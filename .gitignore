@@ -1,6 +1,5 @@
 .vscode/
 __pycache__/*
-test_svd.py
 *.cpp
 *.so
 *.bin
