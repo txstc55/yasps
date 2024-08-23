@@ -1,0 +1,38 @@
+.vscode/
+__pycache__/*
+test_svd.py
+*.cpp
+*.so
+*.bin
+*.obj
+Yasps/build
+Yasps/dist
+Yasps/*.egg-info
+Yasps/*/*.so
+Yasps/*/*.c
+
+# ignore macOS metadata
+.DS_Store
+
+# ignore all binary files
+*.out
+
+# ignore all compiled files
+*.so
+*.bin
+*.cpp
+*.cuh
+*.cu
+*.hpp
+
+
+# ignore all meshes
+*.ele
+*.node
+*.obj
+
+**/__pycache__/*
+
+*.zip
+
+*.mp4
