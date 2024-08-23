@@ -23,6 +23,7 @@ Yasps/*/*.c
 *.cuh
 *.cu
 *.hpp
+*.h
 
 
 # ignore all meshes
