@@ -1,9 +1,0 @@
-pyproject.toml
-setup.py
-yasps/__init__.py
-yasps/symbolic.c
-yasps.egg-info/PKG-INFO
-yasps.egg-info/SOURCES.txt
-yasps.egg-info/dependency_links.txt
-yasps.egg-info/requires.txt
-yasps.egg-info/top_level.txt

@@ -36,3 +36,5 @@ Yasps/*/*.c
 *.zip
 
 *.mp4
+
+.venv/*
