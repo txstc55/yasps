@@ -40,3 +40,4 @@ Yasps/*/*.c
 .venv/*
 
 yasps/build/*
+yasps/yasps.egg-info/*
