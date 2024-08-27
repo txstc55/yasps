@@ -38,3 +38,5 @@ Yasps/*/*.c
 *.mp4
 
 .venv/*
+
+yasps/build/*
