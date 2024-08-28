@@ -4,11 +4,11 @@ __pycache__/*
 *.so
 *.bin
 *.obj
-Yasps/build
-Yasps/dist
-Yasps/*.egg-info
-Yasps/*/*.so
-Yasps/*/*.c
+yasps/build
+yasps/dist
+yasps/*.egg-info
+yasps/*/*.so
+yasps/*/*.c
 
 # ignore macOS metadata
 .DS_Store

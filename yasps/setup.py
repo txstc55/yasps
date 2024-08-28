@@ -3,6 +3,7 @@ from Cython.Build import cythonize
 
 extensions = [
     Extension("yasps.symbolic", ["yasps/symbolic.pyx"]),
+    Extension("yasps.operator", ["yasps/operator.pyx"]),
 ]
 setup(
     name='yasps',  # This is the name of your package
