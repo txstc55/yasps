@@ -1,5 +1,8 @@
 # cython: language_level=3
-
+# operator is used to define what property
+# an operator should have
+# and how the string should be generated
+# from the operator and its children
 class operator:
   def __init__(self, operator_symbol: str, operator_type: int, commutative: bool):
     self.__operator_symbol = operator_symbol
@@ -11,7 +14,7 @@ class operator:
     return self.__operator_symbol
 
   @property
-  def type(self):
+  def type(self)->int:
     # 0 for op(x)
     # 1 for x op y
     # 2 for op($0, $1, ...)
@@ -20,7 +23,7 @@ class operator:
 
 
   @property
-  def commutative(self):
+  def commutative(self)->bool:
     return self.__commutative
 
 
@@ -41,3 +44,7 @@ class operator:
         return children[0].to_string()
       else:
         raise ValueError(f"operator.to_string: Invalid operator type {self.symbol}")
+
+
+  def __str__(self)->str:
+    return self.symbol
