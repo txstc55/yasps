@@ -47,4 +47,4 @@ class operator:
 
 
   def __str__(self)->str:
-    return self.symbol
+    return f"operator({self.symbol}, type={self.type}, commutative={self.commutative})"

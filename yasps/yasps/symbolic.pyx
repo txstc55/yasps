@@ -30,6 +30,7 @@ class symbolic:
   number = operator("number", 3, False)
   variable = operator("variable", 3, False)
   intermediate = operator("intermediate", 3, False)
+  array_access = operator("[]", 3, False)
 
   def __init__(self, value, operator: operator = None, children:list[symbolic] = [], is_constant: bool = False, is_variable: bool = False):
     # if is_constant is false, and is_variable is false
@@ -39,15 +40,15 @@ class symbolic:
     if type(value) == symbolic:
       self.__children = value.children
       self.__value = value.value
-      self.__is_constant = value.is_constant
-      self.__is_variable = value.is_variable
+      self.__is_constant:bool = value.is_constant()
+      self.__is_variable:bool = value.is_variable()
       self.__operator = value.operator
       return
 
     self.__children = children
     self.__value = value
-    self.__is_constant = is_constant
-    self.__is_variable = is_variable
+    self.__is_constant:bool = is_constant
+    self.__is_variable:bool = is_variable
     self.__operator = operator
 
     if operator is None:
@@ -57,6 +58,17 @@ class symbolic:
         self.__operator = symbolic.number
       elif isinstance(value, int):
         self.__operator = symbolic.number
+
+    if operator == symbolic.array_access:
+      if len(children) != 1:
+        raise ValueError(f"symbolic.__init__: {str(self)} should have exactly one child for array access, got {len(children)} instead")
+      if not children[0].is_number():
+        raise ValueError(f"symbolic.__init__: {str(self)} should have a number as its child for array access, got {children[0]} instead")
+      if not isinstance(value, str):
+        raise ValueError(f"symbolic.__init__: {str(self)} should have a string as its value for array access, got {value} instead")
+      if not isinstance(children[0].value, int):
+        raise ValueError(f"symbolic.__init__: {str(self)} should have an integer as its child value for array access, got {children[0].value} instead")
+
 
   @property
   def children(self):
@@ -73,11 +85,29 @@ class symbolic:
   def operator(self):
     return self.__operator
 
-  def is_constant(self):
+  @property
+  def array_name(self):
+    if self.__operator == symbolic.array_access:
+      return self.__children[0].value
+    else:
+      raise ValueError(f"symbolic.array_name: {str(self)} is not an array access")
+
+
+  def is_constant(self)->bool:
     return self.__is_constant
 
-  def is_variable(self):
+  def is_variable(self)->bool:
     return self.__is_variable
+
+  @property
+  def num_children(self):
+    return len(self.children)
+
+  # access children through index
+  def __getitem__(self, index:int)->symbolic:
+    if index >= len(self.children):
+      raise ValueError(f"symbolic.__getitem__: {str(self)} has {len(self.children)} children, but index {index} was requested")
+    return self.children[index]
 
 
   def __add__(self, other)->symbolic:
@@ -354,6 +384,8 @@ class symbolic:
       return str(self.value)
     elif self.operator == symbolic.intermediate:
       return "intermediate_" + str(self.value)
+    elif self.operator == symbolic.array_access:
+      return str(self.value) + "[" + str(self.children[0]) + "]"
     else:
       return self.operator.to_string(self.children)
 
