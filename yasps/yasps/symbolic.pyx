@@ -32,12 +32,20 @@ class symbolic:
   intermediate = operator("intermediate", 3, False)
 
   def __init__(self, value, operator: operator = None, children:list[symbolic] = [], is_constant: bool = False, is_variable: bool = False):
-    self.__children = children
-    self.__value = value
     # if is_constant is false, and is_variable is false
     # it means that the value is changing, but user will set the value
     # if is_constant is true, it means that the value is constant
     # if is_variable is true, it means that the value is changing, and we want to optimize it
+    if type(value) == symbolic:
+      self.__children = value.children
+      self.__value = value.value
+      self.__is_constant = value.is_constant
+      self.__is_variable = value.is_variable
+      self.__operator = value.operator
+      return
+
+    self.__children = children
+    self.__value = value
     self.__is_constant = is_constant
     self.__is_variable = is_variable
     self.__operator = operator
@@ -66,7 +74,16 @@ class symbolic:
   def operator(self):
     return self.__operator
 
-  def __add__(self, other: symbolic | float):
+  @property
+  def is_constant(self):
+    return self.__is_constant
+
+  @property
+  def is_variable(self):
+    return self.__is_variable
+
+
+  def __add__(self, other):
     ## we always need to do type conversion
     ## if possible
     if (type(other) != symbolic):
@@ -74,7 +91,7 @@ class symbolic:
         return self + otherSym
 
     if (self.is_number and other.is_number):
-        return symbolic(self.value + other.value)
+        return self.value + other.value
     ## deal with 0
     elif (self.value == 0):
         return other
@@ -84,6 +101,33 @@ class symbolic:
         return 0
 
     return symbolic(None, operator=symbolic.addition, children=[self, other])
+
+  def __radd__(self, other):
+    return self + other
+
+  def __neg__(self):
+    return symbolic(None, operator=symbolic.negation, children=[self])
+
+  def __sub__(self, other):
+    if (type(other) != symbolic):
+        otherSym = symbolic(other)
+        return self - otherSym
+
+    if (self.is_number and other.is_number):
+        return self.value - other.value
+    elif (self.value == 0):
+        return -other
+    elif (other.value == 0):
+        return self
+    elif (self.value == 0 and other.value == 0):
+        return 0
+
+    return symbolic(None, operator=symbolic.subtraction, children=[self, other])
+
+  def __rsub__(self, other):
+    return symbolic(other) - self
+
+
 
 
   def __str__(self):
