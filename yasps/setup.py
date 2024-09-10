@@ -2,8 +2,9 @@ from setuptools import setup, find_packages, Extension
 from Cython.Build import cythonize
 
 extensions = [
-    Extension("yasps.symbolic", ["yasps/symbolic.pyx"]),
-    Extension("yasps.operator", ["yasps/operator.pyx"]),
+    Extension("yasps.scene", ["yasps/scene/scene.pyx"]),
+    Extension("yasps.attribute", ["yasps/attribute/attribute.pyx"]),
+    Extension("yasps.mesh", ["yasps/mesh/mesh.pyx"]),
 ]
 setup(
     name='yasps',  # This is the name of your package

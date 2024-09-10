@@ -24,6 +24,7 @@ yasps/*/*.c
 *.cu
 *.hpp
 *.h
+*.c
 
 
 # ignore all meshes

@@ -30,44 +30,44 @@ class symbolic:
   number = operator("number", 3, False)
   variable = operator("variable", 3, False)
   intermediate = operator("intermediate", 3, False)
-  array_access = operator("[]", 3, False)
+  mat_access = operator("[]", 3, False)
 
-  def __init__(self, value, operator: operator = None, children:list[symbolic] = [], is_constant: bool = False, is_variable: bool = False):
-    # if is_constant is false, and is_variable is false
-    # it means that the value is changing, but user will set the value
-    # if is_constant is true, it means that the value is constant
-    # if is_variable is true, it means that the value is changing, and we want to optimize it
+  def __init__(self, value, operator: operator = None, children:list[symbolic] = [], correspondance: list[str] = []):
     if type(value) == symbolic:
       self.__children = value.children
       self.__value = value.value
-      self.__is_constant:bool = value.is_constant()
-      self.__is_variable:bool = value.is_variable()
       self.__operator = value.operator
+      self.__correspondance = value.correspondance
       return
 
     self.__children = children
     self.__value = value
-    self.__is_constant:bool = is_constant
-    self.__is_variable:bool = is_variable
     self.__operator = operator
+    self.__correspondance = correspondance
 
     if operator is None:
       if isinstance(value, str):
         self.__operator = symbolic.variable
+        # this is a variable
+        # it must have a correspondance
+        self.__correspondance = correspondance
       elif isinstance(value, float):
+        # for values, correspondance should be none
         self.__operator = symbolic.number
+        self.__correspondance = []
       elif isinstance(value, int):
         self.__operator = symbolic.number
+        self.__correspondance = []
 
-    if operator == symbolic.array_access:
+    if operator == symbolic.mat_access:
       if len(children) != 1:
-        raise ValueError(f"symbolic.__init__: {str(self)} should have exactly one child for array access, got {len(children)} instead")
+        raise ValueError(f"symbolic.__init__: {str(self)} should have exactly one child for mat access, got {len(children)} instead")
       if not children[0].is_number():
-        raise ValueError(f"symbolic.__init__: {str(self)} should have a number as its child for array access, got {children[0]} instead")
+        raise ValueError(f"symbolic.__init__: {str(self)} should have a number as its child for mat access, got {children[0]} instead")
       if not isinstance(value, str):
-        raise ValueError(f"symbolic.__init__: {str(self)} should have a string as its value for array access, got {value} instead")
+        raise ValueError(f"symbolic.__init__: {str(self)} should have a string as its value for mat access, got {value} instead")
       if not isinstance(children[0].value, int):
-        raise ValueError(f"symbolic.__init__: {str(self)} should have an integer as its child value for array access, got {children[0].value} instead")
+        raise ValueError(f"symbolic.__init__: {str(self)} should have an integer as its child value for mat access, got {children[0].value} instead")
 
 
   @property
@@ -86,18 +86,20 @@ class symbolic:
     return self.__operator
 
   @property
-  def array_name(self):
-    if self.__operator == symbolic.array_access:
-      return self.__children[0].value
+  def mat_name(self):
+    if self.__operator == symbolic.mat_access:
+      return self.value
     else:
-      raise ValueError(f"symbolic.array_name: {str(self)} is not an array access")
+      raise ValueError(f"symbolic.mat_name: {str(self)} is not an mat access")
+
+  @property
+  def correspondance(self):
+    return self.__correspondance
 
 
-  def is_constant(self)->bool:
-    return self.__is_constant
+  def changeCorrespondance(self, correspondance: list[str]):
+    self.__correspondance = correspondance
 
-  def is_variable(self)->bool:
-    return self.__is_variable
 
   @property
   def num_children(self):
@@ -384,7 +386,7 @@ class symbolic:
       return str(self.value)
     elif self.operator == symbolic.intermediate:
       return "intermediate_" + str(self.value)
-    elif self.operator == symbolic.array_access:
+    elif self.operator == symbolic.mat_access:
       return str(self.value) + "[" + str(self.children[0]) + "]"
     else:
       return self.operator.to_string(self.children)
