@@ -3,5 +3,5 @@
 # and a list of connectivities
 
 class mesh:
-  def __init__(self):
-    pass
+  def __init__(self, name: str):
+    self.__name = name

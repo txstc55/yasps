@@ -10,4 +10,6 @@ print(x.value.get())
 # print(x.get())
 #
 
-x = scene("new_scene")
+x = scene("abc")
+x.addMesh("abc")
+print(x.abc)
