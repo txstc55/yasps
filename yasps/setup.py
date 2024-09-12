@@ -5,6 +5,9 @@ extensions = [
     Extension("yasps.scene", ["yasps/scene/scene.pyx"]),
     Extension("yasps.attribute", ["yasps/attribute/attribute.pyx"]),
     Extension("yasps.mesh", ["yasps/mesh/mesh.pyx"]),
+    Extension("yasps.connectivity", ["yasps/connectivity/connectivity.pyx"]),
+    Extension("yasps.primitive", ["yasps/primitive/primitive.pyx"]),
+    Extension("yasps.operator", ["yasps/operator/operator.pyx"]),
 ]
 setup(
     name='yasps',  # This is the name of your package

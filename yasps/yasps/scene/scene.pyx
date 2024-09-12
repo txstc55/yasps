@@ -30,6 +30,10 @@ class scene:
   def type(self)->str:
     return "scene"
 
+  @property
+  def attributes(self)->Dict[str, attribute]:
+    return self.__attributes
+
 
   def isValidName(self, name: str)->bool:
     # Check if the name is a valid Python identifier (variable name)
@@ -59,25 +63,27 @@ class scene:
     setattr(self, name, newMesh)
     return newMesh
 
+  @attribute
+  def numInstances(self):
+    return 1
 
+  @attribute
+  def numMeshes(self):
+    return len(self.__meshes)
 
-  def addAttribute(self, name, attribute: attribute = None, value = None, dimension = None):
+  def addAttribute(self, name, attribute: attribute = None, rows: int = 1, cols: int = 1):
     if name in self.__attributes:
       raise ValueError(f"scene.addAttribute: attribute with name '{name}' already exists in scene.")
     if attribute != None:
+      if attribute.name != "":
+        raise ValueError(f"scene.addAttribute: the attribute supplied already has a name '{attribute.name}'. This indicates that the attribute most likely is already set for another object.")
       self.__attributes[name] = attribute
+      attribute.setName(name)
       return attribute
     else:
-      if value == None and dimension == None:
-        raise ValueError("scene.addAttribute: value and dimension cannot both be None if attribute is None.")
-      if value != None:
-        newAttribute = attribute(name, value = value, correspondance = [self])
-        self.__attributes[name] = newAttribute
-        return newAttribute
-      elif dimension != None:
-        newAttribute = attribute(name, dimension = dimension, correspondance = [self])
-        self.__attributes[name] = newAttribute
-        return newAttribute
+      newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols)
+      self.__attributes[name] = newAttribute
+      return newAttribute
 
   # accessing attribute by [] operator
   # user can get multiple attributes by passing a list of names
@@ -90,6 +96,8 @@ class scene:
     elif isinstance(key, tuple):
       # get the list of attributes first
       attributes = [self[name] for name in key]
-
     else:
       raise KeyError(f"scene.__getitem__: attribute with name '{key}' not found in scene.")
+
+  def fullName(self):
+    return self.name
