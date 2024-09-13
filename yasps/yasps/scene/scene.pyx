@@ -1,7 +1,7 @@
 from __future__ import annotations
 # a scene can have meshes
 # and its own attributes
-from typing import Dict, Union, Tuple
+from typing import Dict, Union, Tuple, Optional
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
   from yasps.mesh import mesh  # Only imported for type hints
@@ -74,16 +74,17 @@ class scene:
   def numMeshes(self)->int:
     return len(self.__meshes)
 
-  def addAttribute(self, name, attribute: attribute = None, rows: int = 1, cols: int = 1)->attribute:
+  def addAttribute(self, name, computed_attribute: Optional[attribute] = None, rows: int = 1, cols: int = 1)->attribute:
     if name in self.__attributes:
       raise ValueError(f"scene.addAttribute: attribute with name '{name}' already exists in scene.")
-    if attribute != None:
-      if attribute.name != "":
-        raise ValueError(f"scene.addAttribute: the attribute supplied already has a name '{attribute.name}'. This indicates that the attribute most likely is already set for another object.")
-      self.__attributes[name] = attribute
-      attribute.setName(name)
-      return attribute
+    if computed_attribute != None:
+      if computed_attribute.name != "":
+        raise ValueError(f"scene.addAttribute: the computed_attribute supplied already has a name '{computed_attribute.name}'. This indicates that the input_attribute most likely is already set for another object.")
+        self.__attributes[name] = input_attribute
+        input_attribute.setName(name)
+        return input_attribute
     else:
+      from yasps.attribute import attribute
       newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols)
       self.__attributes[name] = newAttribute
       return newAttribute
@@ -97,8 +98,13 @@ class scene:
       else:
         raise KeyError(f"scene.__getitem__: attribute with name '{key}' not found in scene.")
     elif isinstance(key, tuple):
-      # get the list of attributes first
-      attributes = [self[name] for name in key]
+      from yasps.attribute import attribute
+      # first we check if all names are in the attributes
+      for name in key:
+        if name not in self.__attributes:
+          raise KeyError(f"primitive.__getitem__: attribute with name '{name}' not found in scene {self.fullName}.")
+      attributes = attribute.to_array([self.__attributes[name] for name in key], 1, sum([self.__attributes[name].cols * self.__attributes[name].rows for name in key]))
+      return attributes
     else:
       raise KeyError(f"scene.__getitem__: attribute with name '{key}' not found in scene.")
 

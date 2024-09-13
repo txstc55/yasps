@@ -1,6 +1,6 @@
 # cython: language_level=3
 from __future__ import annotations
-from typing import Dict, Union, Tuple
+from typing import Dict, Union, Tuple, Optional
 # a mesh may have primitives
 # and its own attributes
 from typing import TYPE_CHECKING
@@ -78,15 +78,15 @@ class mesh:
     return len(self.__primitives)
 
 
-  def addAttribute(self, name, attribute: attribute = None, rows: int = 1, cols: int = 1):
+  def addAttribute(self, name, computed_attribute: Optional[attribute] = None, rows: int = 1, cols: int = 1):
     if name in self.__attributes:
-      raise ValueError(f"mesh.addAttribute: attribute with name '{name}' already exists in mesh.")
-    if attribute != None:
-      if attribute.name != "":
-        raise ValueError(f"mesh.addAttribute: the attribute supplied already has a name '{attribute.name}'. This indicates that the attribute most likely is already set for another object.")
-      self.__attributes[name] = attribute
-      attribute.setName(name)
-      return attribute
+      raise ValueError(f"mesh.addAttribute: computed_attribute with name '{name}' already exists in mesh.")
+    if computed_attribute != None:
+      if computed_attribute.name != "":
+        raise ValueError(f"mesh.addAttribute: the computed_attribute supplied already has a name '{computed_attribute.name}'. This indicates that the computed_attribute most likely is already set for another object.")
+        self.__attributes[name] = computed_attribute
+        computed_attribute.setName(name)
+        return computed_attribute
     else:
       from yasps.attribute import attribute
       newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols)
@@ -102,8 +102,13 @@ class mesh:
       else:
         raise KeyError(f"mesh.__getitem__: attribute with name '{key}' not found in mesh.")
     elif isinstance(key, tuple):
-      # get the list of attributes first
-      attributes = [self[name] for name in key]
+      from yasps.attribute import attribute
+      # first we check if all names are in the attributes
+      for name in key:
+        if name not in self.__attributes:
+          raise KeyError(f"primitive.__getitem__: attribute with name '{name}' not found in mesh {self.fullName}.")
+      attributes = attribute.to_array([self.__attributes[name] for name in key], 1, sum([self.__attributes[name].cols * self.__attributes[name].rows for name in key]))
+      return attributes
     else:
       raise KeyError(f"mesh.__getitem__: attribute with name '{key}' not found in mesh.")
 

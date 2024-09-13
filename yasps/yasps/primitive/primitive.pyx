@@ -18,7 +18,7 @@ class primitive:
   def __init__(self, name: str, parent_mesh: mesh, numInstances: int = 0):
     if name == "":
       raise ValueError("mesh.__init__: name cannot be empty.")
-    if mesh is None:
+    if parent_mesh is None:
       raise ValueError("mesh.__init__: mesh cannot be None.")
     self.__name: str = name
     self.__mesh: mesh = parent_mesh
@@ -85,16 +85,16 @@ class primitive:
     return newConnectivity
 
 
-  def addAttribute(self, name: str, rows: int = 1, cols: int = 1, through: Optional[connectivity] = None) -> attribute:
+  def addAttribute(self, name: str, computed_attribute: Optional[attribute] = None, rows: int = 1, cols: int = 1, through: Optional[connectivity] = None) -> attribute:
     from yasps.attribute import attribute
     if name in self.__attributes:
       raise ValueError(f"primitive.addAttribute: attribute with name '{name}' already exists in primitive.")
-    if attribute != None:
-      if attribute.name != "":
-        raise ValueError(f"primitive.addAttribute: the attribute supplied already has a name '{attribute.name}'. This indicates that the attribute most likely is already set for another object.")
-      self.__attributes[name] = attribute
-      attribute.setName(name)
-      return attribute
+    if computed_attribute != None:
+      if computed_attribute.name != "":
+        raise ValueError(f"primitive.addAttribute: the computed_attribute supplied already has a name '{computed_attribute.name}'. This indicates that the computed_attribute most likely is already set for another object.")
+        self.__attributes[name] = computed_attribute
+        computed_attribute.setName(name)
+        return computed_attribute
     elif through is not None:
       # we will gather the attribute from another primitive
       # we will check if the name is inside the to primitive
@@ -113,3 +113,23 @@ class primitive:
   @property
   def fullName(self)->str:
     return f"{self.scene.name}_{self.mesh.name}_{self.name}"
+
+  # accessing attribute by [] operator
+  # user can get multiple attributes by passing a list of names
+  def __getitem__(self, key: Union[str, Tuple[str]]) -> attribute:
+    if isinstance(key, str):
+      if key in self.__attributes:
+        return self.__attributes[key]
+      else:
+        raise KeyError(f"primitive.__getitem__: attribute with name '{key}' not found in primitive.")
+    elif isinstance(key, tuple):
+      from yasps.attribute import attribute
+      # first we check if all names are in the attributes
+      for name in key:
+        if name not in self.__attributes:
+          raise KeyError(f"primitive.__getitem__: attribute with name '{name}' not found in primitive {self.fullName}.")
+      # get the list of attributes first
+      attributes = attribute.to_array([self.__attributes[name] for name in key], 1, sum([self.__attributes[name].cols * self.__attributes[name].rows for name in key]))
+      return attributes
+    else:
+      raise KeyError(f"primitive.__getitem__: attribute with name '{key}' not found in primitive.")
