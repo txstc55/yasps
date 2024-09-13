@@ -1,8 +1,7 @@
-# from .symbolic import symbolic
-# from .operator import operator
-from .attribute import attribute
-from .mesh import mesh
+
 from .scene import scene
-from .connectivity import connectivity
+from .mesh import mesh
 from .primitive import primitive
+from .connectivity import connectivity
+from .attribute import attribute
 from .operator import operator

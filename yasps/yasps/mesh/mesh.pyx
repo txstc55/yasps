@@ -1,18 +1,23 @@
+# cython: language_level=3
 from __future__ import annotations
+from typing import Dict, Union, Tuple
 # a mesh may have primitives
 # and its own attributes
-from yasps.scene import scene
-from typing import Dict, Union, Tuple
-from yasps.primitive import primitive
-from yasps.attribute import attribute
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+  from yasps.scene import scene  # Only imported for type hints
+  from yasps.primitive import primitive
+  from yasps.attribute import attribute
+
+
 import keyword
 class mesh:
   def __init__(self, name: str, parent_scene: scene):
 
     if name == "":
       raise ValueError("mesh.__init__: name cannot be empty.")
-    if scene is None:
-      raise ValueError("mesh.__init__: scene cannot be None.")
+    if parent_scene is None:
+      raise ValueError("mesh.__init__: parent scene cannot be None.")
     self.__name: str = name
     self.__scene: scene = parent_scene
     self.__primitives: Dict[str, primitive] = {}
@@ -55,6 +60,7 @@ class mesh:
     if not self.isValidName(name):
       raise ValueError(f"mesh.addPrimitive: '{name}' is not a valid name for a primitive.")
 
+    from yasps.primitive import primitive
     # add the mesh to the scene
     newPrimitive = primitive(name, self, numInstances)
     self.__primitives[name] = newPrimitive
@@ -63,12 +69,12 @@ class mesh:
     return newPrimitive
 
 
-  @attribute
-  def numInstances(self):
+  @property
+  def numInstances(self)->int:
     return 1
 
-  @attribute
-  def numPrimitives(self):
+  @property
+  def numPrimitives(self)->int:
     return len(self.__primitives)
 
 
@@ -82,6 +88,7 @@ class mesh:
       attribute.setName(name)
       return attribute
     else:
+      from yasps.attribute import attribute
       newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols)
       self.__attributes[name] = newAttribute
       return newAttribute
@@ -100,6 +107,6 @@ class mesh:
     else:
       raise KeyError(f"mesh.__getitem__: attribute with name '{key}' not found in mesh.")
 
-
-  def fullName(self):
+  @property
+  def fullName(self)->str:
     return f"{self.__scene.name}_{self.__name}"

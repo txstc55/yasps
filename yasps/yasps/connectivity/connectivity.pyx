@@ -1,9 +1,12 @@
 from __future__ import annotations
-from yasps.primitive import primitive
-from yasps.mesh import mesh
-from yasps.scene import scene
 import numpy as np
 import pycuda.gpuarray as gpuarray
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+  from yasps.primitive import primitive
+  from yasps.mesh import mesh
+  from yasps.scene import scene
+
 class connectivity:
   def __init__(self, name: str, from_primitive: primitive, to_primitive: primitive, value: np.ndarray, dimension: int):
     # for example the connectivity between triangle and vertex
@@ -15,7 +18,7 @@ class connectivity:
     self.__fromPrimitive: primitive = from_primitive
     self.__toPrimitive: primitive = to_primitive
     self.__value: gpuarray.GPUArray = gpuarray.to_gpu(value.flatten().astype(np.uint32))
-    self.__dimension = dimension
+    self.__dimension: int = dimension
 
   @property
   def name(self)->str:

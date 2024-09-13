@@ -1,13 +1,17 @@
+# cython: language_level=3
 from __future__ import annotations
-# a primitive may have its own attributes
-# and connectivities to other primitives
-from yasps.scene import scene
 from typing import Dict, Union, Tuple, Optional
-from yasps.mesh import mesh
-from yasps.attribute import attribute
-from yasps.connectivity import connectivity
 import keyword
 import numpy as np
+# a primitive may have its own attributes
+# and connectivities to other primitives
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+  from yasps.scene import scene
+  from yasps.mesh import mesh
+  from yasps.attribute import attribute
+  from yasps.connectivity import connectivity
+
 
 
 class primitive:
@@ -75,8 +79,14 @@ class primitive:
     if to.mesh != self.mesh:
       raise ValueError(f"primitive.addConnectivity: connectivity '{name}' must connect to the same mesh.")
 
+    from yasps import connectivity
+    newConnectivity = connectivity(name = name, fromPrimitive = self, toPrimitive = to, data = data)
+    self.__connectivities[name] = newConnectivity
+    return newConnectivity
+
 
   def addAttribute(self, name: str, rows: int = 1, cols: int = 1, through: Optional[connectivity] = None) -> attribute:
+    from yasps.attribute import attribute
     if name in self.__attributes:
       raise ValueError(f"primitive.addAttribute: attribute with name '{name}' already exists in primitive.")
     if attribute != None:
@@ -100,5 +110,6 @@ class primitive:
       self.__attributes[name] = newAttribute
       return newAttribute
 
-  def fullName(self):
+  @property
+  def fullName(self)->str:
     return f"{self.scene.name}_{self.mesh.name}_{self.name}"

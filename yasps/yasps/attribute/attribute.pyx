@@ -1,15 +1,17 @@
+# cython: language_level=3
 from __future__ import annotations
-# from ..symbolic import symbolicMatrix
-# from ..symbolic import symbolic
-from yasps.operator import operator
+import pycuda.autoinit
 import numpy as np
 import pycuda.gpuarray as gpuarray
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Tuple
+from typing import TYPE_CHECKING
 from yasps.operator import operator
-from yasps.scene import scene
-from yasps.mesh import mesh
-from yasps.primitive import primitive
-from yasps.connectivity import connectivity
+if TYPE_CHECKING:
+  from yasps.operator import operator
+  from yasps.scene import scene
+  from yasps.mesh import mesh
+  from yasps.primitive import primitive
+  from yasps.connectivity import connectivity
 
 
 ADD = operator("+", 1, True)
@@ -34,9 +36,9 @@ GE = operator(">=", 1, False)
 ASSIGN = operator("=", 1, False)
 INDEX = operator("ijk", 3, False) # the index used for array access
 FLOAT = operator("float", 3, False) # for float numbers
-ARRAY_ACCESS = operator("[]", 3, False) # for accessing an element in the array
+ARRAY_ACCESS = operator("access", 3, False) # for accessing an element in the array
 DATA = operator("data", 3, False) # for directly accessing data
-ARRAY = operator("array", 3, False) # for directly accessing data
+ARRAY = operator("array", 3, False) # for constructing an array
 GATHER = operator("gather", 3, False) # for gathering data from one primitive to another
 
 
@@ -91,10 +93,16 @@ class attribute:
   def children(self):
     return self.__children
 
+  @property
+  def float_value(self):
+    return self.__float_value
+
+  @property
+  def index_value(self):
+    return self.__index_value
 
   @property
   def value(self):
-    print("here at value")
     if self.__value is None:
       raise ValueError("attribute.value: value is None. Please call compute() first or manually update value.")
     return self.__value
@@ -132,9 +140,62 @@ class attribute:
       except:
         raise ValueError("attribute.updateValue: Invalid value type, cannot be converted to gpuarray")
 
+  # construct a new attribute from a list of attributes
   @staticmethod
   def to_array(children: List[attribute], rows: int, cols: int):
     if rows * cols != len(children):
       raise ValueError("attribute.to_array: number of elements must match the number of children.")
     # TODO: CHECK FOR CORRESPONDANCE
-    return attribute(name = "", rows = rows, cols = cols, children = children, operator = ARRAY)
+    return attribute(name = "", rows = rows, cols = cols, children = children, operator = ARRAY, correspondance = children[0].correspondance)
+
+  # every attribute is actually a vector or a mat
+  # so accessing them through [] operator returns an access attribute
+  def __getitem__(self, index: Union[int, Tuple[int, int]]) -> attribute:
+    if isinstance(index, int):
+      if index >= self.rows * self.cols:
+        raise ValueError("attribute.__getitem__: index out of range.")
+      indexAttribute = attribute(operator = INDEX, index_value = index)
+      return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
+    elif isinstance(index, tuple):
+      if len(index) != 2:
+        raise ValueError("attribute.__getitem__: index must be a tuple of two integers.")
+      if index[0] >= self.rows or index[1] >= self.cols:
+        raise ValueError("attribute.__getitem__: index out of range.")
+      indexAttribute = attribute(operator = INDEX, index_value = index[0] * self.cols + index[1])
+      return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
+
+  def __str__(self)->str:
+    if self.operator.type == 0:
+      return f"{operator.name}({self.children[0]})"
+    elif self.operator.type == 1:
+      return f"({self.children[0]} {operator.name} {self.children[1]})"
+    elif self.operator.type == 2:
+      return f"{operator.name}({', '.join([str(child) for child in self.children])})"
+    elif self.operator.type == 3:
+      if self.operator == INDEX:
+        return str(self.index_value)
+      elif self.operator == FLOAT:
+        return str(self.float_value)
+      elif self.operator == ARRAY_ACCESS:
+        return f"{self.children[0]}[{self.children[1]}]"
+      elif self.operator == DATA:
+        if self.correspondance is not None:
+          return f"{self.correspondance.fullName}.data"
+        else:
+          raise ValueError("attribute.__str__: correspondance is None for a DATA attribute.")
+      elif self.operator == ARRAY:
+        # Construct the string without backslashes inside the f-string
+        children_str = ',\n'.join([str(child) for child in self.children])
+        return f"array(\n{children_str}\n)"
+      elif self.operator == GATHER:
+        if len(self.children) != 1:
+          raise ValueError("attribute.__str__: GATHER operator must have one child.")
+        if self.children[0].correspondance is None:
+          raise ValueError("attribute.__str__: GATHER operator's first child must have a correspondance.")
+        if self.through is None:
+          raise ValueError("attribute.__str__: GATHER operator must have a through attribute.")
+        return f"gather(\n{self.children[0].correspondance.fullName}.{self.name}\n->\n{self.through.fromPrimitive.fullName}.{self.name}"
+      else:
+        raise ValueError("attribute.__str__: unknown operator type.")
+    else:
+      raise ValueError("attribute.__str__: unknown operator type.")

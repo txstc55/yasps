@@ -2,8 +2,10 @@ from __future__ import annotations
 # a scene can have meshes
 # and its own attributes
 from typing import Dict, Union, Tuple
-from yasps.mesh import mesh
-from yasps.attribute import attribute
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+  from yasps.mesh import mesh  # Only imported for type hints
+  from yasps.attribute import attribute
 import keyword
 class scene:
   scenes: Dict[str, scene] = {}
@@ -56,22 +58,23 @@ class scene:
     if not self.isValidName(name):
       raise ValueError(f"scene.addMesh: '{name}' is not a valid name for a mesh.")
 
+    from yasps.mesh import mesh
     # add the mesh to the scene
-    newMesh = mesh(name)
+    newMesh = mesh(name, self)
     self.__meshes[name] = newMesh
     # add mesh as an attribute to the scene
     setattr(self, name, newMesh)
     return newMesh
 
-  @attribute
-  def numInstances(self):
+  @property
+  def numInstances(self)->int:
     return 1
 
-  @attribute
-  def numMeshes(self):
+  @property
+  def numMeshes(self)->int:
     return len(self.__meshes)
 
-  def addAttribute(self, name, attribute: attribute = None, rows: int = 1, cols: int = 1):
+  def addAttribute(self, name, attribute: attribute = None, rows: int = 1, cols: int = 1)->attribute:
     if name in self.__attributes:
       raise ValueError(f"scene.addAttribute: attribute with name '{name}' already exists in scene.")
     if attribute != None:
@@ -99,5 +102,6 @@ class scene:
     else:
       raise KeyError(f"scene.__getitem__: attribute with name '{key}' not found in scene.")
 
-  def fullName(self):
+  @property
+  def fullName(self)->str:
     return self.name
