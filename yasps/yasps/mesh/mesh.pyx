@@ -28,13 +28,23 @@ class mesh:
   def name(self)->str:
     return self.__name
 
+  # return the scene of this mesh
   @property
   def scene(self)->scene:
     return self.__scene
 
+  # return the mesh of this mesh
+  @property
+  def mesh(self)->mesh:
+    return self
+
   @property
   def type(self)->str:
     return "mesh"
+
+  @property
+  def primitives(self)->Dict[str, primitive]:
+    return self.__primitives
 
   @property
   def attributes(self)->Dict[str, attribute]:

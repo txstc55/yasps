@@ -28,6 +28,12 @@ class scene:
   def name(self)->str:
     return self.__name
 
+
+  # return the scene of this scene
+  @property
+  def scene(self)->scene:
+    return self
+
   @property
   def type(self)->str:
     return "scene"

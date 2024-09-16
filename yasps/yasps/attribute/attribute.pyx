@@ -40,6 +40,8 @@ ARRAY_ACCESS = operator("access", 3, False) # for accessing an element in the ar
 DATA = operator("data", 3, False) # for directly accessing data
 ARRAY = operator("array", 3, False) # for constructing an array
 GATHER = operator("gather", 3, False) # for gathering data from one primitive to another
+SCATTER = operator("scatter", 3, False) # for scattering data from one primitive to another
+TRANSPOSE = operator("transpose", 3, False) # for transposing a matrix
 
 
 class attribute:
@@ -107,6 +109,10 @@ class attribute:
       raise ValueError("attribute.value: value is None. Please call compute() first or manually update value.")
     return self.__value
 
+  @property
+  def size(self):
+    return self.rows * self.cols
+
   def reshape(self, rows, cols):
     if self.rows * self.cols != rows * cols:
       raise ValueError("attribute.reshape: new shape must have the same number of elements.")
@@ -140,13 +146,54 @@ class attribute:
       except:
         raise ValueError("attribute.updateValue: Invalid value type, cannot be converted to gpuarray")
 
+  @staticmethod
+  def __check_heritage(a1: attribute, a2: attribute)->attribute:
+    # we check if two attribute are from the same line of blood
+    # return the younger one always
+    if a1.correspondance is None and a1.operator != FLOAT:
+      raise ValueError("attribute.__check_heritage: a1 must have a correspondance since it is not a float value.")
+    if a2.correspondance is None and a2.operator != FLOAT:
+      raise ValueError("attribute.__check_heritage: a2 must have a correspondance since it is not a float value.")
+    if a1.operator == FLOAT or a2.operator == FLOAT:
+      return a1
+
+    if a1.correspondance is None or a2.correspondance is None:
+      raise ValueError("attribute.__check_heritage: correspondance should be set for both attributes.")
+    else:
+      if a1.correspondance == a2.correspondance:
+        # same correspondance, we can return either one
+        return a1
+      if a1.correspondance.type == "scene":
+        # a1 is a scene, we check if a2 is a child of a1
+        if a2.correspondance.scene == a1:
+          return a2
+      if a2.correspondance.type == "scene":
+        # same scenario
+        if a1.correspondance.scene == a2:
+          return a1
+      # now we actually need to check the heritage
+      if a1.correspondance.type == "mesh":
+        if a2.correspondance.mesh == a1.correspondance:
+          return a2
+      if a2.correspondance.type == "mesh":
+        if a1.correspondance.mesh == a2.correspondance:
+          return a1
+      # we dont need to check for primitives, sicen if they are the same
+      # then we already checked it
+      # if they are not the same, we raise error anyway
+      raise ValueError("attribute.__check_heritage: attributes do not share the same heritage.")
+
+
   # construct a new attribute from a list of attributes
   @staticmethod
   def to_array(children: List[attribute], rows: int, cols: int):
     if rows * cols != len(children):
       raise ValueError("attribute.to_array: number of elements must match the number of children.")
-    # TODO: CHECK FOR CORRESPONDANCE
-    return attribute(name = "", rows = rows, cols = cols, children = children, operator = ARRAY, correspondance = children[0].correspondance)
+    # let's get the correspondance
+    youngest_child: attribute = children[0]
+    for i in range(1, len(children)):
+      youngest_child = attribute.__check_heritage(youngest_child, children[i])
+    return attribute(name = "", rows = rows, cols = cols, children = children, operator = ARRAY, correspondance = youngest_child.correspondance)
 
   # every attribute is actually a vector or a mat
   # so accessing them through [] operator returns an access attribute
@@ -154,6 +201,11 @@ class attribute:
     if isinstance(index, int):
       if index >= self.rows * self.cols:
         raise ValueError("attribute.__getitem__: index out of range.")
+      if self.operator == ARRAY:
+        return self.children[index]
+      elif self.operator == DATA:
+        indexAttribute = attribute(operator = INDEX, index_value = index)
+        return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
       indexAttribute = attribute(operator = INDEX, index_value = index)
       return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
     elif isinstance(index, tuple):
@@ -161,8 +213,25 @@ class attribute:
         raise ValueError("attribute.__getitem__: index must be a tuple of two integers.")
       if index[0] >= self.rows or index[1] >= self.cols:
         raise ValueError("attribute.__getitem__: index out of range.")
+      if self.operator == ARRAY:
+        return self.children[index[0] * self.cols + index[1]]
+      elif self.operator == DATA:
+        indexAttribute = attribute(operator = INDEX, index_value = index[0] * self.cols + index[1])
+        return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
       indexAttribute = attribute(operator = INDEX, index_value = index[0] * self.cols + index[1])
       return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
+    else:
+      raise ValueError("attribute.__getitem__: index must be either an integer or a tuple of two integers.")
+
+  # transpose operator
+  def transpose(self)->attribute:
+    if self.size == 0:
+      return self
+    else:
+      if self.operator == TRANSPOSE:
+        return self.children[0]
+      else:
+        return attribute(children = [self], operator = TRANSPOSE, correspondance = self.correspondance, rows = self.cols, cols = self.rows)
 
   def __str__(self)->str:
     if self.operator.type == 0:
@@ -194,8 +263,80 @@ class attribute:
           raise ValueError("attribute.__str__: GATHER operator's first child must have a correspondance.")
         if self.through is None:
           raise ValueError("attribute.__str__: GATHER operator must have a through attribute.")
-        return f"gather(\n{self.children[0].correspondance.fullName}.{self.name}\n->\n{self.through.fromPrimitive.fullName}.{self.name}"
+        return f"gather({self.through.toPrimitive.fullName}.{self.name}->{self.through.fromPrimitive.fullName}.{self.name})"
+      elif self.operator == SCATTER:
+        if len(self.children) != 1:
+          raise ValueError("attribute.__str__: SCATTER operator must have one child.")
+        if self.children[0].correspondance is None:
+          raise ValueError("attribute.__str__: SCATTER operator's first child must have a correspondance.")
+        if self.through is None:
+          raise ValueError("attribute.__str__: SCATTER operator must have a through attribute.")
+        return f"scatter({self.through.fromPrimitive.fullName}.{self.name}->{self.through.toPrimitive.fullName}.{self.name})"
       else:
         raise ValueError("attribute.__str__: unknown operator type.")
     else:
       raise ValueError("attribute.__str__: unknown operator type.")
+
+
+  def row(self, index: int)->attribute:
+    if self.size == 1:
+      return self
+    if index >= self.rows:
+      raise ValueError("attribute.row: index out of range.")
+    return attribute(children = [self[ind] for ind in range(index * self.cols, (index + 1) * self.cols)], operator = ARRAY, correspondance = self.correspondance, rows = 1, cols = self.cols)
+
+  def col(self, index: int)->attribute:
+    if self.size == 1:
+      return self
+    if index >= self.cols:
+      raise ValueError("attribute.col: index out of range.")
+    return attribute(children = [self[i * self.cols + index] for i in range(self.rows)], operator = ARRAY, correspondance = self.correspondance, rows = self.rows, cols = 1)
+
+  # here we define the operator overloading
+  def __add__(self, other: Union[attribute, float])->attribute:
+    if isinstance(other, float):
+      other_attribute = attribute(float_value = other)
+      return self + other_attribute
+    elif isinstance(other, attribute):
+      if other.operator == FLOAT:
+        if other.float_value == 0:
+          return self
+      if self.size == 1 or other.size == 1:
+        return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other), rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
+      else:
+        if self.rows == other.rows and self.cols == other.cols:
+          return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other), rows = self.rows, cols = self.cols)
+        else:
+          raise ValueError("attribute.__add__: cannot add two attributes of different dimensions.")
+    raise ValueError("attribute.__add__: cannot add an attribute with a non-attribute.")
+
+  def __radd__(self, other: Union[attribute, float])->attribute:
+    return self + other
+
+  def __mul__(self, other: Union[attribute, float])->attribute:
+    if isinstance(other, float):
+      other_attribute = attribute(float_value = other)
+      return self * other_attribute
+    elif isinstance(other, attribute):
+      if other.operator == FLOAT:
+        if other.float_value == 1:
+          return self
+      if self.operator == FLOAT:
+        if self.float_value == 1:
+          return other
+      if self.size == 1 or other.size == 1:
+        return attribute(children = [self, other], operator = MUL, correspondance = attribute.__check_heritage(self, other), rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
+      else:
+        if self.cols == other.rows:
+          return attribute(children = [self, other], operator = MUL, correspondance = attribute.__check_heritage(self, other), rows = self.rows, cols = other.cols)
+        else:
+          raise ValueError(f"attribute.__mul__: dimension mismatch, cannot multiply {self.rows}x{self.cols} with {other.rows}x{other.cols}.")
+    raise ValueError("attribute.__mul__: cannot multiply an attribute with a non-attribute.")
+
+  def __rmul__(self, other: Union[attribute, float])->attribute:
+    if isinstance(other, float):
+      other_attribute = attribute(float_value = other)
+      return self * other_attribute
+    elif isinstance(other, attribute):
+      return other * self
+    raise ValueError("attribute.__rmul__: cannot multiply an attribute with a non-attribute.")

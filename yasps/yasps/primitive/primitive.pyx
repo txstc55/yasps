@@ -31,13 +31,24 @@ class primitive:
   def name(self)->str:
     return self.__name
 
+  # return the mesh of this primitive
   @property
   def mesh(self)->mesh:
     return self.__mesh
 
+  # return the scene of this primitive
   @property
   def scene(self)->scene:
     return self.mesh.scene
+
+  # return the primitive of this primitive
+  @property
+  def primitive(self)->primitive:
+    return self
+
+  @property
+  def connectivities(self)->Dict[str, connectivity]:
+    return self.__connectivities
 
   @property
   def type(self)->str:
@@ -67,7 +78,7 @@ class primitive:
       return False
     return True
 
-  def addConnectivity(self, name:str, to: primitive, data: np.ndarray) -> connectivity:
+  def addConnectivity(self, name:str, to: primitive, data: np.ndarray, dimension: int) -> connectivity:
     if name in self.__connectivities:
       raise ValueError(f"primitive.addConnectivity: connectivity with name '{name}' already exists in primitive.")
 
@@ -80,13 +91,15 @@ class primitive:
       raise ValueError(f"primitive.addConnectivity: connectivity '{name}' must connect to the same mesh.")
 
     from yasps import connectivity
-    newConnectivity = connectivity(name = name, fromPrimitive = self, toPrimitive = to, data = data)
+    newConnectivity = connectivity(name, self, to, data, dimension)
     self.__connectivities[name] = newConnectivity
+    setattr(self, name, newConnectivity)
     return newConnectivity
 
 
   def addAttribute(self, name: str, computed_attribute: Optional[attribute] = None, rows: int = 1, cols: int = 1, through: Optional[connectivity] = None) -> attribute:
     from yasps.attribute import attribute
+    from yasps.attribute import GATHER, SCATTER
     if name in self.__attributes:
       raise ValueError(f"primitive.addAttribute: attribute with name '{name}' already exists in primitive.")
     if computed_attribute != None:
@@ -96,15 +109,30 @@ class primitive:
         computed_attribute.setName(name)
         return computed_attribute
     elif through is not None:
-      # we will gather the attribute from another primitive
-      # we will check if the name is inside the to primitive
-      toPrimitive = through.toPrimitive
-      if name not in toPrimitive.__attributes:
-        raise ValueError(f"primitive.addAttribute: attribute with name '{name}' does not exist in primitive '{toPrimitive.name}'. The through construction is not successful.")
-      newAttribute = attribute(name = name, correspondance = self, rows = through.dimension, cols = toPrimitive[name].rows * toPrimitive.cols, through = through, children = [toPrimitive[name]])
-      print(f"The attribute {name} for primitive {self.name} now has dimension {newAttribute.rows}x{newAttribute.cols}")
-      self.__attributes[name] = newAttribute
-      return newAttribute
+      # we now check if this is a gathering operation or scattering operation
+      if through.fromPrimitive == self:
+        # we will gather the attribute from another primitive
+        # we will check if the name is inside the to primitive
+        toPrimitive = through.toPrimitive
+        if name not in toPrimitive.__attributes:
+          raise ValueError(f"primitive.addAttribute: attribute with name '{name}' does not exist in primitive '{toPrimitive.name}'. The through construction is not successful for the gathering operation.")
+        newAttribute = attribute(name = name, correspondance = self, rows = through.dimension, cols = toPrimitive[name].rows * toPrimitive[name].cols, through = through, children = [toPrimitive[name]], operator = GATHER)
+        print(f"The attribute {name} for primitive {self.name} now has dimension {newAttribute.rows}x{newAttribute.cols}")
+        self.__attributes[name] = newAttribute
+        return newAttribute
+      elif through.toPrimitive == self:
+        # we will scatter the attribute to another primitive
+        # we will check if the name is inside the from primitive
+        fromPrimitive = through.fromPrimitive
+        if name not in fromPrimitive.__attributes:
+          raise ValueError(f"primitive.addAttribute: attribute with name '{name}' does not exist in primitive '{fromPrimitive.name}'. The through construction is not successful for the scattering operation.")
+        newAttribute = attribute(name = name, correspondance = self, rows = 1, cols = fromPrimitive[name].rows * fromPrimitive[name].cols / through.dimension, through = through, children = [fromPrimitive[name]], operator = SCATTER)
+        print(f"The attribute {name} for primitive {self.name} now has dimension {newAttribute.rows}x{newAttribute.cols}")
+        self.__attributes[name] = newAttribute
+        return newAttribute
+      else:
+        raise ValueError(f"primitive.addAttribute: the through construction must have either the fromPrimitive or the toPrimitive as the primitive where the attribute is being added.")
+
     else:
       newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols)
       self.__attributes[name] = newAttribute
