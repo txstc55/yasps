@@ -5,6 +5,7 @@ import numpy as np
 import pycuda.gpuarray as gpuarray
 from typing import Optional, List, Union, Tuple
 from typing import TYPE_CHECKING
+import hashlib # for hashing
 from yasps.operator import operator
 if TYPE_CHECKING:
   from yasps.operator import operator
@@ -18,7 +19,7 @@ ADD = operator("+", 1, True)
 SUB = operator("-", 1, False)
 MUL = operator("*", 1, True)
 DIV = operator("/", 1, False)
-POW = operator("pow", 1, False)
+POW = operator("**", 1, False)
 NEG = operator("-", 0, False)
 SIN = operator("sin", 0, False)
 COS = operator("cos", 0, False)
@@ -42,6 +43,7 @@ ARRAY = operator("array", 3, False) # for constructing an array
 GATHER = operator("gather", 3, False) # for gathering data from one primitive to another
 SCATTER = operator("scatter", 3, False) # for scattering data from one primitive to another
 TRANSPOSE = operator("transpose", 3, False) # for transposing a matrix
+INTERMEDIATE = operator("intermediate", 3, False) # for intermediate results
 
 
 class attribute:
@@ -67,13 +69,19 @@ class attribute:
       # next if it is an index value
       self.__index_value = index_value
       self.__operator = INDEX
-
+    self.__hash: int = 0
+    self.__deviceKernel: str = ""
+    self.__globalKernel: str = ""
 
 
 
   @property
   def name(self)->str:
     return self.__name
+
+  @property
+  def fullName(self)->str:
+    return self.correspondance.fullName + "_" + self.__name
 
   @property
   def rows(self)->int:
@@ -84,34 +92,42 @@ class attribute:
     return self.__n_cols
 
   @property
-  def correspondance(self):
+  def correspondance(self) -> Union[scene, mesh, primitive]:
     return self.__correspondance
 
   @property
-  def through(self):
+  def through(self) -> connectivity:
     return self.__through
 
   @property
-  def children(self):
+  def children(self) -> List[attribute]:
     return self.__children
 
   @property
-  def float_value(self):
+  def float_value(self) -> float:
     return self.__float_value
 
   @property
-  def index_value(self):
+  def index_value(self) -> int:
     return self.__index_value
 
   @property
-  def value(self):
+  def value(self) -> gpuarray.GPUArray:
     if self.__value is None:
       raise ValueError("attribute.value: value is None. Please call compute() first or manually update value.")
     return self.__value
 
   @property
-  def size(self):
+  def size(self) -> int:
     return self.rows * self.cols
+
+  @property
+  def deviceKernel(self) -> str:
+    return self.__deviceKernel
+
+  @property
+  def globalKernel(self) -> str:
+    return self.__globalKernel
 
   def reshape(self, rows, cols):
     if self.rows * self.cols != rows * cols:
@@ -340,3 +356,105 @@ class attribute:
     elif isinstance(other, attribute):
       return other * self
     raise ValueError("attribute.__rmul__: cannot multiply an attribute with a non-attribute.")
+
+  @property
+  def hash(self)->int:
+    if self.__hash != 0:
+      return self.__hash
+
+    if self.operator == ADD:
+      self.__hash = sum([child.hash for child in self.children])
+    elif self.operator == MUL:
+      self.__hash = self.children[0].hash * self.children[1].hash
+    elif self.operator == SUB:
+      self.__hash = self.children[0].hash - self.children[1].hash
+    elif self.operator == DIV:
+      division_string:str = f"{self.children[0].hash}/{self.children[1].hash}"
+      self.__hash = int(hashlib.sha256(division_string.encode()).hexdigest(), 16)
+    elif self.operator == POW:
+      power_string:str = f"{self.children[0].hash}**{self.children[1].hash}"
+      self.__hash = int(hashlib.sha256(power_string.encode()).hexdigest(), 16)
+    elif self.operator == NEG:
+      self.__hash = -self.children[0].hash
+    elif self.operator == SIN:
+      sin_string:str = f"sin({self.children[0].hash})"
+      self.__hash = int(hashlib.sha256(sin_string.encode()).hexdigest(), 16)
+    elif self.operator == COS:
+      cos_string:str = f"cos({self.children[0].hash})"
+      self.__hash = int(hashlib.sha256(cos_string.encode()).hexdigest(), 16)
+    elif self.operator == TAN:
+      tan_string:str = f"tan({self.children[0].hash})"
+      self.__hash = int(hashlib.sha256(tan_string.encode()).hexdigest(), 16)
+    elif self.operator == COT:
+      cot_string:str = f"cot({self.children[0].hash})"
+      self.__hash = int(hashlib.sha256(cot_string.encode()).hexdigest(), 16)
+    elif self.operator == ABS:
+      self.__hash = abs(self.children[0].hash)
+    elif self.operator == SELECT:
+      select_string:str = f"select({self.children[0].hash},{self.children[1].hash},{self.children[2].hash})"
+      self.__hash = int(hashlib.sha256(select_string.encode()).hexdigest(), 16)
+    elif self.operator == SQRT:
+      sqrt_string:str = f"sqrt({self.children[0].hash})"
+      self.__hash = int(hashlib.sha256(sqrt_string.encode()).hexdigest(), 16)
+    elif self.operator == EQ:
+      eq_string:str = f"{self.children[0].hash} == {self.children[1].hash}"
+      self.__hash = int(hashlib.sha256(eq_string.encode()).hexdigest(), 16)
+    elif self.operator == NE:
+      ne_string:str = f"{self.children[0].hash} != {self.children[1].hash}"
+      self.__hash = int(hashlib.sha256(ne_string.encode()).hexdigest(), 16)
+    elif self.operator == GT:
+      gt_string:str = f"{self.children[0].hash} > {self.children[1].hash}"
+      self.__hash = int(hashlib.sha256(gt_string.encode()).hexdigest(), 16)
+    elif self.operator == GE:
+      ge_string:str = f"{self.children[0].hash} >= {self.children[1].hash}"
+      self.__hash = int(hashlib.sha256(ge_string.encode()).hexdigest(), 16)
+    elif self.operator == LT:
+      lt_string:str = f"{self.children[0].hash} < {self.children[1].hash}"
+      self.__hash = int(hashlib.sha256(lt_string.encode()).hexdigest(), 16)
+    elif self.operator == LE:
+      le_string:str = f"{self.children[0].hash} <= {self.children[1].hash}"
+      self.__hash = int(hashlib.sha256(le_string.encode()).hexdigest(), 16)
+    elif self.operator == ASSIGN:
+      assign_string:str = f"{self.children[0].hash} = {self.children[1].hash}"
+      self.__hash = int(hashlib.sha256(assign_string.encode()).hexdigest(), 16)
+    elif self.operator == INDEX:
+      return self.__index_value
+    elif self.operator == ARRAY_ACCESS:
+      array_access_string:str = f"{self.children[0].hash}[{self.children[1].hash}]"
+      self.__hash = int(hashlib.sha256(array_access_string.encode()).hexdigest(), 16)
+    elif self.operator == ARRAY:
+      array_string:str = f"[{','.join([str(child.hash) for child in self.children])}]"
+      self.__hash = int(hashlib.sha256(array_string.encode()).hexdigest(), 16)
+    elif self.operator == FLOAT:
+      float_str = str(self.float_value).encode()
+      # Compute the SHA-256 hash
+      hash_hex = hashlib.sha256(float_str).hexdigest()
+      # Convert the hexadecimal hash to an integer
+      hash_int = int(hash_hex, 16)
+      self.__hash = hash_int
+    elif self.operator == DATA:
+      fullname = str(self)
+      # Compute the SHA-256 hash and convert to an integer
+      hash_hex = hashlib.sha256(fullname.encode()).hexdigest()
+      hash_int = int(hash_hex, 16)
+      self.__hash = hash_int
+    elif self.operator == GATHER:
+      if self.through is None:
+        raise ValueError("attribute.hash: Gather operator must have a through attribute.")
+      gather_string:str = f"gather({self.through.toPrimitive[self.name].hash}, {self.through.fromPrimitive[self.name].hash})"
+      self.__hash = int(hashlib.sha256(gather_string.encode()).hexdigest(), 16)
+    elif self.operator == SCATTER:
+      if self.through is None:
+        raise ValueError("attribute.hash: Scatter operator must have a through attribute.")
+      scatter_string:str = f"scatter({self.through.fromPrimitive[self.name].hash}, {self.through.toPrimitive[self.name].hash})"
+      self.__hash = int(hashlib.sha256(scatter_string.encode()).hexdigest(), 16)
+    elif self.operator == TRANSPOSE:
+      transpose_string:str = f"transpose({self.children[0].hash})"
+      self.__hash = int(hashlib.sha256(transpose_string.encode()).hexdigest(), 16)
+    return self.__hash
+
+  def __hash__(self):
+    return self.hash
+
+  def __eq__(self, other) -> bool:
+    return hash(self) == hash(other)
