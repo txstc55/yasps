@@ -8,6 +8,8 @@ extensions = [
     Extension("yasps.connectivity", ["yasps/connectivity/connectivity.pyx"]),
     Extension("yasps.primitive", ["yasps/primitive/primitive.pyx"]),
     Extension("yasps.operator", ["yasps/operator/operator.pyx"]),
+    Extension("yasps.deviceKernel", ["yasps/kernel/deviceKernel.pyx"]),
+    Extension("yasps.codeGenerator", ["yasps/codeGenerator/codeGenerator.pyx"]),
 ]
 setup(
     name='yasps',  # This is the name of your package

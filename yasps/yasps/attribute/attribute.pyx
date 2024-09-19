@@ -13,6 +13,7 @@ if TYPE_CHECKING:
   from yasps.mesh import mesh
   from yasps.primitive import primitive
   from yasps.connectivity import connectivity
+  from yasps.deviceKernel import deviceKernel
 
 
 ADD = operator("+", 1, True)
@@ -70,8 +71,7 @@ class attribute:
       self.__index_value = index_value
       self.__operator = INDEX
     self.__hash: int = 0
-    self.__deviceKernel: str = ""
-    self.__globalKernel: str = ""
+    self.__deviceKernel: Optional["deviceKernel"] = None
 
 
 
@@ -112,6 +112,14 @@ class attribute:
     return self.__index_value
 
   @property
+  def deviceKernel(self) -> Optional[deviceKernel]:
+    return self.__deviceKernel
+
+  @deviceKernel.setter
+  def deviceKernel(self, deviceKernel: deviceKernel) -> None:
+    self.__deviceKernel = deviceKernel
+
+  @property
   def value(self) -> gpuarray.GPUArray:
     if self.__value is None:
       raise ValueError("attribute.value: value is None. Please call compute() first or manually update value.")
@@ -121,13 +129,6 @@ class attribute:
   def size(self) -> int:
     return self.rows * self.cols
 
-  @property
-  def deviceKernel(self) -> str:
-    return self.__deviceKernel
-
-  @property
-  def globalKernel(self) -> str:
-    return self.__globalKernel
 
   def reshape(self, rows, cols):
     if self.rows * self.cols != rows * cols:

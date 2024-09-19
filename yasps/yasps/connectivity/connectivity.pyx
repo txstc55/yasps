@@ -1,3 +1,4 @@
+# cython: language_level=3
 from __future__ import annotations
 import numpy as np
 import pycuda.gpuarray as gpuarray
@@ -23,6 +24,10 @@ class connectivity:
   @property
   def name(self)->str:
     return self.__name
+
+  @property
+  def fullName(self)->str:
+    return f"from_{self.fromPrimitive.name}_to_{self.toPrimitive.name}"
 
   @property
   def fromPrimitive(self)->primitive:

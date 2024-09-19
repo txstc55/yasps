@@ -12,7 +12,7 @@ positions = scene0.mesh1.box_vertices["position"]
 positions.updateValue(np.array([[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, -1, -1], [-1, -1, -1]]))
 
 
-m1.addPrimitive("vertices", 5) # octahedron
+m1.addPrimitive("vertices", 5) # d6 somehow
 m1.vertices.addConnectivity("box_to_vertex", m1.box_vertices, np.array([[0, 1, 2, 3], [0, 4, 7, 3], [1, 5, 6, 2], [2, 6, 7, 3], [4, 5, 6, 7]]), 4)
 m1.vertices.addAttribute("box_vertex_weights", rows = 1, cols = 4)
 
