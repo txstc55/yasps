@@ -57,20 +57,30 @@ class namedAttributeCodeGenerator:
     self.__generateCodeOrder()
     # now we do the code generation
     # reverse order since we want to generate the code from the bottom up
-    for attribute in self.__order[::-1]:
-      if attribute.operator == ya.DATA:
-        # we can safely retrieve the data for those attributes
-        pass
-      elif attribute.name != "":
-        # we need to generate the code for the named attribute
-        # we need to retrieve the data from the children
-        # and then apply the kernel
-        pass
-      else:
-        # we need to generate the code for the unnamed attribute
-        # we need to retrieve the data from the children
-        # and then apply the kernel
-        pass
+    code_strings: List[str] = []
+    attribute_replacements: Dict[int, int] = {} # from hash to intermediate index
+    for current in self.__order[::-1]:
+      if current.hash not in attribute_replacements:
+        if current.operator == ya.DATA:
+          # we can safely retrieve the data for those attributes
+          if current.size == 1:
+            code_strings.append(f'''
+  double {current.fullName}_data = {current.correspondance.fullName}[{current.correspondance.fullName}_index]
+''')
+          code_strings.append(f'''
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_mat({current.fullName} + {current.fullName}_index * {current.rows} * {current.cols})
+''')
+          attribute_replacements[current.hash] = -1
+        elif current.name != "":
+          # the code is already generated
+          code_strings.append(f'''
+  double {current.fullName}_data
+''')
+        else:
+          # we need to generate the code for the unnamed attribute
+          # we need to retrieve the data from the children
+          # and then apply the kernel
+          pass
 
 
 class codeGenerator:
