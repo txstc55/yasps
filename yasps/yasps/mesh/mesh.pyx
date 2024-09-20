@@ -91,12 +91,12 @@ class mesh:
   def addAttribute(self, name, computed_attribute: Optional[attribute] = None, rows: int = 1, cols: int = 1):
     if name in self.__attributes:
       raise ValueError(f"mesh.addAttribute: computed_attribute with name '{name}' already exists in mesh.")
-    if computed_attribute != None:
+    if computed_attribute is not None:
       if computed_attribute.name != "":
         raise ValueError(f"mesh.addAttribute: the computed_attribute supplied already has a name '{computed_attribute.name}'. This indicates that the computed_attribute most likely is already set for another object.")
-        self.__attributes[name] = computed_attribute
-        computed_attribute.setName(name)
-        return computed_attribute
+      self.__attributes[name] = computed_attribute
+      computed_attribute.setName(name)
+      return computed_attribute
     else:
       from yasps.attribute import attribute
       newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols)

@@ -102,12 +102,13 @@ class primitive:
     from yasps.attribute import GATHER, SCATTER
     if name in self.__attributes:
       raise ValueError(f"primitive.addAttribute: attribute with name '{name}' already exists in primitive.")
-    if computed_attribute != None:
+
+    if computed_attribute is not None:
       if computed_attribute.name != "":
         raise ValueError(f"primitive.addAttribute: the computed_attribute supplied already has a name '{computed_attribute.name}'. This indicates that the computed_attribute most likely is already set for another object.")
-        self.__attributes[name] = computed_attribute
-        computed_attribute.setName(name)
-        return computed_attribute
+      self.__attributes[name] = computed_attribute
+      computed_attribute.setName(name)
+      return computed_attribute
     elif through is not None:
       # we now check if this is a gathering operation or scattering operation
       if through.fromPrimitive == self:

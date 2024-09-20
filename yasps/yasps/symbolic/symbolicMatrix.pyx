@@ -3,7 +3,7 @@ from .symbolic import symbolic
 class symbolicMatrix:
   symbolicMatrixSize = {} # dictionary to store the size of the matrix
   def __init__(self, name: str, rows: int = 1, cols: int = 1, data = [], correspondance: list[str] = []):
-    if data != None:
+    if data is not None:
       # single element to a 1x1 matrix
       if (not isinstance(data, list)):
         self.__rows = 1

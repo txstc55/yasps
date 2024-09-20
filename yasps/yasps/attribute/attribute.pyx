@@ -45,6 +45,8 @@ GATHER = operator("gather", 3, False) # for gathering data from one primitive to
 SCATTER = operator("scatter", 3, False) # for scattering data from one primitive to another
 TRANSPOSE = operator("transpose", 3, False) # for transposing a matrix
 INTERMEDIATE = operator("intermediate", 3, False) # for intermediate results
+ROW = operator("row", 3, False) # for row access
+COL = operator("col", 3, False) # for column access
 
 
 class attribute:
@@ -140,7 +142,7 @@ class attribute:
   def operator(self):
     return self.__operator
 
-  def setName(self, name):
+  def setName(self, name) -> None:
     self.__name = name
 
 
@@ -158,7 +160,7 @@ class attribute:
         self.__value = value.ravel()
     else:
       try:
-        flattend_value = np.array(value).flatten()
+        flattend_value = np.array(value, dtype=np.float64).flatten()
         self.updateValue(flattend_value)
       except:
         raise ValueError("attribute.updateValue: Invalid value type, cannot be converted to gpuarray")
@@ -177,23 +179,23 @@ class attribute:
     if a1.correspondance is None or a2.correspondance is None:
       raise ValueError("attribute.__check_heritage: correspondance should be set for both attributes.")
     else:
-      if a1.correspondance == a2.correspondance:
+      if a1.correspondance.fullName == a2.correspondance.fullName:
         # same correspondance, we can return either one
         return a1
       if a1.correspondance.type == "scene":
         # a1 is a scene, we check if a2 is a child of a1
-        if a2.correspondance.scene == a1:
+        if a2.correspondance.scene.fullName == a1.fullName:
           return a2
       if a2.correspondance.type == "scene":
         # same scenario
-        if a1.correspondance.scene == a2:
+        if a1.correspondance.scene.fullName == a2.fullName:
           return a1
       # now we actually need to check the heritage
       if a1.correspondance.type == "mesh":
-        if a2.correspondance.mesh == a1.correspondance:
+        if a2.correspondance.mesh.fullName == a1.correspondance.fullName:
           return a2
       if a2.correspondance.type == "mesh":
-        if a1.correspondance.mesh == a2.correspondance:
+        if a1.correspondance.mesh.fullName == a2.correspondance.fullName:
           return a1
       # we dont need to check for primitives, sicen if they are the same
       # then we already checked it
@@ -252,11 +254,11 @@ class attribute:
 
   def __str__(self)->str:
     if self.operator.type == 0:
-      return f"{operator.name}({self.children[0]})"
+      return f"{self.operator.name}({self.children[0]})"
     elif self.operator.type == 1:
-      return f"({self.children[0]} {operator.name} {self.children[1]})"
+      return f"({self.children[0]} {self.operator.name} {self.children[1]})"
     elif self.operator.type == 2:
-      return f"{operator.name}({', '.join([str(child) for child in self.children])})"
+      return f"{self.operator.name}({', '.join([str(child) for child in self.children])})"
     elif self.operator.type == 3:
       if self.operator == INDEX:
         return str(self.index_value)
@@ -266,7 +268,7 @@ class attribute:
         return f"{self.children[0]}[{self.children[1]}]"
       elif self.operator == DATA:
         if self.correspondance is not None:
-          return f"{self.correspondance.fullName}.data"
+          return f"{self.correspondance.fullName}"
         else:
           raise ValueError("attribute.__str__: correspondance is None for a DATA attribute.")
       elif self.operator == ARRAY:
@@ -289,6 +291,18 @@ class attribute:
         if self.through is None:
           raise ValueError("attribute.__str__: SCATTER operator must have a through attribute.")
         return f"scatter({self.through.fromPrimitive.fullName}.{self.name}->{self.through.toPrimitive.fullName}.{self.name})"
+      elif self.operator == ROW:
+        if len(self.children) != 2:
+          raise ValueError("attribute.__str__: ROW operator must have two children.")
+        return f"{self.children[0]}.row({self.children[1]})"
+      elif self.operator == COL:
+        if len(self.children) != 2:
+          raise ValueError("attribute.__str__: COL operator must have two children.")
+        return f"{self.children[0]}.col({self.children[1]})"
+      elif self.operator == TRANSPOSE:
+        if len(self.children) != 1:
+          raise ValueError("attribute.__str__: TRANSPOSE operator must have one child.")
+        return f"{self.children[0]}.transpose()"
       else:
         raise ValueError("attribute.__str__: unknown operator type.")
     else:
@@ -300,14 +314,14 @@ class attribute:
       return self
     if index >= self.rows:
       raise ValueError("attribute.row: index out of range.")
-    return attribute(children = [self[ind] for ind in range(index * self.cols, (index + 1) * self.cols)], operator = ARRAY, correspondance = self.correspondance, rows = 1, cols = self.cols)
+    return attribute(children = [self, attribute(index_value = index)], operator = ROW, correspondance = self.correspondance, rows = 1, cols = self.cols)
 
   def col(self, index: int)->attribute:
     if self.size == 1:
       return self
     if index >= self.cols:
       raise ValueError("attribute.col: index out of range.")
-    return attribute(children = [self[i * self.cols + index] for i in range(self.rows)], operator = ARRAY, correspondance = self.correspondance, rows = self.rows, cols = 1)
+    return attribute(children = [self, attribute(index_value = index)], operator = COL, correspondance = self.correspondance, rows = self.rows, cols = 1)
 
   # here we define the operator overloading
   def __add__(self, other: Union[attribute, float])->attribute:
@@ -319,10 +333,10 @@ class attribute:
         if other.float_value == 0:
           return self
       if self.size == 1 or other.size == 1:
-        return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other), rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
+        return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
       else:
         if self.rows == other.rows and self.cols == other.cols:
-          return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other), rows = self.rows, cols = self.cols)
+          return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
         else:
           raise ValueError("attribute.__add__: cannot add two attributes of different dimensions.")
     raise ValueError("attribute.__add__: cannot add an attribute with a non-attribute.")
@@ -338,14 +352,18 @@ class attribute:
       if other.operator == FLOAT:
         if other.float_value == 1:
           return self
+        # else:
+        #   return attribute(children = [self, other], operator = MUL, correspondance = self, rows = self.rows, cols = self.cols)
       if self.operator == FLOAT:
         if self.float_value == 1:
           return other
+        # else:
+        #   return attribute(children = [self, other], operator = MUL, correspondance = other, rows = other.rows, cols = other.cols)
       if self.size == 1 or other.size == 1:
-        return attribute(children = [self, other], operator = MUL, correspondance = attribute.__check_heritage(self, other), rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
+        return attribute(children = [self, other], operator = MUL, correspondance = attribute.__check_heritage(self, other).correspondance, rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
       else:
         if self.cols == other.rows:
-          return attribute(children = [self, other], operator = MUL, correspondance = attribute.__check_heritage(self, other), rows = self.rows, cols = other.cols)
+          return attribute(children = [self, other], operator = MUL, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = other.cols)
         else:
           raise ValueError(f"attribute.__mul__: dimension mismatch, cannot multiply {self.rows}x{self.cols} with {other.rows}x{other.cols}.")
     raise ValueError("attribute.__mul__: cannot multiply an attribute with a non-attribute.")
@@ -452,6 +470,12 @@ class attribute:
     elif self.operator == TRANSPOSE:
       transpose_string:str = f"transpose({self.children[0].hash})"
       self.__hash = int(hashlib.sha256(transpose_string.encode()).hexdigest(), 16)
+    elif self.operator == ROW:
+      row_string:str = f"{self.children[0].hash}.row({self.children[1].hash})"
+      self.__hash = int(hashlib.sha256(row_string.encode()).hexdigest(), 16)
+    elif self.operator == COL:
+      col_string:str = f"{self.children[0].hash}.col({self.children[1].hash})"
+      self.__hash = int(hashlib.sha256(col_string.encode()).hexdigest(), 16)
     return self.__hash
 
   def __hash__(self):
