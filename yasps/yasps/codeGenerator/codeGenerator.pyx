@@ -6,7 +6,7 @@ class namedAttributeCodeGenerator:
   # generate the code for attribute
   def __init__(self, input: ya.attribute):
     self.__input: ya.attribute = input
-    self.__order: List[ya.attribute] = []
+    self.__order: List[ya.attribute] = [input]
     self.__stack: List[ya.attribute] = input.children
     self.__childrenAttributeKernels: Dict[int, ya.attribute] = {}
 
@@ -22,59 +22,116 @@ class namedAttributeCodeGenerator:
       elif current.operator == ya.INDEX:
         pass
       elif current.correspondance.fullName == self.__input.correspondance.fullName:
-        if current.operator == ya.DATA:
+        if current.name != "":
+          # we will also generate the kernel for datas and named attribute
+          # even though in reality we never call kernel for datas
+          # the reason we generate this is to know what attributes are needed
+          # for the kernel
           self.__order.append(current)
-        elif current.name != "":
-          # it is a named attribute
-          # we dont need to go deeper
-          # since we will generate the code for that child
-          self.__order.append(current)
-          codeGenerator = namedAttributeCodeGenerator(current)
-          codeGenerator.generateCode()
-          self.__childrenAttributeKernels[current.hash] = current
+          # check if we have already generated the kernel for it
+          if current.hash not in self.__childrenAttributeKernels:
+            codeGenerator = namedAttributeCodeGenerator(current)
+            codeGenerator.generateCode()
+            self.__childrenAttributeKernels[current.hash] = current
         else:
+          # doesnt have a name
+          # probably just operations
+          # we will go over all the children
           self.__order.append(current)
           self.__stack.extend(current.children)
       else:
-        if current.operator == ya.DATA:
-          if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
-            # we can safely retrieve the data for those attributes
+        # when correspondance is different
+        # there are couple of scenarios
+        # 1. the correspondance is a scene or mesh, which means this is an operation done on scene or mesh attributes, we will allow that
+        if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
+          if current.name != "":
+            # data or named attributes
             self.__order.append(current)
+            # check if we have already generated the kernel for it
+            if current.hash not in self.__childrenAttributeKernels:
+              codeGenerator = namedAttributeCodeGenerator(current)
+              codeGenerator.generateCode()
+              self.__childrenAttributeKernels[current.hash] = current
           else:
-            # retrieving data from other attribute is only done through gather
-            pass
-        elif current.name != "":
-          codeGenerator = namedAttributeCodeGenerator(current)
-          codeGenerator.generateCode()
-          self.__childrenAttributeKernels[current.hash] = current
+            # this is an operation on scene or mesh
+            self.__order.append(current)
+            self.__stack.extend(current.children)
         else:
-          # go over the children until we hit a named attribute
-          self.__stack.extend(current.children)
+          # this is an operation on other primitive attributes probably
+          # this is only done through gather
+          # so it must have a name at that point
+          if current.name != "":
+            # we dont add it to order
+            # but we will create a code generator to generate the code for it
+            if current.hash not in self.__childrenAttributeKernels:
+              codeGenerator = namedAttributeCodeGenerator(current)
+              codeGenerator.generateCode()
+              self.__childrenAttributeKernels[current.hash] = current
+          else:
+            # this should not happen, raise an error
+            raise ValueError("codeGenerator.__generateCodeOrder: actually going to a child without a name and not the same correspondance.")
 
 
   def generateCode(self) -> None:
+    if self.__input.deviceKernel is not None:
+      # nothing to do
+      return
+
     # actually generate the code
     self.__generateCodeOrder()
     # now we do the code generation
     # reverse order since we want to generate the code from the bottom up
     code_strings: List[str] = []
     attribute_replacements: Dict[int, int] = {} # from hash to intermediate index
+    # go from bottom to top
     for current in self.__order[::-1]:
+      # check if we have gone through this attribute
+      # if not, fetch the data
       if current.hash not in attribute_replacements:
         if current.operator == ya.DATA:
           # we can safely retrieve the data for those attributes
           if current.size == 1:
+            # safely retrieve the single data
             code_strings.append(f'''
-  double {current.fullName}_data = {current.correspondance.fullName}[{current.correspondance.fullName}_index]
+  double {current.fullName}_local_data = {current.correspondance.fullName}_global_data[{current.correspondance.fullName}_index];
 ''')
-          code_strings.append(f'''
-  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_mat({current.fullName} + {current.fullName}_index * {current.rows} * {current.cols})
+          else:
+            # retrieve the data and put it in a matrix locally
+            # the map is not a copy operation so it's almost free
+            code_strings.append(f'''
+  double {current.fullName}_local_data_temp[{current.size}];
+  {current.fullName}_device_function({current.fullName}_global_data, {current.fullName}_index, {current.fullName}_local_data_temp);
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
 ''')
+          # mark this attribute as have been gone through
           attribute_replacements[current.hash] = -1
+        elif current.operator == ya.GATHER:
+          # need to generate the code for the gathering operation
+          # we know the children must be a named attribute for the gathering operator
+          children_attribute = current.children[0] # should only have one child
+          code_strings.append(f'''
+  double {current.fullName}_local_data_temp[{current.size}];
+  for (unsigned int i = 0; i < {current.through.dimension}; i++){{
+    # grab the index for the through attribute
+    unsigned int {current.through.fullName}_index = {current.through.fullName}_global_indices[{current.through.fromPrimitive.fullName}_index * {current.through.dimension} + i];
+    // now for each row, grab the data
+    double {current.fullName}_local_data_row_temp[{int(current.size / children_attribute.size)}];
+    {children_attribute.fullName}_device_function
+  }})
+''')
         elif current.name != "":
           # the code is already generated
-          code_strings.append(f'''
-  double {current.fullName}_data
+          # we need to call the kernel
+          if current.size == 1:
+            code_strings.append(f'''
+  double {current.fullName}_local_data = 0.0;
+  {current.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in current.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in current.deviceKernel.kernelConnectivity])}, {current.fullName}_local_data);
+''')
+          else:
+            code_strings.append(f'''
+  double {current.fullName}_local_data_temp[{current.size}];
+  {current.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in current.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in current.deviceKernel.kernelConnectivity])}, {current.fullName}_local_data_temp);
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
 ''')
         else:
           # we need to generate the code for the unnamed attribute

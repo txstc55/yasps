@@ -27,7 +27,7 @@ class connectivity:
 
   @property
   def fullName(self)->str:
-    return f"from_{self.fromPrimitive.name}_to_{self.toPrimitive.name}"
+    return f"from_{self.fromPrimitive.fullName}_to_{self.toPrimitive.fullName}"
 
   @property
   def fromPrimitive(self)->primitive:
