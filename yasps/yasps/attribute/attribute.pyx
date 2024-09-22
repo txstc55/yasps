@@ -16,11 +16,12 @@ if TYPE_CHECKING:
   from yasps.deviceKernel import deviceKernel
 
 
+BROADCAST_ADD = operator("+", 3, False) # broadcast an add to all elements
 ADD = operator("+", 1, True)
 SUB = operator("-", 1, False)
 MUL = operator("*", 1, True)
 DIV = operator("/", 1, False)
-POW = operator("**", 1, False)
+POW = operator("pow", 2, False)
 NEG = operator("-", 0, False)
 SIN = operator("sin", 0, False)
 COS = operator("cos", 0, False)
@@ -334,6 +335,10 @@ class attribute:
           return self
       if self.size == 1 or other.size == 1:
         return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
+      elif other.size == 1:
+        return attribute(children = [self, other], operator = BROADCAST_ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
+      elif self.size == 1:
+        return attribute(children = [other, self], operator = BROADCAST_ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = other.rows, cols = other.cols)
       else:
         if self.rows == other.rows and self.cols == other.cols:
           return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
