@@ -83,6 +83,7 @@ class namedAttributeCodeGenerator:
     # reverse order since we want to generate the code from the bottom up
     code_strings: List[str] = []
     attribute_replacements: Dict[int, int] = {} # from hash to intermediate index
+    num_intermediates = 0
     # go from bottom to top
     for current in self.__order[::-1]:
       # check if we have gone through this attribute
@@ -116,29 +117,99 @@ class namedAttributeCodeGenerator:
     unsigned int {current.through.fullName}_index = {current.through.fullName}_global_indices[{current.through.fromPrimitive.fullName}_index * {current.through.dimension} + i];
     // now for each row, grab the data
     double {current.fullName}_local_data_row_temp[{int(current.size / children_attribute.size)}];
-    {children_attribute.fullName}_device_function
+    {children_attribute.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in children_attribute.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in children_attribute.deviceKernel.kernelConnectivity])}, {current.fullName}_local_data_row_temp);
+    for (unsigned int j = 0; j < {int(current.size / children_attribute.size)}; j++){{ // copy the data
+      {current.fullName}_local_data_temp[i * {int(current.size / children_attribute.size)} + j] = {current.fullName}_local_data_row_temp[j];
+    }}
   }})
 ''')
+          attribute_replacements[current.hash] = -1
         elif current.name != "":
           # the code is already generated
           # we need to call the kernel
           if current.size == 1:
             code_strings.append(f'''
   double {current.fullName}_local_data = 0.0;
-  {current.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in current.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in current.deviceKernel.kernelConnectivity])}, {current.fullName}_local_data);
+  {current.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in current.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in current.deviceKernel.kernelConnectivity])}, &{current.fullName}_local_data);
 ''')
           else:
             code_strings.append(f'''
   double {current.fullName}_local_data_temp[{current.size}];
   {current.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in current.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in current.deviceKernel.kernelConnectivity])}, {current.fullName}_local_data_temp);
+  // convert the data to a matrix
   Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
 ''')
+          attribute_replacements[current.hash] = -1
         else:
-          # we need to generate the code for the unnamed attribute
-          # we need to retrieve the data from the children
-          # and then apply the kernel
-          pass
+          # this is a computation
+          # we simply generate the code for it
+          # for any operation, we know that the children must
+          # have been gone through
+          # so we can safely retrieve the data
 
+          # first we get the data in either a matrix or a scalar
+          attribute_name:str = ""
+          if current.size == 1:
+            attribute_name = f"double INTERMEDIATE_{num_intermediates}"
+            num_intermediates += 1
+          else:
+            attribute_name = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> INTERMEDIATE_{num_intermediates}"
+            num_intermediates += 1
+          if current.operator.type == 0:
+            code_strings.append(f'''
+  {attribute_name} = {current.operator.name}({self.getIntermediateName(current.children[0], attribute_replacements)});
+''')
+          elif current.operator.type == 1:
+            if current
+            code_strings.append(f'''
+  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)} {current.operator.name} {self.getIntermediateName(current.children[1], attribute_replacements)};
+''')
+          elif current.operator.type == 2:
+            code_strings.append(f'''
+  {attribute_name} = {current.operator.name}({", ".join([self.getIntermediateName(x, attribute_replacements) for x in current.children])});
+''')
+          else:
+            if current.operator == ya.ARRAY_ACCESS:
+              code_strings.append(f'''
+  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}[{current.children[1].index_value}];
+''')
+            elif current.operator == ya.ARRAY:
+              code_strings.append(f'''
+  double INTERMEDIATE_{num_intermediates}_DATA[{current.size}] = {{{", ".join([self.getIntermediateName(x, attribute_replacements) for x in current.children])}}};
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> INTERMEDIATE_{num_intermediates}(INTERMEDIATE_{num_intermediates}_DATA);
+''')
+            elif current.operator == ya.TRANSPOSE:
+              code_strings.append(f'''
+  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.transpose();
+''')
+            elif current.operator == ya.BROADCAST_ADD:
+              code_strings.append(f'''
+  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.array() + {self.getIntermediateName(current.children[1], attribute_replacements)};
+''')
+            elif current.operator == ya.ROW:
+              code_strings.append(f'''
+  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.row({current.children[1].index_value});
+''')
+            elif current.operator == ya.COL:
+              code_strings.append(f'''
+  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.col({current.children[1].index_value});
+''')
+            else:
+              raise ValueError("codeGenerator.generateCode: unknown operator.")
+
+
+
+  def getIntermediateName(self, attribute: ya.attribute, replacement: Dict[int, int]) -> str:
+    if attribute.operator == ya.FLOAT:
+      return str(attribute.float_value)
+    # return the name of the intermediate value
+    attribute_hash = attribute.hash
+    if attribute_hash not in replacement:
+      raise ValueError("codeGenerator.getIntermediateName: attribute hash not found in replacement.")
+    if replacement[attribute_hash] == -1:
+      return f"{attribute.fullName}_local_data"
+    else:
+      return f"INTERMEDIATE_{replacement[attribute_hash]}"
 
 class codeGenerator:
   def __init__(self):

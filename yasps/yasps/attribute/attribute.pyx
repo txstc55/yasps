@@ -304,6 +304,8 @@ class attribute:
         if len(self.children) != 1:
           raise ValueError("attribute.__str__: TRANSPOSE operator must have one child.")
         return f"{self.children[0]}.transpose()"
+      elif self.operator == BROADCAST_ADD:
+        return f"{self.children[0]} + {self.children[1]}"
       else:
         raise ValueError("attribute.__str__: unknown operator type.")
     else:
@@ -386,7 +388,7 @@ class attribute:
     if self.__hash != 0:
       return self.__hash
 
-    if self.operator == ADD:
+    if self.operator == ADD or self.operator == BROADCAST_ADD:
       self.__hash = sum([child.hash for child in self.children])
     elif self.operator == MUL:
       self.__hash = self.children[0].hash * self.children[1].hash
