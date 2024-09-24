@@ -25,8 +25,8 @@ m1.vertices.addAttribute("box_vertex_weights", rows = 1, cols = 4)
 m1.vertices["box_vertex_weights"].updateValue(np.array([[0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25]]))
 
 # here we compute the weighted position
-# weighted_position = m1.vertices["position"].row(0) * m1.vertices["box_vertex_weights"][0] + m1.vertices["position"].row(1) * m1.vertices["box_vertex_weights"][1] + m1.vertices["position"].row(2) * m1.vertices["box_vertex_weights"][2] + m1.vertices["position"].row(3) * m1.vertices["box_vertex_weights"][3]
-weighted_position = m1.vertices["position"].row(0) * m1.vertices["box_vertex_weights"][0]
+weighted_position = m1.vertices["position"].row(0) * m1.vertices["box_vertex_weights"][0] + m1.vertices["position"].row(1) * m1.vertices["box_vertex_weights"][1] + m1.vertices["position"].row(2) * m1.vertices["box_vertex_weights"][2] + m1.vertices["position"].row(3) * m1.vertices["box_vertex_weights"][3]
+# weighted_position = m1.vertices["position"].row(0) * m1.vertices["box_vertex_weights"][0]
 
 m1.vertices.addAttribute("weighted_position", computed_attribute = weighted_position)
 
@@ -34,8 +34,8 @@ m1.vertices.addAttribute("weighted_position", computed_attribute = weighted_posi
 
 
 # attr = scene0.mesh1.box_vertices["position"] * 3.0
-attr = scene0.mesh1.vertices["position"].row(0)
-# attr = m1.vertices["weighted_position"]
+# attr = scene0.mesh1.vertices["position"].row(0)
+attr = m1.vertices["weighted_position"]
 print(attr)
 # print(attr.children)
 generator = namedAttributeCodeGenerator(attr)
@@ -44,6 +44,7 @@ generator.generateCodeOrder()
 # print(attr.children)
 generator.generateCode()
 print(attr.deviceKernel.kernelString)
+print(m1.vertices["position"].deviceKernel.kernelString)
 
 # # # new_att = m1.vertices["position"][0] * 3.0
 # # # print(new_att)

@@ -16,7 +16,7 @@ if TYPE_CHECKING:
   from yasps.deviceKernel import deviceKernel
 
 
-BROADCAST_ADD = operator("+", 3, False) # broadcast an add to all elements
+
 ADD = operator("+", 1, True)
 SUB = operator("-", 1, False)
 MUL = operator("*", 1, True)
@@ -45,6 +45,7 @@ ARRAY = operator("array", 3, False) # for constructing an array
 GATHER = operator("gather", 3, False) # for gathering data from one primitive to another
 SCATTER = operator("scatter", 3, False) # for scattering data from one primitive to another
 TRANSPOSE = operator("transpose", 3, False) # for transposing a matrix
+BROADCAST_ADD = operator("+", 3, False) # broadcast an add to all elements
 INTERMEDIATE = operator("intermediate", 3, False) # for intermediate results
 ROW = operator("row", 3, False) # for row access
 COL = operator("col", 3, False) # for column access

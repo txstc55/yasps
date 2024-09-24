@@ -88,12 +88,10 @@ class namedAttributeCodeGenerator:
       kernelString: str = f'''
   #pragma unroll
   for (unsigned int i = 0; i < {current.size}; i++) {{
-    result[i] = {current.fullName}_global_data[{current.fullName}_index * {current.size} + i];
-  }}
-'''
+    result[i] = {current.fullName}_global_data[{current.correspondance.fullName}_index * {current.size} + i];
+  }}'''
       kernelHeader: str = f'''
-__device__ __inline__ void {current.fullName}_device_function(const double* {current.fullName}_global_data, unsigned int {current.fullName}_index, double* result)
-'''
+__device__ __inline__ void {current.fullName}_device_function(const double* {current.fullName}_global_data, unsigned int {current.correspondance.fullName}_index, double* result)'''
       current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, set([current]), set([]), set([])) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
       return
 
@@ -106,31 +104,75 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     num_intermediates = 0
     # go from bottom to top
     for current in self.__order[::-1]:
-      # check if we have gone through this attribute
-      # if not, fetch the data
-      if current.hash not in attribute_replacements and current.hash != self.__input.hash:
-        if current.operator == ya.DATA:
-          # we can safely retrieve the data for those attributes
-          if current.size == 1:
-            # safely retrieve the single data
-            code_strings.append(f'''
-  double {current.fullName}_local_data = {current.correspondance.fullName}_global_data[{current.correspondance.fullName}_index];
-''')
-          else:
-            # retrieve the data and put it in a matrix locally
-            # the map is not a copy operation so it's almost free
-            code_strings.append(f'''
-  double {current.fullName}_local_data_temp[{current.size}];
-  {current.fullName}_device_function({current.fullName}_global_data, {current.fullName}_index, {current.fullName}_local_data_temp);
-  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
-''')
-          # mark this attribute as have been gone through
+      if current.hash in attribute_replacements:
+        # we don't need to do anything about it
+        pass
+      elif current.hash == self.__input.hash or current.name == "":
+        # we need to generate the code accordingly
+        attribute_initialization: str = ""
+        attribute_name: str = ""
+        if current.name != "":
+          attribute_name = current.fullName
           attribute_replacements[current.hash] = -1
-        elif current.operator == ya.GATHER:
-          # need to generate the code for the gathering operation
-          # we know the children must be a named attribute for the gathering operator
-          children_attribute = current.children[0] # should only have one child
+        else:
+          attribute_name = f"INTERMEDIATE_{num_intermediates}"
+          attribute_replacements[current.hash] = num_intermediates
+          num_intermediates += 1
+
+        if current.size == 1:
+          attribute_initialization = f"double {attribute_name}"
+        else:
+          attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}"
+
+        # now we generate the computation code
+        if current.operator.type == 0:
+          # different code generation for scalar and double
+          if current.size == 1:
+            code_strings.append(f'''
+  {attribute_initialization} = {current.operator.name}({self.getIntermediateName(current.children[0], attribute_replacements)});''')
+          else:
+            code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.array().{current.operator.name}());''')
+        elif current.operator.type == 1:
           code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)} {current.operator.name} {self.getIntermediateName(current.children[1], attribute_replacements)};''')
+        elif current.operator.type == 2:
+          # for type 2 there isn't many operators
+          # currently we have select or power
+          # and power is forbidden on matrix
+          # so we can always do it this way as op(a, b, c, d, ...)
+          code_strings.append(f'''
+{attribute_initialization} = {current.operator.name}({", ".join([self.getIntermediateName(x, attribute_replacements) for x in current.children])});''')
+        else:
+          # special operator with type 3
+          if current.operator == ya.INDEX:
+            # this should never ever happen
+            raise ValueError("codeGenerator.generateCode: INDEX operator should never be reached.")
+          elif current.operator == ya.FLOAT:
+            # the float attribute can only happen if it is a root node
+            # because when traversing we never put it on the stack
+            code_strings.append(f'''
+  result[0] = {current.float_value};''')
+          elif current.operator == ya.ARRAY_ACCESS:
+            # generate code for array access
+            code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}[{current.children[1].index_value}];''')
+          elif current.operator == ya.DATA:
+            # the only reason we will reach here
+            # is because we are at the root node
+            # since data attribute should always have a name
+            # but we already handled that case
+            return
+          elif current.operator == ya.ARRAY:
+            # generate code for array
+            code_strings.append(f'''
+  double {attribute_name}_temp_data[{current.size}] = {{{", ".join([self.getIntermediateName(x, attribute_replacements) for x in current.children])}}};
+  {attribute_initialization}({attribute_name}_temp_data);''')
+          elif current.operator == ya.GATHER:
+            # need to generate the code for the gathering operation
+            # we know the children must be a named attribute for the gathering operator
+            children_attribute = current.children[0] # should only have one child
+            code_strings.append(f'''
   double {current.fullName}_local_data_temp[{current.size}];
   for (unsigned int i = 0; i < {current.through.dimension}; i++){{
     # grab the index for the through attribute
@@ -140,96 +182,52 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     {children_attribute.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in children_attribute.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in children_attribute.deviceKernel.kernelConnectivity])}, {current.through.fullName}_index, {current.fullName}_local_data_row_temp);
     #pragma unroll
     for (unsigned int j = 0; j < {children_attribute.size}; j++){{ // copy the data
-      {current.fullName}_local_data_temp[i * {int(current.through.dimension)} + j] = {current.fullName}_local_data_row_temp[j];
+      {current.fullName}_local_data_temp[i * {int(children_attribute.size)} + j] = {current.fullName}_local_data_row_temp[j];
     }}
   }}
   // we now need to put it into the matrix
-  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
-''')
-          attribute_replacements[current.hash] = -1
-        elif current.name != "":
-          # the code is already generated
-          # we need to call the kernel
-          if current.size == 1:
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);''')
+          elif current.operator == ya.TRANSPOSE:
             code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.transpose();''')
+          elif current.operator == ya.BROADCAST_ADD:
+            code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.array() + {self.getIntermediateName(current.children[1], attribute_replacements)};''')
+          elif current.operator == ya.ROW:
+            # print(f"At row, {str(current)}")
+            code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.row({current.children[1].index_value});''')
+          elif current.operator == ya.COL:
+            code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.col({current.children[1].index_value});''')
+            # generate code for array access
+      else:
+        # it is not an output
+        # and it has a name
+        # so we can safely call the function
+        if current.size == 1:
+          code_strings.append(f'''
   double {current.fullName}_local_data = 0.0;
-  {current.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in current.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in current.deviceKernel.kernelConnectivity])}, {current.fullName}_index, &{current.fullName}_local_data);
 ''')
-          else:
-            code_strings.append(f'''
+        else:
+          code_strings.append(f'''
   double {current.fullName}_local_data_temp[{current.size}];
-  {current.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in current.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in current.deviceKernel.kernelConnectivity])}, {current.fullName}_local_data_temp);
-  // convert the data to a matrix
+''')
+        code_strings.append(f'''
+  {current.fullName}_device_function({current.fullName}_global_data, {current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
+''')
+        if current.size > 1:
+          code_strings.append(f'''
   Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
 ''')
-          attribute_replacements[current.hash] = -1
-        else:
-          # this is a computation
-          # we simply generate the code for it
-          # for any operation, we know that the children must
-          # have been gone through
-          # so we can safely retrieve the data
+        # add to intermediate names
+        attribute_replacements[current.hash] = -1
 
-          # first we get the data in either a matrix or a scalar
-          attribute_name:str = ""
-          if current.size == 1:
-            attribute_name = f"double INTERMEDIATE_{num_intermediates}"
-          else:
-            attribute_name = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> INTERMEDIATE_{num_intermediates}"
-          num_intermediates += 1 # increment the number of intermediates
-          if current.operator.type == 0:
-            # different code generation for scalar and double
-            if current.size == 1:
-              code_strings.append(f'''
-  {attribute_name} = {current.operator.name}({self.getIntermediateName(current.children[0], attribute_replacements)});
-''')
-            else:
-              code_strings.append(f'''
-                {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.array().{current.operator.name}());
-''')
-          elif current.operator.type == 1:
-            code_strings.append(f'''
-  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)} {current.operator.name} {self.getIntermediateName(current.children[1], attribute_replacements)};
-''')
-          elif current.operator.type == 2:
-            # for power, there isn't many operators
-            # currently we have select or power
-            # and power is forbidden on matrix
-            code_strings.append(f'''
-  {attribute_name} = {current.operator.name}({", ".join([self.getIntermediateName(x, attribute_replacements) for x in current.children])});
-''')
-          else:
-            if current.operator == ya.ARRAY_ACCESS:
-              code_strings.append(f'''
-  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}[{current.children[1].index_value}];
-''')
-            elif current.operator == ya.ARRAY:
-              code_strings.append(f'''
-  double INTERMEDIATE_{num_intermediates}_DATA[{current.size}] = {{{", ".join([self.getIntermediateName(x, attribute_replacements) for x in current.children])}}};
-  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> INTERMEDIATE_{num_intermediates}(INTERMEDIATE_{num_intermediates}_DATA);
-''')
-            elif current.operator == ya.TRANSPOSE:
-              code_strings.append(f'''
-  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.transpose();
-''')
-            elif current.operator == ya.BROADCAST_ADD:
-              code_strings.append(f'''
-  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.array() + {self.getIntermediateName(current.children[1], attribute_replacements)};
-''')
-            elif current.operator == ya.ROW:
-              print(f"At row, {str(current)}")
-              code_strings.append(f'''
-  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.row({current.children[1].index_value});
-''')
-            elif current.operator == ya.COL:
-              code_strings.append(f'''
-  {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.col({current.children[1].index_value});
-''')
-            else:
-              raise ValueError("codeGenerator.generateCode: unknown operator.")
+    # now we are done with the computation
+    # need to put back the result
     attributeName: str = ""
     if self.__input.name == "":
-      attributeName = str(self.__input.hash)
+      attributeName = f'attr_{self.__input.hash}'
     else:
       attributeName = self.__input.fullName
     # we have finished the computation, add a line to store the result
@@ -237,7 +235,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
   // put the result back
   #pragma unroll
   for (unsigned int i = 0; i < {self.__input.size}; i++){{
-    result[i] = {self.getIntermediateName(self.__input, attribute_replacements)}{"" if self.__input.size == 1 else ".data()[i]"}
+    result[i] = {self.getIntermediateName(self.__input, attribute_replacements)}{"" if self.__input.size == 1 else ".data()[i]"};
   }}
 ''')
     # now we need to get the datas for generating this kernel
@@ -254,7 +252,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
 
     # now we generate header
     headerString: str = f'''
-__device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.fullName}_global_data, " for x in allDatas])}{"".join([f"const unsigned int* {x.fullName}_global_indices, " for x in allConnectivities])}{attributeName}_index, double* result)
+__device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.fullName}_global_data, " for x in allDatas])}{"".join([f"const unsigned int* {x.fullName}_global_indices, " for x in allConnectivities])}unsigned int {self.__input.correspondance.fullName}_index, double* result)
 '''
     kernelString: str = "\n".join(code_strings)
     self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allDependencies)
