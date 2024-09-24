@@ -27,5 +27,15 @@ class deviceKernel:
   def kernelConnectivity(self)->Set[connectivity]:
     return self.__kernelConnectivity
 
+  @property
+  def kernelHeader(self)->str:
+    return self.__kernelHeader
+
+  @property
+  def dependents(self)->Set[deviceKernel]:
+    return self.__dependents
+
+
+
   def __hash__(self) -> int:
     return hash(self.__kernelString)

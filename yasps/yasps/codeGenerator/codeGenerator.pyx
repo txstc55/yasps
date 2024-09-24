@@ -1,13 +1,15 @@
+# cython: language_level=3
 import yasps.attribute as ya
 from yasps.connectivity import connectivity
-from typing import Dict, List
+from typing import Dict, List, Set
+from yasps.deviceKernel import deviceKernel
 
 class namedAttributeCodeGenerator:
   # generate the code for attribute
   def __init__(self, input: ya.attribute):
     self.__input: ya.attribute = input
     self.__order: List[ya.attribute] = [input]
-    self.__stack: List[ya.attribute] = input.children
+    self.__stack: List[ya.attribute] = list(input.children)
     self.__childrenAttributeKernels: Dict[int, ya.attribute] = {}
 
   def __generateCodeOrder(self) -> None:
@@ -72,9 +74,27 @@ class namedAttributeCodeGenerator:
             raise ValueError("codeGenerator.__generateCodeOrder: actually going to a child without a name and not the same correspondance.")
 
 
+  def generateCodeOrder(self) -> None:
+    self.__generateCodeOrder()
+
+
   def generateCode(self) -> None:
     if self.__input.deviceKernel is not None:
       # nothing to do
+      return
+    if len(self.__stack) == 0 and self.__input.operator == ya.DATA:
+      # this attribute is a data, generate special code for it
+      current: ya.attribute = self.__input
+      kernelString: str = f'''
+  #pragma unroll
+  for (unsigned int i = 0; i < {current.size}; i++) {{
+    result[i] = {current.fullName}_global_data[{current.fullName}_index * {current.size} + i];
+  }}
+'''
+      kernelHeader: str = f'''
+__device__ __inline__ void {current.fullName}_device_function(const double* {current.fullName}_global_data, unsigned int {current.fullName}_index, double* result)
+'''
+      current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, set([current]), set([]), set([])) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
       return
 
     # actually generate the code
@@ -88,7 +108,7 @@ class namedAttributeCodeGenerator:
     for current in self.__order[::-1]:
       # check if we have gone through this attribute
       # if not, fetch the data
-      if current.hash not in attribute_replacements:
+      if current.hash not in attribute_replacements and current.hash != self.__input.hash:
         if current.operator == ya.DATA:
           # we can safely retrieve the data for those attributes
           if current.size == 1:
@@ -116,12 +136,15 @@ class namedAttributeCodeGenerator:
     # grab the index for the through attribute
     unsigned int {current.through.fullName}_index = {current.through.fullName}_global_indices[{current.through.fromPrimitive.fullName}_index * {current.through.dimension} + i];
     // now for each row, grab the data
-    double {current.fullName}_local_data_row_temp[{int(current.size / children_attribute.size)}];
-    {children_attribute.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in children_attribute.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in children_attribute.deviceKernel.kernelConnectivity])}, {current.fullName}_local_data_row_temp);
-    for (unsigned int j = 0; j < {int(current.size / children_attribute.size)}; j++){{ // copy the data
-      {current.fullName}_local_data_temp[i * {int(current.size / children_attribute.size)} + j] = {current.fullName}_local_data_row_temp[j];
+    double {current.fullName}_local_data_row_temp[{children_attribute.size}];
+    {children_attribute.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in children_attribute.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in children_attribute.deviceKernel.kernelConnectivity])}, {current.through.fullName}_index, {current.fullName}_local_data_row_temp);
+    #pragma unroll
+    for (unsigned int j = 0; j < {children_attribute.size}; j++){{ // copy the data
+      {current.fullName}_local_data_temp[i * {int(current.through.dimension)} + j] = {current.fullName}_local_data_row_temp[j];
     }}
-  }})
+  }}
+  // we now need to put it into the matrix
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
 ''')
           attribute_replacements[current.hash] = -1
         elif current.name != "":
@@ -130,7 +153,7 @@ class namedAttributeCodeGenerator:
           if current.size == 1:
             code_strings.append(f'''
   double {current.fullName}_local_data = 0.0;
-  {current.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in current.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in current.deviceKernel.kernelConnectivity])}, &{current.fullName}_local_data);
+  {current.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in current.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in current.deviceKernel.kernelConnectivity])}, {current.fullName}_index, &{current.fullName}_local_data);
 ''')
           else:
             code_strings.append(f'''
@@ -151,20 +174,27 @@ class namedAttributeCodeGenerator:
           attribute_name:str = ""
           if current.size == 1:
             attribute_name = f"double INTERMEDIATE_{num_intermediates}"
-            num_intermediates += 1
           else:
             attribute_name = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> INTERMEDIATE_{num_intermediates}"
-            num_intermediates += 1
+          num_intermediates += 1 # increment the number of intermediates
           if current.operator.type == 0:
-            code_strings.append(f'''
+            # different code generation for scalar and double
+            if current.size == 1:
+              code_strings.append(f'''
   {attribute_name} = {current.operator.name}({self.getIntermediateName(current.children[0], attribute_replacements)});
 ''')
+            else:
+              code_strings.append(f'''
+                {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.array().{current.operator.name}());
+''')
           elif current.operator.type == 1:
-            if current
             code_strings.append(f'''
   {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)} {current.operator.name} {self.getIntermediateName(current.children[1], attribute_replacements)};
 ''')
           elif current.operator.type == 2:
+            # for power, there isn't many operators
+            # currently we have select or power
+            # and power is forbidden on matrix
             code_strings.append(f'''
   {attribute_name} = {current.operator.name}({", ".join([self.getIntermediateName(x, attribute_replacements) for x in current.children])});
 ''')
@@ -187,6 +217,7 @@ class namedAttributeCodeGenerator:
   {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.array() + {self.getIntermediateName(current.children[1], attribute_replacements)};
 ''')
             elif current.operator == ya.ROW:
+              print(f"At row, {str(current)}")
               code_strings.append(f'''
   {attribute_name} = {self.getIntermediateName(current.children[0], attribute_replacements)}.row({current.children[1].index_value});
 ''')
@@ -196,6 +227,37 @@ class namedAttributeCodeGenerator:
 ''')
             else:
               raise ValueError("codeGenerator.generateCode: unknown operator.")
+    attributeName: str = ""
+    if self.__input.name == "":
+      attributeName = str(self.__input.hash)
+    else:
+      attributeName = self.__input.fullName
+    # we have finished the computation, add a line to store the result
+    code_strings.append(f'''
+  // put the result back
+  #pragma unroll
+  for (unsigned int i = 0; i < {self.__input.size}; i++){{
+    result[i] = {self.getIntermediateName(self.__input, attribute_replacements)}{"" if self.__input.size == 1 else ".data()[i]"}
+  }}
+''')
+    # now we need to get the datas for generating this kernel
+    allNamedAttributeChildren = self.__childrenAttributeKernels.values()
+    # get the datas they need
+    allDatas: Set[ya.attribute] = set.union(*[x.deviceKernel.kernelDatas for x in allNamedAttributeChildren]) # get all the unique datas
+    allConnectivities: Set[connectivity] = set().union(*[x.deviceKernel.kernelConnectivity for x in allNamedAttributeChildren]) # get all the unique connectivities
+    allDependencies: Set[deviceKernel] = set().union(*[x.deviceKernel.dependents for x in allNamedAttributeChildren]) # get all the unique dependencies as strings
+
+    # if we are a gathering operation
+    # we need to set the connectivity
+    if self.__input.operator == ya.GATHER:
+      allConnectivities.add(self.__input.through)
+
+    # now we generate header
+    headerString: str = f'''
+__device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.fullName}_global_data, " for x in allDatas])}{"".join([f"const unsigned int* {x.fullName}_global_indices, " for x in allConnectivities])}{attributeName}_index, double* result)
+'''
+    kernelString: str = "\n".join(code_strings)
+    self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allDependencies)
 
 
 
@@ -205,7 +267,7 @@ class namedAttributeCodeGenerator:
     # return the name of the intermediate value
     attribute_hash = attribute.hash
     if attribute_hash not in replacement:
-      raise ValueError("codeGenerator.getIntermediateName: attribute hash not found in replacement.")
+      raise ValueError("codeGenerator.getIntermediateName: attribute hash not found in replacement.", str(attribute))
     if replacement[attribute_hash] == -1:
       return f"{attribute.fullName}_local_data"
     else:

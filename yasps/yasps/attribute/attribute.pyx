@@ -305,6 +305,9 @@ class attribute:
           raise ValueError("attribute.__str__: TRANSPOSE operator must have one child.")
         return f"{self.children[0]}.transpose()"
       elif self.operator == BROADCAST_ADD:
+        print("At broadcast add")
+        print(self.children[0])
+        print(self.children[1])
         return f"{self.children[0]} + {self.children[1]}"
       else:
         raise ValueError("attribute.__str__: unknown operator type.")
@@ -467,7 +470,7 @@ class attribute:
     elif self.operator == GATHER:
       if self.through is None:
         raise ValueError("attribute.hash: Gather operator must have a through attribute.")
-      gather_string:str = f"gather({self.through.toPrimitive[self.name].hash}, {self.through.fromPrimitive[self.name].hash})"
+      gather_string:str = f"gather({self.through.toPrimitive[self.name].hash}_through_{self.through})"
       self.__hash = int(hashlib.sha256(gather_string.encode()).hexdigest(), 16)
     elif self.operator == SCATTER:
       if self.through is None:

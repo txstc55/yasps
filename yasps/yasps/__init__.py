@@ -7,3 +7,4 @@ from .attribute import attribute
 from .operator import operator
 from .deviceKernel import deviceKernel
 from .codeGenerator import codeGenerator
+from .codeGenerator import namedAttributeCodeGenerator
