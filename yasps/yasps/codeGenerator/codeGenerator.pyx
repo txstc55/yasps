@@ -1,10 +1,12 @@
 # cython: language_level=3
+from __future__ import annotations
 import yasps.attribute as ya
 from yasps.connectivity import connectivity
 from typing import Dict, List, Set
 from yasps.deviceKernel import deviceKernel
+from yasps.globalKernel import globalKernel
 
-class namedAttributeCodeGenerator:
+class codeGenerator:
   # generate the code for attribute
   def __init__(self, input: ya.attribute):
     self.__input: ya.attribute = input
@@ -32,8 +34,8 @@ class namedAttributeCodeGenerator:
           self.__order.append(current)
           # check if we have already generated the kernel for it
           if current.hash not in self.__childrenAttributeKernels:
-            codeGenerator = namedAttributeCodeGenerator(current)
-            codeGenerator.generateCode()
+            childCodeGenerator = codeGenerator(current)
+            childCodeGenerator.generateCode()
             self.__childrenAttributeKernels[current.hash] = current
         else:
           # doesnt have a name
@@ -51,8 +53,8 @@ class namedAttributeCodeGenerator:
             self.__order.append(current)
             # check if we have already generated the kernel for it
             if current.hash not in self.__childrenAttributeKernels:
-              codeGenerator = namedAttributeCodeGenerator(current)
-              codeGenerator.generateCode()
+              childCodeGenerator = codeGenerator(current)
+              childCodeGenerator.generateCode()
               self.__childrenAttributeKernels[current.hash] = current
           else:
             # this is an operation on scene or mesh
@@ -66,8 +68,8 @@ class namedAttributeCodeGenerator:
             # we dont add it to order
             # but we will create a code generator to generate the code for it
             if current.hash not in self.__childrenAttributeKernels:
-              codeGenerator = namedAttributeCodeGenerator(current)
-              codeGenerator.generateCode()
+              childCodeGenerator = codeGenerator(current)
+              childCodeGenerator.generateCode()
               self.__childrenAttributeKernels[current.hash] = current
           else:
             # this should not happen, raise an error
@@ -112,7 +114,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
         attribute_initialization: str = ""
         attribute_name: str = ""
         if current.name != "":
-          attribute_name = current.fullName
+          attribute_name = current.fullName + "_local_data"
           attribute_replacements[current.hash] = -1
         else:
           attribute_name = f"INTERMEDIATE_{num_intermediates}"
@@ -175,11 +177,11 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
             code_strings.append(f'''
   double {current.fullName}_local_data_temp[{current.size}];
   for (unsigned int i = 0; i < {current.through.dimension}; i++){{
-    # grab the index for the through attribute
+    // grab the index for the through attribute
     unsigned int {current.through.fullName}_index = {current.through.fullName}_global_indices[{current.through.fromPrimitive.fullName}_index * {current.through.dimension} + i];
     // now for each row, grab the data
     double {current.fullName}_local_data_row_temp[{children_attribute.size}];
-    {children_attribute.fullName}_device_function({", ".join([f'{x.fullName}_global_data' for x in children_attribute.deviceKernel.kernelDatas])}, {", ".join([f'{x.fullName}_global_indices' for x in children_attribute.deviceKernel.kernelConnectivity])}, {current.through.fullName}_index, {current.fullName}_local_data_row_temp);
+    {children_attribute.fullName}_device_function({"".join([f'{x.fullName}_global_data, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}{"".join([f'{x.fullName}_global_indices, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])} {current.through.fullName}_index, {current.fullName}_local_data_row_temp);
     #pragma unroll
     for (unsigned int j = 0; j < {children_attribute.size}; j++){{ // copy the data
       {current.fullName}_local_data_temp[i * {int(children_attribute.size)} + j] = {current.fullName}_local_data_row_temp[j];
@@ -214,7 +216,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
   double {current.fullName}_local_data_temp[{current.size}];
 ''')
         code_strings.append(f'''
-  {current.fullName}_device_function({current.fullName}_global_data, {current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
+  {current.fullName}_device_function({"".join([f'{x.fullName}_global_data, ' for x in current.deviceKernel.kernelDatas])}{"".join([f'{x.fullName}_global_indices, ' for x in current.deviceKernel.kernelConnectivity])}{current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
 ''')
         if current.size > 1:
           code_strings.append(f'''
@@ -244,6 +246,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     allDatas: Set[ya.attribute] = set.union(*[x.deviceKernel.kernelDatas for x in allNamedAttributeChildren]) # get all the unique datas
     allConnectivities: Set[connectivity] = set().union(*[x.deviceKernel.kernelConnectivity for x in allNamedAttributeChildren]) # get all the unique connectivities
     allDependencies: Set[deviceKernel] = set().union(*[x.deviceKernel.dependents for x in allNamedAttributeChildren]) # get all the unique dependencies as strings
+    allDependencies = allDependencies.union([x.deviceKernel for x in allNamedAttributeChildren]) # also add the children as dependencies
 
     # if we are a gathering operation
     # we need to set the connectivity
@@ -252,13 +255,15 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
 
     # now we generate header
     headerString: str = f'''
-__device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.fullName}_global_data, " for x in allDatas])}{"".join([f"const unsigned int* {x.fullName}_global_indices, " for x in allConnectivities])}unsigned int {self.__input.correspondance.fullName}_index, double* result)
-'''
+__device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.fullName}_global_data, " for x in sorted(allDatas, key = lambda y: y.fullName)])}{"".join([f"const unsigned int* {x.fullName}_global_indices, " for x in sorted(allConnectivities, key = lambda y: y.fullName)])}unsigned int {self.__input.correspondance.fullName}_index, double* result)'''
+
     kernelString: str = "\n".join(code_strings)
+
+    # now we generate the device kernel
     self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allDependencies)
 
 
-
+  # get the name of the intermediate variables
   def getIntermediateName(self, attribute: ya.attribute, replacement: Dict[int, int]) -> str:
     if attribute.operator == ya.FLOAT:
       return str(attribute.float_value)
@@ -270,183 +275,3 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
       return f"{attribute.fullName}_local_data"
     else:
       return f"INTERMEDIATE_{replacement[attribute_hash]}"
-
-class codeGenerator:
-  def __init__(self):
-    self.__order: List[ya.attribute] = []
-    self.__attributes_with_kernels: Dict[str, ya.attribute] = {} # generate and record all the attributes that has a kenrel to it
-
-  @property
-  def order(self)->List[ya.attribute]:
-    return self.__order
-
-  @property
-  def attributesWithKernels(self)->Dict[str, ya.attribute]:
-    return self.__attributes_with_kernels
-
-
-  def generateCodeOrder(self, input: ya.attribute) -> None:
-    # TODO: Implement expression simplification
-    # TODO: Implement common subexpression elimination
-    stack: List[ya.attribute] = [input]
-    while stack:
-      current: ya.attribute = stack.pop()
-      if current.operator == ya.FLOAT:
-        # there is no need to record constant values
-        pass
-      elif current.operator == ya.INDEX:
-        pass
-      elif current.correspondance.fullName == input.correspondance.fullName:
-        # print("same correspondance", str(current))
-        if current.operator == ya.DATA:
-          self.__order.append(current)
-          # self.__attributes_with_kernels[current.fullName] = current
-        elif current.name != "":
-          # stop at the first named attribute
-          self.__order.append(current)
-          self.__attributes_with_kernels[current.fullName] = current
-          stack.extend(current.children)
-        else:
-          self.__order.append(current)
-          stack.extend(current.children)
-      else:
-        if current.operator == ya.DATA:
-          if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
-            # for scene or mesh data, it is fine to put it on the execution order
-            # as we might need it later on
-            self.__order.append(current)
-          else:
-            # for data that's an attribute
-            # and the correspondance is not the same
-            # this means there's a gathering most likely
-            # we don't do anything about it
-            pass
-        elif current.name != "":
-          # generate kernel for named attributes
-          self.__attributes_with_kernels[current.fullName] = current
-          stack.extend(current.children)
-        else:
-          stack.extend(current.children)
-
-  def generateCodeForNamedAttribute(self, input: ya.attribute) -> None:
-    if input.deviceKernel is not None:
-      # we have generated the code before
-      return
-
-    seen_attributes: Dict[int, int] = {} # from a hash to the intermediate value index
-    stack: List[ya.attribute] = [input]
-    order: List[ya.attribute] = []
-    while stack:
-      current: ya.attribute = stack.pop()
-      if current.operator == ya.FLOAT:
-        # there is no need to record constant values
-        pass
-      elif current.operator == ya.INDEX:
-        pass
-      elif current.correspondance.fullName == input.correspondance.fullName:
-        # print("same correspondance", str(current))
-        if current.operator == ya.DATA:
-          order.append(current)
-        elif current.name != "":
-          order.append(current)
-          stack.extend(current.children)
-        else:
-          order.append(current)
-          stack.extend(current.children)
-      else:
-        if current.operator == ya.DATA:
-          if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
-            # for scene or mesh data, it is fine to put it on the execution order
-            # as we might need it later on
-            order.append(current)
-          else:
-            # for data that's an attribute
-            # and the correspondance is not the same
-            # this means there's a gathering most likely
-            # we don't do anything about it
-            pass
-        elif current.name != "":
-          order.append(current)
-          stack.extend(current.children)
-        else:
-          stack.extend(current.children)
-
-
-  def generateCodeForAttribute(self, input: ya.attribute) -> None:
-    if input.deviceKernel is not None:
-      return
-    # first we generate the order
-    # and extrate the attributes that needs to generate the kernels
-    self.generateCodeOrder(input)
-    # ok now we first go through the order of the named attributes
-
-#   def generateCodeForAttribute(self, input: ya.attribute) -> None:
-#     if input.deviceKernel != "":
-#       return
-#     else:
-#       if input.operator == ya.DATA:
-#         input_size: int = input.size # get the dimension of the data
-#         input.deviceKernel = f'''
-# __device__ double* compute_{input.fullName}(unsigned int index, double* {input.fullName}, double* output){{
-#   for (unsigned int i = 0; i < {input_size}; i++){{
-#     output[i] = {input.fullName}[i];
-#   }}
-#   return {input.fullName} + index * {input_size};
-# }}
-# '''
-
-
-#   # recursively generate compute kernels for all children
-#   # if they have a name
-#   def generateCode(self, input: ya.attribute) -> None:
-#     # store the kernels that have been generated
-#     intermediate_kernels: Dict[int, str] = {}
-
-#     # store the hashes if they have been seen
-#     # from a hash of an attribute to the intermediate variable names
-#     intermediate_replacement_hashes: Dict[int, str] = {}
-
-#     # store the data attributes needed
-#     # for kernel input lookup
-#     data_needed: Dict[int, ya.attribute] = {}
-
-#     # store the connectivity needed
-#     # for kernel input lookup
-#     connectivity_needed: Dict[str, connectivity] = {}
-
-#     # store the strings for each node
-#     code_strings: List[str] = []
-
-#     # we first generate the code order
-#     self.generateCodeOrder(input)
-
-#     # traverse the order from last to first
-#     for i in range(len(self.__order) - 1, -1, -1):
-#       current: ya.attribute = self.__order[i]
-#       current_hash: int = current.hash
-
-#       if current.operator == ya.DATA:
-#         if current_hash not in data_needed:
-#           data_needed[current.hash] = current # record that we need this data
-#           intermediate_replacement_hashes[current.hash] = f'INTERMEDIATE_{len(data_needed) - 1}' # record the intermediate number
-#           # add the code for computing this data
-#           code_strings.append(f'''
-# Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}({current.fullName}_data + {current.fullName}_index * {current.rows} * {current.cols});
-# ''')
-#       elif current.operator == ya.GATHER:
-#         # in a gather operation
-#         # we need both datas
-#         gathering_connectivity = current.through
-#         if gathering_connectivity is None:
-#           raise ValueError("codeGenerator.generateCode: Gather operation must have a through connectivity")
-#           # check if the name is already in connectivity
-#         if gathering_connectivity.fullName not in connectivity_needed:
-#           connectivity_needed[gathering_connectivity.fullName] = gathering_connectivity
-#         # check if this gathering kernel has been generated
-#         if current.hash not in intermediate_kernels:
-#           # we generate the kernel that specifically does the gathering
-#           intermediate_kernels[current.hash] = f'''
-# __device__ void gather_{gathering_connectivity.fullName}({', '.join([x.full_name + '_data' for x in data_needed.values()])}, {', '.join([x.fullName])})
-# '''
-#       else:
-#         self.generateCodeForAttribute(current)

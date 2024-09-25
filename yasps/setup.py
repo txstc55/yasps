@@ -10,6 +10,7 @@ extensions = [
     Extension("yasps.operator", ["yasps/operator/operator.pyx"]),
     Extension("yasps.deviceKernel", ["yasps/kernel/deviceKernel.pyx"]),
     Extension("yasps.codeGenerator", ["yasps/codeGenerator/codeGenerator.pyx"]),
+    Extension("yasps.globalKernel", ["yasps/kernel/globalKernel.pyx"]),
 ]
 setup(
     name='yasps',  # This is the name of your package

@@ -35,7 +35,5 @@ class deviceKernel:
   def dependents(self)->Set[deviceKernel]:
     return self.__dependents
 
-
-
   def __hash__(self) -> int:
     return hash(self.__kernelString)

@@ -14,6 +14,8 @@ if TYPE_CHECKING:
   from yasps.primitive import primitive
   from yasps.connectivity import connectivity
   from yasps.deviceKernel import deviceKernel
+  from yasps.globalKernel import globalKernel
+  from yasps.codeGenerator import codeGenerator
 
 
 
@@ -75,7 +77,8 @@ class attribute:
       self.__index_value = index_value
       self.__operator = INDEX
     self.__hash: int = 0
-    self.__deviceKernel: Optional["deviceKernel"] = None
+    self.__deviceKernel: Optional[deviceKernel] = None
+    self.__globalKernel: Optional[globalKernel] = None
 
 
 
@@ -122,6 +125,14 @@ class attribute:
   @deviceKernel.setter
   def deviceKernel(self, deviceKernel: deviceKernel) -> None:
     self.__deviceKernel = deviceKernel
+
+  @property
+  def globalKernel(self) -> Optional[globalKernel]:
+    return self.__globalKernel
+
+  @globalKernel.setter
+  def globalKernel(self, globalKernel: globalKernel) -> None:
+    self.__globalKernel = globalKernel
 
   @property
   def value(self) -> gpuarray.GPUArray:
@@ -494,3 +505,11 @@ class attribute:
 
   def __eq__(self, other) -> bool:
     return hash(self) == hash(other)
+
+  def compute(self) -> None:
+    from yasps.codeGenerator import codeGenerator
+    from yasps.globalKernel import globalKernel
+    codegen: codeGenerator = codeGenerator(self)
+    codegen.generateCode()
+    # now add the global kernel
+    self.__globalKernel = globalKernel(self)
