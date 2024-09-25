@@ -8,3 +8,4 @@ from .operator import operator
 from .deviceKernel import deviceKernel
 from .codeGenerator import codeGenerator
 from .globalKernel import globalKernel
+from .helper import *

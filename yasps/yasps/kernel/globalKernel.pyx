@@ -6,93 +6,58 @@ from yasps.connectivity import connectivity
 from pycuda.compiler import SourceModule
 import pycuda.driver as pd
 from typing import Optional, List
+from yasps.helper import mangle_function_name
+
+testing_kernel = '''
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <cuda.h>
+#define EIGEN_USE_GPU
+#include <Eigen/Core>
+#include <Eigen/Dense>
+
+__device__ __inline__ void scene0_mesh1_box_vertices_position_device_function(const double* scene0_mesh1_box_vertices_position_global_data, unsigned int scene0_mesh1_box_vertices_index, double* result);
+__device__ __inline__ void attr_2135261969964008520466497175698682107904885953521130276238228463269580701963254917487818494896317884355041057720712784118276025015450406366006716703617834_device_function(const double* scene0_mesh1_box_vertices_position_global_data, unsigned int scene0_mesh1_box_vertices_index, double* result);
+__device__ __inline__ void scene0_mesh1_box_vertices_position_device_function(const double* scene0_mesh1_box_vertices_position_global_data, unsigned int scene0_mesh1_box_vertices_index, double* result){
+
+  #pragma unroll
+  for (unsigned int i = 0; i < 3; i++) {
+    result[i] = scene0_mesh1_box_vertices_position_global_data[scene0_mesh1_box_vertices_index * 3 + i];
+  }
+  printf("Checking box vertex 0: %lf\\n", scene0_mesh1_box_vertices_position_global_data[0]);
+}
+__device__ __inline__ void attr_2135261969964008520466497175698682107904885953521130276238228463269580701963254917487818494896317884355041057720712784118276025015450406366006716703617834_device_function(const double* scene0_mesh1_box_vertices_position_global_data, unsigned int scene0_mesh1_box_vertices_index, double* result){
+
+  double scene0_mesh1_box_vertices_position_local_data_temp[3];
+
+  scene0_mesh1_box_vertices_position_device_function(scene0_mesh1_box_vertices_position_global_data, scene0_mesh1_box_vertices_index, scene0_mesh1_box_vertices_position_local_data_temp);
+
+  printf("Id: %u, data: %lf, %lf, %lf\\n", scene0_mesh1_box_vertices_index, scene0_mesh1_box_vertices_position_local_data_temp[0], scene0_mesh1_box_vertices_position_local_data_temp[1], scene0_mesh1_box_vertices_position_local_data_temp[2]);
 
 
-def mangle_function_name(func_name, arg_types):
-    """
-    Generate the mangled name for a C++ function according to the Itanium C++ ABI.
+  Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> scene0_mesh1_box_vertices_position_local_data(scene0_mesh1_box_vertices_position_local_data_temp);
 
-    Parameters:
-    - func_name: The name of the function (string).
-    - arg_types: A list of argument types (list of strings).
 
-    Returns:
-    - The mangled function name (string).
-    """
-    mangled_name = '_Z' + str(len(func_name)) + func_name
-    type_encodings = []
-    types_seen = []
+  Eigen::Matrix<double, 1, 3, Eigen::RowMajor> INTERMEDIATE_0 = scene0_mesh1_box_vertices_position_local_data * 1.5;
 
-    base_type_encodings = {
-        'void': 'v',
-        'bool': 'b',
-        'char': 'c',
-        'signed char': 'a',
-        'unsigned char': 'h',
-        'short': 's',
-        'unsigned short': 't',
-        'int': 'i',
-        'unsigned int': 'j',
-        'long': 'l',
-        'unsigned long': 'm',
-        'long long': 'x',
-        'unsigned long long': 'y',
-        'float': 'f',
-        'double': 'd',
-        'long double': 'e',
-        'wchar_t': 'w',
-        'char16_t': 'Ds',
-        'char32_t': 'Di',
-        'nullptr_t': 'Dn',
-    }
+  // put the result back
+  #pragma unroll
+  for (unsigned int i = 0; i < 3; i++){
+    result[i] = INTERMEDIATE_0.data()[i];
+  }
 
-    def encode_type(arg_type):
-        arg_type = arg_type.strip()
-
-        # Handle pointers and references recursively
-        pointer_prefix = ''
-        while arg_type.endswith(('*', '&')):
-            if arg_type.endswith('*'):
-                pointer_prefix += 'P'
-                arg_type = arg_type[:-1].strip()
-            elif arg_type.endswith('&'):
-                pointer_prefix += 'R'
-                arg_type = arg_type[:-1].strip()
-
-        # Handle const and volatile qualifiers
-        cv_qualifiers = ''
-        while arg_type.startswith(('const ', 'volatile ')):
-            if arg_type.startswith('const '):
-                cv_qualifiers += 'K'
-                arg_type = arg_type[6:].strip()
-            elif arg_type.startswith('volatile '):
-                cv_qualifiers += 'V'
-                arg_type = arg_type[9:].strip()
-
-        # Encode the base type
-        if arg_type in base_type_encodings:
-            encoding = pointer_prefix + cv_qualifiers + base_type_encodings[arg_type]
-        else:
-            # For user-defined types
-            parts = arg_type.split('::')
-            encoding = 'N' + ''.join(f'{len(part)}{part}' for part in parts) + 'E'
-            encoding = pointer_prefix + cv_qualifiers + encoding
-
-        # Handle type substitutions
-        if encoding in types_seen:
-            index = types_seen.index(encoding)
-            substitution = f'S{index}_'
-            return substitution
-        else:
-            types_seen.append(encoding)
-            return encoding
-
-    for arg in arg_types:
-        type_encoding = encode_type(arg)
-        type_encodings.append(type_encoding)
-
-    mangled_name += ''.join(type_encodings)
-    return mangled_name
+}
+__global__ void attr_2135261969964008520466497175698682107904885953521130276238228463269580701963254917487818494896317884355041057720712784118276025015450406366006716703617834_global_function(const double* scene0_mesh1_box_vertices_position_global_data, double* result, unsigned int MAX_INDEX){
+  // first we get the index
+  unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= MAX_INDEX){
+    return;
+  }
+  // now we call the device function
+  attr_2135261969964008520466497175698682107904885953521130276238228463269580701963254917487818494896317884355041057720712784118276025015450406366006716703617834_device_function(scene0_mesh1_box_vertices_position_global_data, index, result + index * 3);
+}
+'''
 
 
 class globalKernel:
@@ -104,9 +69,9 @@ class globalKernel:
 
   def __generateKernel(self, attr: attribute) -> None:
     ## first we get all the header functions
-    sortedDependency: List[deviceKernel] = sorted(attr.deviceKernel.dependents, key = lambda x: x.kernelHeader)
-    sortedDatas: List[attribute] = sorted(attr.deviceKernel.kernelDatas, key = lambda x: x.fullName)
-    sortedConnectivities: List[connectivity] = sorted(attr.deviceKernel.kernelConnectivity, key = lambda x: x.fullName)
+    sortedDependency: List[deviceKernel] = attr.deviceKernel.dependents
+    sortedDatas: List[attribute] = attr.deviceKernel.kernelDatas
+    sortedConnectivities: List[connectivity] = attr.deviceKernel.kernelConnectivity
     # add the includes
     self.__kernelString += f'''
 #include <stdio.h>
@@ -144,13 +109,16 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.ful
   {attributeName}_device_function({"".join([f"{x.fullName}_global_data, " for x in sortedDatas])}{"".join([f"{x.fullName}_global_indices, " for x in sortedConnectivities])}index, result + index * {attr.size});
 }}
 '''
+
+    # # for debugging
+    # self.__kernelString = testing_kernel
     # compile the code with eigen library and get the function
     mod = SourceModule(
       self.__kernelString,
       options = ["-std=c++11", '-O3', '-I/usr/include/eigen3', "--expt-relaxed-constexpr"],
       no_extern_c = True
     )
-    print(self.__kernelString)
+    # print(self.__kernelString)
 
     # get the mangled name
     input_types = []
@@ -161,8 +129,6 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.ful
     input_types.append("double*")
     input_types.append("unsigned int")
     kernel_name: str = mangle_function_name(f"{attributeName}_global_function", input_types)
-    print(f"kernel name: {kernel_name}")
-    print(f"name gpt: _Z55scene0_mesh1_vertices_weighted_position_global_functionPKdS0_PKjPdj")
     self.__kernel = mod.get_function(kernel_name)
 
 
@@ -170,3 +136,7 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.ful
   @property
   def kernelString(self) -> str:
     return self.__kernelString
+
+  @property
+  def kernel(self) -> pd.Function:
+    return self.__kernel

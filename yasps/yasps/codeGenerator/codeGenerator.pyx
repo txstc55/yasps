@@ -94,7 +94,7 @@ class codeGenerator:
   }}'''
       kernelHeader: str = f'''
 __device__ __inline__ void {current.fullName}_device_function(const double* {current.fullName}_global_data, unsigned int {current.correspondance.fullName}_index, double* result)'''
-      current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, set([current]), set([]), set([])) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
+      current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, [current], [], []) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
       return
 
     # actually generate the code
@@ -243,19 +243,24 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     # now we need to get the datas for generating this kernel
     allNamedAttributeChildren = self.__childrenAttributeKernels.values()
     # get the datas they need
-    allDatas: Set[ya.attribute] = set.union(*[x.deviceKernel.kernelDatas for x in allNamedAttributeChildren]) # get all the unique datas
-    allConnectivities: Set[connectivity] = set().union(*[x.deviceKernel.kernelConnectivity for x in allNamedAttributeChildren]) # get all the unique connectivities
-    allDependencies: Set[deviceKernel] = set().union(*[x.deviceKernel.dependents for x in allNamedAttributeChildren]) # get all the unique dependencies as strings
-    allDependencies = allDependencies.union([x.deviceKernel for x in allNamedAttributeChildren]) # also add the children as dependencies
+    allDatas: List[ya.attribute] = [item for x in allNamedAttributeChildren for item in x.deviceKernel.kernelDatas] # get all datas
+    allConnectivities: List[connectivity] = [item for x in allNamedAttributeChildren for item in x.deviceKernel.kernelConnectivity] # get all the connectivities
+    allDependencies: List[deviceKernel] = [item for x in allNamedAttributeChildren for item in x.deviceKernel.dependents] # get all the dependencies as strings
+    allDependencies = allDependencies + [x.deviceKernel for x in allNamedAttributeChildren] # also add the children as dependencies
 
     # if we are a gathering operation
     # we need to set the connectivity
     if self.__input.operator == ya.GATHER:
-      allConnectivities.add(self.__input.through)
+      allConnectivities.append(self.__input.through)
+
+    # sort and remove duplicates
+    allDatas = sorted(set(allDatas), key = lambda x: x.fullName)
+    allConnectivities = sorted(set(allConnectivities), key = lambda x: x.fullName)
+    allDependencies = sorted(set(allDependencies), key = lambda x: x.kernelHeader)
 
     # now we generate header
     headerString: str = f'''
-__device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.fullName}_global_data, " for x in sorted(allDatas, key = lambda y: y.fullName)])}{"".join([f"const unsigned int* {x.fullName}_global_indices, " for x in sorted(allConnectivities, key = lambda y: y.fullName)])}unsigned int {self.__input.correspondance.fullName}_index, double* result)'''
+__device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.fullName}_global_data, " for x in allDatas])}{"".join([f"const unsigned int* {x.fullName}_global_indices, " for x in allConnectivities])}unsigned int {self.__input.correspondance.fullName}_index, double* result)'''
 
     kernelString: str = "\n".join(code_strings)
 

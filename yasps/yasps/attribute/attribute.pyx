@@ -164,7 +164,7 @@ class attribute:
     # let's worry about memory allocation later on when the size changes
     # TODO: CHECK FOR SIZE AND DO NOT ALLOCATE NEW MEMORY WHEN SIZE IS SMALLER
     if isinstance(value, np.ndarray):
-      self.__value = gpuarray.to_gpu(value)
+      self.__value = gpuarray.to_gpu(np.array(value, dtype = np.float64).flatten())
 
     elif isinstance(value, gpuarray.GPUArray):
       if deepCopy:
@@ -507,9 +507,32 @@ class attribute:
     return hash(self) == hash(other)
 
   def compute(self) -> None:
-    from yasps.codeGenerator import codeGenerator
-    from yasps.globalKernel import globalKernel
-    codegen: codeGenerator = codeGenerator(self)
-    codegen.generateCode()
-    # now add the global kernel
-    self.__globalKernel = globalKernel(self)
+    if self.__operator == DATA:
+      # do nothing, its a data attribute
+      print(self.value)
+      return
+    if self.__globalKernel is None:
+      from yasps.codeGenerator import codeGenerator
+      from yasps.globalKernel import globalKernel
+      codegen: codeGenerator = codeGenerator(self)
+      codegen.generateCode()
+      # now add the global kernel
+      self.__globalKernel = globalKernel(self)
+      # after we generate the kernel, we first check if our data is already allocated or if the size does not match
+    assert self.__correspondance is not None # cannot be none
+    assert self.__deviceKernel is not None # cannot be none
+    assert self.__globalKernel is not None
+    if self.__value is None or self.__value.size < self.__correspondance.numInstances * self.size:
+      # reallocate a new pycuda array with the correct size
+      print(f"Reallocation needed, old size: {self.__value.size}, new size: {self.__correspondance.numInstances * self.size}")
+      self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
+      # print(self.value)
+    # after we allocated, we invoke the kernel
+    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__deviceKernel.kernelDatas] + [x.value for x in self.__deviceKernel.kernelConnectivity] + [self.__value]
+    # # check the values
+    # for item in [x.value for x in self.__deviceKernel.kernelDatas]:
+    #   print(item)
+
+    # finally call the kernel
+    self.__globalKernel.kernel(*arguments, np.uint32(self.__correspondance.numInstances), block=(32, 1, 1), grid=((self.__correspondance.numInstances + 32) // 32, 1, 1))
+    # print(self.value)
