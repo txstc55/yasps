@@ -45,12 +45,17 @@ ARRAY_ACCESS = operator("access", 3, False) # for accessing an element in the ar
 DATA = operator("data", 3, False) # for directly accessing data
 ARRAY = operator("array", 3, False) # for constructing an array
 GATHER = operator("gather", 3, False) # for gathering data from one primitive to another
-SCATTER = operator("scatter", 3, False) # for scattering data from one primitive to another
+SUM = operator("sum", 3, False) # for summation when the connectivity is unfixed
+AVERAGE = operator("average", 3, False) # for averaging when the connectivity is unfixed
 TRANSPOSE = operator("transpose", 3, False) # for transposing a matrix
 BROADCAST_ADD = operator("+", 3, False) # broadcast an add to all elements
+BROADCAST_SUB = operator("-", 3, False) # broadcast a sub to all elements
 INTERMEDIATE = operator("intermediate", 3, False) # for intermediate results
 ROW = operator("row", 3, False) # for row access
 COL = operator("col", 3, False) # for column access
+CROSS = operator("cross", 3, False) # for cross product
+NORM = operator("norm", 3, False) # for norm
+
 
 
 class attribute:
@@ -81,7 +86,11 @@ class attribute:
     self.__globalKernel: Optional[globalKernel] = None
 
 
-
+  ################################################
+  ################################################
+  #     ATTRIBUTE PROPERTY DEFINITION
+  ################################################
+  ################################################
   @property
   def name(self)->str:
     return self.__name
@@ -140,6 +149,16 @@ class attribute:
       raise ValueError("attribute.value: value is None. Please call compute() first or manually update value.")
     return self.__value
 
+  # @value.setter
+  # def value(self, newValue: Union[gpuarray.GPUArray, np.ndarray]) -> None:
+  #   if isinstance(newValue, np.ndarray):
+  #     self.__value = gpuarray.to_gpu(np.array(newValue.flatten(), dtype = np.float64).flatten())
+  #   elif isinstance(newValue, gpuarray.GPUArray):
+  #     self.__value = newValue.copy()
+  #   else:
+  #     raise ValueError("attribute.value: Invalid value type, can only be np.ndarray or gpuarray.GPUArray.")
+
+
   @property
   def size(self) -> int:
     return self.rows * self.cols
@@ -158,13 +177,17 @@ class attribute:
   def setName(self, name) -> None:
     self.__name = name
 
+  @property
+  def code_generation_data_name(self) -> str:
+    return f'{self.fullName}_global_data'
+
 
   def updateValue(self, value: Union[np.ndarray, gpuarray.GPUArray], deepCopy = False):
     # check value array for gpu array conversion
     # let's worry about memory allocation later on when the size changes
     # TODO: CHECK FOR SIZE AND DO NOT ALLOCATE NEW MEMORY WHEN SIZE IS SMALLER
     if isinstance(value, np.ndarray):
-      self.__value = gpuarray.to_gpu(np.array(value, dtype = np.float64).flatten())
+      self.__value = gpuarray.to_gpu(np.array(value.flatten(), dtype = np.float64).flatten())
 
     elif isinstance(value, gpuarray.GPUArray):
       if deepCopy:
@@ -255,16 +278,12 @@ class attribute:
     else:
       raise ValueError("attribute.__getitem__: index must be either an integer or a tuple of two integers.")
 
-  # transpose operator
-  def transpose(self)->attribute:
-    if self.size == 0:
-      return self
-    else:
-      if self.operator == TRANSPOSE:
-        return self.children[0]
-      else:
-        return attribute(children = [self], operator = TRANSPOSE, correspondance = self.correspondance, rows = self.cols, cols = self.rows)
 
+  ################################################
+  ################################################
+  #     ATTRIBUTE STRING DEFINITION
+  ################################################
+  ################################################
   def __str__(self)->str:
     if self.operator.type == 0:
       return f"{self.operator.name}({self.children[0]})"
@@ -288,22 +307,14 @@ class attribute:
         # Construct the string without backslashes inside the f-string
         children_str = ',\n'.join([str(child) for child in self.children])
         return f"array(\n{children_str}\n)"
-      elif self.operator == GATHER:
+      elif self.operator == GATHER or self.operator == SUM or self.operator == AVERAGE:
         if len(self.children) != 1:
-          raise ValueError("attribute.__str__: GATHER operator must have one child.")
+          raise ValueError(f"attribute.__str__: {self.operator.name.upper()} operator must have one child.")
         if self.children[0].correspondance is None:
-          raise ValueError("attribute.__str__: GATHER operator's first child must have a correspondance.")
+          raise ValueError(f"attribute.__str__: {self.operator.name.upper()} operator's first child must have a correspondance.")
         if self.through is None:
-          raise ValueError("attribute.__str__: GATHER operator must have a through attribute.")
-        return f"gather({self.through.toPrimitive.fullName}.{self.name}->{self.through.fromPrimitive.fullName}.{self.name})"
-      elif self.operator == SCATTER:
-        if len(self.children) != 1:
-          raise ValueError("attribute.__str__: SCATTER operator must have one child.")
-        if self.children[0].correspondance is None:
-          raise ValueError("attribute.__str__: SCATTER operator's first child must have a correspondance.")
-        if self.through is None:
-          raise ValueError("attribute.__str__: SCATTER operator must have a through attribute.")
-        return f"scatter({self.through.fromPrimitive.fullName}.{self.name}->{self.through.toPrimitive.fullName}.{self.name})"
+          raise ValueError(f"attribute.__str__: {self.operator.name.upper()} operator must have a through attribute.")
+        return f"{self.operator.name}({self.__children[0].fullName}->{self.correspondance.fullName}.{self.name})"
       elif self.operator == ROW:
         if len(self.children) != 2:
           raise ValueError("attribute.__str__: ROW operator must have two children.")
@@ -317,16 +328,24 @@ class attribute:
           raise ValueError("attribute.__str__: TRANSPOSE operator must have one child.")
         return f"{self.children[0]}.transpose()"
       elif self.operator == BROADCAST_ADD:
-        print("At broadcast add")
-        print(self.children[0])
-        print(self.children[1])
         return f"{self.children[0]} + {self.children[1]}"
+      elif self.operator == BROADCAST_SUB:
+        return f"{self.children[0]} - {self.children[1]}"
+      elif self.operator == CROSS:
+        return f"{self.children[0]} x {self.children[1]}"
+      elif self.operator == NORM:
+        return f"norm({self.children[0]})"
       else:
         raise ValueError("attribute.__str__: unknown operator type.")
     else:
       raise ValueError("attribute.__str__: unknown operator type.")
 
 
+  ################################################
+  ################################################
+  #     ATTRIBUTE OPERATION DEFINITION
+  ################################################
+  ################################################
   def row(self, index: int)->attribute:
     if self.size == 1:
       return self
@@ -341,7 +360,7 @@ class attribute:
       raise ValueError("attribute.col: index out of range.")
     return attribute(children = [self, attribute(index_value = index)], operator = COL, correspondance = self.correspondance, rows = self.rows, cols = 1)
 
-  # here we define the operator overloading
+
   def __add__(self, other: Union[attribute, float])->attribute:
     if isinstance(other, float):
       other_attribute = attribute(float_value = other)
@@ -350,8 +369,8 @@ class attribute:
       if other.operator == FLOAT:
         if other.float_value == 0:
           return self
-      if self.size == 1 or other.size == 1:
-        return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
+      if self.size == 1 and other.size == 1:
+        return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
       elif other.size == 1:
         return attribute(children = [self, other], operator = BROADCAST_ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
       elif self.size == 1:
@@ -365,6 +384,30 @@ class attribute:
 
   def __radd__(self, other: Union[attribute, float])->attribute:
     return self + other
+
+  def __sub__(self, other: Union[attribute, float])->attribute:
+    if isinstance(other, float):
+      other_attribute = attribute(float_value = other)
+      return self + other_attribute
+    elif isinstance(other, attribute):
+      if other.operator == FLOAT:
+        if other.float_value == 0:
+          return self
+      if self.size == 1 or other.size == 1:
+        return attribute(children = [self, other], operator = SUB, correspondance = attribute.__check_heritage(self, other).correspondance, rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
+      elif other.size == 1:
+        return attribute(children = [self, other], operator = BROADCAST_SUB, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
+      elif self.size == 1:
+        return attribute(children = [other, self], operator = BROADCAST_SUB, correspondance = attribute.__check_heritage(self, other).correspondance, rows = other.rows, cols = other.cols)
+      else:
+        if self.rows == other.rows and self.cols == other.cols:
+          return attribute(children = [self, other], operator = SUB, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
+        else:
+          raise ValueError("attribute.__sub__: cannot sub two attributes of different dimensions.")
+    raise ValueError("attribute.__sub__: cannot sub an attribute with a non-attribute.")
+
+  def __rsub__(self, other: Union[attribute, float])->attribute:
+    return self - other
 
   def __mul__(self, other: Union[attribute, float])->attribute:
     if isinstance(other, float):
@@ -398,6 +441,64 @@ class attribute:
       return other * self
     raise ValueError("attribute.__rmul__: cannot multiply an attribute with a non-attribute.")
 
+
+
+  def cross(self, other: attribute) -> attribute:
+    if self.size != 3 or other.size != 3:
+      raise ValueError("attribute.cross: cross product is only defined for 3D vectors.")
+    if self.rows != 3:
+      return self.transpose().cross(other)
+    if other.rows != 3:
+      return self.cross(other.transpose())
+    return attribute(children = [self, other], operator = CROSS, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 3, cols = 1)
+
+  def __truediv__(self, other: Union[float, attribute]) -> attribute:
+    if isinstance(other, float):
+      return self * (1.0 / other)
+    elif isinstance(other, attribute):
+      if other.operator == FLOAT:
+        if other.float_value == 1:
+          return self
+        return self * (1.0 / other.float_value)
+      elif other.size == 1:
+        return self * (1.0 / other)
+      else:
+        raise ValueError("attribute.__div__: cannot divide an attribute by a non-scalar.")
+    raise ValueError(f"attribute.__div__: cannot divide an attribute by {type(other)}.")
+
+  def __rtruediv__(self, other: Union[float, attribute]) -> attribute:
+    if self.size == 1:
+      if isinstance(other, float):
+        return attribute(children = [attribute(float_value = other), self], operator = DIV, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+      elif isinstance(other, attribute):
+        return other * (1.0 / self)
+      else:
+        raise ValueError("attribute.__rdiv__: cannot divide a non-attribute by an attribute.")
+    raise ValueError("attribute.__rdiv__: cannot divide a non-scalar by an attribute.")
+
+  # transpose operator
+  def transpose(self)->attribute:
+    if self.size == 0:
+      return self
+    else:
+      if self.operator == TRANSPOSE:
+        return self.children[0]
+      else:
+        return attribute(children = [self], operator = TRANSPOSE, correspondance = self.correspondance, rows = self.cols, cols = self.rows)
+
+  def norm(self) -> attribute:
+    if self.rows ==1 and self.cols == 1:
+      return self # norm of self is self
+    if self.rows == 1 or self.cols == 1:
+      return attribute(children = [self], operator = NORM, correspondance = self.correspondance) # return the norm
+    else:
+      raise ValueError("attribute.norm: norm is only defined for vectors.")
+
+  ################################################
+  ################################################
+  #     ATTRIBUTE HASH DEFINITION
+  ################################################
+  ################################################
   @property
   def hash(self)->int:
     if self.__hash != 0:
@@ -407,7 +508,7 @@ class attribute:
       self.__hash = sum([child.hash for child in self.children])
     elif self.operator == MUL:
       self.__hash = self.children[0].hash * self.children[1].hash
-    elif self.operator == SUB:
+    elif self.operator == SUB or self.operator == BROADCAST_SUB:
       self.__hash = self.children[0].hash - self.children[1].hash
     elif self.operator == DIV:
       division_string:str = f"{self.children[0].hash}/{self.children[1].hash}"
@@ -479,16 +580,11 @@ class attribute:
       hash_hex = hashlib.sha256(fullname.encode()).hexdigest()
       hash_int = int(hash_hex, 16)
       self.__hash = hash_int
-    elif self.operator == GATHER:
+    elif self.operator == GATHER or self.operator == SUM or self.operator == AVERAGE:
       if self.through is None:
-        raise ValueError("attribute.hash: Gather operator must have a through attribute.")
-      gather_string:str = f"gather({self.through.toPrimitive[self.name].hash}_through_{self.through})"
-      self.__hash = int(hashlib.sha256(gather_string.encode()).hexdigest(), 16)
-    elif self.operator == SCATTER:
-      if self.through is None:
-        raise ValueError("attribute.hash: Scatter operator must have a through attribute.")
-      scatter_string:str = f"scatter({self.through.fromPrimitive[self.name].hash}, {self.through.toPrimitive[self.name].hash})"
-      self.__hash = int(hashlib.sha256(scatter_string.encode()).hexdigest(), 16)
+        raise ValueError(f"attribute.hash: {self.operator.name.upper()} operator must have a through attribute.")
+      operation_string:str = f"{self.operator.name}({self.__children[0].hash}_through_{self.through})"
+      self.__hash = int(hashlib.sha256(operation_string.encode()).hexdigest(), 16)
     elif self.operator == TRANSPOSE:
       transpose_string:str = f"transpose({self.children[0].hash})"
       self.__hash = int(hashlib.sha256(transpose_string.encode()).hexdigest(), 16)
@@ -498,19 +594,30 @@ class attribute:
     elif self.operator == COL:
       col_string:str = f"{self.children[0].hash}.col({self.children[1].hash})"
       self.__hash = int(hashlib.sha256(col_string.encode()).hexdigest(), 16)
+    elif self.operator == CROSS:
+      cross_string:str = f"{self.children[0].hash}.cross({self.children[1].hash})"
+      self.__hash = int(hashlib.sha256(cross_string.encode()).hexdigest(), 16)
+    elif self.operator == NORM:
+      norm_string:str = f"{self.children[0].hash}.norm()"
+      self.__hash = int(hashlib.sha256(norm_string.encode()).hexdigest(), 16)
     return self.__hash
 
-  def __hash__(self):
+  def __hash__(self) -> int:
     return self.hash
 
   def __eq__(self, other) -> bool:
     return hash(self) == hash(other)
 
-  def compute(self) -> None:
+
+  ################################################
+  ################################################
+  #     ATTRIBUTE COMPUTATION DEFINITION
+  ################################################
+  ################################################
+  def compute(self) -> attribute:
     if self.__operator == DATA:
       # do nothing, its a data attribute
-      print(self.value)
-      return
+      return self
     if self.__globalKernel is None:
       from yasps.codeGenerator import codeGenerator
       from yasps.globalKernel import globalKernel
@@ -528,11 +635,12 @@ class attribute:
       self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
       # print(self.value)
     # after we allocated, we invoke the kernel
-    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__deviceKernel.kernelDatas] + [x.value for x in self.__deviceKernel.kernelConnectivity] + [self.__value]
+    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__deviceKernel.kernelDatas] + [x.value for x in self.__deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__value]
     # # check the values
     # for item in [x.value for x in self.__deviceKernel.kernelDatas]:
     #   print(item)
 
     # finally call the kernel
     self.__globalKernel.kernel(*arguments, np.uint32(self.__correspondance.numInstances), block=(32, 1, 1), grid=((self.__correspondance.numInstances + 32) // 32, 1, 1))
+    return self
     # print(self.value)

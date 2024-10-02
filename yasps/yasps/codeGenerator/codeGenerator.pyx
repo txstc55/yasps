@@ -90,10 +90,10 @@ class codeGenerator:
       kernelString: str = f'''
   #pragma unroll
   for (unsigned int i = 0; i < {current.size}; i++) {{
-    result[i] = {current.fullName}_global_data[{current.correspondance.fullName}_index * {current.size} + i];
+    result[i] = {current.code_generation_data_name}[{current.correspondance.fullName}_index * {current.size} + i];
   }}'''
       kernelHeader: str = f'''
-__device__ __inline__ void {current.fullName}_device_function(const double* {current.fullName}_global_data, unsigned int {current.correspondance.fullName}_index, double* result)'''
+__device__ __inline__ void {current.fullName}_device_function(const double* {current.code_generation_data_name}, unsigned int {current.correspondance.fullName}_index, double* result)'''
       current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, [current], [], []) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
       return
 
@@ -124,7 +124,10 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
         if current.size == 1:
           attribute_initialization = f"double {attribute_name}"
         else:
-          attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}"
+          if current.rows == 1 or current.cols == 1:
+            attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}"
+          else:
+            attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}"
 
         # now we generate the computation code
         if current.operator.type == 0:
@@ -178,10 +181,10 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
   double {current.fullName}_local_data_temp[{current.size}];
   for (unsigned int i = 0; i < {current.through.dimension}; i++){{
     // grab the index for the through attribute
-    unsigned int {current.through.fullName}_index = {current.through.fullName}_global_indices[{current.through.fromPrimitive.fullName}_index * {current.through.dimension} + i];
+    unsigned int {current.through.fullName}_index = {current.through.code_generation_index_name}[{current.through.fromPrimitive.fullName}_index * {current.through.dimension} + i];
     // now for each row, grab the data
     double {current.fullName}_local_data_row_temp[{children_attribute.size}];
-    {children_attribute.fullName}_device_function({"".join([f'{x.fullName}_global_data, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}{"".join([f'{x.fullName}_global_indices, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])} {current.through.fullName}_index, {current.fullName}_local_data_row_temp);
+    {children_attribute.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.through.fullName}_index, {current.fullName}_local_data_row_temp);
     #pragma unroll
     for (unsigned int j = 0; j < {children_attribute.size}; j++){{ // copy the data
       {current.fullName}_local_data_temp[i * {int(children_attribute.size)} + j] = {current.fullName}_local_data_row_temp[j];
@@ -189,12 +192,51 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
   }}
   // we now need to put it into the matrix
   Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);''')
+          elif current.operator == ya.SUM or current.operator == ya.AVERAGE:
+            # get the children attribute
+            children_attribute = current.children[0]
+            code_strings.append(f'''
+  double {current.fullName}_local_data_temp[{current.size}] = {{0}};
+''')
+            if current.through.dimension == 0:
+              code_strings.append(f'''
+  // grab the starting and ending index since the connectivity is not fixed
+  unsigned int {current.through.fullName}_starting_index = {current.through.code_generation_csr_name}[{current.through.fromPrimitive.fullName}_index];
+  unsigned int {current.through.fullName}_ending_index = {current.through.code_generation_csr_name}[{current.through.fromPrimitive.fullName}_index + 1];
+''')
+            else:
+              code_strings.append(f'''
+  // we know where to start and end
+  unsigned int {current.through.fullName}_starting_index = {current.through.fromPrimitive.fullName}_index * {current.through.dimension};
+  unsigned int {current.through.fullName}_ending_index = {current.through.fromPrimitive.fullName}_index * {current.through.dimension} + {current.through.dimension};
+''')
+            code_strings.append(f'''
+  for (unsigned int i = {current.through.fullName}_starting_index; i < {current.through.fullName}_ending_index; i++){{
+    // grab the index for the through attribute
+    unsigned int {current.through.fullName}_index = {current.through.code_generation_index_name}[i];
+    // now for each row, grab the data
+    double {current.fullName}_local_data_row_temp[{children_attribute.size}];
+    {children_attribute.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.through.fullName}_index, {current.fullName}_local_data_row_temp);
+    #pragma unroll
+    for (unsigned int j = 0; j < {children_attribute.size}; j++){{ // copy the data
+      {current.fullName}_local_data_temp[j] += {current.fullName}_local_data_row_temp[j];
+    }}
+  }}
+  // we now need to put it into the matrix
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);''')
+            if current.operator == ya.AVERAGE:
+              code_strings.append(f'''
+  {current.fullName}_local_data /= fmax({current.through.fullName}_ending_index - {current.through.fullName}_starting_index, 1.0);
+''')
           elif current.operator == ya.TRANSPOSE:
             code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.transpose();''')
           elif current.operator == ya.BROADCAST_ADD:
             code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.array() + {self.getIntermediateName(current.children[1], attribute_replacements)};''')
+          elif current.operator == ya.BROADCAST_SUB:
+            code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.array() - {self.getIntermediateName(current.children[1], attribute_replacements)};''')
           elif current.operator == ya.ROW:
             # print(f"At row, {str(current)}")
             code_strings.append(f'''
@@ -203,6 +245,12 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
             code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.col({current.children[1].index_value});''')
             # generate code for array access
+          elif current.operator == ya.CROSS:
+            code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.cross({self.getIntermediateName(current.children[1], attribute_replacements)});''')
+          elif current.operator == ya.NORM:
+            code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0], attribute_replacements)}.norm();''')
       else:
         # it is not an output
         # and it has a name
@@ -216,7 +264,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
   double {current.fullName}_local_data_temp[{current.size}];
 ''')
         code_strings.append(f'''
-  {current.fullName}_device_function({"".join([f'{x.fullName}_global_data, ' for x in current.deviceKernel.kernelDatas])}{"".join([f'{x.fullName}_global_indices, ' for x in current.deviceKernel.kernelConnectivity])}{current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
+  {current.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}{"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}{"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
 ''')
         if current.size > 1:
           code_strings.append(f'''
@@ -250,7 +298,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
 
     # if we are a gathering operation
     # we need to set the connectivity
-    if self.__input.operator == ya.GATHER:
+    if self.__input.operator == ya.GATHER or self.__input.operator == ya.SUM or self.__input.operator == ya.AVERAGE:
       allConnectivities.append(self.__input.through)
 
     # sort and remove duplicates
@@ -260,7 +308,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
 
     # now we generate header
     headerString: str = f'''
-__device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.fullName}_global_data, " for x in allDatas])}{"".join([f"const unsigned int* {x.fullName}_global_indices, " for x in allConnectivities])}unsigned int {self.__input.correspondance.fullName}_index, double* result)'''
+__device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.code_generation_data_name}, " for x in allDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in allConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}" for x in allConnectivities if x.dimension == 0])}unsigned int {self.__input.correspondance.fullName}_index, double* result)'''
 
     kernelString: str = "\n".join(code_strings)
 

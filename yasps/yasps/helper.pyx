@@ -72,6 +72,7 @@ def mangle_function_name(func_name, arg_types):
         if encoding in types_seen:
             index = types_seen.index(encoding)
             substitution = f'S{index}_'
+            types_seen.append(encoding) # add the type regardless
             return substitution
         else:
             types_seen.append(encoding)

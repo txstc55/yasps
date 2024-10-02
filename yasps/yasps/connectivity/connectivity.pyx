@@ -2,14 +2,15 @@
 from __future__ import annotations
 import numpy as np
 import pycuda.gpuarray as gpuarray
-from typing import TYPE_CHECKING
+from itertools import accumulate
+from typing import TYPE_CHECKING, List, Union
 if TYPE_CHECKING:
   from yasps.primitive import primitive
   from yasps.mesh import mesh
   from yasps.scene import scene
 
 class connectivity:
-  def __init__(self, name: str, from_primitive: primitive, to_primitive: primitive, value: np.ndarray, dimension: int):
+  def __init__(self, name: str, from_primitive: primitive, to_primitive: primitive, value: Union[np.ndarray, List[List[int]]], dimension: int):
     # for example the connectivity between triangle and vertex
     # one triangle contains 3 vertices
     # so the dimension is 3
@@ -18,8 +19,27 @@ class connectivity:
     self.__name: str = name
     self.__fromPrimitive: primitive = from_primitive
     self.__toPrimitive: primitive = to_primitive
-    self.__value: gpuarray.GPUArray = gpuarray.to_gpu(value.flatten().astype(np.uint32))
-    self.__dimension: int = dimension
+    if dimension != 0:
+      self.__value: gpuarray.GPUArray = gpuarray.to_gpu(np.array(value).flatten().astype(np.uint32))
+      self.__dimension: int = dimension
+      self.__compressedRows: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32)
+    else:
+      # if the dimension is 0
+      # this means the connectivity is not fixed
+      # for example the connectivity between vertex to triangle
+      # one vertex may connect to unknown number of triangles
+      # in this case, we will need to generate a CSR format for quick navigation
+      flattened_list: List[int] = [item for sublist in value for item in sublist]
+      self.__value: gpuarray.GPUArray = gpuarray.to_gpu(np.array(flattened_list).flatten().astype(np.uint32))
+      # the value can only be a list of list
+      lengths: List[int] = [len(x) for x in value]
+      # Using accumulate to generate the prefix sum directly
+      prefix_sum: List[int] = [0] + list(accumulate(lengths))
+      self.__dimension: int = dimension
+      self.__compressedRows: gpuarray.GPUArray = gpuarray.to_gpu(np.array(prefix_sum).astype(np.uint32))
+
+
+
 
   @property
   def name(self)->str:
@@ -52,3 +72,20 @@ class connectivity:
   @property
   def scene(self)->scene:
     return self.mesh.scene
+
+  @property
+  def type(self)->str:
+    return "connectivity"
+
+  @property
+  def compressedRows(self)->gpuarray.GPUArray:
+    return self.__compressedRows
+
+
+  @property
+  def code_generation_index_name(self) -> str:
+    return f'{self.fullName}_global_indices'
+
+  @property
+  def code_generation_csr_name(self) -> str:
+    return f'{self.fullName}_compressed_row_indices'

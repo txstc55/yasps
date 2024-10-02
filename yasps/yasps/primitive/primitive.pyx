@@ -1,6 +1,6 @@
 # cython: language_level=3
 from __future__ import annotations
-from typing import Dict, Union, Tuple, Optional
+from typing import Dict, Union, Tuple, Optional, List
 import keyword
 import numpy as np
 # a primitive may have its own attributes
@@ -78,7 +78,7 @@ class primitive:
       return False
     return True
 
-  def addConnectivity(self, name:str, to: primitive, data: np.ndarray, dimension: int) -> connectivity:
+  def addConnectivity(self, name:str, to: primitive, data: Union[np.ndarray, List[List[int]]], dimension: int) -> connectivity:
     if name in self.__connectivities:
       raise ValueError(f"primitive.addConnectivity: connectivity with name '{name}' already exists in primitive.")
 
@@ -97,9 +97,9 @@ class primitive:
     return newConnectivity
 
 
-  def addAttribute(self, name: str, computed_attribute: Optional[attribute] = None, rows: int = 1, cols: int = 1, through: Optional[connectivity] = None) -> attribute:
+  def addAttribute(self, name: str, computed_attribute: Optional[attribute] = None, rows: int = 1, cols: int = 1, through: Optional[connectivity] = None, source: Optional[attribute] = None, operation: Optional[str] = None) -> attribute:
     from yasps.attribute import attribute
-    from yasps.attribute import GATHER, SCATTER
+    from yasps.attribute import GATHER, SUM, AVERAGE
     if name in self.__attributes:
       raise ValueError(f"primitive.addAttribute: attribute with name '{name}' already exists in primitive.")
 
@@ -115,24 +115,53 @@ class primitive:
         # we will gather the attribute from another primitive
         # we will check if the name is inside the to primitive
         toPrimitive = through.toPrimitive
+        if source is not None:
+          # first we check if the source attribute is in the fromPrimitive
+          if source.correspondance != toPrimitive:
+            raise ValueError(f"primitive.addAttribute: the source attribute must be in the toPrimitive of the through construction.")
+          if through.dimension == 0 and operation is None:
+            raise ValueError(f"primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
+          op = GATHER
+          newRows: int = through.dimension
+          newCols: int = source.rows * source.cols
+          if operation is not None:
+            newRows = source.rows
+            newCols = source.cols
+            if operation == "SUM":
+              op = SUM
+            elif operation == "AVERAGE":
+              op = AVERAGE
+            else:
+              raise ValueError(f"primitive.addAttribute: the operation '{operation}' is not valid. Available operations are: SUM and AVERAGE.")
+
+          newAttribute = attribute(name = name, correspondance = self, rows = newRows, cols = newCols, through = through, children = [source], operator = op)
+          print(f"The attribute {name} for primitive {self.name} now has dimension {newRows}x{newCols}")
+          self.__attributes[name] = newAttribute
+          return newAttribute
+        # the source is not set up
+        # we automatically try to retrieve the attribute with the same name
         if name not in toPrimitive.__attributes:
           raise ValueError(f"primitive.addAttribute: attribute with name '{name}' does not exist in primitive '{toPrimitive.name}'. The through construction is not successful for the gathering operation.")
-        newAttribute = attribute(name = name, correspondance = self, rows = through.dimension, cols = toPrimitive[name].rows * toPrimitive[name].cols, through = through, children = [toPrimitive[name]], operator = GATHER)
-        print(f"The attribute {name} for primitive {self.name} now has dimension {newAttribute.rows}x{newAttribute.cols}")
-        self.__attributes[name] = newAttribute
-        return newAttribute
-      elif through.toPrimitive == self:
-        # we will scatter the attribute to another primitive
-        # we will check if the name is inside the from primitive
-        fromPrimitive = through.fromPrimitive
-        if name not in fromPrimitive.__attributes:
-          raise ValueError(f"primitive.addAttribute: attribute with name '{name}' does not exist in primitive '{fromPrimitive.name}'. The through construction is not successful for the scattering operation.")
-        newAttribute = attribute(name = name, correspondance = self, rows = 1, cols = fromPrimitive[name].rows * fromPrimitive[name].cols / through.dimension, through = through, children = [fromPrimitive[name]], operator = SCATTER)
-        print(f"The attribute {name} for primitive {self.name} now has dimension {newAttribute.rows}x{newAttribute.cols}")
+        if through.dimension == 0 and operation is None:
+          raise ValueError(f"primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
+        op = GATHER
+        newRows: int = through.dimension
+        newCols: int = toPrimitive[name].rows * toPrimitive[name].cols
+        if operation is not None:
+          newRows = toPrimitive[name].rows
+          newCols = toPrimitive[name].cols
+          if operation == "SUM":
+            op = SUM
+          elif operation == "AVERAGE":
+            op = AVERAGE
+          else:
+            raise ValueError(f"primitive.addAttribute: the operation '{operation}' is not valid. Available operations are: SUM and AVERAGE.")
+        newAttribute = attribute(name = name, correspondance = self, rows = newRows, cols = newCols, through = through, children = [toPrimitive[name]], operator = op)
+        print(f"The attribute {name} for primitive {self.name} now has dimension {newRows}x{newCols}")
         self.__attributes[name] = newAttribute
         return newAttribute
       else:
-        raise ValueError(f"primitive.addAttribute: the through construction must have either the fromPrimitive or the toPrimitive as the primitive where the attribute is being added.")
+        raise ValueError(f"primitive.addAttribute: the through construction must have the fromPrimitive as the primitive where the attribute is being added.")
 
     else:
       newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols)
