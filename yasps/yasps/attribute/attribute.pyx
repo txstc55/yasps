@@ -645,3 +645,26 @@ class attribute:
     self.__globalKernel.kernel(*arguments, np.uint32(self.__correspondance.numInstances), block=(32, 1, 1), grid=((self.__correspondance.numInstances + 32) // 32, 1, 1))
     return self
     # print(self.value)
+
+
+  ################################################
+  ################################################
+  #     AUTODIFF
+  ################################################
+  ################################################
+
+  def __diff(self, wrt: List[attribute]) -> List[List[attribute]]:
+    # we first check the operation of input
+    # it can only be either an array access or a data
+    for item in wrt:
+      if item.operator != ARRAY_ACCESS and item.operator != DATA:
+        raise ValueError(f"attribute.__diff: cannot differentiate with respect to {item.operator.name.upper()}, available operations are ARRAY_ACCESS and DATA")
+
+
+
+
+    return []
+
+
+  # def __diff_data(self, wrt: List[attribute]) -> List[List[attribute]]:
+  #   # we check for any of the attribute, is it
