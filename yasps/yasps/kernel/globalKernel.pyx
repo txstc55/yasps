@@ -6,7 +6,7 @@ from yasps.connectivity import connectivity
 from pycuda.compiler import SourceModule
 import pycuda.driver as pd
 from typing import Optional, List
-from yasps.helper import mangle_function_name
+from yasps.helper import get_mangled_name
 
 testing_kernel = ""
 
@@ -44,12 +44,14 @@ class globalKernel:
     # now actually generate the global kernel
     attributeName: str = ""
     if attr.name == "":
-      attributeName = f'attr_{attr.hash}'
+      attributeName = f'attr_{attr.hash}'.replace("-", "_neg_")
     else:
       attributeName = attr.fullName
 
+    kernelRawName = f'''
+__global__ void {attributeName}_global_function({"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}double* result, unsigned int MAX_INDEX)'''
     self.__kernelString += f'''
-__global__ void {attributeName}_global_function({"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}double* result, unsigned int MAX_INDEX){{
+{kernelRawName}{{
   // first we get the index
   unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index >= MAX_INDEX){{
@@ -62,7 +64,7 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
 
     # # for debugging
     # self.__kernelString = testing_kernel
-    # print(self.__kernelString)
+    print(self.__kernelString)
     # compile the code with eigen library and get the function
     mod = SourceModule(
       self.__kernelString,
@@ -80,11 +82,12 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
       input_types.append("const unsigned int*")
     for c in sortedConnectivities:
       if c.dimension == 0:
-        input_types.append("const unsigned int")
+        input_types.append("const unsigned int*")
     input_types.append("double*")
     input_types.append("unsigned int")
-    kernel_name: str = mangle_function_name(f"{attributeName}_global_function", input_types)
-    # print("Kernel name: ", kernel_name)
+    kernel_name: str = get_mangled_name(kernelRawName, f'{attributeName}_global_function')
+    print("Kernel Raw Name: ", kernelRawName)
+    print("Kernel name: ", kernel_name)
     self.__kernel = mod.get_function(kernel_name)
 
 

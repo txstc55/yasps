@@ -220,11 +220,12 @@ class attribute:
         return a1
       if a1.correspondance.type == "scene":
         # a1 is a scene, we check if a2 is a child of a1
-        if a2.correspondance.scene.fullName == a1.fullName:
+        if a2.correspondance.scene.fullName == a1.correspondance.fullName:
           return a2
       if a2.correspondance.type == "scene":
+        # print("Enter here?")
         # same scenario
-        if a1.correspondance.scene.fullName == a2.fullName:
+        if a1.correspondance.scene.fullName == a2.correspondance.fullName:
           return a1
       # now we actually need to check the heritage
       if a1.correspondance.type == "mesh":
@@ -300,7 +301,7 @@ class attribute:
         return f"{self.children[0]}[{self.children[1]}]"
       elif self.operator == DATA:
         if self.correspondance is not None:
-          return f"{self.correspondance.fullName}"
+          return f"{self.correspondance.fullName}.{self.name}"
         else:
           raise ValueError("attribute.__str__: correspondance is None for a DATA attribute.")
       elif self.operator == ARRAY:

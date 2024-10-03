@@ -19,7 +19,6 @@ m1.vertices.addAttribute("p", through = m1.vertices.cage_to_vertex, source = m1.
 # positions_computed = m1.vertices["p"].compute().value.get()
 
 m1.vertices.addAttribute("weights", rows = 1, cols = 4) # add attribute weight
-
 # generate random weights
 weights = np.array([[0.125, 0.375, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25]])
 def generate_random_weights(num_elements):
@@ -49,7 +48,6 @@ normal = (edge1.cross(edge2) / edge1.cross(edge2).norm() + 1.0) / 2.0 # compute 
 m1.triangles.addAttribute("normal", computed_attribute = normal) # add the attribute
 
 normal.compute()
-print(m1.triangles["normal"].globalKernel.kernelString)
 
 # visualize
 import pyvista as pv
