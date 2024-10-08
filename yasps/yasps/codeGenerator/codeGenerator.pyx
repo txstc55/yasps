@@ -343,8 +343,13 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     index_value = current.children[1].index_value
     row_num = index_value // current.children[0].cols
     col_num = index_value % current.children[0].cols
-    self.__code_strings.append(f'''
-{attribute_initialization} = {self.getIntermediateName(current.children[0])}({row_num}, {col_num});''')
+    if current.rows == 1 and current.cols == 1:
+      # this is a direct access to a scalar
+      self.__code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])};''')
+    else:
+      self.__code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}({row_num}, {col_num});''')
 
   def __generate_code_for_array(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)

@@ -30,6 +30,7 @@ COS = operator("cos", 0, False)
 TAN = operator("tan", 0, False)
 COT = operator("cot", 0, False)
 ABS = operator("abs", 0, False)
+LOG = operator("log", 0, False)
 SELECT = operator("select", 2, False)
 SQRT = operator("sqrt", 0, False)
 EQ = operator("==", 1, True)
@@ -55,6 +56,7 @@ ROW = operator("row", 3, False) # for row access
 COL = operator("col", 3, False) # for column access
 CROSS = operator("cross", 3, False) # for cross product
 NORM = operator("norm", 3, False) # for norm
+DET = operator("det", 3, False) # determinant of the matrix
 
 
 
@@ -181,6 +183,51 @@ class attribute:
   def code_generation_data_name(self) -> str:
     return f'{self.fullName}_global_data'
 
+  @property
+  def isZero(self) -> bool:
+    if self.operator == FLOAT and self.float_value == 0.0:
+      return True
+    elif self.operator == ARRAY:
+      # check if all are zero
+      for i in range(self.size):
+        if not self.children[i].isZero:
+          return False
+      return True
+    return False
+
+  @property
+  def isIdentity(self) -> bool:
+    if self.operator == FLOAT and self.float_value == 1.0:
+      return True
+    elif self.operator == ARRAY:
+      if self.rows != self.cols:
+        return False
+      for i in range(self.rows):
+        for j in range(self.rows):
+          if i == j:
+            if not self.children[i * self.cols + j].isIdentity:
+              return False
+          else:
+            if not self.children[i * self.cols + j].isZero:
+              return False
+      return True
+    return False
+
+  @property
+  def isFloatMat(self) -> bool:
+    # check if this is just a constant value array
+    # because it doesnt need correspondance
+    if self.operator == ARRAY:
+      for i in range(self.size):
+        if not self.children[i].operator == FLOAT:
+          return False
+      return True
+    return False
+
+  @staticmethod
+  def zeros(rows: int, cols: int) -> attribute:
+    zeroArray: List[attribute] = [attribute(float_value = 0.0) for _ in range(rows * cols)]
+    return attribute.to_array(zeroArray, rows, cols)
 
   def updateValue(self, value: Union[np.ndarray, gpuarray.GPUArray], deepCopy = False):
     # check value array for gpu array conversion
@@ -202,15 +249,18 @@ class attribute:
         raise ValueError("attribute.updateValue: Invalid value type, cannot be converted to gpuarray")
 
   @staticmethod
-  def __check_heritage(a1: attribute, a2: attribute)->attribute:
+  def __check_heritage(a1: attribute, a2: attribute) -> attribute:
     # we check if two attribute are from the same line of blood
     # return the younger one always
-    if a1.correspondance is None and a1.operator != FLOAT:
+    if a1.correspondance is None and (a1.operator != FLOAT and not a1.isFloatMat):
       raise ValueError("attribute.__check_heritage: a1 must have a correspondance since it is not a float value.")
-    if a2.correspondance is None and a2.operator != FLOAT:
+    if a2.correspondance is None and (a2.operator != FLOAT and not a2.isFloatMat):
       raise ValueError("attribute.__check_heritage: a2 must have a correspondance since it is not a float value.")
     if a1.operator == FLOAT or a2.operator == FLOAT:
       return a1
+
+    if a1.isFloatMat or a2.isFloatMat:
+      return a2
 
     if a1.correspondance is None or a2.correspondance is None:
       raise ValueError("attribute.__check_heritage: correspondance should be set for both attributes.")
@@ -242,7 +292,7 @@ class attribute:
 
   # construct a new attribute from a list of attributes
   @staticmethod
-  def to_array(children: List[attribute], rows: int, cols: int):
+  def to_array(children: List[attribute], rows: int, cols: int) -> attribute:
     if rows * cols != len(children):
       raise ValueError("attribute.to_array: number of elements must match the number of children.")
     # let's get the correspondance
@@ -367,9 +417,10 @@ class attribute:
       other_attribute = attribute(float_value = other)
       return self + other_attribute
     elif isinstance(other, attribute):
-      if other.operator == FLOAT:
-        if other.float_value == 0:
-          return self
+      if other.isZero:
+        return self
+      if self.isZero:
+        return other
       if self.size == 1 and other.size == 1:
         return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
       elif other.size == 1:
@@ -386,14 +437,35 @@ class attribute:
   def __radd__(self, other: Union[attribute, float])->attribute:
     return self + other
 
+  def add_explicit(self, other: attribute) -> attribute:
+    if isinstance(other, float):
+      other_attribute = attribute(float_value = other)
+      return self.add_explicit(other_attribute)
+    elif isinstance(other, attribute):
+      if other.isZero:
+        return self
+      if self.isZero:
+        return other
+      if self.size == 1 and other.size == 1:
+        return self + other
+      elif other.size == 1:
+        return attribute.to_array([x + other for x in self.children], self.rows, self.cols)
+      elif self.size == 1:
+        return attribute.to_array([self + x for x in other.children], other.rows, other.cols)
+      else:
+        if self.rows == other.rows and self.cols == other.cols:
+          return attribute.to_array([self[i] + other[i] for i in range(self.size)], self.rows, self.cols)
+        else:
+          raise ValueError("attribute.add_explicit: cannot add two attributes of different dimensions.")
+    raise ValueError("attribute.add_explicit: cannot add an attribute with a non-attribute.")
+
   def __sub__(self, other: Union[attribute, float])->attribute:
     if isinstance(other, float):
       other_attribute = attribute(float_value = other)
       return self + other_attribute
     elif isinstance(other, attribute):
-      if other.operator == FLOAT:
-        if other.float_value == 0:
-          return self
+      if other.isZero:
+        return self
       if self.size == 1 or other.size == 1:
         return attribute(children = [self, other], operator = SUB, correspondance = attribute.__check_heritage(self, other).correspondance, rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
       elif other.size == 1:
@@ -410,29 +482,83 @@ class attribute:
   def __rsub__(self, other: Union[attribute, float])->attribute:
     return self - other
 
+  def __neg__(self)->attribute:
+    return attribute(children = [self], operator = NEG, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+
+  def sub_explicit(self, other: attribute) -> attribute:
+    if isinstance(other, float):
+      other_attribute = attribute(float_value = other)
+      return self.sub_explicit(other_attribute)
+    elif isinstance(other, attribute):
+      if other.isZero:
+        return self
+      if self.size == 1 and other.size == 1:
+        return self - other
+      elif other.size == 1:
+        return attribute.to_array([x - other for x in self.children], self.rows, self.cols)
+      elif self.size == 1:
+        return attribute.to_array([self - x for x in other.children], other.rows, other.cols)
+      else:
+        if self.rows == other.rows and self.cols == other.cols:
+          return attribute.to_array([self[i] - other[i] for i in range(self.size)], self.rows, self.cols)
+        else:
+          raise ValueError("attribute.sub_explicit: cannot sub two attributes of different dimensions.")
+    raise ValueError("attribute.sub_explicit: cannot sub an attribute with a non-attribute.")
+
   def __mul__(self, other: Union[attribute, float])->attribute:
     if isinstance(other, float):
       other_attribute = attribute(float_value = other)
       return self * other_attribute
     elif isinstance(other, attribute):
       if other.operator == FLOAT:
-        if other.float_value == 1:
+        if other.isIdentity:
           return self
-        # else:
-        #   return attribute(children = [self, other], operator = MUL, correspondance = self, rows = self.rows, cols = self.cols)
       if self.operator == FLOAT:
-        if self.float_value == 1:
+        if self.isIdentity:
           return other
-        # else:
-        #   return attribute(children = [self, other], operator = MUL, correspondance = other, rows = other.rows, cols = other.cols)
       if self.size == 1 or other.size == 1:
         return attribute(children = [self, other], operator = MUL, correspondance = attribute.__check_heritage(self, other).correspondance, rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
       else:
         if self.cols == other.rows:
+          if self.isIdentity:
+            return other
+          if other.isIdentity:
+            return self
           return attribute(children = [self, other], operator = MUL, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = other.cols)
         else:
           raise ValueError(f"attribute.__mul__: dimension mismatch, cannot multiply {self.rows}x{self.cols} with {other.rows}x{other.cols}.")
     raise ValueError("attribute.__mul__: cannot multiply an attribute with a non-attribute.")
+
+  def multiply_explicit(self, other) -> attribute:
+    # explicitly multiply the elements out without using matrix operators
+    if isinstance(other, float):
+      other_attribute = attribute(float_value = other)
+      return self.multiply_explicit(other_attribute)
+    elif isinstance(other, attribute):
+      if other.operator == FLOAT:
+        if other.isIdentity:
+          return self
+      if self.operator == FLOAT:
+        if self.isIdentity:
+          return other
+      if self.size == 1 or other.size == 1:
+        return self * other
+      else:
+        if self.cols == other.rows:
+          if self.isIdentity:
+            return other
+          if other.isIdentity:
+            return self
+          # start the triple for loop
+          result = attribute.zeros(self.rows, other.cols)
+          for i in range(self.rows):
+            for j in range(other.cols):
+              for k in range(self.cols):
+                result.children[i * other.cols + j] += self[i * self.cols + k] * other[k * other.cols + j]
+          return result
+        else:
+          raise ValueError(f"attribute.multiply_explicit: dimension mismatch, cannot multiply {self.rows}x{self.cols} with {other.rows}x{other.cols}.")
+    raise ValueError("attribute.multiply_explicit: cannot multiply an attribute with a non-attribute.")
 
   def __rmul__(self, other: Union[attribute, float])->attribute:
     if isinstance(other, float):
@@ -442,6 +568,13 @@ class attribute:
       return other * self
     raise ValueError("attribute.__rmul__: cannot multiply an attribute with a non-attribute.")
 
+  def trace(self) -> attribute:
+    if self.rows != self.cols:
+      raise ValueError("attribute.trace: cannot compute trace of a non-square matrix.")
+    result = self.children[0]
+    for i in range(1, self.rows):
+      result += self.children[i * self.rows + i]
+    return result
 
 
   def cross(self, other: attribute) -> attribute:
@@ -533,6 +666,9 @@ class attribute:
       self.__hash = int(hashlib.sha256(cot_string.encode()).hexdigest(), 16)
     elif self.operator == ABS:
       self.__hash = abs(self.children[0].hash)
+    elif self.operator == LOG:
+      log_string = f"log({self.hash})"
+      self.__hash = int(hashlib.sha256(log_string.encode()).hexdigest(), 16)
     elif self.operator == SELECT:
       select_string:str = f"select({self.children[0].hash},{self.children[1].hash},{self.children[2].hash})"
       self.__hash = int(hashlib.sha256(select_string.encode()).hexdigest(), 16)
