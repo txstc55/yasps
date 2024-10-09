@@ -51,5 +51,24 @@ IB = attribute.to_array([x0[0], x0[1], x0[2], x1[0], x1[1], x1[2], x2[0], x2[1],
 vol = IB.determinant() / 6.0
 tets.addAttribute("vol", computed_attribute = vol)
 tets.addAttribute("IB", computed_attribute = IB.inverse())
-print(tets.attributes["vol"].compute().value.get())
-print(tets.attributes["IB"].compute().value.get())
+# print(tets.attributes["vol"].compute().value.get())
+# print(tets.attributes["IB"].compute().value.get())
+
+
+
+def stable_neo_hookean(mu, lam, vol, IB, position):
+  row0 = position.row(0)
+  row1 = position.row(1)
+  row2 = position.row(2)
+  x0 = row1 - row0
+  x1 = row2 - row0
+  x2 = row3 - row0
+  F = attribute.to_array([x0[0], x0[1], x0[2], x1[0], x1[1], x1[2], x2[0], x2[1], x2[2]], rows = 3, cols = 3)
+  FI = F.transpose() * IB
+  J = FI.determinant()
+  lnJ = J.log()
+  return 0.5 * mu * ((FI.transpose() * FI).trace() - 3.0) - mu * lnJ + 0.5 * lam * lnJ * lnJ
+
+tets.addAttribute("energy", computed_attribute = stable_neo_hookean(bunny["mu"], bunny["lam"], tets["vol"], tets["IB"], tet_positions))
+# tets["energy"].compute()
+print(tets.attributes["energy"].compute().value.get())

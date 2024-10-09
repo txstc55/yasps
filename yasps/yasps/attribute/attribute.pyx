@@ -573,12 +573,16 @@ class attribute:
       return other * self
     raise ValueError("attribute.__rmul__: cannot multiply an attribute with a non-attribute.")
 
+  def log(self) -> attribute:
+    return attribute(children = [self], operator = LOG, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+
   def trace(self) -> attribute:
     if self.rows != self.cols:
       raise ValueError("attribute.trace: cannot compute trace of a non-square matrix.")
-    result = self.children[0]
+    result = self[0, 0]
+    # print(f"At trace, {self.rows}, {self.cols}")
     for i in range(1, self.rows):
-      result += self.children[i * self.rows + i]
+      result += self[i, i]
     return result
 
 
@@ -688,7 +692,7 @@ class attribute:
     elif self.operator == ABS:
       self.__hash = abs(self.children[0].hash)
     elif self.operator == LOG:
-      log_string = f"log({self.hash})"
+      log_string = f"ln({self.children[0].hash})"
       self.__hash = int(hashlib.sha256(log_string.encode()).hexdigest(), 16)
     elif self.operator == SELECT:
       select_string:str = f"select({self.children[0].hash},{self.children[1].hash},{self.children[2].hash})"

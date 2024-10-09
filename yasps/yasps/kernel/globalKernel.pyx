@@ -61,17 +61,21 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
   {attributeName}_device_function({"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}index, result + index * {attr.size});
 }}
 '''
-
+    print(self.__kernelString)
+    import time
+    # print the current time in minutes and seconds
+    print(time.strftime("%M:%S", time.localtime()))
     # # for debugging
     # self.__kernelString = testing_kernel
-    print(self.__kernelString)
+    # print(self.__kernelString)
     # compile the code with eigen library and get the function
     mod = SourceModule(
       self.__kernelString,
       options = ["-std=c++11", '-O3', '-I/usr/include/eigen3', "--expt-relaxed-constexpr"],
       no_extern_c = True
     )
-    # print(self.__kernelString)
+    print(time.strftime("%M:%S", time.localtime()))
+
 
 
     # get the mangled name
@@ -86,8 +90,8 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
     input_types.append("double*")
     input_types.append("unsigned int")
     kernel_name: str = get_mangled_name(kernelRawName, f'{attributeName}_global_function')
-    print("Kernel Raw Name: ", kernelRawName)
-    print("Kernel name: ", kernel_name)
+    # print("Kernel Raw Name: ", kernelRawName)
+    # print("Kernel name: ", kernel_name)
     self.__kernel = mod.get_function(kernel_name)
 
 

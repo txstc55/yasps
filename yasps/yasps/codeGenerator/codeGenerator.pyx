@@ -238,6 +238,9 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     headerString: str = f'''
 __device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.code_generation_data_name}, " for x in allDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in allConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in allConnectivities if x.dimension == 0])}unsigned int {self.__input.correspondance.fullName}_index, double* result)'''
 
+    # remove the duplicates, some of the index initialization may be duplicated
+    seen_strings: Set[str] = set()
+    self.__code_strings = [x for x in self.__code_strings if not (x in seen_strings or seen_strings.add(x))]
     kernelString: str = "\n".join(self.__code_strings)
 
     # now we generate the device kernel
@@ -298,7 +301,6 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
 
   def __generate_code_for_type_0(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
-
     # different code generation for scalar and double
     if current.size == 1:
       self.__code_strings.append(f'''
