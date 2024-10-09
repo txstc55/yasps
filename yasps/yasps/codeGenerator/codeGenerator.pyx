@@ -168,6 +168,10 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
             self.__generate_code_for_cross(current)
           elif current.operator == ya.NORM:
             self.__generate_code_for_norm(current)
+          elif current.operator == ya.DET:
+            self.__generate_code_for_det(current)
+          elif current.operator == ya.INV:
+            self.__generate_code_for_inverse(current)
       else:
         # it is not an output
         # and it has a name
@@ -343,7 +347,9 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     index_value = current.children[1].index_value
     row_num = index_value // current.children[0].cols
     col_num = index_value % current.children[0].cols
-    if current.rows == 1 and current.cols == 1:
+    child_rows = current.children[0].rows
+    child_cols = current.children[0].cols
+    if child_rows == 1 and child_cols == 1:
       # this is a direct access to a scalar
       self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])};''')
@@ -478,3 +484,13 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.norm();''')
+
+  def __generate_code_for_det(self, current: ya.attribute) -> None:
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    self.__code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}.determinant();''')
+
+  def __generate_code_for_inverse(self, current: ya.attribute) -> None:
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    self.__code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}.inverse();''')

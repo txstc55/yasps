@@ -57,6 +57,7 @@ COL = operator("col", 3, False) # for column access
 CROSS = operator("cross", 3, False) # for cross product
 NORM = operator("norm", 3, False) # for norm
 DET = operator("det", 3, False) # determinant of the matrix
+INV = operator("inverse", 3, False)
 
 
 
@@ -386,6 +387,10 @@ class attribute:
         return f"{self.children[0]} x {self.children[1]}"
       elif self.operator == NORM:
         return f"norm({self.children[0]})"
+      elif self.operator == DET:
+        return f"det({self.children[0]})"
+      elif self.operator == INV:
+        return f"inv({self.children[0]})"
       else:
         raise ValueError("attribute.__str__: unknown operator type.")
     else:
@@ -628,6 +633,22 @@ class attribute:
     else:
       raise ValueError("attribute.norm: norm is only defined for vectors.")
 
+  def inverse(self) -> attribute:
+    if self.rows == 1 and self.cols == 1:
+      return 1.0 / self
+    else:
+      if self.rows != self.cols:
+        raise ValueError("attribute.inverse: cannot compute inverse of a non-square matrix.")
+      return attribute(children = [self], operator = INV, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+
+  def determinant(self) -> attribute:
+    if self.rows == 1 and self.cols == 1:
+      return self
+    else:
+      if self.rows != self.cols:
+        raise ValueError("attribute.determinant: cannot compute determinant of a non-square matrix.")
+      return attribute(children = [self], operator = DET, correspondance = self.correspondance, rows = 1, cols = 1)
+
   ################################################
   ################################################
   #     ATTRIBUTE HASH DEFINITION
@@ -737,6 +758,12 @@ class attribute:
     elif self.operator == NORM:
       norm_string:str = f"{self.children[0].hash}.norm()"
       self.__hash = int(hashlib.sha256(norm_string.encode()).hexdigest(), 16)
+    elif self.operator == DET:
+      det_string:str = f"{self.children[0].hash}.det()"
+      self.__hash = int(hashlib.sha256(det_string.encode()).hexdigest(), 16)
+    elif self.operator == INV:
+      inv_string:str = f"{self.children[0].hash}.inv()"
+      self.__hash = int(hashlib.sha256(inv_string.encode()).hexdigest(), 16)
     return self.__hash
 
   def __hash__(self) -> int:
