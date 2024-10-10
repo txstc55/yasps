@@ -27,12 +27,7 @@ class scene:
     self.__meshes: Dict[str, mesh]= {}
     self.__attributes: Dict[str, attribute] = {}
     self.__energies: Dict[int, attribute] = {}
-    self.__gradient: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
-    self.__diagonalBlocks: List[gpuarray.GPUArray] = []
-    self.__diagonalBlockSizes: List[int] = []
-    self.__diagonalBlockCounts: List[int] = []
-    self.__OffDiagonalBlocks: List[gpuarray.GPUArray] = []
-    self.__offDiagonalBlockSizes: List[Tuple[int, int]] = []
+
 
 
 
