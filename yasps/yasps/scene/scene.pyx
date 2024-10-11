@@ -3,6 +3,7 @@ import pycuda.autoinit
 import pycuda.gpuarray as gpuarray
 import numpy as np
 
+
 # a scene can have meshes
 # and its own attributes
 from typing import Dict, Union, Tuple, Optional, List
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
   from yasps.mesh import mesh  # Only imported for type hints
   from yasps.attribute import attribute
+
 import keyword
 class scene:
   scenes: Dict[str, scene] = {}
@@ -27,6 +29,8 @@ class scene:
     self.__meshes: Dict[str, mesh]= {}
     self.__attributes: Dict[str, attribute] = {}
     self.__energies: Dict[int, attribute] = {}
+    from yasps.minimizer import minimizer
+    self.__minimizer: minimizer = minimizer()
 
 
 
@@ -122,28 +126,18 @@ class scene:
       raise KeyError(f"scene.__getitem__: attribute with name '{key}' not found in scene.")
 
   @property
-  def fullName(self)->str:
+  def fullName(self) -> str:
     return self.name
 
   @property
-  def energyes(self)->Dict[int, attribute]:
+  def energyes(self) -> Dict[int, attribute]:
     return self.__energies
 
-  def addEnergy(self, energy: attribute) -> None:
-    # check if the energy has 1d
-    if energy.size != 1:
-      raise ValueError(f"scene.addEnergy: energy attribute must have size 1. Got size {energy.size} instead.")
+  def addEnergy(self, e: attribute) -> None:
+    from yasps.energy import energy
+    newEnergy = energy(e)
+    self.__minimizer.addEnergy(newEnergy)
 
-    # check if the energy is already added
-    if energy.hash in self.__energies:
-      raise ValueError(f"scene.addEnergy: energy attribute with hash '{energy.hash}' already exists in scene.")
-
-    self.__energies[energy.hash] = energy
 
   def minimizeEnergy(self, wrt: List[attribute]):
-    from yasps.attribute import DATA
-    for item in wrt:
-      if item.operator != DATA:
-        raise ValueError(f"scene.minimizeEnergy: attribute '{item.name}' is not a data attribute. Only data attributes can be minimized.")
-    # we first allocate an array of the appropriate size if not already
-    pass
+    self.__minimizer.addWrt(wrt)

@@ -8,4 +8,6 @@ from .operator import operator
 from .deviceKernel import deviceKernel
 from .codeGenerator import codeGenerator
 from .globalKernel import globalKernel
+from .energy import energy
+from .minimizer import minimizer
 from .helper import *

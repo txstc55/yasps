@@ -5,17 +5,16 @@ import numpy as np
 import pycuda.gpuarray as gpuarray
 from typing import Optional, List, Union, Tuple
 from typing import TYPE_CHECKING
-from yasps.attribute import attribute
-# if TYPE_CHECKING:
-#   from yasps.operator import operator
-#   from yasps.scene import scene
-#   from yasps.mesh import mesh
-#   from yasps.primitive import primitive
-#   from yasps.connectivity import connectivity
-#   from yasps.deviceKernel import deviceKernel
-#   from yasps.globalKernel import globalKernel
-#   from yasps.codeGenerator import codeGenerator
-#   from yasps.attribute import attribute
+if TYPE_CHECKING:
+  from yasps.operator import operator
+  from yasps.scene import scene
+  from yasps.mesh import mesh
+  from yasps.primitive import primitive
+  from yasps.connectivity import connectivity
+  from yasps.deviceKernel import deviceKernel
+  from yasps.globalKernel import globalKernel
+  from yasps.codeGenerator import codeGenerator
+  from yasps.attribute import attribute
 
 class energy:
   def __init__(self, energy: attribute):
@@ -54,3 +53,11 @@ class energy:
     for i in range(len(self.__root)):
       if self.__root[i].correspondance.type == "scene" or self.__root[i].correspondance.type == "mesh":
         self.__rootSize[i] = 1
+
+
+  def __hash__(self) -> int:
+    return self.__energy.hash
+
+  @property
+  def hash(self) -> int:
+    return self.__hash__()

@@ -8,6 +8,8 @@ bunny.addAttribute("lam", rows = 1, cols = 1)
 bunny.attributes["lam"].updateValue(1.0)
 bunny.addAttribute("mu", rows = 1, cols = 1)
 bunny.attributes["mu"].updateValue(2.0)
+bunny.addAttribute("size", rows = 1, cols = 1)
+bunny.attributes["size"].updateValue(1.0)
 
 # add vertices
 vertices = bunny.addPrimitive("vertices", numInstances = 8)
@@ -69,6 +71,10 @@ def stable_neo_hookean(mu, lam, vol, IB, position):
   lnJ = J.log()
   return 0.5 * mu * ((FI.transpose() * FI).trace() - 3.0) - mu * lnJ + 0.5 * lam * lnJ * lnJ
 
-tets.addAttribute("energy", computed_attribute = stable_neo_hookean(bunny["mu"], bunny["lam"], tets["vol"], tets["IB"], tet_positions))
+stable_neo_hookean = tets.addAttribute("energy", computed_attribute = stable_neo_hookean(bunny["mu"], bunny["lam"], tets["vol"], tets["IB"], tet_positions))
 # tets["energy"].compute()
-print(tets.attributes["energy"].compute().value.get())
+# print(tets.attributes["energy"].compute().value.get())
+#
+s0.addEnergy(stable_neo_hookean)
+s0.addEnergy((bunny["size"] - 1.5) * (bunny["size"] - 1.5))
+s0.minimizeEnergy([vertices["position"], bunny["size"]])
