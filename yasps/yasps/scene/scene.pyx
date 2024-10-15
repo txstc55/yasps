@@ -136,6 +136,8 @@ class scene:
   def addEnergy(self, e: attribute) -> None:
     from yasps.energy import energy
     newEnergy = energy(e)
+    if e.name == "":
+      raise ValueError("scene.addEnergy: energy attribute must have a name.")
     self.__minimizer.addEnergy(newEnergy)
 
 

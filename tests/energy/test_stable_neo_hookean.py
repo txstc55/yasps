@@ -59,9 +59,9 @@ tets.addAttribute("IB", computed_attribute = IB.inverse())
 
 
 def stable_neo_hookean(mu, lam, vol, IB, position):
-  row0 = position.row(0)
-  row1 = position.row(1)
-  row2 = position.row(2)
+  row0 = position.row(0) * bunny["size"]
+  row1 = position.row(1) * bunny["size"]
+  row2 = position.row(2) * bunny["size"]
   x0 = row1 - row0
   x1 = row2 - row0
   x2 = row3 - row0
@@ -72,9 +72,6 @@ def stable_neo_hookean(mu, lam, vol, IB, position):
   return 0.5 * mu * ((FI.transpose() * FI).trace() - 3.0) - mu * lnJ + 0.5 * lam * lnJ * lnJ
 
 stable_neo_hookean = tets.addAttribute("energy", computed_attribute = stable_neo_hookean(bunny["mu"], bunny["lam"], tets["vol"], tets["IB"], tet_positions))
-# tets["energy"].compute()
-# print(tets.attributes["energy"].compute().value.get())
-#
 s0.addEnergy(stable_neo_hookean)
-s0.addEnergy((bunny["size"] - 1.5) * (bunny["size"] - 1.5))
+# s0.addEnergy((bunny["size"] - 1.5) * (bunny["size"] - 1.5))
 s0.minimizeEnergy([vertices["position"], bunny["size"]])

@@ -106,7 +106,7 @@ def get_mangled_name(kernel_header: str, kernel_name: str) -> str:
   os.system(f"rm {kernel_name}.cu")
   os.system(f"rm {kernel_name}.so")
   os.system(f"rm {kernel_name}.nm")
-  print(lines)
+  # print(lines)
   if len(lines) > 0:
     return (lines[0].split(" ")[2].strip())
   return ""
