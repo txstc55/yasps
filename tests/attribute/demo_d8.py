@@ -1,6 +1,21 @@
 from yasps import scene
 from yasps import codeGenerator
 import numpy as np
+# set up date
+cube_positions_values = np.array([[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, -1, -1], [-1, -1, -1]], dtype = np.float64) # update the values
+weights = np.array([[0.125, 0.375, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25]], dtype = np.float64)
+triangles = np.array([
+    [0, 1, 2],
+    [0, 2, 3],
+    [0, 3, 4],
+    [0, 4, 1],
+    [1, 5, 2],
+    [2, 5, 3],
+    [3, 5, 4],
+    [4, 5, 1]
+  ]
+)
+
 # set seed
 np.random.seed(0)
 scene0 = scene("scene0") # create the scene
@@ -8,7 +23,7 @@ m1 = scene0.addMesh("mesh1") # add the mesh
 cage_vertices = m1.addPrimitive("cage_vertices", 8) # add a primitive box vertex as control points
 cage_vertices.addAttribute("position", rows = 1, cols = 3) # box vertices have 3D positions
 positions = scene0.mesh1.cage_vertices["position"]
-cube_positions_values = np.array([[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, -1, -1], [-1, -1, -1]], dtype = np.float64) # update the values
+
 positions.updateValue(cube_positions_values)
 
 
@@ -20,7 +35,7 @@ m1.vertices.addAttribute("p", through = m1.vertices.cage_to_vertex, source = m1.
 
 m1.vertices.addAttribute("weights", rows = 1, cols = 4) # add attribute weight
 # generate random weights
-weights = np.array([[0.125, 0.375, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25]])
+
 def generate_random_weights(num_elements):
     random_weights = np.random.rand(num_elements)  # Generate random values
     return random_weights / random_weights.sum()   # Normalize to sum to 1
@@ -31,13 +46,15 @@ for i in range(weights.shape[0]):
 
 m1.vertices["weights"].updateValue(weights) # add the values
 
-weighted_position = m1.vertices["weights"] * m1.vertices["p"] # define the weighted positions
+weighted_position = m1.vertices["weights"] * m1.vertices["p"] / 3.0 # define the weighted positions
+# print((weighted_position * 2.0).compute().value.get())
+
 m1.vertices.addAttribute("wp", computed_attribute = weighted_position) # add the attribute
 
 
 # we now add triangle normals
 m1.addPrimitive("triangles", 8) # d8
-m1.triangles.addConnectivity("triangle_vertices", m1.vertices, np.array([[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 1], [1, 5, 2], [2, 5, 3], [3, 5, 4], [4, 5, 1]]), 3) # define the relationship
+m1.triangles.addConnectivity("triangle_vertices", m1.vertices, triangles, 3) # define the relationship
 # define the position of the triangles
 
 m1.triangles.addAttribute("wp", through = m1.triangles.triangle_vertices) # extract position from vertex's weighted position, this time we just use the name instead of the source attribute
@@ -51,17 +68,7 @@ normal.compute()
 
 # visualize
 import pyvista as pv
-triangles = np.array([
-    [0, 1, 2],
-    [0, 2, 3],
-    [0, 3, 4],
-    [0, 4, 1],
-    [1, 5, 2],
-    [2, 5, 3],
-    [3, 5, 4],
-    [4, 5, 1]
-  ]
-)
+
 
 
 

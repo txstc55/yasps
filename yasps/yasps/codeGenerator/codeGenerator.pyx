@@ -67,16 +67,16 @@ class codeGenerator:
           # this is an operation on other primitive attributes probably
           # this is only done through gather
           # so it must have a name at that point
-          if current.name != "":
-            # we dont add it to order
-            # but we will create a code generator to generate the code for it
-            if current.hash not in self.__childrenAttributeKernels:
-              childCodeGenerator = codeGenerator(current)
-              childCodeGenerator.generateCode()
-              self.__childrenAttributeKernels[current.hash] = current
-          else:
-            # this should not happen, raise an error
-            raise ValueError("codeGenerator.__generateCodeOrder: actually going to a child without a name and not the same correspondance.")
+          # if current.name != "":
+          # we dont add it to order
+          # but we will create a code generator to generate the code for it
+          if current.hash not in self.__childrenAttributeKernels:
+            childCodeGenerator = codeGenerator(current)
+            childCodeGenerator.generateCode()
+            self.__childrenAttributeKernels[current.hash] = current
+          # else:
+          #   # this should not happen, raise an error
+          #   raise ValueError("codeGenerator.__generateCodeOrder: actually going to a child without a name and not the same correspondance.")
 
 
   def generateCodeOrder(self) -> None:
@@ -372,6 +372,11 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     # need to generate the code for the gathering operation
     # we know the children must be a named attribute for the gathering operator
     children_attribute = current.children[0] # should only have one child
+    children_attribute_name: str = ""
+    if children_attribute.name == "":
+      children_attribute_name = f"attr_{children_attribute.hash}"
+    else:
+      children_attribute_name = children_attribute.fullName
     self.__code_strings.append(f'''
   double {current.fullName}_local_data_temp[{current.size}];
   for (unsigned int i = 0; i < {current.through.dimension}; i++){{
@@ -379,7 +384,7 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     unsigned int {current.through.fullName}_index = {current.through.code_generation_index_name}[{current.through.fromPrimitive.fullName}_index * {current.through.dimension} + i];
     // now for each row, grab the data
     double {current.fullName}_local_data_row_temp[{children_attribute.size}];
-    {children_attribute.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_csr_name}, ' for x in children_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.through.fullName}_index, {current.fullName}_local_data_row_temp);
+    {children_attribute_name}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_csr_name}, ' for x in children_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.through.fullName}_index, {current.fullName}_local_data_row_temp);
     #pragma unroll
     for (unsigned int j = 0; j < {children_attribute.size}; j++){{ // copy the data
       {current.fullName}_local_data_temp[i * {int(children_attribute.size)} + j] = {current.fullName}_local_data_row_temp[j];
@@ -401,6 +406,11 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
   def __generate_code_for_sum_and_average(self, current: ya.attribute) -> None:
     # get the children attribute
     children_attribute = current.children[0]
+    children_attribute_name: str = ""
+    if children_attribute.name == "":
+      children_attribute_name = f"attr_{children_attribute.hash}"
+    else:
+      children_attribute_name = children_attribute.fullName
     self.__code_strings.append(f'''
   double {current.fullName}_local_data_temp[{current.size}] = {{0}};
 ''')
@@ -422,7 +432,7 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     unsigned int {current.through.fullName}_index = {current.through.code_generation_index_name}[i];
     // now for each row, grab the data
     double {current.fullName}_local_data_row_temp[{children_attribute.size}];
-    {children_attribute.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_csr_name}, ' for x in children_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.through.fullName}_index, {current.fullName}_local_data_row_temp);
+    {children_attribute_name}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_csr_name}, ' for x in children_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.through.fullName}_index, {current.fullName}_local_data_row_temp);
 
     // add the data back
     for (unsigned int j = 0; j < {children_attribute.size}; j++){{

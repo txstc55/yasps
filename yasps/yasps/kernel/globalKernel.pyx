@@ -61,6 +61,9 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
   {attributeName}_device_function({"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}index, result + index * {attr.size});
 }}
 '''
+    f = open("testing_kernel.cu", "w")
+    f.write(self.__kernelString)
+    f.close()
     # print(self.__kernelString)
     import time
     # print the current time in minutes and seconds

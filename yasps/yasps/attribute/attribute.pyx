@@ -100,7 +100,10 @@ class attribute:
 
   @property
   def fullName(self)->str:
-    return self.correspondance.fullName + "_" + self.__name
+    if self.__name != "":
+      return self.correspondance.fullName + "_" + self.__name
+    else:
+      return self.correspondance.fullName + "_" + str(self.hash)
 
   @property
   def rows(self)->int:

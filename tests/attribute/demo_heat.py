@@ -31,7 +31,7 @@ for face in faces:
 # initialize the scene
 s0 = scene("scene0")
 s0.addAttribute("dt", rows = 1, cols = 1)
-s0.attributes["dt"].updateValue(np.array([0.001]))
+s0.attributes["dt"].updateValue(np.array([0.01]))
 
 # add the bunny mesh
 bunny = s0.addMesh("bunny")
@@ -75,16 +75,22 @@ total_frames = 0
 start = time.time()
 def update_heat():
   global total_frames, start
+  start = time.time()
   change_value = heat_change.compute().value
   heat = (bunny_vertices.attributes["heat"].value.get() + change_value.get())
   bunny_vertices.attributes["heat"].updateValue(heat)
+  end = time.time()
+  print(f"Time taken for compute: {end - start}")
+  start = time.time()
   mesh.point_data["heat"] = heat
   plotter.update_scalars(heat)
-  total_frames += 1
-  if total_frames % 10 == 0:
-    end = time.time()
-    print(f"Time taken for 10 frames: {end - start}")
-    start = time.time()
+  end = time.time()
+  print(f"Time taken for updating: {end - start}")
+  # total_frames += 1
+  # if total_frames % 10 == 0:
+  #   end = time.time()
+  #   print(f"Time taken for 10 frames: {end - start}")
+  #   start = time.time()
 
 while True:
   update_heat()
