@@ -61,6 +61,7 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
   {attributeName}_device_function({"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}index, result + index * {attr.size});
 }}
 '''
+    # generate the code to check
     f = open("testing_kernel.cu", "w")
     f.write(self.__kernelString)
     f.close()
@@ -74,7 +75,7 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
     # compile the code with eigen library and get the function
     mod = SourceModule(
       self.__kernelString,
-      options = ["-std=c++11", '-O3', '-I/usr/include/eigen3', "--expt-relaxed-constexpr"],
+      options = ["-std=c++11", '-O3', '-I/usr/include/eigen3', "--expt-relaxed-constexpr", "--disable-warnings"],
       no_extern_c = True
     )
     # print(time.strftime("%M:%S", time.localtime()))

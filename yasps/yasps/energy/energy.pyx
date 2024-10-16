@@ -6,6 +6,7 @@ import pycuda.gpuarray as gpuarray
 from typing import Optional, List, Union, Tuple, Set, Dict
 from typing import TYPE_CHECKING
 from yasps.attribute import attribute
+from yasps.autodiff import autodiff
 if TYPE_CHECKING:
   from yasps.operator import operator
   from yasps.scene import scene
@@ -23,13 +24,7 @@ class energy:
     self.__energy: attribute = energy
     self.__paths: List[List[attribute]] = [] # how to get to the roots
     self.__roots: List[attribute] = []
-    self.__roots, self.__paths = self.getRoots(energy, []) # get the root attributes
-    print("All roots are: ")
-    for root in self.__roots:
-      print(root)
-    print("All paths are: ")
-    for path in self.__paths:
-      print([str(x) for x in path])
+    self.__roots, self.__paths = self.getRoots(energy, [energy]) # get the root attributes
 
 
   @property
@@ -111,7 +106,7 @@ class energy:
 
             rowIndex = node.children[1].index_value
             currentIndex = indicesCPU[node.children[0].hash][currentIndex, rowIndex]
-          else:
+          elif node.operator == DATA:
             # because it is a data
             # and we have a starting position for the data
             # we will need to aggregate the starting index
@@ -124,6 +119,23 @@ class energy:
               allIndices.append(np.uint32(currentIndex))
     print("All indices are: ", allIndices)
     return allIndices
+
+  def generateHessianAndGradient(self, wrt: List[attribute]) -> None:
+    differentiater = autodiff()
+    # generate the symbolic code for gradient and hessian
+    # first we check which path we need
+    filteredPath: List[List[attribute]] = []
+    for path in self.__paths:
+      if path[-1] in wrt:
+        filteredPath.append(path)
+
+    # now we generate from the bottom up
+    for path in filteredPath:
+      # do it in reverse order
+      for i in range(len(path) - 2, -1, -1):
+        # we will compute the jacobian for each neighboring nodes
+        differentiater.diff(path[i], path[i+1])
+
 
 
 

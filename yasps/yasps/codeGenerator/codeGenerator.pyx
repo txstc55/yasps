@@ -185,9 +185,11 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
   double {current.fullName}_local_data_temp[{current.size}];
 ''')
         if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
-          # this is one piece of data, that doesn't really need indexing
-          # we set the index to 0
-          self.__code_strings.append(f'''
+          # we also need to check if the indexing is already a part of the input
+          if self.__input.correspondance.type != "scene" and self.__input.correspondance.type != "mesh":
+            # this is one piece of data, that doesn't really need indexing
+            # we set the index to 0
+            self.__code_strings.append(f'''
   // add 0 indexing since it is a scene or mesh data
   unsigned int {current.correspondance.fullName}_index = 0;
 ''')

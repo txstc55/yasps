@@ -10,4 +10,5 @@ from .codeGenerator import codeGenerator
 from .globalKernel import globalKernel
 from .energy import energy
 from .minimizer import minimizer
+from .autodiff import autodiff
 from .helper import *

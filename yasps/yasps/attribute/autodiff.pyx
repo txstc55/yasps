@@ -6,34 +6,31 @@ import yasps.attribute as ya
 
 
 class autodiff:
-  def __init__(self, source: ya.attribute, wrt: List[ya.attribute]):
-    for item in wrt:
-      if item.operator != ya.DATA:
-        raise ValueError("autodiff: The wrt attribute must be a data attribute")
-    self.__source: ya.attribute = source
-    self.__wrt: List[ya.attribute] = wrt
-    self.__results: List[ya.attribute] = []
+  def __init__(self):
     self.__seen_differentiations: Dict[Tuple[ya.attribute, ya.attribute], ya.attribute] = {}
 
 
+
+  def diff(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    return self.__diff(current, wrt)
 
   def __diff(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     # we have done this differentiation before
     if (current, wrt) in self.__seen_differentiations:
       return self.__seen_differentiations[(current, wrt)]
-    # if current.operator == ya.ADD:
-    #   return self.__diff_add(current, wrt)
-    # elif current.operator == ya.SUB:
-    #   return self.__diff_sub(current, wrt)
-    # elif current.operator == ya.MUL:
-    #   return self.__diff_mul(current, wrt)
+    if current.operator == ya.ADD:
+      return self.__diff_add(current, wrt)
+    elif current.operator == ya.SUB:
+      return self.__diff_sub(current, wrt)
+    elif current.operator == ya.MUL:
+      return self.__diff_mul(current, wrt)
     # elif current.operator == ya.DIV:
     #   return self.__diff_div(current, wrt)
     # elif current.operator == ya.POW:
     #   return self.__diff_pow(current, wrt)
     # elif current.operator == ya.NEG:
     #   return self.__diff_neg(current, wrt)
-    if current.operator == ya.DATA:
+    elif current.operator == ya.DATA:
       result = self.__diff_data(current, wrt)
     elif current.operator == ya.ARRAY_ACCESS:
       self.__seen_differentiations[(current, wrt)] = self.__diff_data(current, wrt)
@@ -44,10 +41,10 @@ class autodiff:
     return result
 
   def __diff_add(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    # dimension will match
     dA = self.__diff(current.children[0], wrt)
     dB = self.__diff(current.children[1], wrt)
     return dA.add_explicit(dB)
-    # return ya.to_array([self.__diff(current.children[0], wrt) + self.__diff(current.children[1], wrt)], rows = current.rows, columns = current.cols, correspondance = current.correspondance)
 
   def __diff_sub(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     return ya.to_array([self.__diff(current.children[0], wrt) - self.__diff(current.children[1], wrt)], rows = current.rows, columns = current.cols, correspondance = current.correspondance)
@@ -59,41 +56,55 @@ class autodiff:
     dB = self.__diff(current.children[1], wrt)
     A = current.children[0]
     B = current.children[1]
-    # then we multiply the matrices explicitly
-    dAB = dA.explicit_mul(B)
-    dBA = A.explicit_mul(dB)
+    # dA is now a tensor, since we flatten the third dimension
+    # dA is m by n by k, and we merged the first two dimension so it is m*n by k
+    # since we need to multiply dA by B, we need to expand the first dimension of dA
+    result = [None] * current.size * wrt.size
+    for i in range(wrt.size):
+      dAi = ya.attribute.to_array([dA[j, i] for j in range(A.size)], rows = A.rows, cols = A.cols)
+      dAB = dAi.mul_explicit(B)
+      dBi = ya.attribute.to_array([dB[j, i] for j in range(B.size)], rows = B.rows, cols = B.cols)
+      AdB = A.mul_explicit(dBi)
+      summation = dAB.add_explicit(AdB)
+      for j in range(current.size):
+        result[j * wrt.size + i] = summation[j]
+    return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
 
-    return dAB.explicit_add(dBA)
+
+    # # then we multiply the matrices explicitly
+    # dAB = dA.mul_explicit(B)
+    # dBA = A.mul_explicit(dB)
+
+    # return dAB.explicit_add(dBA)
 
   # def __diff_log(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
   #   # check if the children is a determinant
   #   if current.children[0].operator == ya.DET:
 
+  def __diff_gather(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    # differentiating through a gathering is a bit different
+    # because we will need to generate the jacobian for two things
+    # first the children to wrt
+    child = current.children[0]
+    child_jacobian = ya.attribute.zeros(child.size, wrt.size)
+    child_jacobian_name = f"d{current.fullName}_d{child.fullName}"
+    if child_jacobian_name not in child.correspondance.attributes:
+      child_jacobian = self.__diff(child, wrt)
+      # once we get the child jacobian, we first add it as an attribute in case we need it later
+      child.correspondance.attributes[child_jacobian_name] = child_jacobian
+    else:
+      child_jacobian = child.correspondance.attributes[child_jacobian_name]
+    return child_jacobian
 
 
   def __diff_data(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
-    # when we differentiate a data attribute
-    # there are only 1 and 0
-    # because we are always differentiating wrt to an element of a data attribute
-    # the result is always a ARRAY_ACCESS
-
-    data_name = wrt.children[0].fullName
-    current_name = current.fullName
-    if current_name == data_name:
-      # the current attribute is the wrt attribute
-      # the result is 1 somewhere and 0 everywhere else
-      result: List[ya.attribute] = []
-      for i in range(current.size):
-        if i == wrt.children[1].index_value:
-          result.append(ya.attribute(float_value = 1.0))
-        else:
-          result.append(ya.attribute(float_value = 0.0))
-      return ya.to_array(result, rows = current.rows, columns = current.cols)
+    # checking if the data is the same
+    # if it is, we return identity
+    # else we return zeros
+    if current.fullName == wrt.fullName:
+      return ya.attribute.identity(current.size)
     else:
-      result: List[ya.attribute] = []
-      for _ in range(current.size):
-        result.append(ya.attribute(float_value = 0.0))
-      return ya.to_array(result, rows = current.rows, columns = current.cols)
+      return ya.attribute.zeros(current.size, wrt.size)
 
   def __diff_array_access(self, current: ya.attribute, wrt: ya.attribute):
     # differentiating an array access

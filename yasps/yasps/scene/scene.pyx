@@ -143,3 +143,4 @@ class scene:
 
   def minimizeEnergy(self, wrt: List[attribute]):
     self.__minimizer.addWrt(wrt)
+    self.__minimizer.generateHessianAndGradient()

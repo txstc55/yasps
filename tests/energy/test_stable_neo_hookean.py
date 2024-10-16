@@ -2,6 +2,12 @@ from yasps import scene
 from yasps import attribute
 import numpy as np
 
+# initialize some data
+position = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0]], dtype = np.float64)
+
+faces = np.array([[0, 1, 3, 7], [1, 2, 3, 7], [0, 1, 4, 7], [1, 5, 4, 7], [1, 2, 6, 7], [1, 5, 6, 7]])
+
+
 s0 = scene("scene0")
 bunny = s0.addMesh("bunny")
 bunny.addAttribute("lam", rows = 1, cols = 1)
@@ -14,26 +20,10 @@ bunny.attributes["size"].updateValue(1.0)
 # add vertices
 vertices = bunny.addPrimitive("vertices", numInstances = 8)
 vertices.addAttribute("position", rows = 1, cols = 3)
-vertices["position"].updateValue(np.array([
-    [0.0, 0.0, 0.0],  # Vertex 0
-    [1.0, 0.0, 0.0],  # Vertex 1
-    [1.0, 1.0, 0.0],  # Vertex 2
-    [0.0, 1.0, 0.0],  # Vertex 3
-    [0.0, 0.0, 1.0],  # Vertex 4
-    [1.0, 0.0, 1.0],  # Vertex 5
-    [1.0, 1.0, 1.0],  # Vertex 6
-    [0.0, 1.0, 1.0]   # Vertex 7
-], dtype = np.float64))
+vertices["position"].updateValue(position)
 
 tets = bunny.addPrimitive("tets", numInstances = 6)
-tet_to_vertex = tets.addConnectivity("tet_to_vertex", vertices, np.array([
-    [0, 1, 3, 7],  # Tetrahedron 0
-    [1, 2, 3, 7],  # Tetrahedron 1
-    [0, 1, 4, 7],  # Tetrahedron 2
-    [1, 5, 4, 7],  # Tetrahedron 3
-    [1, 2, 6, 7],  # Tetrahedron 4
-    [1, 5, 6, 7]   # Tetrahedron 5
-]), 4)
+tet_to_vertex = tets.addConnectivity("tet_to_vertex", vertices, faces, 4)
 tet_positions = tets.addAttribute("position", through = tet_to_vertex)
 tet_position_rest = tets.addAttribute("position_rest", rows = 4, cols = 3)
 tet_position_rest.updateValue(tet_positions.compute().value.get(), deepCopy = True) # make a deep copy
@@ -71,7 +61,14 @@ def stable_neo_hookean(mu, lam, vol, IB, position):
   lnJ = J.log()
   return 0.5 * mu * ((FI.transpose() * FI).trace() - 3.0) - mu * lnJ + 0.5 * lam * lnJ * lnJ
 
-stable_neo_hookean = tets.addAttribute("energy", computed_attribute = stable_neo_hookean(bunny["mu"], bunny["lam"], tets["vol"], tets["IB"], tet_positions))
-s0.addEnergy(stable_neo_hookean)
-# s0.addEnergy((bunny["size"] - 1.5) * (bunny["size"] - 1.5))
+snh = tets.addAttribute("energy", computed_attribute = stable_neo_hookean(bunny["mu"], bunny["lam"], tets["vol"], tets["IB"], tet_positions))
+size_energy = bunny.addAttribute("size_energy", computed_attribute = 1000.0 * (bunny["size"] - 1.5) * (bunny["size"] - 1.5))
+print(size_energy.compute().value.get())
+
+
+
+# print(snh.compute().value.get())
+s0.addEnergy(snh)
+s0.addEnergy(size_energy)
+
 s0.minimizeEnergy([vertices["position"], bunny["size"]])

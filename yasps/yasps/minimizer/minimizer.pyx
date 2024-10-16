@@ -102,3 +102,7 @@ class minimizer:
   def __getSparseIndices(self):
     for energy in self.energies:
       energy.getSparseIndices(self.wrt, self.__wrtStartIndices)
+
+  def generateHessianAndGradient(self):
+    for energy in self.energies:
+      energy.generateHessianAndGradient(self.wrt)

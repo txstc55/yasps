@@ -13,7 +13,9 @@ extensions = [
     Extension("yasps.globalKernel", ["yasps/kernel/globalKernel.pyx"]),
     Extension("yasps.energy", ["yasps/energy/energy.pyx"]),
     Extension("yasps.minimizer", ["yasps/minimizer/minimizer.pyx"]),
+    Extension("yasps.autodiff", ["yasps/attribute/autodiff.pyx"]),
     Extension("yasps.helper", ["yasps/helper.pyx"]),
+
 ]
 setup(
     name='yasps',  # This is the name of your package
