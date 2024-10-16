@@ -5,7 +5,7 @@ import numpy as np
 import pycuda.gpuarray as gpuarray
 from typing import Optional, List, Union, Tuple
 from typing import TYPE_CHECKING
-import hashlib # for hashing
+
 from yasps.operator import operator
 if TYPE_CHECKING:
   from yasps.operator import operator
@@ -259,51 +259,18 @@ class attribute:
 
   @staticmethod
   def __check_heritage(a1: attribute, a2: attribute) -> attribute:
-    # we check if two attribute are from the same line of blood
-    # return the younger one always
-    if a1.correspondance is None and (a1.operator != FLOAT and not a1.isFloatMat):
-      raise ValueError(f"attribute.__check_heritage: a1 must have a correspondance since it is not a float value. a1 is: {a1}")
-    if a2.correspondance is None and (a2.operator != FLOAT and not a2.isFloatMat):
-      raise ValueError(f"attribute.__check_heritage: a2 must have a correspondance since it is not a float value. a2 is: {a2}")
-    if a1.operator == FLOAT or a2.operator == FLOAT:
-      return a1
-
-    if a1.isFloatMat or a2.isFloatMat:
-      return a2
-
-    if a1.correspondance is None or a2.correspondance is None:
-      raise ValueError("attribute.__check_heritage: correspondance should be set for both attributes.")
-    else:
-      if a1.correspondance.fullName == a2.correspondance.fullName:
-        # same correspondance, we can return either one
-        return a1
-      if a1.correspondance.type == "scene":
-        # a1 is a scene, we check if a2 is a child of a1
-        if a2.correspondance.scene.fullName == a1.correspondance.fullName:
-          return a2
-      if a2.correspondance.type == "scene":
-        # print("Enter here?")
-        # same scenario
-        if a1.correspondance.scene.fullName == a2.correspondance.fullName:
-          return a1
-      # now we actually need to check the heritage
-      if a1.correspondance.type == "mesh":
-        if a2.correspondance.mesh.fullName == a1.correspondance.fullName:
-          return a2
-      if a2.correspondance.type == "mesh":
-        if a1.correspondance.mesh.fullName == a2.correspondance.fullName:
-          return a1
-      # we dont need to check for primitives, sicen if they are the same
-      # then we already checked it
-      # if they are not the same, we raise error anyway
-      raise ValueError("attribute.__check_heritage: attributes do not share the same heritage.")
+    from yasps.attributeHelper import checkHeritage
+    return checkHeritage(a1, a2)
 
 
   # construct a new attribute from a list of attributes
   @staticmethod
   def to_array(children: List[attribute], rows: int, cols: int) -> attribute:
     if rows * cols != len(children):
-      raise ValueError("attribute.to_array: number of elements must match the number of children.")
+      raise ValueError(f"attribute.to_array: number of elements must match the number of children. {rows} * {cols} != {len(children)}.")
+    if rows * cols == 1:
+      # no need to create an array for a single element
+      return children[0]
     # let's get the correspondance
     youngest_child: attribute = children[0]
     for i in range(1, len(children)):
@@ -321,6 +288,8 @@ class attribute:
       elif self.operator == DATA:
         indexAttribute = attribute(operator = INDEX, index_value = index)
         return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
+      elif self.size == 1 and index == 0:
+        return self
       indexAttribute = attribute(operator = INDEX, index_value = index)
       return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
     elif isinstance(index, tuple):
@@ -333,6 +302,8 @@ class attribute:
       elif self.operator == DATA:
         indexAttribute = attribute(operator = INDEX, index_value = index[0] * self.cols + index[1])
         return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
+      elif self.size == 0 and index[0] == 0 and index[1] == 0:
+        return self
       indexAttribute = attribute(operator = INDEX, index_value = index[0] * self.cols + index[1])
       return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
     else:
@@ -345,64 +316,8 @@ class attribute:
   ################################################
   ################################################
   def __str__(self)->str:
-    if self.operator.type == 0:
-      return f"{self.operator.name}({self.children[0]})"
-    elif self.operator.type == 1:
-      return f"({self.children[0]} {self.operator.name} {self.children[1]})"
-    elif self.operator.type == 2:
-      return f"{self.operator.name}({', '.join([str(child) for child in self.children])})"
-    elif self.operator.type == 3:
-      if self.operator == INDEX:
-        return str(self.index_value)
-      elif self.operator == FLOAT:
-        return str(self.float_value)
-      elif self.operator == ARRAY_ACCESS:
-        return f"{self.children[0]}[{self.children[1]}]"
-      elif self.operator == DATA:
-        if self.correspondance is not None:
-          return f"{self.correspondance.fullName}.{self.name}"
-        else:
-          raise ValueError("attribute.__str__: correspondance is None for a DATA attribute.")
-      elif self.operator == ARRAY:
-        # Construct the string without backslashes inside the f-string
-        children_str = ',\n'.join([str(child) for child in self.children])
-        return f"array(\n{children_str}\n)"
-      elif self.operator == GATHER or self.operator == SUM or self.operator == AVERAGE:
-        if len(self.children) != 1:
-          raise ValueError(f"attribute.__str__: {self.operator.name.upper()} operator must have one child.")
-        if self.children[0].correspondance is None:
-          raise ValueError(f"attribute.__str__: {self.operator.name.upper()} operator's first child must have a correspondance.")
-        if self.through is None:
-          raise ValueError(f"attribute.__str__: {self.operator.name.upper()} operator must have a through attribute.")
-        return f"{self.operator.name}({self.__children[0].fullName}->{self.correspondance.fullName}.{self.name})"
-      elif self.operator == ROW:
-        if len(self.children) != 2:
-          raise ValueError("attribute.__str__: ROW operator must have two children.")
-        return f"{self.children[0]}.row({self.children[1]})"
-      elif self.operator == COL:
-        if len(self.children) != 2:
-          raise ValueError("attribute.__str__: COL operator must have two children.")
-        return f"{self.children[0]}.col({self.children[1]})"
-      elif self.operator == TRANSPOSE:
-        if len(self.children) != 1:
-          raise ValueError("attribute.__str__: TRANSPOSE operator must have one child.")
-        return f"{self.children[0]}.transpose()"
-      elif self.operator == BROADCAST_ADD:
-        return f"{self.children[0]} + {self.children[1]}"
-      elif self.operator == BROADCAST_SUB:
-        return f"{self.children[0]} - {self.children[1]}"
-      elif self.operator == CROSS:
-        return f"{self.children[0]} x {self.children[1]}"
-      elif self.operator == NORM:
-        return f"norm({self.children[0]})"
-      elif self.operator == DET:
-        return f"det({self.children[0]})"
-      elif self.operator == INV:
-        return f"inv({self.children[0]})"
-      else:
-        raise ValueError("attribute.__str__: unknown operator type.")
-    else:
-      raise ValueError("attribute.__str__: unknown operator type.")
+    from yasps.attributeHelper import attribute2str
+    return attribute2str(self)
 
 
   ################################################
@@ -424,30 +339,19 @@ class attribute:
       raise ValueError("attribute.col: index out of range.")
     return attribute(children = [self, attribute(index_value = index)], operator = COL, correspondance = self.correspondance, rows = self.rows, cols = 1)
 
-
+  ################################################
+  # addition
+  ################################################
   def __add__(self, other: Union[attribute, float])->attribute:
     if isinstance(other, float):
       other_attribute = attribute(float_value = other)
       return self + other_attribute
     elif isinstance(other, attribute):
-      if other.isZero:
-        return self
-      if self.isZero:
-        return other
-      if self.size == 1 and other.size == 1:
-        return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
-      elif other.size == 1:
-        return attribute(children = [self, other], operator = BROADCAST_ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
-      elif self.size == 1:
-        return attribute(children = [other, self], operator = BROADCAST_ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = other.rows, cols = other.cols)
-      else:
-        if self.rows == other.rows and self.cols == other.cols:
-          return attribute(children = [self, other], operator = ADD, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
-        else:
-          raise ValueError("attribute.__add__: cannot add two attributes of different dimensions.")
+      from yasps.attributeOperations import add
+      return add(self, other)
     raise ValueError("attribute.__add__: cannot add an attribute with a non-attribute.")
 
-  def __radd__(self, other: Union[attribute, float])->attribute:
+  def __radd__(self, other: float)->attribute:
     return self + other
 
   def add_explicit(self, other: attribute) -> attribute:
@@ -455,98 +359,55 @@ class attribute:
       other_attribute = attribute(float_value = other)
       return self.add_explicit(other_attribute)
     elif isinstance(other, attribute):
-      if other.isZero:
-        return self
-      if self.isZero:
-        return other
-      if self.size == 1 and other.size == 1:
-        return self + other
-      elif other.size == 1:
-        return attribute.to_array([x + other for x in self.children], self.rows, self.cols)
-      elif self.size == 1:
-        return attribute.to_array([self + x for x in other.children], other.rows, other.cols)
-      else:
-        if self.rows == other.rows and self.cols == other.cols:
-          return attribute.to_array([self[i] + other[i] for i in range(self.size)], self.rows, self.cols)
-        else:
-          raise ValueError("attribute.add_explicit: cannot add two attributes of different dimensions.")
+      from yasps.attributeOperations import add_explicitly
+      return add_explicitly(self, other)
     raise ValueError("attribute.add_explicit: cannot add an attribute with a non-attribute.")
 
+
+  ################################################
+  # subtraction
+  ################################################
   def __sub__(self, other: Union[attribute, float])->attribute:
     if isinstance(other, float):
       other_attribute = attribute(float_value = other)
       return self - other_attribute
     elif isinstance(other, attribute):
-      if other.isZero:
-        return self
-      if self.size == 1 or other.size == 1:
-        return attribute(children = [self, other], operator = SUB, correspondance = attribute.__check_heritage(self, other).correspondance, rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
-      elif other.size == 1:
-        return attribute(children = [self, other], operator = BROADCAST_SUB, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
-      elif self.size == 1:
-        return attribute(children = [other, self], operator = BROADCAST_SUB, correspondance = attribute.__check_heritage(self, other).correspondance, rows = other.rows, cols = other.cols)
-      else:
-        if self.rows == other.rows and self.cols == other.cols:
-          return attribute(children = [self, other], operator = SUB, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
-        else:
-          raise ValueError("attribute.__sub__: cannot sub two attributes of different dimensions.")
+      from yasps.attributeOperations import sub
+      return sub(self, other)
     raise ValueError("attribute.__sub__: cannot sub an attribute with a non-attribute.")
 
-  def __rsub__(self, other: Union[attribute, float])->attribute:
-    return self - other
-
-  def __neg__(self)->attribute:
-    return attribute(children = [self], operator = NEG, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+  def __rsub__(self, other: float)->attribute:
+    return -self + other
 
   def sub_explicit(self, other: attribute) -> attribute:
     if isinstance(other, float):
       other_attribute = attribute(float_value = other)
       return self.sub_explicit(other_attribute)
     elif isinstance(other, attribute):
-      if other.isZero:
-        return self
-      if self.isZero:
-        return attribute.to_array([-x for x in other.children], other.rows, other.cols)
-      if self.size == 1 and other.size == 1:
-        return self - other
-      elif other.size == 1:
-        return attribute.to_array([x - other for x in self.children], self.rows, self.cols)
-      elif self.size == 1:
-        return attribute.to_array([self - x for x in other.children], other.rows, other.cols)
-      else:
-        if self.rows == other.rows and self.cols == other.cols:
-          return attribute.to_array([self[i] - other[i] for i in range(self.size)], self.rows, self.cols)
-        else:
-          raise ValueError("attribute.sub_explicit: cannot sub two attributes of different dimensions.")
+      from yasps.attributeOperations import sub_explicitly
+      return sub_explicitly(self, other)
     raise ValueError("attribute.sub_explicit: cannot sub an attribute with a non-attribute.")
 
+  def __neg__(self)->attribute:
+    if self.operator == FLOAT:
+      return attribute(float_value = -self.float_value)
+    return attribute(children = [self], operator = NEG, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+
+
+  ################################################
+  # multiplication
+  ################################################
   def __mul__(self, other: Union[attribute, float])->attribute:
     if isinstance(other, float):
       other_attribute = attribute(float_value = other)
       return self * other_attribute
     elif isinstance(other, attribute):
-      if other.operator == FLOAT:
-        if other.isIdentity:
-          return self
-        if other.isZero:
-          return attribute.zeros(self.rows, self.cols)
-      if self.operator == FLOAT:
-        if self.isIdentity:
-          return other
-        if self.isZero:
-          return attribute.zeros(other.rows, other.cols)
-      if self.size == 1 or other.size == 1:
-        return attribute(children = [self, other], operator = MUL, correspondance = attribute.__check_heritage(self, other).correspondance, rows = max(self.rows, other.rows), cols = max(self.cols, other.cols))
-      else:
-        if self.cols == other.rows:
-          if self.isIdentity:
-            return other
-          if other.isIdentity:
-            return self
-          return attribute(children = [self, other], operator = MUL, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = other.cols)
-        else:
-          raise ValueError(f"attribute.__mul__: dimension mismatch, cannot multiply {self.rows}x{self.cols} with {other.rows}x{other.cols}.")
+      from yasps.attributeOperations import mul
+      return mul(self, other)
     raise ValueError("attribute.__mul__: cannot multiply an attribute with a non-attribute.")
+
+  def __rmul__(self, other: float)->attribute:
+    return self * other
 
   def mul_explicit(self, other) -> attribute:
     # explicitly multiply the elements out without using matrix operators
@@ -554,38 +415,34 @@ class attribute:
       other_attribute = attribute(float_value = other)
       return self.mul_explicit(other_attribute)
     elif isinstance(other, attribute):
-      if other.operator == FLOAT:
-        if other.isIdentity:
-          return self
-      if self.operator == FLOAT:
-        if self.isIdentity:
-          return other
-      if self.size == 1 or other.size == 1:
-        return self * other
-      else:
-        if self.cols == other.rows:
-          if self.isIdentity:
-            return other
-          if other.isIdentity:
-            return self
-          # start the triple for loop
-          result = attribute.zeros(self.rows, other.cols)
-          for i in range(self.rows):
-            for j in range(other.cols):
-              for k in range(self.cols):
-                result.children[i * other.cols + j] += self[i * self.cols + k] * other[k * other.cols + j]
-          return result
-        else:
-          raise ValueError(f"attribute.mul_explicit: dimension mismatch, cannot multiply {self.rows}x{self.cols} with {other.rows}x{other.cols}.")
+      from yasps.attributeOperations import mul_explicitly
+      return mul_explicitly(self, other)
     raise ValueError("attribute.mul_explicit: cannot multiply an attribute with a non-attribute.")
 
-  def __rmul__(self, other: Union[attribute, float])->attribute:
+  ################################################
+  # division
+  ################################################
+  def __truediv__(self, other: Union[float, attribute]) -> attribute:
     if isinstance(other, float):
-      other_attribute = attribute(float_value = other)
-      return self * other_attribute
+      return self * (1.0 / other)
     elif isinstance(other, attribute):
-      return other * self
-    raise ValueError("attribute.__rmul__: cannot multiply an attribute with a non-attribute.")
+      from yasps.attributeOperations import div
+      return div(self, other)
+    raise ValueError(f"attribute.__truediv__: cannot divide an attribute by {type(other)}.")
+
+  def __rtruediv__(self, other: float) -> attribute:
+    if self.size == 1:
+      return attribute(children = [attribute(float_value = other), self], operator = DIV, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+    else:
+      raise ValueError("attribute.__rtruediv__: cannot divide a non scalar")
+
+  def div_explicit(self, other) -> attribute:
+    if isinstance(other, float):
+      return self * (1.0 / other)
+    elif isinstance(other, attribute):
+      from yasps.attributeOperations import div_explicitly
+      return div_explicitly(self, other)
+    raise ValueError(f"attribute.div_explicit: cannot divide an attribute by {type(other)}.")
 
   def log(self) -> attribute:
     return attribute(children = [self], operator = LOG, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
@@ -609,29 +466,8 @@ class attribute:
       return self.cross(other.transpose())
     return attribute(children = [self, other], operator = CROSS, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 3, cols = 1)
 
-  def __truediv__(self, other: Union[float, attribute]) -> attribute:
-    if isinstance(other, float):
-      return self * (1.0 / other)
-    elif isinstance(other, attribute):
-      if other.operator == FLOAT:
-        if other.float_value == 1:
-          return self
-        return self * (1.0 / other.float_value)
-      elif other.size == 1:
-        return self * (1.0 / other)
-      else:
-        raise ValueError("attribute.__div__: cannot divide an attribute by a non-scalar.")
-    raise ValueError(f"attribute.__div__: cannot divide an attribute by {type(other)}.")
 
-  def __rtruediv__(self, other: Union[float, attribute]) -> attribute:
-    if self.size == 1:
-      if isinstance(other, float):
-        return attribute(children = [attribute(float_value = other), self], operator = DIV, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
-      elif isinstance(other, attribute):
-        return other * (1.0 / self)
-      else:
-        raise ValueError("attribute.__rdiv__: cannot divide a non-attribute by an attribute.")
-    raise ValueError("attribute.__rdiv__: cannot divide a non-scalar by an attribute.")
+
 
   # transpose operator
   def transpose(self)->attribute:
@@ -676,113 +512,9 @@ class attribute:
   def hash(self)->int:
     if self.__hash != 0:
       return self.__hash
-
-    if self.operator == ADD or self.operator == BROADCAST_ADD:
-      self.__hash = sum([child.hash for child in self.children])
-    elif self.operator == MUL:
-      self.__hash = self.children[0].hash * self.children[1].hash
-    elif self.operator == SUB or self.operator == BROADCAST_SUB:
-      self.__hash = self.children[0].hash - self.children[1].hash
-    elif self.operator == DIV:
-      division_string:str = f"{self.children[0].hash}/{self.children[1].hash}"
-      self.__hash = int(hashlib.sha256(division_string.encode()).hexdigest(), 16)
-    elif self.operator == POW:
-      power_string:str = f"{self.children[0].hash}**{self.children[1].hash}"
-      self.__hash = int(hashlib.sha256(power_string.encode()).hexdigest(), 16)
-    elif self.operator == NEG:
-      self.__hash = -self.children[0].hash
-    elif self.operator == SIN:
-      sin_string:str = f"sin({self.children[0].hash})"
-      self.__hash = int(hashlib.sha256(sin_string.encode()).hexdigest(), 16)
-    elif self.operator == COS:
-      cos_string:str = f"cos({self.children[0].hash})"
-      self.__hash = int(hashlib.sha256(cos_string.encode()).hexdigest(), 16)
-    elif self.operator == TAN:
-      tan_string:str = f"tan({self.children[0].hash})"
-      self.__hash = int(hashlib.sha256(tan_string.encode()).hexdigest(), 16)
-    elif self.operator == COT:
-      cot_string:str = f"cot({self.children[0].hash})"
-      self.__hash = int(hashlib.sha256(cot_string.encode()).hexdigest(), 16)
-    elif self.operator == ABS:
-      self.__hash = abs(self.children[0].hash)
-    elif self.operator == LOG:
-      log_string = f"ln({self.children[0].hash})"
-      self.__hash = int(hashlib.sha256(log_string.encode()).hexdigest(), 16)
-    elif self.operator == SELECT:
-      select_string:str = f"select({self.children[0].hash},{self.children[1].hash},{self.children[2].hash})"
-      self.__hash = int(hashlib.sha256(select_string.encode()).hexdigest(), 16)
-    elif self.operator == SQRT:
-      sqrt_string:str = f"sqrt({self.children[0].hash})"
-      self.__hash = int(hashlib.sha256(sqrt_string.encode()).hexdigest(), 16)
-    elif self.operator == EQ:
-      eq_string:str = f"{self.children[0].hash} == {self.children[1].hash}"
-      self.__hash = int(hashlib.sha256(eq_string.encode()).hexdigest(), 16)
-    elif self.operator == NE:
-      ne_string:str = f"{self.children[0].hash} != {self.children[1].hash}"
-      self.__hash = int(hashlib.sha256(ne_string.encode()).hexdigest(), 16)
-    elif self.operator == GT:
-      gt_string:str = f"{self.children[0].hash} > {self.children[1].hash}"
-      self.__hash = int(hashlib.sha256(gt_string.encode()).hexdigest(), 16)
-    elif self.operator == GE:
-      ge_string:str = f"{self.children[0].hash} >= {self.children[1].hash}"
-      self.__hash = int(hashlib.sha256(ge_string.encode()).hexdigest(), 16)
-    elif self.operator == LT:
-      lt_string:str = f"{self.children[0].hash} < {self.children[1].hash}"
-      self.__hash = int(hashlib.sha256(lt_string.encode()).hexdigest(), 16)
-    elif self.operator == LE:
-      le_string:str = f"{self.children[0].hash} <= {self.children[1].hash}"
-      self.__hash = int(hashlib.sha256(le_string.encode()).hexdigest(), 16)
-    elif self.operator == ASSIGN:
-      assign_string:str = f"{self.children[0].hash} = {self.children[1].hash}"
-      self.__hash = int(hashlib.sha256(assign_string.encode()).hexdigest(), 16)
-    elif self.operator == INDEX:
-      return self.__index_value
-    elif self.operator == ARRAY_ACCESS:
-      array_access_string:str = f"{self.children[0].hash}[{self.children[1].hash}]"
-      self.__hash = int(hashlib.sha256(array_access_string.encode()).hexdigest(), 16)
-    elif self.operator == ARRAY:
-      array_string:str = f"[{','.join([str(child.hash) for child in self.children])}]"
-      self.__hash = int(hashlib.sha256(array_string.encode()).hexdigest(), 16)
-    elif self.operator == FLOAT:
-      float_str = str(self.float_value).encode()
-      # Compute the SHA-256 hash
-      hash_hex = hashlib.sha256(float_str).hexdigest()
-      # Convert the hexadecimal hash to an integer
-      hash_int = int(hash_hex, 16)
-      self.__hash = hash_int
-    elif self.operator == DATA:
-      fullname = str(self)
-      # Compute the SHA-256 hash and convert to an integer
-      hash_hex = hashlib.sha256(fullname.encode()).hexdigest()
-      hash_int = int(hash_hex, 16)
-      self.__hash = hash_int
-    elif self.operator == GATHER or self.operator == SUM or self.operator == AVERAGE:
-      if self.through is None:
-        raise ValueError(f"attribute.hash: {self.operator.name.upper()} operator must have a through attribute.")
-      operation_string:str = f"{self.operator.name}({self.__children[0].hash}_through_{self.through})"
-      self.__hash = int(hashlib.sha256(operation_string.encode()).hexdigest(), 16)
-    elif self.operator == TRANSPOSE:
-      transpose_string:str = f"transpose({self.children[0].hash})"
-      self.__hash = int(hashlib.sha256(transpose_string.encode()).hexdigest(), 16)
-    elif self.operator == ROW:
-      row_string:str = f"{self.children[0].hash}.row({self.children[1].hash})"
-      self.__hash = int(hashlib.sha256(row_string.encode()).hexdigest(), 16)
-    elif self.operator == COL:
-      col_string:str = f"{self.children[0].hash}.col({self.children[1].hash})"
-      self.__hash = int(hashlib.sha256(col_string.encode()).hexdigest(), 16)
-    elif self.operator == CROSS:
-      cross_string:str = f"{self.children[0].hash}.cross({self.children[1].hash})"
-      self.__hash = int(hashlib.sha256(cross_string.encode()).hexdigest(), 16)
-    elif self.operator == NORM:
-      norm_string:str = f"{self.children[0].hash}.norm()"
-      self.__hash = int(hashlib.sha256(norm_string.encode()).hexdigest(), 16)
-    elif self.operator == DET:
-      det_string:str = f"{self.children[0].hash}.det()"
-      self.__hash = int(hashlib.sha256(det_string.encode()).hexdigest(), 16)
-    elif self.operator == INV:
-      inv_string:str = f"{self.children[0].hash}.inv()"
-      self.__hash = int(hashlib.sha256(inv_string.encode()).hexdigest(), 16)
-    return self.__hash
+    else:
+      from yasps.attributeHelper import hashAttribute
+      return hashAttribute(self)
 
   def __hash__(self) -> int:
     return self.hash

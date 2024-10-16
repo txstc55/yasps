@@ -31,7 +31,7 @@ for face in faces:
 # initialize the scene
 s0 = scene("scene0")
 s0.addAttribute("dt", rows = 1, cols = 1)
-s0.attributes["dt"].updateValue(np.array([0.01]))
+s0.attributes["dt"].updateValue(np.array([200]))
 
 # add the bunny mesh
 bunny = s0.addMesh("bunny")
@@ -53,7 +53,7 @@ bunny_vertices.attributes["heat"].updateValue(heat_values)
 avg_heat = bunny_vertices.addAttribute("avg_heat", through = bunny_vertices.connectivities["vertex_to_vertex"], operation = "AVERAGE", source = bunny_vertices["heat"])
 
 # get the d_heat
-heat_change = (avg_heat - bunny_vertices["heat"]) * s0["dt"]
+heat_change = (avg_heat - bunny_vertices["heat"]) / s0["dt"]
 bunny_vertices.addAttribute("d_heat", computed_attribute = heat_change)
 
 

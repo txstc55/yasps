@@ -1,4 +1,5 @@
 import os
+# for solving the name mangling issue when we compile a file
 def get_mangled_name(kernel_header: str, kernel_name: str) -> str:
   f = open("tmp_compile.cu", 'w')
   f.write(f'''

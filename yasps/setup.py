@@ -15,7 +15,8 @@ extensions = [
     Extension("yasps.minimizer", ["yasps/minimizer/minimizer.pyx"]),
     Extension("yasps.autodiff", ["yasps/attribute/autodiff.pyx"]),
     Extension("yasps.helper", ["yasps/helper.pyx"]),
-
+    Extension("yasps.attributeHelper", ["yasps/attribute/attributeHelper.pyx"]),
+    Extension("yasps.attributeOperations", ["yasps/attribute/attributeOperations.pyx"])
 ]
 setup(
     name='yasps',  # This is the name of your package

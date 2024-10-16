@@ -12,3 +12,5 @@ from .energy import energy
 from .minimizer import minimizer
 from .autodiff import autodiff
 from .helper import *
+from .attributeHelper import *
+from .attributeOperations import *
