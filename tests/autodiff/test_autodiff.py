@@ -22,3 +22,13 @@ print(result)
 aa = a + b
 result = ad.diff(aa, a)
 print(result)
+
+## test row
+aa0 = aa.row(0)
+result = ad.diff(aa0, a)
+print(result)
+
+## test column
+aa0 = aa.col(0)
+result = ad.diff(aa0, a)
+print(result)

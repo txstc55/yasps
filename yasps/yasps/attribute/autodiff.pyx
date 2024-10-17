@@ -36,8 +36,11 @@ class autodiff:
     elif current.operator == ya.DATA:
       result = self.__diff_data(current, wrt)
     elif current.operator == ya.ARRAY_ACCESS:
-      self.__seen_differentiations[(current, wrt)] = self.__diff_data(current, wrt)
       result = self.__diff_array_access(current, wrt)
+    elif current.operator == ya.ROW:
+      result = self.__diff_row(current, wrt)
+    elif current.operator == ya.COL:
+      result = self.__diff_col(current, wrt)
     else:
       raise ValueError(f"autodiff: The operator is not supported: {current.operator}")
     self.__seen_differentiations[(current, wrt)] = result
@@ -50,7 +53,9 @@ class autodiff:
     return dA.add_explicit(dB)
 
   def __diff_sub(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
-    return ya.attribute.to_array([self.__diff(current.children[0], wrt) - self.__diff(current.children[1], wrt)], rows = current.rows, columns = current.cols, correspondance = current.correspondance)
+    dA = self.__diff(current.children[0], wrt)
+    dB = self.__diff(current.children[1], wrt)
+    return dA.sub_explicit(dB)
 
   def __diff_mul(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     # we explicitly do the multiplication
@@ -123,20 +128,25 @@ class autodiff:
   def __diff_array_access(self, current: ya.attribute, wrt: ya.attribute):
     # differentiating an array access
     # is equal to differentiating every element of the array
-    return self.__diff(current.children[0], wrt)
+    mat_diff = self.__diff(current.children[0], wrt)
+    ind = current.children[1].index_value
+    return ya.attribute.to_array(mat_diff.children[ind * wrt.size: (ind + 1) * wrt.size], rows = 1, cols = wrt.size)
 
   def __diff_row(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     # differentiating a row
     mat_diff = self.__diff(current.children[0], wrt)
     mat_cols = current.children[0].cols
     row_index = current.children[1].index_value
-    return ya.to_array([mat_diff[mat_cols * row_index + i] for i in range(mat_cols)], rows = 1, cols = mat_cols)
+    return ya.attribute.to_array(mat_diff.children[row_index * mat_cols * wrt.size:(row_index + 1) * mat_cols * wrt.size], rows = mat_cols, cols = wrt.size)
 
   def __diff_col(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     mat_diff = self.__diff(current.children[0], wrt)
     mat_rows = current.children[0].rows
     col_index = current.children[1].index_value
-    return ya.to_array([mat_diff[col_index + i * mat_rows] for i in range(mat_rows)], rows = mat_rows, cols = 1)
+    result = []
+    for i in range(mat_rows):
+      result += mat_diff.children[(i * mat_rows * wrt.size + col_index * wrt.size):(i * mat_rows * wrt.size + (col_index + 1) * wrt.size)]
+    return ya.attribute.to_array(result, rows = mat_rows, cols = wrt.size)
 
   def __diff_float(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     return ya.attribute.zeros(current.size, wrt.size)
