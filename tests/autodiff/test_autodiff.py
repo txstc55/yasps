@@ -11,10 +11,14 @@ ad = autodiff()
 result = ad.diff(a * b, a)
 print(result)
 
-# test division
+## test division
 a2 = a * a
 a0 = a2[0, 0]
-result = ad.diff(a / a[0, 0], a)
+result = ad.diff(a2 / a[0, 0], a)
 print(result)
-# test =  -1 * (1.0 / (a[0, 0] * a[0, 0]))
-# print(test)
+
+
+## test addition
+aa = a + b
+result = ad.diff(aa, a)
+print(result)

@@ -1,4 +1,5 @@
 # cython: language_level=3
+from typing import List
 import yasps.attribute as ya
 import hashlib # for hashing
 
@@ -125,8 +126,8 @@ def attribute2str(att: ya.attribute):
       return str(att.float_value)
     elif att.operator == ya.ARRAY_ACCESS:
       array_index = att.children[1].index_value
-      row = array_index // att.cols
-      col = array_index % att.cols
+      row = array_index // att.children[0].cols
+      col = array_index % att.children[0].cols
       return f"{att.children[0]}[{row}, {col}]"
     elif att.operator == ya.DATA:
       if att.correspondance is not None:
@@ -134,14 +135,12 @@ def attribute2str(att: ya.attribute):
       else:
         raise ValueError("attribute.__str__: correspondance is None for a DATA attribute.")
     elif att.operator == ya.ARRAY:
-      # Construct the string without backslashes inside the f-string
-      children_str = ',\n'.join([str(child) for child in att.children])
       results = []
       for i in range(att.rows):
-        row_string: str = ""
+        row_strings: List[str] = []
         for j in range(att.cols):
-          row_string += str(att[i, j]) + " "
-        results.append(row_string)
+          row_strings.append(str(att[i, j]))
+        results.append(", ".join(row_strings))
       result_string = '\n'.join(results)
       return f"Mat(\n{result_string}\n)"
     elif att.operator == ya.GATHER or att.operator == ya.SUM or att.operator == ya.AVERAGE:
