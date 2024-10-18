@@ -34,11 +34,11 @@ LOG = operator("log", 0, False)
 SELECT = operator("select", 2, False)
 SQRT = operator("sqrt", 0, False)
 EQ = operator("==", 1, True)
-NE = operator("!=", 1, True)
+NEQ = operator("!=", 1, True)
 LT = operator("<", 1, False)
-LE = operator("<=", 1, False)
+LEQ = operator("<=", 1, False)
 GT = operator(">", 1, False)
-GE = operator(">=", 1, False)
+GEQ = operator(">=", 1, False)
 ASSIGN = operator("=", 1, False)
 INDEX = operator("ijk", 3, False) # the index used for array access
 FLOAT = operator("float", 3, False) # for float numbers
@@ -57,7 +57,8 @@ COL = operator("col", 3, False) # for column access
 CROSS = operator("cross", 3, False) # for cross product
 NORM = operator("norm", 3, False) # for norm
 DET = operator("det", 3, False) # determinant of the matrix
-INV = operator("inverse", 3, False)
+INV = operator("inverse", 3, False) # matrix inverse
+DOT = operator("dot", 3, False) # dot product
 
 
 
@@ -285,6 +286,16 @@ class attribute:
         raise ValueError("attribute.__getitem__: index out of range.")
       if self.operator == ARRAY:
         return self.children[index]
+      elif self.operator == SELECT:
+        # for select, if the two values are the same
+        # then we return it
+        # otherwise we need to return another select
+        true_value = self.children[1]
+        false_value = self.children[2]
+        if true_value[index].hash == false_value[index].hash:
+          return true_value[index]
+        else:
+          return attribute.select(self.children[0], true_value[index], false_value[index])
       elif self.operator == DATA:
         indexAttribute = attribute(operator = INDEX, index_value = index)
         return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
@@ -299,6 +310,17 @@ class attribute:
         raise ValueError(f"attribute.__getitem__: index out of range, acceessing index of {index} in a matrix of {self.rows}x{self.cols}.")
       if self.operator == ARRAY:
         return self.children[index[0] * self.cols + index[1]]
+      elif self.operator == SELECT:
+        # for select, if the two values are the same
+        # then we return it
+        # otherwise we need to return another select
+        true_value = self.children[1]
+        false_value = self.children[2]
+        new_ind = index[0] * self.cols + index[1]
+        if true_value[new_ind].hash == false_value[new_ind].hash:
+          return true_value[new_ind]
+        else:
+          return attribute.select(self.children[0], true_value[new_ind], false_value[new_ind])
       elif self.operator == DATA:
         indexAttribute = attribute(operator = INDEX, index_value = index[0] * self.cols + index[1])
         return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
@@ -444,8 +466,26 @@ class attribute:
       return div_explicitly(self, other)
     raise ValueError(f"attribute.div_explicit: cannot divide an attribute by {type(other)}.")
 
+  ################################################
+  # all other things
+  ################################################
+  def pow(self, other: Union[float, attribute]) -> attribute:
+    if isinstance(other, float):
+      other_attribute = attribute(float_value = other)
+      return self.pow(other_attribute)
+    elif isinstance(other, attribute):
+      from yasps.attributeOperations import pow_op
+      return pow_op(self, other)
+    raise ValueError("attribute.pow: cannot raise an attribute to a non-attribute.")
+
+  def sqrt(self) -> attribute:
+    from yasps.attributeOperations import sqrt_op
+    return sqrt_op(self)
+
+
   def log(self) -> attribute:
-    return attribute(children = [self], operator = LOG, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+    from yasps.attributeOperations import log_op
+    return log_op(self)
 
   def trace(self) -> attribute:
     if self.rows != self.cols:
@@ -465,9 +505,6 @@ class attribute:
     if other.rows != 3:
       return self.cross(other.transpose())
     return attribute(children = [self, other], operator = CROSS, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 3, cols = 1)
-
-
-
 
   # transpose operator
   def transpose(self)->attribute:
@@ -502,6 +539,56 @@ class attribute:
       if self.rows != self.cols:
         raise ValueError("attribute.determinant: cannot compute determinant of a non-square matrix.")
       return attribute(children = [self], operator = DET, correspondance = self.correspondance, rows = 1, cols = 1)
+
+  def dot(self, other: attribute) -> attribute:
+    if self.size != other.size:
+      raise ValueError("attribute.dot: cannot compute dot product of vectors of different sizes.")
+    if not (self.rows == 1 or self.cols == 1):
+      raise ValueError(f"attribute.dot: dot product is only defined for vectors, got dimension {self.rows}x{self.cols}.")
+    if not (other.rows == 1 or other.cols == 1):
+      raise ValueError(f"attribute.dot: dot product is only defined for vectors, got dimension {other.rows}x{other.cols}.")
+    return attribute(children = [self, other], operator = DOT, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
+
+  def dot_explicit(self, other: attribute) -> attribute:
+    if self.size != other.size:
+      raise ValueError("attribute.dot: cannot compute dot product of vectors of different sizes.")
+    if not (self.rows == 1 or self.cols == 1):
+      raise ValueError(f"attribute.dot: dot product is only defined for vectors, got dimension {self.rows}x{self.cols}.")
+    if not (other.rows == 1 or other.cols == 1):
+      raise ValueError(f"attribute.dot: dot product is only defined for vectors, got dimension {other.rows}x{other.cols}.")
+    result = attribute(float_value = 0.0)
+    for i in range(self.size):
+      result += self[i] * other[i]
+    return result
+
+  def eq(self, other: attribute) -> attribute:
+    if self.cols != other.cols or self.rows != other.rows:
+      raise ValueError("attribute.eq: cannot compare attributes of different sizes.")
+    return attribute(children = [self, other], operator = EQ, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
+
+  def neq(self, other: attribute) -> attribute:
+    if self.cols != other.cols or self.rows != other.rows:
+      raise ValueError("attribute.neq: cannot compare attributes of different sizes.")
+    return attribute(children = [self, other], operator = NEQ, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
+
+  def gt(self, other: attribute) -> attribute:
+    if self.cols != other.cols or self.rows != other.rows:
+      raise ValueError("attribute.gt: cannot compare attributes of different sizes.")
+    return attribute(children = [self, other], operator = GT, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
+
+  def geq(self, other: attribute) -> attribute:
+    if self.cols != other.cols or self.rows != other.rows:
+      raise ValueError("attribute.geq: cannot compare attributes of different sizes.")
+    return attribute(children = [self, other], operator = GEQ, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
+
+  @staticmethod
+  def select(condition: attribute, true_attribute: attribute, false_attribute: attribute) -> attribute:
+    # check dimension of true and false attribute
+    if true_attribute.rows != false_attribute.rows or true_attribute.cols != false_attribute.cols:
+      raise ValueError("attribute.select: true and false attributes must have the same dimension.")
+    return attribute(children = [condition, true_attribute, false_attribute], operator = SELECT, correspondance = attribute.__check_heritage(true_attribute, false_attribute).correspondance, rows = true_attribute.rows, cols = true_attribute.cols)
+
+
 
   ################################################
   ################################################

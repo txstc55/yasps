@@ -109,6 +109,9 @@ def hashAttribute(att: ya.attribute) -> int:
   elif att.operator == ya.INV:
     inv_string:str = f"{att.children[0].hash}.inv()"
     att._attribute__hash = int(hashlib.sha256(inv_string.encode()).hexdigest(), 16)
+  elif att.operator == ya.DOT:
+    dot_string:str = f"{att.children[0].hash}.dot({att.children[1].hash})"
+    att._attribute__hash = int(hashlib.sha256(dot_string.encode()).hexdigest(), 16)
   return att.hash
 
 
@@ -175,6 +178,8 @@ def attribute2str(att: ya.attribute):
       return f"det({att.children[0]})"
     elif att.operator == ya.INV:
       return f"inv({att.children[0]})"
+    elif att.operator == ya.DOT:
+      return f"{att.children[0]} · {att.children[1]}"
     else:
       raise ValueError("attribute.__str__: unknown operator type.")
   else:

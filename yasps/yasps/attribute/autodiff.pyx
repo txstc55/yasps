@@ -96,9 +96,41 @@ class autodiff:
         result[j * wrt.size + i] = summation[j]
     return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
 
-  # def __diff_log(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
-  #   # check if the children is a determinant
-  #   if current.children[0].operator == ya.DET:
+  def __diff_neg(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    current_diff = self.__diff(current.children[0], wrt)
+    result = [-x for x in current_diff.children]
+    return ya.attribute.to_array(result, rows = current_diff.rows, cols = current_diff.cols)
+
+  def __diff_pow(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    # we know that current is size one
+    # d/dx of f(x)^g(x) = f(x)^g(x) * (g'(x) * ln(f(x)) + g(x) * f'(x) / f(x))
+    fx = current.children[0]
+    gx = current.children[1]
+    d_fx = self.__diff(fx, wrt)
+    d_gx = self.__diff(gx, wrt)
+    ln_fx = fx.log()
+    d_gx_ln_fx = d_gx.mul_explicit(ln_fx) # we know ln_fx is a scalar
+    gx_d_fx_fx = d_fx.mul_explicit(gx / fx) # we know gx and fx are both scalars
+    result = current.mul_explicit(d_gx_ln_fx.add_explicit(gx_d_fx_fx))
+    return result
+
+  def __diff_log(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    df = self.__diff(current.children[0], wrt)
+    return df.div_explicit(current.children[0])
+
+  def __diff_norm(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    df = self.__diff(current.children[0], wrt) # df is m by n
+    result = [None] * wrt.size # because norm is a scalar
+    for i in range(wrt.size):
+      dfi = ya.attribute.to_array([df[j, i] for j in range(current.children[0].size)], rows = current.children[0].size, cols = 1)
+      fdfi = current.children[0].dot_explicit(dfi)
+      result[i] = fdfi / current
+    return ya.attribute.to_array(result, rows = 1, cols = wrt.size)
+
+  def __diff_select(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    return ya.attribute.select(current.children[0], self.__diff(current.children[1], wrt), self.__diff(current.children[2], wrt))
+
+
 
   def __diff_gather(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     # differentiating through a gathering is a bit different
@@ -110,9 +142,44 @@ class autodiff:
     if child_jacobian_name not in child.correspondance.attributes:
       child_jacobian = self.__diff(child, wrt)
       # once we get the child jacobian, we first add it as an attribute in case we need it later
-      child.correspondance.attributes[child_jacobian_name] = child_jacobian
+      child.correspondance.addAttribute(child_jacobian_name, computed_attribute = child_jacobian)
     else:
       child_jacobian = child.correspondance.attributes[child_jacobian_name]
+    # now we need to determine, in the jacobian, are there elements that aren't tied to a primitive
+    skipped_indices = []
+
+    for i in range(child_jacobian.size):
+      if child_jacobian[i].correspondance is None or (child_jacobian[i].correspondance.type != "primitive") or child_jacobian[i].operator == ya.FLOAT:
+        skipped_indices.append(i)
+    # ok now we need to create new attributes for the non skipped indices
+    for i in range(child_jacobian.size):
+      if i in skipped_indices:
+        continue
+      # # we need to create a new attribute for the ith element
+      # child.correspondance.addAttribute(f"{child_jacobian_name}_{i}", computed_attribute = child_jacobian.children[i])
+      current.correspondance.addAttribute(f"{child_jacobian_name}_{i}", through = current.through, source = child.correspondance[child_jacobian_name][i])
+    # now we need to assemble the jacobian matrix
+    result = [None] * current.size * wrt.size * current.through.dimension
+    # this will be a blocked matrix, where blocks are always on diagonal
+    for i in range(current.through.dimension): # work on the block
+      block_jacobian = [ya.attribute(float_value = 0.0)] * child_jacobian.size
+      for j in range(child_jacobian.size):
+        if j in skipped_indices:
+          # direcltly get it
+          block_jacobian[j] = child_jacobian[j]
+        else:
+          block_jacobian[j] = current.correspondance[f"{child_jacobian_name}_{j}"][i]
+      # now we put the block jacobian back
+      for j in range(child_jacobian.rows):
+        for k in range(child_jacobian.cols):
+          ind = j * child_jacobian.cols + k
+          result_ind = (i * child_jacobian.size * current.through.dimension) + j * (wrt.size * current.through.dimension) + i * wrt.size + k
+          result[result_ind] = block_jacobian[ind]
+    return ya.attribute.to_array(result, rows = current.size, cols = wrt.size * current.through.dimension)
+
+
+
+
     return child_jacobian
 
 

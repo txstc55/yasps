@@ -2,7 +2,7 @@
 from __future__ import annotations
 import yasps.attribute as ya
 from yasps.connectivity import connectivity
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 from yasps.deviceKernel import deviceKernel
 from yasps.globalKernel import globalKernel
 
@@ -172,6 +172,8 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
             self.__generate_code_for_det(current)
           elif current.operator == ya.INV:
             self.__generate_code_for_inverse(current)
+          elif current.operator == ya.DOT:
+            self.__generate_code_for_dot(current)
       else:
         # it is not an output
         # and it has a name
@@ -331,7 +333,12 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     # currently we have select or power
     # and power is forbidden on matrix
     # so we can always do it this way as op(a, b, c, d, ...)
-    self.__code_strings.append(f'''
+    if current.operator == ya.SELECT:
+      self.__code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])} ? {self.getIntermediateName(current.children[1])} : {self.getIntermediateName(current.children[2])};''')
+
+    else:
+      self.__code_strings.append(f'''
 {attribute_initialization} = {current.operator.name}({", ".join([self.getIntermediateName(x) for x in current.children])});''')
 
 
@@ -508,3 +515,8 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.inverse();''')
+
+  def __generate_code_for_dot(self, current: ya.attribute) -> None:
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    self.__code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}.dot({self.getIntermediateName(current.children[1])});''')

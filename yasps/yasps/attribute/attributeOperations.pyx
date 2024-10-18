@@ -1,5 +1,6 @@
 import yasps.attribute as ya
 from typing import Union
+import math
 def add(att: ya.attribute, other: ya.attribute) -> ya.attribute:
   if other.isZero:
     return att
@@ -40,6 +41,8 @@ def sub(att: ya.attribute, other: ya.attribute) -> ya.attribute:
     return att
   if att.isZero:
     return -other
+  if att.hash == other.hash:
+    return ya.attribute.zeros(att.rows, att.cols)
   if att.operator == ya.FLOAT and other.operator == ya.FLOAT:
     return ya.attribute(float_value = att.float_value - other.float_value)
   if att.size == 1 and other.size == 1:
@@ -138,3 +141,42 @@ def div_explicitly(att: ya.attribute, other: ya.attribute):
   if other.operator == ya.FLOAT:
     return mul_explicitly(att, ya.attribute(float_value = 1.0 / other.float_value))
   return ya.attribute.to_array([att[i] * (1.0 / other) for i in range(att.size)], att.rows, att.cols)
+
+def pow_op(att: ya.attribute, other: ya.attribute):
+  if att.size != 1:
+    raise ValueError("attribute.__pow__: cannot raise power of a non scalar.")
+  if other.size != 1:
+    raise ValueError("attribute.__pow__: cannot raise to a non scalar power.")
+  if att.isZero:
+    return ya.attribute(float_value = 0.0)
+  if att.isIdentity:
+    return ya.attribute(float_value = 1.0)
+  if other.isZero:
+    return ya.attribute(float_value = 1.0)
+  if other.isIdentity:
+    return att
+  if att.operator == ya.FLOAT and other.operator == ya.FLOAT:
+    return ya.attribute(float_value = att.float_value ** other.float_value)
+  return ya.attribute(children = [att, other], operator = ya.POW, correspondance = ya.attribute._attribute__check_heritage(att, other).correspondance, rows = att.rows, cols = att.cols)
+
+def sqrt_op(att: ya.attribute):
+  if att.size != 1:
+    raise ValueError("attribute.__sqrt__: cannot take square root of a non scalar.")
+  if att.isZero:
+    return ya.attribute(float_value = 0.0)
+  if att.isIdentity:
+    return ya.attribute(float_value = 1.0)
+  if att.operator == ya.FLOAT:
+    return ya.attribute(float_value = math.sqrt(att.float_value))
+  return ya.attribute(children = [att], operator = ya.SQRT, correspondance = att.correspondance, rows = att.rows, cols = att.cols)
+
+def log_op(att: ya.attribute):
+  if att.size != 1:
+    raise ValueError("attribute.__log__: cannot take log of a non scalar.")
+  if att.isZero:
+    raise ValueError("attribute.__log__: cannot take log of zero.")
+  if att.isIdentity:
+    return ya.attribute(float_value = 0.0)
+  if att.operator == ya.FLOAT:
+    return ya.attribute(float_value = math.log(att.float_value))
+  return ya.attribute(children = [att], operator = ya.LOG, correspondance = att.correspondance, rows = att.rows, cols = att.cols)
