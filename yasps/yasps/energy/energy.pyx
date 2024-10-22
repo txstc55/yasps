@@ -103,7 +103,6 @@ class energy:
         for node in path:
           if node.operator == ROW:
             # get the new index
-
             rowIndex = node.children[1].index_value
             currentIndex = indicesCPU[node.children[0].hash][currentIndex, rowIndex]
           elif node.operator == DATA:
@@ -134,7 +133,9 @@ class energy:
       # do it in reverse order
       for i in range(len(path) - 2, -1, -1):
         # we will compute the jacobian for each neighboring nodes
-        differentiater.diff(path[i], path[i+1])
+        print("Differentiating: ", path[i].fullName, path[i+1].fullName)
+        result = differentiater.diff(path[i], path[i+1])
+        print(result)
 
   # def __diff_gather(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
   #   # differentiating through a gathering is a bit different

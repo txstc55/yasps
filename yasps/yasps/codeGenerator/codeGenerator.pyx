@@ -16,6 +16,7 @@ class codeGenerator:
     self.__attribute_replacements: Dict[int, int] = {}
     self.__num_intermediates: int = 0
     self.__code_strings: List[str] = []
+    self.__repeated_intermediates: Set[int] = set()
 
   def __generateCodeOrder(self) -> None:
     if self.__input.deviceKernel is not None:
@@ -105,23 +106,18 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     # go from bottom to top
     # check how many items appeared more than once
     order_counts = {}
+
+    # we check if the item actually needs to be initialized
+    # since some of the elements are only computed once
     for item in self.__order:
       if item.hash in order_counts:
-        order_counts[item.hash] += 1
+        self.__repeated_intermediates.add(item.hash)
       else:
         order_counts[item.hash] = 1
-    # check number of items with more than one count
-    multiple_count_items = 0
-    for key in order_counts:
-      if order_counts[key] > 1:
-        multiple_count_items += 1
-    print(f"multiple_count_items: {multiple_count_items}")
 
-    replacement_count: int = 0
     for current in self.__order[::-1]:
       if current.hash in self.__attribute_replacements:
         # we don't need to do anything about it
-        replacement_count += 1
         pass
       elif current.hash == self.__input.hash or current.name == "":
         # we need to generate the code accordingly
@@ -265,12 +261,11 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
 
     # remove the duplicates, some of the index initialization may be duplicated
     seen_strings: Set[str] = set()
-    self.__code_strings = [x.strip() for x in self.__code_strings if not (x in seen_strings or seen_strings.add(x))]
+    self.__code_strings = [x.strip('\n') for x in self.__code_strings if not (x.strip('\n') in seen_strings or seen_strings.add(x.strip('\n')))]
     kernelString: str = "\n".join(self.__code_strings)
 
     # now we generate the device kernel
     self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allDependencies)
-    print(f"Replacement count: {replacement_count}")
     print(f"All intermediate count: {len(self.__attribute_replacements)}")
     print(f"num intermediates: {self.__num_intermediates}")
 
@@ -328,6 +323,14 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
 
   def __generate_code_for_type_0(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+#     if current.hash not in self.__repeated_intermediates and current.hash != self.__input.hash:
+#       if current.size == 1:
+#         self.__code_strings.append(f'''
+# # define {attribute_name} ({current.operator.name}({self.getIntermediateName(current.children[0])}))''')
+#       else:
+#         self.__code_strings.append(f'''
+# # define {attribute_name} ({self.getIntermediateName(current.children[0])}.array().{current.operator.name}())''')
+#       return
     # different code generation for scalar and double
     if current.size == 1:
       self.__code_strings.append(f'''
@@ -340,6 +343,10 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
 
   def __generate_code_for_type_1(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+#     if current.hash not in self.__repeated_intermediates and current.hash != self.__input.hash:
+#       self.__code_strings.append(f'''
+# # define {attribute_name} ({self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])})''')
+#       return
     if current.operator == ya.MUL or current.operator == ya.DIV:
       self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')

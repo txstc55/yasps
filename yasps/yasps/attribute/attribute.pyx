@@ -5,6 +5,7 @@ import numpy as np
 import pycuda.gpuarray as gpuarray
 from typing import Optional, List, Union, Tuple
 from typing import TYPE_CHECKING
+import pycuda.driver as cuda
 
 from yasps.operator import operator
 if TYPE_CHECKING:
@@ -636,6 +637,9 @@ class attribute:
   ################################################
   ################################################
   def compute(self) -> attribute:
+    start_compute = cuda.Event()
+    end_compute = cuda.Event()
+    start_compute.record()
     if self.__operator == DATA:
       # do nothing, its a data attribute
       return self
@@ -647,14 +651,13 @@ class attribute:
       # now add the global kernel
       self.__globalKernel = globalKernel(self)
       # after we generate the kernel, we first check if our data is already allocated or if the size does not match
-    assert self.__correspondance is not None # cannot be none
-    assert self.__deviceKernel is not None # cannot be none
-    assert self.__globalKernel is not None
-    if self.__value is None or self.__value.size < self.__correspondance.numInstances * self.size:
-      # reallocate a new pycuda array with the correct size
-      print(f"Reallocation needed, old size: {self.__value.size}, new size: {self.__correspondance.numInstances * self.size}")
-      self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
-      # print(self.value)
+      assert self.__correspondance is not None # cannot be none
+      assert self.__deviceKernel is not None # cannot be none
+      assert self.__globalKernel is not None
+      if self.__value is None or self.__value.size < self.__correspondance.numInstances * self.size:
+        # reallocate a new pycuda array with the correct size
+        print(f"Reallocation needed, old size: {self.__value.size}, new size: {self.__correspondance.numInstances * self.size}")
+        self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
     # after we allocated, we invoke the kernel
     arguments: List[gpuarray.GPUArray] = [x.value for x in self.__deviceKernel.kernelDatas] + [x.value for x in self.__deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__value]
     # # check the values
@@ -662,7 +665,21 @@ class attribute:
     #   print(item)
 
     # finally call the kernel
+    # time the execution
+    start_call = cuda.Event()
+    end_call = cuda.Event()
+    start_call.record()
     self.__globalKernel.kernel(*arguments, np.uint32(self.__correspondance.numInstances), block=(32, 1, 1), grid=((self.__correspondance.numInstances + 32) // 32, 1, 1))
+    # Record the end event
+    end_call.record()
+    # Wait for the end event to complete
+    end_call.synchronize()
+    # Calculate the elapsed time in milliseconds
+    elapsed_time_ms = start_call.time_till(end_call)
+    end_compute.record()
+    end_compute.synchronize()
+    print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
+    print(f"Total time: {start_compute.time_till(end_compute):.5f} ms")
     return self
     # print(self.value)
 

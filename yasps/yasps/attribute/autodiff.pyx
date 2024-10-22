@@ -49,6 +49,8 @@ class autodiff:
       result = self.__diff_col(current, wrt)
     elif current.operator == ya.GATHER:
       result = self.__diff_gather(current, wrt)
+    elif current.operator == ya.SELECT:
+      result = self.__diff_select(current, wrt)
     else:
       raise ValueError(f"autodiff: The operator is not supported: {current.operator}")
     self.__seen_differentiations[(current, wrt)] = result
