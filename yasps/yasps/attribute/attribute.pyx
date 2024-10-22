@@ -188,35 +188,43 @@ class attribute:
   def code_generation_data_name(self) -> str:
     return f'{self.fullName}_global_data'
 
+  # for iszero and isidentity
+  # 0 means not zero or not identity
+  # 1 means zero or identity and singular value
+  # 2 means zero or identity and mat value
   @property
-  def isZero(self) -> bool:
+  def isZero(self) -> int:
     if self.operator == FLOAT and self.float_value == 0.0:
-      return True
+      return 1
     elif self.operator == ARRAY:
       # check if all are zero
       for i in range(self.size):
-        if not self.children[i].isZero:
-          return False
-      return True
-    return False
+        if self.children[i].isZero == 0:
+          return 0
+      if self.size == 1:
+        return 1
+      return 2
+    return 0
 
   @property
-  def isIdentity(self) -> bool:
+  def isIdentity(self) -> int:
     if self.operator == FLOAT and self.float_value == 1.0:
-      return True
+      return 1
     elif self.operator == ARRAY:
       if self.rows != self.cols:
-        return False
+        return 0
       for i in range(self.rows):
         for j in range(self.rows):
           if i == j:
-            if not self.children[i * self.cols + j].isIdentity:
-              return False
+            if self.children[i * self.cols + j].isIdentity == 0:
+              return 0
           else:
-            if not self.children[i * self.cols + j].isZero:
-              return False
-      return True
-    return False
+            if self.children[i * self.cols + j].isZero == 0:
+              return 0
+      if self.rows == 1:
+        return 1
+      return 2
+    return 0
 
   @property
   def isFloatMat(self) -> bool:
@@ -571,15 +579,27 @@ class attribute:
       raise ValueError("attribute.neq: cannot compare attributes of different sizes.")
     return attribute(children = [self, other], operator = NEQ, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
 
-  def gt(self, other: attribute) -> attribute:
-    if self.cols != other.cols or self.rows != other.rows:
-      raise ValueError("attribute.gt: cannot compare attributes of different sizes.")
-    return attribute(children = [self, other], operator = GT, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
+  def __gt__(self, other: Union[attribute, float]) -> attribute:
+    if isinstance(other, float):
+      other_attribute = attribute(float_value = other)
+      return self > other_attribute
+    elif isinstance(other, attribute):
+      if self.cols != other.cols or self.rows != other.rows:
+        raise ValueError("attribute.gt: cannot compare attributes of different sizes.")
+      return attribute(children = [self, other], operator = GT, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
+    else:
+      raise ValueError("attribute.__gt__: other must be an attribute or a float.")
 
-  def geq(self, other: attribute) -> attribute:
-    if self.cols != other.cols or self.rows != other.rows:
-      raise ValueError("attribute.geq: cannot compare attributes of different sizes.")
-    return attribute(children = [self, other], operator = GEQ, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
+  def __ge__(self, other: Union[attribute, float]) -> attribute:
+    if isinstance(other, float):
+      other_attribute = attribute(float_value = other)
+      return self >= other_attribute
+    elif isinstance(other, attribute):
+      if self.cols != other.cols or self.rows != other.rows:
+        raise ValueError("attribute.geq: cannot compare attributes of different sizes.")
+      return attribute(children = [self, other], operator = GEQ, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
+    else:
+      raise ValueError("attribute.__ge__: other must be an attribute or a float.")
 
   @staticmethod
   def select(condition: attribute, true_attribute: attribute, false_attribute: attribute) -> attribute:

@@ -2,10 +2,25 @@ import yasps.attribute as ya
 from typing import Union
 import math
 def add(att: ya.attribute, other: ya.attribute) -> ya.attribute:
-  if other.isZero:
+  if att.rows != other.rows or att.cols != other.cols:
+    if att.size != 1 and other.size != 1:
+      raise ValueError("attribute.__add__: cannot add two attributes of different dimensions.")
+  if other.isZero == 1:
     return att
-  if att.isZero:
+  if other.isZero == 2:
+    # this is a mat value
+    # we check dimension first
+    if att.size == 1:
+      return ya.attribute.to_array([att for _ in range(other.size)], rows = other.rows, cols = other.cols)
+    else:
+      return att
+  if att.isZero == 1:
     return other
+  if att.isZero == 2:
+    if other.size == 1:
+      return ya.attribute.to_array([other for _ in range(att.size)], rows = att.rows, cols = att.cols)
+    else:
+      return other
   if att.operator == ya.FLOAT and other.operator == ya.FLOAT:
     return ya.attribute(float_value = att.float_value + other.float_value)
   if att.size == 1 and other.size == 1:
@@ -14,17 +29,30 @@ def add(att: ya.attribute, other: ya.attribute) -> ya.attribute:
     return ya.attribute(children = [att, other], operator = ya.BROADCAST_ADD, correspondance = ya.attribute._attribute__check_heritage(att, other).correspondance, rows = att.rows, cols = att.cols)
   if att.size == 1:
     return ya.attribute(children = [other, att], operator = ya.BROADCAST_ADD, correspondance = ya.attribute._attribute__check_heritage(att, other).correspondance, rows = other.rows, cols = other.cols)
-  # check dimension match
-  if att.rows == other.rows and att.cols == other.cols:
-    return ya.attribute(children = [att, other], operator = ya.ADD, correspondance = ya.attribute._attribute__check_heritage(att, other).correspondance, rows = att.rows, cols = att.cols)
-  else:
-    raise ValueError("attribute.__add__: cannot add two attributes of different dimensions.")
+
+  # dimension match, just do normal add
+  return ya.attribute(children = [att, other], operator = ya.ADD, correspondance = ya.attribute._attribute__check_heritage(att, other).correspondance, rows = att.rows, cols = att.cols)
 
 def add_explicitly(att: ya.attribute, other: ya.attribute) -> ya.attribute:
-  if other.isZero:
+  if att.rows != other.rows or att.cols != other.cols:
+    if att.size != 1 and other.size != 1:
+      raise ValueError("attribute.add_explicit: cannot add two attributes of different dimensions.")
+  if other.isZero == 1:
     return att
-  if att.isZero:
+  if other.isZero == 2:
+    # this is a mat value
+    # we check dimension first
+    if att.size == 1:
+      return ya.attribute.to_array([att for _ in range(other.size)], rows = other.rows, cols = other.cols)
+    else:
+      return att
+  if att.isZero == 1:
     return other
+  if att.isZero == 2:
+    if other.size == 1:
+      return ya.attribute.to_array([other for _ in range(att.size)], rows = att.rows, cols = att.cols)
+    else:
+      return other
   if att.size == 1 and other.size == 1:
     return att + other
   if other.size == 1:
@@ -37,10 +65,25 @@ def add_explicitly(att: ya.attribute, other: ya.attribute) -> ya.attribute:
     raise ValueError("attribute.add_explicit: cannot add two attributes of different dimensions.")
 
 def sub(att: ya.attribute, other: ya.attribute) -> ya.attribute:
-  if other.isZero:
+  if att.rows != other.rows or att.cols != other.cols:
+    if att.size != 1 and other.size != 1:
+      raise ValueError("attribute.__sub__: cannot sub two attributes of different dimensions.")
+  if other.isZero == 1:
     return att
-  if att.isZero:
+  if other.isZero == 2:
+    # this is a mat value
+    # we check dimension first
+    if att.size == 1:
+      return ya.attribute.to_array([att for _ in range(other.size)], rows = other.rows, cols = other.cols)
+    else:
+      return att
+  if att.isZero == 1:
     return -other
+  if att.isZero == 2:
+    if other.size == 1:
+      return ya.attribute.to_array([-other for _ in range(att.size)], rows = att.rows, cols = att.cols)
+    else:
+      return -other
   if att.hash == other.hash:
     return ya.attribute.zeros(att.rows, att.cols)
   if att.operator == ya.FLOAT and other.operator == ya.FLOAT:
@@ -58,10 +101,25 @@ def sub(att: ya.attribute, other: ya.attribute) -> ya.attribute:
     raise ValueError("attribute.__sub__: cannot subtract two attributes of different dimensions.")
 
 def sub_explicitly(att: ya.attribute, other: ya.attribute) -> ya.attribute:
-  if other.isZero:
+  if att.rows != other.rows or att.cols != other.cols:
+    if att.size != 1 and other.size != 1:
+      raise ValueError("attribute.sub_explicit: cannot sub two attributes of different dimensions.")
+  if other.isZero == 1:
     return att
-  if att.isZero:
+  if other.isZero == 2:
+    # this is a mat value
+    # we check dimension first
+    if att.size == 1:
+      return ya.attribute.to_array([att for _ in range(other.size)], rows = other.rows, cols = other.cols)
+    else:
+      return att
+  if att.isZero == 1:
     return -other
+  if att.isZero == 2:
+    if other.size == 1:
+      return ya.attribute.to_array([-other for _ in range(att.size)], rows = att.rows, cols = att.cols)
+    else:
+      return -other
   if att.size == 1 and other.size == 1:
     return att - other
   if other.size == 1:
@@ -74,13 +132,16 @@ def sub_explicitly(att: ya.attribute, other: ya.attribute) -> ya.attribute:
     raise ValueError("attribute.sub_explicit: cannot subtract two attributes of different dimensions.")
 
 def mul(att: ya.attribute, other: ya.attribute) -> ya.attribute:
-  if att.isIdentity:
+  if att.cols != other.rows:
+    if att.size != 1 and other.size != 1:
+      raise ValueError("attribute.__mul__: cannot multiply two attributes of different dimensions.")
+  if att.isIdentity == 1:
     return other
-  if other.isIdentity:
+  if other.isIdentity == 1:
     return att
-  if att.isZero:
+  if att.isZero == 1:
     return ya.attribute.zeros(other.rows, other.cols)
-  if other.isZero:
+  if other.isZero == 1:
     return ya.attribute.zeros(att.rows, att.cols)
   if other.operator == ya.FLOAT and att.operator == ya.FLOAT:
     return ya.attribute(float_value = att.float_value * other.float_value)
@@ -93,13 +154,13 @@ def mul(att: ya.attribute, other: ya.attribute) -> ya.attribute:
 
 
 def mul_explicitly(att: ya.attribute, other: ya.attribute) -> ya.attribute:
-  if att.isIdentity:
+  if att.isIdentity == 1:
     return other
-  if other.isIdentity:
+  if other.isIdentity == 1:
     return att
-  if att.isZero:
+  if att.isZero == 1:
     return ya.attribute.zeros(other.rows, other.cols)
-  if other.isZero:
+  if other.isZero == 1:
     return ya.attribute.zeros(att.rows, att.cols)
 
   if att.operator == ya.FLOAT and other.operator == ya.FLOAT:

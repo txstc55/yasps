@@ -136,7 +136,50 @@ class energy:
         # we will compute the jacobian for each neighboring nodes
         differentiater.diff(path[i], path[i+1])
 
+  # def __diff_gather(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+  #   # differentiating through a gathering is a bit different
+  #   # because we will need to generate the jacobian for two things
+  #   # first the children to wrt
+  #   child = current.children[0]
+  #   child_jacobian = ya.attribute.zeros(child.size, wrt.size)
+  #   child_jacobian_name = f"d{current.fullName}_d{child.fullName}"
+  #   if child_jacobian_name not in child.correspondance.attributes:
+  #     child_jacobian = self.__diff(child, wrt)
+  #     # once we get the child jacobian, we first add it as an attribute in case we need it later
+  #     child.correspondance.addAttribute(child_jacobian_name, computed_attribute = child_jacobian)
+  #   else:
+  #     child_jacobian = child.correspondance.attributes[child_jacobian_name]
+  #   # now we need to determine, in the jacobian, are there elements that aren't tied to a primitive
+  #   skipped_indices = []
 
+  #   for i in range(child_jacobian.size):
+  #     if child_jacobian[i].correspondance is None or (child_jacobian[i].correspondance.type != "primitive") or child_jacobian[i].operator == ya.FLOAT:
+  #       skipped_indices.append(i)
+  #   # ok now we need to create new attributes for the non skipped indices
+  #   for i in range(child_jacobian.size):
+  #     if i in skipped_indices:
+  #       continue
+  #     # # we need to create a new attribute for the ith element
+  #     # child.correspondance.addAttribute(f"{child_jacobian_name}_{i}", computed_attribute = child_jacobian.children[i])
+  #     current.correspondance.addAttribute(f"{child_jacobian_name}_{i}", through = current.through, source = child.correspondance[child_jacobian_name][i])
+  #   # now we need to assemble the jacobian matrix
+  #   result = [None] * current.size * wrt.size * current.through.dimension
+  #   # this will be a blocked matrix, where blocks are always on diagonal
+  #   for i in range(current.through.dimension): # work on the block
+  #     block_jacobian = [ya.attribute(float_value = 0.0)] * child_jacobian.size
+  #     for j in range(child_jacobian.size):
+  #       if j in skipped_indices:
+  #         # direcltly get it
+  #         block_jacobian[j] = child_jacobian[j]
+  #       else:
+  #         block_jacobian[j] = current.correspondance[f"{child_jacobian_name}_{j}"][i]
+  #     # now we put the block jacobian back
+  #     for j in range(child_jacobian.rows):
+  #       for k in range(child_jacobian.cols):
+  #         ind = j * child_jacobian.cols + k
+  #         result_ind = (i * child_jacobian.size * current.through.dimension) + j * (wrt.size * current.through.dimension) + i * wrt.size + k
+  #         result[result_ind] = block_jacobian[ind]
+  #   return ya.attribute.to_array(result, rows = current.size, cols = wrt.size * current.through.dimension)
 
 
   def __hash__(self) -> int:

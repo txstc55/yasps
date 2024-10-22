@@ -103,9 +103,25 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     # actually generate the code
     self.__generateCodeOrder()
     # go from bottom to top
+    # check how many items appeared more than once
+    order_counts = {}
+    for item in self.__order:
+      if item.hash in order_counts:
+        order_counts[item.hash] += 1
+      else:
+        order_counts[item.hash] = 1
+    # check number of items with more than one count
+    multiple_count_items = 0
+    for key in order_counts:
+      if order_counts[key] > 1:
+        multiple_count_items += 1
+    print(f"multiple_count_items: {multiple_count_items}")
+
+    replacement_count: int = 0
     for current in self.__order[::-1]:
       if current.hash in self.__attribute_replacements:
         # we don't need to do anything about it
+        replacement_count += 1
         pass
       elif current.hash == self.__input.hash or current.name == "":
         # we need to generate the code accordingly
@@ -199,7 +215,12 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
   {current.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}{"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}{"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
 ''')
         if current.size > 1:
-          self.__code_strings.append(f'''
+          if current.rows == 1 or current.cols == 1:
+            self.__code_strings.append(f'''
+    Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
+  ''')
+          else:
+            self.__code_strings.append(f'''
   Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
 ''')
         # add to intermediate names
@@ -244,11 +265,14 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
 
     # remove the duplicates, some of the index initialization may be duplicated
     seen_strings: Set[str] = set()
-    self.__code_strings = [x for x in self.__code_strings if not (x in seen_strings or seen_strings.add(x))]
+    self.__code_strings = [x.strip() for x in self.__code_strings if not (x in seen_strings or seen_strings.add(x))]
     kernelString: str = "\n".join(self.__code_strings)
 
     # now we generate the device kernel
     self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allDependencies)
+    print(f"Replacement count: {replacement_count}")
+    print(f"All intermediate count: {len(self.__attribute_replacements)}")
+    print(f"num intermediates: {self.__num_intermediates}")
 
 
   # get the name of the intermediate variables
@@ -289,9 +313,8 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
       attribute_name = current.fullName + "_local_data"
       self.__attribute_replacements[current.hash] = -1
     else:
-      attribute_name = f"INTERMEDIATE_{self.__num_intermediates}"
-      self.__attribute_replacements[current.hash] = self.__num_intermediates
-      self.__num_intermediates += 1
+      ind = self.__attribute_replacements[current.hash]
+      attribute_name = f"INTERMEDIATE_{ind}"
 
     if current.size == 1:
       attribute_initialization = f"double {attribute_name}"
@@ -319,11 +342,9 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     if current.operator == ya.MUL or current.operator == ya.DIV:
       self.__code_strings.append(f'''
-  // division and multiplication is expansive, allocate some space
   {attribute_initialization} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
     else:
       self.__code_strings.append(f'''
-  // operation is not too expansive, use expression template if possible
   auto {attribute_name} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
 
 
@@ -339,7 +360,7 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
 
     else:
       self.__code_strings.append(f'''
-{attribute_initialization} = {current.operator.name}({", ".join([self.getIntermediateName(x) for x in current.children])});''')
+  {attribute_initialization} = {current.operator.name}({", ".join([self.getIntermediateName(x) for x in current.children])});''')
 
 
   def __generate_code_for_index(self, current: ya.attribute) -> None:
@@ -402,7 +423,13 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
 ''')
     # put it back according to size
     if current.size > 1:
-      self.__code_strings.append(f'''
+      if current.rows == 1 or current.cols == 1:
+        self.__code_strings.append(f'''
+    // we now need to put it into the matrix
+    Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
+  ''')
+      else:
+        self.__code_strings.append(f'''
   // we now need to put it into the matrix
   Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
 ''')
@@ -450,7 +477,13 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
   }}
 ''')
     if current.size > 1:
-      self.__code_strings.append(f'''
+      if current.rows == 1 or current.cols == 1:
+        self.__code_strings.append(f'''
+    // we now need to put it into the matrix
+    Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
+  ''')
+      else:
+        self.__code_strings.append(f'''
   // we now need to put it into the matrix
   Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
 ''')

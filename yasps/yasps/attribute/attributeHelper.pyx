@@ -44,19 +44,19 @@ def hashAttribute(att: ya.attribute) -> int:
   elif att.operator == ya.EQ:
     eq_string:str = f"{att.children[0].hash} == ya.{att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(eq_string.encode()).hexdigest(), 16)
-  elif att.operator == ya.NE:
+  elif att.operator == ya.NEQ:
     ne_string:str = f"{att.children[0].hash} != {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(ne_string.encode()).hexdigest(), 16)
   elif att.operator == ya.GT:
     gt_string:str = f"{att.children[0].hash} > {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(gt_string.encode()).hexdigest(), 16)
-  elif att.operator == ya.GE:
+  elif att.operator == ya.GEQ:
     ge_string:str = f"{att.children[0].hash} >= {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(ge_string.encode()).hexdigest(), 16)
   elif att.operator == ya.LT:
     lt_string:str = f"{att.children[0].hash} < {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(lt_string.encode()).hexdigest(), 16)
-  elif att.operator == ya.LE:
+  elif att.operator == ya.LEQ:
     le_string:str = f"{att.children[0].hash} <= {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(le_string.encode()).hexdigest(), 16)
   elif att.operator == ya.ASSIGN:

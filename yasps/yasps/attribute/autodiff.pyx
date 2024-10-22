@@ -27,10 +27,16 @@ class autodiff:
       result = self.__diff_mul(current, wrt)
     elif current.operator == ya.DIV:
       result = self.__diff_div(current, wrt)
-    # elif current.operator == ya.POW:
-    #   return self.__diff_pow(current, wrt)
-    # elif current.operator == ya.NEG:
-    #   return self.__diff_neg(current, wrt)
+    elif current.operator == ya.POW:
+      return self.__diff_pow(current, wrt)
+    elif current.operator == ya.SQRT:
+      return self.__diff_sqrt(current, wrt)
+    elif current.operator == ya.LOG:
+      return self.__diff_log(current, wrt)
+    elif current.operator == ya.NORM:
+      return self.__diff_norm(current, wrt)
+    elif current.operator == ya.NEG:
+      return self.__diff_neg(current, wrt)
     elif current.operator == ya.FLOAT:
       result = self.__diff_float(current, wrt)
     elif current.operator == ya.DATA:
@@ -41,6 +47,8 @@ class autodiff:
       result = self.__diff_row(current, wrt)
     elif current.operator == ya.COL:
       result = self.__diff_col(current, wrt)
+    elif current.operator == ya.GATHER:
+      result = self.__diff_gather(current, wrt)
     else:
       raise ValueError(f"autodiff: The operator is not supported: {current.operator}")
     self.__seen_differentiations[(current, wrt)] = result
@@ -64,23 +72,42 @@ class autodiff:
     dB = self.__diff(current.children[1], wrt)
     A = current.children[0]
     B = current.children[1]
-    # dA is now a tensor, since we flatten the third dimension
-    # dA is m by n by k, and we merged the first two dimension so it is m*n by k
-    # since we need to multiply dA by B, we need to expand the first dimension of dA
-    result = [None] * current.size * wrt.size
-    for i in range(wrt.size):
-      dAi = ya.attribute.to_array([dA[j, i] for j in range(A.size)], rows = A.rows, cols = A.cols)
-      dAB = dAi.mul_explicit(B)
-      dBi = ya.attribute.to_array([dB[j, i] for j in range(B.size)], rows = B.rows, cols = B.cols)
-      AdB = A.mul_explicit(dBi)
-      summation = dAB.add_explicit(AdB)
-      for j in range(current.size):
-        result[j * wrt.size + i] = summation[j]
-    return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
+    if A.size !=1 and B.size != 1:
+      # dA is now a tensor, since we flatten the third dimension
+      # dA is m by n by k, and we merged the first two dimension so it is m*n by k
+      # since we need to multiply dA by B, we need to expand the first dimension of dA
+      result = [None] * current.size * wrt.size
+      for i in range(wrt.size):
+        dAi = ya.attribute.to_array([dA[j, i] for j in range(A.size)], rows = A.rows, cols = A.cols)
+        dAB = dAi.mul_explicit(B)
+        dBi = ya.attribute.to_array([dB[j, i] for j in range(B.size)], rows = B.rows, cols = B.cols)
+        AdB = A.mul_explicit(dBi)
+        summation = dAB.add_explicit(AdB)
+        for j in range(current.size):
+          result[j * wrt.size + i] = summation[j]
+      return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
+    elif A.size == 1:
+      result = []
+      for i in range(B.size):
+        Bi = B[i]
+        dABi = dA.mul_explicit(Bi)
+        for j in range(wrt.size):
+          result.append(dABi[j])
+      AdB = A.mul_explicit(dB)
+      return AdB.add_explicit(ya.attribute.to_array(result, rows = current.size, cols = wrt.size))
+    elif B.size == 1:
+      result = []
+      dAB = dA.mul_explicit(B)
+      for i in range(A.size):
+        Ai = A[i]
+        AdBi = Ai.mul_explicit(dB)
+        for j in range(wrt.size):
+          result.append(AdBi[j])
+      return dAB.add_explicit(ya.attribute.to_array(result, rows = current.size, cols = wrt.size))
 
   def __diff_div(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
-    dA = self.__diff(current.children[0], wrt) # dA is now m by n by k
-    dB = self.__diff(current.children[1], wrt) # dB is now m by n by k
+    dA = self.__diff(current.children[0], wrt)
+    dB = self.__diff(current.children[1], wrt)
     result = [None] * current.size * wrt.size
     for i in range(wrt.size):
       dAi = ya.attribute.to_array([dA[j, i] for j in range(current.size)], rows = current.rows, cols = current.cols)
@@ -118,6 +145,15 @@ class autodiff:
     df = self.__diff(current.children[0], wrt)
     return df.div_explicit(current.children[0])
 
+  def __diff_sqrt(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    # rule is 1 / (2 * sqrt(dx))
+    df = self.__diff(current.children[0], wrt) # the jacobian is 1 by n
+    result = [0.5 * df[i] / current for i in range(wrt.size)]
+    return ya.attribute.to_array(result, rows = 1, cols = wrt.size)
+
+
+
+
   def __diff_norm(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     df = self.__diff(current.children[0], wrt) # df is m by n
     result = [None] * wrt.size # because norm is a scalar
@@ -133,54 +169,12 @@ class autodiff:
 
 
   def __diff_gather(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
-    # differentiating through a gathering is a bit different
-    # because we will need to generate the jacobian for two things
-    # first the children to wrt
-    child = current.children[0]
-    child_jacobian = ya.attribute.zeros(child.size, wrt.size)
-    child_jacobian_name = f"d{current.fullName}_d{child.fullName}"
-    if child_jacobian_name not in child.correspondance.attributes:
-      child_jacobian = self.__diff(child, wrt)
-      # once we get the child jacobian, we first add it as an attribute in case we need it later
-      child.correspondance.addAttribute(child_jacobian_name, computed_attribute = child_jacobian)
-    else:
-      child_jacobian = child.correspondance.attributes[child_jacobian_name]
-    # now we need to determine, in the jacobian, are there elements that aren't tied to a primitive
-    skipped_indices = []
-
-    for i in range(child_jacobian.size):
-      if child_jacobian[i].correspondance is None or (child_jacobian[i].correspondance.type != "primitive") or child_jacobian[i].operator == ya.FLOAT:
-        skipped_indices.append(i)
-    # ok now we need to create new attributes for the non skipped indices
-    for i in range(child_jacobian.size):
-      if i in skipped_indices:
-        continue
-      # # we need to create a new attribute for the ith element
-      # child.correspondance.addAttribute(f"{child_jacobian_name}_{i}", computed_attribute = child_jacobian.children[i])
-      current.correspondance.addAttribute(f"{child_jacobian_name}_{i}", through = current.through, source = child.correspondance[child_jacobian_name][i])
-    # now we need to assemble the jacobian matrix
-    result = [None] * current.size * wrt.size * current.through.dimension
-    # this will be a blocked matrix, where blocks are always on diagonal
-    for i in range(current.through.dimension): # work on the block
-      block_jacobian = [ya.attribute(float_value = 0.0)] * child_jacobian.size
-      for j in range(child_jacobian.size):
-        if j in skipped_indices:
-          # direcltly get it
-          block_jacobian[j] = child_jacobian[j]
-        else:
-          block_jacobian[j] = current.correspondance[f"{child_jacobian_name}_{j}"][i]
-      # now we put the block jacobian back
-      for j in range(child_jacobian.rows):
-        for k in range(child_jacobian.cols):
-          ind = j * child_jacobian.cols + k
-          result_ind = (i * child_jacobian.size * current.through.dimension) + j * (wrt.size * current.through.dimension) + i * wrt.size + k
-          result[result_ind] = block_jacobian[ind]
-    return ya.attribute.to_array(result, rows = current.size, cols = wrt.size * current.through.dimension)
-
-
-
-
-    return child_jacobian
+    # there are only two cases
+    # if we are differentiating wrt to anything other than a wrt, we return zeros
+    if wrt.operator != ya.GATHER:
+      return ya.attribute.zeros(current.size, wrt.size)
+    if current.fullName == wrt.fullName:
+      return ya.attribute.identity(current.size)
 
 
   def __diff_data(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
