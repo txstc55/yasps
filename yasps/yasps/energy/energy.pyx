@@ -59,13 +59,18 @@ class energy:
       if root.operator != DATA:
         childrenRoots, childrenPaths = self.getRoots(root.children[0], [])
         trueRoots += childrenRoots * root.through.dimension
-        for i in range(root.through.dimension):
-          for childrenPath in childrenPaths:
-            allPaths.append(parentPath + [root.row(i)] + childrenPath)
+        for childrenPath in childrenPaths:
+          allPaths.append(parentPath + [root] + childrenPath)
         # allPaths += childrenPaths * root.through.dimension
       else:
         trueRoots.append(root)
         allPaths.append(parentPath + [root])
+    # print("All paths: ")
+    # for path in allPaths:
+    #   print([p.fullName for p in path])
+    # print("All roots: ")
+    # for root in trueRoots:
+    #   print(root.fullName)
     return trueRoots, allPaths
 
   def getHessianOffDiagonalBlockSizes(self, wrt: List[attribute]) -> List[Tuple[int, int]]:
@@ -79,26 +84,41 @@ class energy:
     return sizePairs
 
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
-    from yasps.attribute import ROW, DATA
+    from yasps.attribute import ROW, DATA, GATHER
     # we have the path, now determine which path to use since we have the wrt
     usedPaths: List[List[attribute]] = []
-    for i in range(len(self.roots)):
-      if self.roots[i] in wrt:
-        usedPaths.append(self.__paths[i])
+    # for i in range(len(self.roots)):
+    #   if self.roots[i] in wrt:
+    #     usedPaths.append(self.__paths[i])
+    for path in self.__paths:
+      if path[-1] in wrt:
+        usedPaths.append(path)
 
 
     indicesCPU: Dict[int, np.ndarray] = {} # the indices to cpu
     # now we get the indices of the paths by recursively go over the indices, first we transfer the indices to CPU
     for path in usedPaths:
       for att in path:
-        if att.operator == ROW:
-          if att.children[0].hash not in indicesCPU:
-            indicesCPU[att.children[0].hash] = att.children[0].through.value.get().reshape(att.children[0].through.fromPrimitive.numInstances, att.children[0].through.dimension) # reshape to a 2D array with num instances, and dimension
+        if att.operator == GATHER:
+          if att.hash not in indicesCPU:
+            indicesCPU[att.hash] = att.through.value.get().reshape(att.through.fromPrimitive.numInstances, att.through.dimension) # reshape to a 2D array with num instances, and dimension
     # now we recursively go over each path
+    # we first recursively duplicate the path with rows
+
     currentIndex = 0
     allIndices: List[np.uint32] = []
+
+    print("Used paths: ")
+    for path in usedPaths:
+      print([p.fullName for p in path])
+    duplicatedPaths = []
+    for path in usedPaths:
+      duplicatedPaths += self.__duplicatePath(path)
+    print("Duplicated paths: ")
+    for path in duplicatedPaths:
+      print([p.fullName for p in path])
     for i in range(self.__energy.correspondance.numInstances):
-      for path in usedPaths:
+      for path in duplicatedPaths:
         currentIndex = i
         for node in path:
           if node.operator == ROW:
@@ -119,7 +139,32 @@ class energy:
     print("All indices are: ", allIndices)
     return allIndices
 
+
+  def __duplicatePath(self, path: List[attribute]) -> List[List[attribute]]:
+    from yasps.attribute import DATA, GATHER
+    if path[0].operator == DATA:
+      # we've reached the end
+      # return itself
+      return [path]
+    elif path[0].operator == GATHER:
+      # we need to duplicate the path
+      # first we need to get the children paths
+      childrenPaths = self.__duplicatePath(path[1:])
+      duplicatedPaths = []
+      for i in range(path[0].through.dimension):
+        # duplicate each path
+        for childrenPath in childrenPaths:
+          duplicatedPaths.append([path[0].row(i)] + childrenPath)
+      return duplicatedPaths
+    else:
+      # we are at top level
+      childrenPaths = self.__duplicatePath(path[1:])
+      return [[path[0]] + childrenPath for childrenPath in childrenPaths]
+
+
+
   def generateHessianAndGradient(self, wrt: List[attribute]) -> None:
+    from yasps.attribute import DATA, GATHER
     differentiater = autodiff()
     # generate the symbolic code for gradient and hessian
     # first we check which path we need
@@ -132,10 +177,38 @@ class energy:
     for path in filteredPath:
       # do it in reverse order
       for i in range(len(path) - 2, -1, -1):
-        # we will compute the jacobian for each neighboring nodes
-        print("Differentiating: ", path[i].fullName, path[i+1].fullName)
-        result = differentiater.diff(path[i], path[i+1])
-        print(result)
+        # # we will compute the jacobian for each neighboring nodes
+        # # print("Differentiating: ", path[i].fullName, path[i+1].fullName)
+        # result = differentiater.diff(path[i], path[i+1])
+        # # print(result)
+        lead_node = path[i]
+        follow_node = path[i+1]
+        if lead_node.operator == GATHER:
+          # we need to differentiate a gather's children wrt to the next node
+          child_att = lead_node.children[0]
+          child_att_correspondance = child_att.correspondance
+          child_att_full_name = child_att.fullName
+          follow_node_full_name = follow_node.fullName
+          diff_att_name = f'd{child_att_full_name}_d{follow_node_full_name}'
+          child_att_jacobian: attribute
+          if diff_att_name not in child_att_correspondance.attributes:
+            child_att_jacobian = differentiater.diff(child_att, follow_node)
+            child_att_correspondance.addAttribute(diff_att_name, computed_attribute = child_att_jacobian)
+            print(f"Diff {child_att_full_name} wrt {follow_node_full_name} done")
+            print("Jacobian is: ")
+            print(child_att_jacobian)
+          else:
+            child_att_jacobian = child_att_correspondance.attributes[diff_att_name]
+        # now that we have the child jacobian, we need to differentiate the gather wrt to the child
+        else:
+          # it's a normal node, which is the energy
+          # add the differentiation wrt to the next node
+          diff_att_name = f'd{lead_node.fullName}_d{follow_node.fullName}'
+          if diff_att_name not in lead_node.correspondance.attributes:
+            diff_att = differentiater.diff(lead_node, follow_node)
+            lead_node.correspondance.addAttribute(diff_att_name, computed_attribute = diff_att)
+            print(f"Diff {lead_node.fullName} wrt {follow_node.fullName} done")
+
 
   # def __diff_gather(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
   #   # differentiating through a gathering is a bit different

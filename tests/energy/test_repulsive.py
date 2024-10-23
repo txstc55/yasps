@@ -85,12 +85,15 @@ def repulsive_energy(points, repulsive_weight, alpha, beta):
 repulsive_energy_value = repulsive_energy(edge_pair_positions, m["repulsive_weight"], m["alpha"], m["beta"])
 repulsive_energies = edge_pairs.addAttribute("repulsive_energy", computed_attribute = repulsive_energy_value)
 
+print("adding energy")
 s.addEnergy(repulsive_energy_value)
+print("energy added 1")
 s.addEnergy(sphere_boundary_energy)
+print("energy added 2")
 s.minimizeEnergy([translations, scales])
-#
-from yasps import autodiff
-ad = autodiff()
-energy_grad = ad.diff(repulsive_energies, edge_pair_positions)
-edge_pairs.addAttribute("grad", computed_attribute = energy_grad)
-print(energy_grad.compute().value.get())
+# #
+# from yasps import autodiff
+# ad = autodiff()
+# energy_grad = ad.diff(repulsive_energies, edge_pair_positions)
+# edge_pairs.addAttribute("grad", computed_attribute = energy_grad)
+# print(energy_grad.compute().value.get())
