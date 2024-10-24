@@ -103,9 +103,15 @@ class attribute:
   @property
   def fullName(self)->str:
     if self.__name != "":
-      return self.correspondance.fullName + "_" + self.__name
+      if self.correspondance is not None:
+        return self.correspondance.fullName + "_" + self.__name
+      else:
+        return self.__name
     else:
-      return self.correspondance.fullName + "_" + str(self.hash)
+      if self.correspondance is not None:
+        return self.correspondance.fullName + "_" + str(self.hash)
+      else:
+        return 'attr_' + str(self.hash)
 
   @property
   def rows(self)->int:

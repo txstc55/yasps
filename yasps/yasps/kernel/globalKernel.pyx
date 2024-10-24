@@ -65,23 +65,11 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
     f = open("testing_kernel.cu", "w")
     f.write(self.__kernelString)
     f.close()
-    # print(self.__kernelString)
-    import time
-    # print the current time in minutes and seconds
-    # print(time.strftime("%M:%S", time.localtime()))
-    # # for debugging
-    # self.__kernelString = testing_kernel
-    # print(self.__kernelString)
-    # compile the code with eigen library and get the function
     mod = SourceModule(
       self.__kernelString,
       options = ["-std=c++11", '-O3', '-I/usr/include/eigen3', "--expt-relaxed-constexpr", "--disable-warnings"],
       no_extern_c = True
     )
-    # print(time.strftime("%M:%S", time.localtime()))
-
-
-
     # get the mangled name
     input_types = []
     for _ in sortedDatas:
@@ -94,8 +82,6 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
     input_types.append("double*")
     input_types.append("unsigned int")
     kernel_name: str = get_mangled_name(kernelRawName, f'{attributeName}_global_function')
-    # print("Kernel Raw Name: ", kernelRawName)
-    # print("Kernel name: ", kernel_name)
     self.__kernel = mod.get_function(kernel_name)
 
 

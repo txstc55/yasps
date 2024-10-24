@@ -25,6 +25,11 @@ class energy:
     self.__paths: List[List[attribute]] = [] # how to get to the roots
     self.__roots: List[attribute] = []
     self.__roots, self.__paths = self.getRoots(energy, [energy]) # get the root attributes
+    self.__wrt: List[List[int]] = [] # an energy can be minimized for different attributes, for safety let's save all histories
+    self.__indices: List[List[np.uint32]] = [] # save the indices
+    self.__gradient_sizes: List[List[int]] = [] # save the sizes of the gradient
+    self.__hessians: List[attribute] = [] # save the hessian for each wrt input
+    self.__gradients: List[attribute] = [] # save the gradient for each wrt input
 
 
   @property
@@ -84,6 +89,10 @@ class energy:
     return sizePairs
 
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
+    wrt_hashes = [w.hash for w in wrt]
+    if wrt_hashes in self.__wrt:
+      return self.__indices[self.__wrt.index(wrt_hashes)]
+
     from yasps.attribute import ROW, DATA, GATHER
     # we have the path, now determine which path to use since we have the wrt
     usedPaths: List[List[attribute]] = []
@@ -137,6 +146,10 @@ class energy:
               currentIndex = wrt_start_indices[dataIndexInWrt]
               allIndices.append(np.uint32(currentIndex))
     print("All indices are: ", allIndices)
+    self.__wrt.append(wrt_hashes)
+    self.__indices.append(allIndices)
+    self.__gradient_sizes.append([x[-1].size for x in duplicatedPaths])
+    print("Corresponding sizes are: ", [x[-1].size for x in duplicatedPaths])
     return allIndices
 
 
@@ -164,7 +177,7 @@ class energy:
 
 
   def generateHessianAndGradient(self, wrt: List[attribute]) -> None:
-    from yasps.attribute import DATA, GATHER
+    from yasps.attribute import DATA, GATHER, FLOAT
     differentiater = autodiff()
     # generate the symbolic code for gradient and hessian
     # first we check which path we need
@@ -173,6 +186,7 @@ class energy:
       if path[-1] in wrt:
         filteredPath.append(path)
 
+    gradients: List[attribute] = []
     # now we generate from the bottom up
     for path in filteredPath:
       # do it in reverse order
@@ -189,71 +203,111 @@ class energy:
           child_att_correspondance = child_att.correspondance
           child_att_full_name = child_att.fullName
           follow_node_full_name = follow_node.fullName
-          diff_att_name = f'd{child_att_full_name}_d{follow_node_full_name}'
-          child_att_jacobian: attribute
+          diff_att_name = f'd_{child_att_full_name}_d_{follow_node_full_name}'
+          child_diff: attribute
           if diff_att_name not in child_att_correspondance.attributes:
-            child_att_jacobian = differentiater.diff(child_att, follow_node)
-            child_att_correspondance.addAttribute(diff_att_name, computed_attribute = child_att_jacobian)
-            print(f"Diff {child_att_full_name} wrt {follow_node_full_name} done")
-            print("Jacobian is: ")
-            print(child_att_jacobian)
+            child_diff = differentiater.diff(child_att, follow_node)
+            if diff_att_name not in child_att_correspondance.attributes:
+              child_att_correspondance.addAttribute(diff_att_name, computed_attribute = child_diff)
+            # print(f"Diff {child_att_full_name} wrt {follow_node_full_name} done")
+            # print(f"name is: {diff_att_name}")
+            # print("Jacobian is: ")
+            # print(child_diff)
           else:
-            child_att_jacobian = child_att_correspondance.attributes[diff_att_name]
+            child_diff = child_att_correspondance.attributes[diff_att_name]
         # now that we have the child jacobian, we need to differentiate the gather wrt to the child
         else:
           # it's a normal node, which is the energy
           # add the differentiation wrt to the next node
-          diff_att_name = f'd{lead_node.fullName}_d{follow_node.fullName}'
+          diff_att_name = f'd_{lead_node.fullName}_d_{follow_node.fullName}'
           if diff_att_name not in lead_node.correspondance.attributes:
             diff_att = differentiater.diff(lead_node, follow_node)
-            lead_node.correspondance.addAttribute(diff_att_name, computed_attribute = diff_att)
-            print(f"Diff {lead_node.fullName} wrt {follow_node.fullName} done")
+            if diff_att_name not in lead_node.correspondance.attributes:
+              lead_node.correspondance.addAttribute(diff_att_name, computed_attribute = diff_att)
+            # print(f"Diff {lead_node.fullName} wrt {follow_node.fullName} done")
+      # ok now we have done the differentiation from node to node
+      # we need to assemble the actual jacobian matrix for the gather operator
+      if len(path) == 2:
+        # there is no gather operation
+        # the jacobian should be directly used
+        derivative = path[0].correspondance[f'd_{path[0].fullName}_d_{path[1].fullName}']
+        gradients.append(derivative)
+      else:
+        # we go from bottom up
+        # and for the first one, we will deal with it separately
+        for i in range(len(path) - 2, 0, -1):
+          lead_att = path[i]
+          next_att = path[i+1]
+          data_node = path[-1]
+          neighboring_jacobian = next_att.correspondance[f'd_{lead_att.children[0].fullName}_d_{next_att.fullName}']
+          multiplied_jacobian: attribute
+          if i == len(path) - 2:
+            # just return the neighboring jacobian as the multiplied
+            multiplied_jacobian = neighboring_jacobian
+          else:
+            # now we get the jacobian from the next att to the data node
+            gather_path = path[i + 1: -1]
+            gather_path_str = "_d_".join([x.fullName for x in gather_path])
+            next_att_data_jacobian = next_att.correspondance[f'd_{gather_path_str}_d_{data_node.fullName}']
+            multiplied_jacobian = neighboring_jacobian.mul_explicit(next_att_data_jacobian)
+          # now we determine if it is needed to actually gather the entire thing by checking if everything has a correspondance and not a float
+          skipped_indices: List[int] = []
+          # TODO: there are elements that are repeated
+          # we can reduce the amout of gather by taking out those elements
+          # and only gather once
+          for j in range(multiplied_jacobian.size):
+            if multiplied_jacobian[j].correspondance is None or (multiplied_jacobian[j].correspondance.type != "primitive") or multiplied_jacobian[j].operator == FLOAT:
+              skipped_indices.append(j)
 
+          # ok now we need to create new attributes for the non skipped indices
+          included_paths = [lead_att.children[0]] + path[i + 1: -1]
+          included_path_str = "_d_".join([x.fullName for x in included_paths])
+          for j in range(multiplied_jacobian.size):
+            if j in skipped_indices:
+              continue
+            # we need to create a new attribute for the ith element through gather
+            if f"d_{included_path_str}_d_{data_node.fullName}_{j}" not in lead_att.correspondance.attributes:
+              lead_att.correspondance.addAttribute(f"d_{included_path_str}_d_{data_node.fullName}_{j}", through = lead_att.through, source = multiplied_jacobian[j]) # we add the new gathering attribute and use it later on
+          # now we have a new gather attribute which is the jacobian
+          new_jacobian_children = [attribute(float_value = 0.0) for _ in range(multiplied_jacobian.size * lead_att.through.dimension * lead_att.through.dimension)]
+          # ok, if the child jacobian is m by n, then the new jacobian has k by k blocks, each block is m by n
+          # and only the diagonal blocks will have nonzero values
+          for j in range(multiplied_jacobian.size):
+            m = multiplied_jacobian.rows
+            n = multiplied_jacobian.cols
+            k = lead_att.through.dimension
+            child_jacobian_row = j // n
+            child_jacobian_col = j % n
+            for l in range(lead_att.through.dimension):
+              leading_index = m * n * k * l
+              element_index = leading_index + child_jacobian_row * n * k + n * l + child_jacobian_col
+              if j in skipped_indices:
+                new_jacobian_children[element_index] = multiplied_jacobian[j]
+              else:
+                new_jacobian_children[element_index] = lead_att.correspondance[f"d_{included_path_str}_d_{data_node.fullName}_{j}"][l]
+          new_jacobian = attribute.to_array(new_jacobian_children, rows = multiplied_jacobian.rows * lead_att.through.dimension, cols = multiplied_jacobian.cols * lead_att.through.dimension)
+          # add the jacobian to the correspondance
+          included_paths = path[i: -1]
+          included_path_str = "_d_".join([x.fullName for x in included_paths])
+          if f"d_{included_path_str}_d_{data_node.fullName}" not in lead_att.correspondance.attributes:
+            lead_att.correspondance.addAttribute(f"d_{included_path_str}_d_{data_node.fullName}", computed_attribute = new_jacobian)
 
-  # def __diff_gather(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
-  #   # differentiating through a gathering is a bit different
-  #   # because we will need to generate the jacobian for two things
-  #   # first the children to wrt
-  #   child = current.children[0]
-  #   child_jacobian = ya.attribute.zeros(child.size, wrt.size)
-  #   child_jacobian_name = f"d{current.fullName}_d{child.fullName}"
-  #   if child_jacobian_name not in child.correspondance.attributes:
-  #     child_jacobian = self.__diff(child, wrt)
-  #     # once we get the child jacobian, we first add it as an attribute in case we need it later
-  #     child.correspondance.addAttribute(child_jacobian_name, computed_attribute = child_jacobian)
-  #   else:
-  #     child_jacobian = child.correspondance.attributes[child_jacobian_name]
-  #   # now we need to determine, in the jacobian, are there elements that aren't tied to a primitive
-  #   skipped_indices = []
-
-  #   for i in range(child_jacobian.size):
-  #     if child_jacobian[i].correspondance is None or (child_jacobian[i].correspondance.type != "primitive") or child_jacobian[i].operator == ya.FLOAT:
-  #       skipped_indices.append(i)
-  #   # ok now we need to create new attributes for the non skipped indices
-  #   for i in range(child_jacobian.size):
-  #     if i in skipped_indices:
-  #       continue
-  #     # # we need to create a new attribute for the ith element
-  #     # child.correspondance.addAttribute(f"{child_jacobian_name}_{i}", computed_attribute = child_jacobian.children[i])
-  #     current.correspondance.addAttribute(f"{child_jacobian_name}_{i}", through = current.through, source = child.correspondance[child_jacobian_name][i])
-  #   # now we need to assemble the jacobian matrix
-  #   result = [None] * current.size * wrt.size * current.through.dimension
-  #   # this will be a blocked matrix, where blocks are always on diagonal
-  #   for i in range(current.through.dimension): # work on the block
-  #     block_jacobian = [ya.attribute(float_value = 0.0)] * child_jacobian.size
-  #     for j in range(child_jacobian.size):
-  #       if j in skipped_indices:
-  #         # direcltly get it
-  #         block_jacobian[j] = child_jacobian[j]
-  #       else:
-  #         block_jacobian[j] = current.correspondance[f"{child_jacobian_name}_{j}"][i]
-  #     # now we put the block jacobian back
-  #     for j in range(child_jacobian.rows):
-  #       for k in range(child_jacobian.cols):
-  #         ind = j * child_jacobian.cols + k
-  #         result_ind = (i * child_jacobian.size * current.through.dimension) + j * (wrt.size * current.through.dimension) + i * wrt.size + k
-  #         result[result_ind] = block_jacobian[ind]
-  #   return ya.attribute.to_array(result, rows = current.size, cols = wrt.size * current.through.dimension)
+        # # now we deal with the last pair
+        children_path = path[1: -1]
+        children_path_str = "_d_".join([x.fullName for x in children_path])
+        neighboring_jacobian = path[0].correspondance[f'd_{path[0].fullName}_d_{path[1].fullName}']
+        last_data_jacobian = path[1].correspondance[f'd_{children_path_str}_d_{path[-1].fullName}']
+        final_jacobian = neighboring_jacobian.mul_explicit(last_data_jacobian)
+        gradients.append(final_jacobian)
+    gradients_assembled_children = []
+    for gradient in gradients:
+      # print("Gradient is: ", gradient)
+      for i in range(gradient.size):
+        gradients_assembled_children.append(gradient[i])
+    if f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}' not in self.__energy.correspondance.attributes:
+      g = self.__energy.correspondance.addAttribute(f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}', computed_attribute = attribute.to_array(gradients_assembled_children, rows = self.__energy.size, cols = len(gradients_assembled_children)))
+    print(self.__energy.correspondance[f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}'].fullName)
+    self.__gradients.append(self.__energy.correspondance[f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}'])
 
 
   def __hash__(self) -> int:

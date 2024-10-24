@@ -135,7 +135,7 @@ class primitive:
               raise ValueError(f"primitive.addAttribute: the operation '{operation}' is not valid. Available operations are: SUM and AVERAGE.")
 
           newAttribute = attribute(name = name, correspondance = self, rows = newRows, cols = newCols, through = through, children = [source], operator = op)
-          print(f"The attribute {name} for primitive {self.name} now has dimension {newRows}x{newCols}")
+          # print(f"The attribute {name} for primitive {self.name} now has dimension {newRows}x{newCols}")
           self.__attributes[name] = newAttribute
           return newAttribute
         # the source is not set up
@@ -157,7 +157,7 @@ class primitive:
           else:
             raise ValueError(f"primitive.addAttribute: the operation '{operation}' is not valid. Available operations are: SUM and AVERAGE.")
         newAttribute = attribute(name = name, correspondance = self, rows = newRows, cols = newCols, through = through, children = [toPrimitive[name]], operator = op)
-        print(f"The attribute {name} for primitive {self.name} now has dimension {newRows}x{newCols}")
+        # print(f"The attribute {name} for primitive {self.name} now has dimension {newRows}x{newCols}")
         self.__attributes[name] = newAttribute
         return newAttribute
       else:

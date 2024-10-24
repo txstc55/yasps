@@ -1,5 +1,6 @@
 from yasps.scene import scene
 from yasps.attribute import attribute
+from yasps.autodiff import autodiff
 import numpy as np
 import math
 np.random.seed(13)
@@ -54,13 +55,19 @@ scales.updateValue(np.ones((NUM_POINTS, 1)))
 
 # add the relation between edge pairs and vertices
 c = edge_pairs.addConnectivity("edge_pair_to_vertex", vertex, edge_pair_indices, 4)
-edge_pair_positions = edge_pairs.addAttribute("position", through = c, source = (vertex_positions + translations) * scales)
+
+# true_position = (vertex_positions + translations) * scales
+true_position = vertex_positions * 2.0
+edge_pair_positions = edge_pairs.addAttribute("position", through = c, source = true_position)
 
 # add the sphere boundary energy
-sphere_boundary_energy = attribute.select(((vertex_positions + translations) * scales).norm() > 1.0, vertex_positions.norm() - 1.0, attribute(float_value = 0.0))
+sphere_boundary_energy = attribute.select((true_position).norm() > 1.0, (true_position).norm() - 1.0, attribute(float_value = 0.0))
 vertex.addAttribute("sphere_boundary_energy", computed_attribute = sphere_boundary_energy)
 print(sphere_boundary_energy.compute().value.get())
 
+# ad = autodiff()
+# result = ad.diff(sphere_boundary_energy, scales)
+# print(result)
 
 # add the repulsive force
 def repulsive_energy(points, repulsive_weight, alpha, beta):
@@ -68,9 +75,9 @@ def repulsive_energy(points, repulsive_weight, alpha, beta):
   p1 = points.row(1)
   p2 = points.row(2)
   p3 = points.row(3)
+  r = p0.dot_explicit(p0) + p1.dot_explicit(p1) + p2.dot_explicit(p2) + p3.dot_explicit(p3)
   T01 = (p1 - p0) / ((p1 - p0).dot_explicit(p1 - p0)).sqrt()
   T23 = (p3 - p2) / ((p3 - p2).dot_explicit(p3 - p2)).sqrt()
-  # r = (p1) / 2.0
   r = T01.dot_explicit(p0 - p2).pow(alpha) / (p0 - p2).norm().pow(beta)
   r += T01.dot_explicit(p0 - p3).pow(alpha) / (p0 - p3).norm().pow(beta)
   r += T01.dot_explicit(p1 - p2).pow(alpha) / (p1 - p2).norm().pow(beta)
@@ -79,7 +86,6 @@ def repulsive_energy(points, repulsive_weight, alpha, beta):
   r += T23.dot_explicit(p2 - p1).pow(alpha) / (p2 - p1).norm().pow(beta)
   r += T23.dot_explicit(p3 - p0).pow(alpha) / (p3 - p0).norm().pow(beta)
   r += T23.dot_explicit(p3 - p1).pow(alpha) / (p3 - p1).norm().pow(beta)
-  # return r
   return r * repulsive_weight / 4.0
 
 repulsive_energy_value = repulsive_energy(edge_pair_positions, m["repulsive_weight"], m["alpha"], m["beta"])
@@ -90,10 +96,7 @@ s.addEnergy(repulsive_energy_value)
 print("energy added 1")
 s.addEnergy(sphere_boundary_energy)
 print("energy added 2")
-s.minimizeEnergy([translations, scales])
-# #
-# from yasps import autodiff
-# ad = autodiff()
-# energy_grad = ad.diff(repulsive_energies, edge_pair_positions)
-# edge_pairs.addAttribute("grad", computed_attribute = energy_grad)
-# print(energy_grad.compute().value.get())
+s.minimizeEnergy([vertex_positions])
+print(edge_pairs["d_scene_mesh_edge_pair_repulsive_energy_d_scene_mesh_vertex_rest_position"].compute().value.get())
+# print(edge_pairs["d_scene_mesh_edge_pair_position_d_scene_mesh_vertex_rest_position"])
+# print(edge_pairs["position"].compute().value.get())

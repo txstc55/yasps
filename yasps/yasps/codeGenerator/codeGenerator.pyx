@@ -35,12 +35,25 @@ class codeGenerator:
           # even though in reality we never call kernel for datas
           # the reason we generate this is to know what attributes are needed
           # for the kernel
+          # if current.fullName == "scene_mesh_edge_pair_d_scene_mesh_vertex_4751934927072571522926939811690662007008092393643494922003777497913959258393109802892957861802463902152300288974682765455609473845080651745173354917039320_d_scene_mesh_vertex_translation_0":
+          #   print("we reached here")
           self.__order.append(current)
           # check if we have already generated the kernel for it
           if current.hash not in self.__childrenAttributeKernels:
+            # if current.fullName == "scene_mesh_edge_pair_d_scene_mesh_vertex_4751934927072571522926939811690662007008092393643494922003777497913959258393109802892957861802463902152300288974682765455609473845080651745173354917039320_d_scene_mesh_vertex_translation_0":
+            #   print("we tried to generate code for it")
             childCodeGenerator = codeGenerator(current)
             childCodeGenerator.generateCode()
             self.__childrenAttributeKernels[current.hash] = current
+          else:
+            # if current.fullName == "scene_mesh_edge_pair_d_scene_mesh_vertex_4751934927072571522926939811690662007008092393643494922003777497913959258393109802892957861802463902152300288974682765455609473845080651745173354917039320_d_scene_mesh_vertex_translation_0":
+            #   print("we have already generated the code for it")
+            #   print(self.__childrenAttributeKernels[current.hash].fullName)
+            if current.fullName != self.__childrenAttributeKernels[current.hash].fullName:
+              # we add a macro to make the two functions the same
+              self.__code_strings.append(f'''
+#define {current.fullName}_device_function {self.__childrenAttributeKernels[current.hash].fullName}_device_function
+''')
         else:
           # doesnt have a name
           # probably just operations
@@ -51,7 +64,7 @@ class codeGenerator:
         # when correspondance is different
         # there are couple of scenarios
         # 1. the correspondance is a scene or mesh, which means this is an operation done on scene or mesh attributes, we will allow that
-        if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
+        if current.correspondance.type != "primitive":
           if current.name != "":
             # data or named attributes
             self.__order.append(current)
@@ -85,6 +98,8 @@ class codeGenerator:
 
 
   def generateCode(self) -> None:
+    # if self.__input.fullName == "scene_mesh_edge_pair_d_scene_mesh_vertex_4751934927072571522926939811690662007008092393643494922003777497913959258393109802892957861802463902152300288974682765455609473845080651745173354917039320_d_scene_mesh_vertex_translation_0":
+    #   print("we are generating code for it")
     if self.__input.deviceKernel is not None:
       # nothing to do
       return
@@ -204,12 +219,13 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
             # this is one piece of data, that doesn't really need indexing
             # we set the index to 0
             self.__code_strings.append(f'''
-  // add 0 indexing since it is a scene or mesh data
-  unsigned int {current.correspondance.fullName}_index = 0;
+// add 0 indexing since it is a scene or mesh data
+#define {current.correspondance.fullName}_index 0
 ''')
-        self.__code_strings.append(f'''
-  {current.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}{"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}{"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
-''')
+        if current.deviceKernel is not None:
+          self.__code_strings.append(f'''
+    {current.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}{"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}{"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
+  ''')
         if current.size > 1:
           if current.rows == 1 or current.cols == 1:
             self.__code_strings.append(f'''
@@ -226,7 +242,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     # need to put back the result
     attributeName: str = ""
     if self.__input.name == "":
-      attributeName = f'attr_{self.__input.hash}'
+      attributeName = self.__input.fullName
     else:
       attributeName = self.__input.fullName
     # we have finished the computation, add a line to store the result
@@ -260,14 +276,14 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
 __device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.code_generation_data_name}, " for x in allDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in allConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in allConnectivities if x.dimension == 0])}unsigned int {self.__input.correspondance.fullName}_index, double* result)'''
 
     # remove the duplicates, some of the index initialization may be duplicated
-    seen_strings: Set[str] = set()
-    self.__code_strings = [x.strip('\n') for x in self.__code_strings if not (x.strip('\n') in seen_strings or seen_strings.add(x.strip('\n')))]
+    # seen_strings: Set[str] = set()
+    self.__code_strings = [x.strip('\n') for x in self.__code_strings]
     kernelString: str = "\n".join(self.__code_strings)
 
     # now we generate the device kernel
     self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allDependencies)
-    print(f"All intermediate count: {len(self.__attribute_replacements)}")
-    print(f"num intermediates: {self.__num_intermediates}")
+    # print(f"All intermediate count: {len(self.__attribute_replacements)}")
+    # print(f"num intermediates: {self.__num_intermediates}")
 
 
   # get the name of the intermediate variables
@@ -411,7 +427,7 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     children_attribute = current.children[0] # should only have one child
     children_attribute_name: str = ""
     if children_attribute.name == "":
-      children_attribute_name = f"attr_{children_attribute.hash}"
+      children_attribute_name = children_attribute.fullName
     else:
       children_attribute_name = children_attribute.fullName
     self.__code_strings.append(f'''
@@ -451,7 +467,7 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     children_attribute = current.children[0]
     children_attribute_name: str = ""
     if children_attribute.name == "":
-      children_attribute_name = f"attr_{children_attribute.hash}"
+      children_attribute_name = children_attribute.fullName
     else:
       children_attribute_name = children_attribute.fullName
     self.__code_strings.append(f'''
