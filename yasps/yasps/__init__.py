@@ -8,6 +8,7 @@ from .operator import operator
 from .deviceKernel import deviceKernel
 from .codeGenerator import codeGenerator
 from .globalKernel import globalKernel
+from .hessianAndGradientKernel import hessianAndGradientKernel
 from .energy import energy
 from .minimizer import minimizer
 from .autodiff import autodiff

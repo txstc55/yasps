@@ -109,9 +109,9 @@ class attribute:
         return self.__name
     else:
       if self.correspondance is not None:
-        return self.correspondance.fullName + "_" + str(self.hash)
+        return self.correspondance.fullName + "_" + str(self.hash).replace("-", "_neg_")
       else:
-        return 'attr_' + str(self.hash)
+        return 'attr_' + str(self.hash).replace("-", "_neg_")
 
   @property
   def rows(self)->int:
@@ -666,9 +666,6 @@ class attribute:
         self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
     # after we allocated, we invoke the kernel
     arguments: List[gpuarray.GPUArray] = [x.value for x in self.__deviceKernel.kernelDatas] + [x.value for x in self.__deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__value]
-    # # check the values
-    # for item in [x.value for x in self.__deviceKernel.kernelDatas]:
-    #   print(item)
 
     # finally call the kernel
     # time the execution

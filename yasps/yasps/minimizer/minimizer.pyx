@@ -25,6 +25,14 @@ class minimizer:
     # if it has duplicates, we will raise an error
 
   @property
+  def gradient(self) -> gpuarray.GPUArray:
+    return self.__gradient
+
+  @property
+  def gradientSegments(self) -> List[gpuarray.GPUArray]:
+    return self.__gradientSegments
+
+  @property
   def energies(self) -> List[energy]:
     return self.__energies
 
@@ -84,8 +92,8 @@ class minimizer:
       else:
         index = self.__diagonalBlockSizes.index(item.size)
         self.__diagonalBlockCounts[index] += item.numInstances
-    print(f"The diagonal block sizes are: {self.__diagonalBlockSizes}")
-    print(f"The diagonal block counts are: {self.__diagonalBlockCounts}")
+    # print(f"The diagonal block sizes are: {self.__diagonalBlockSizes}")
+    # print(f"The diagonal block counts are: {self.__diagonalBlockCounts}")
     # allocate the gpu array
     for size in self.__diagonalBlockSizes:
       self.__diagonalBlocks.append(gpuarray.empty(size, dtype = np.float64))
@@ -97,7 +105,7 @@ class minimizer:
       offDiagonalSizes += energy.getHessianOffDiagonalBlockSizes(self.wrt)
 
     self.__offDiagonalBlockSizes = list(set(offDiagonalSizes))
-    print(f"The off diagonal block sizes are: {self.__offDiagonalBlockSizes}")
+    # print(f"The off diagonal block sizes are: {self.__offDiagonalBlockSizes}")
 
   def __getSparseIndices(self):
     for energy in self.energies:
@@ -106,3 +114,9 @@ class minimizer:
   def generateHessianAndGradient(self):
     for energy in self.energies:
       energy.generateHessianAndGradient(self.wrt)
+
+  def computeHessianAndGradient(self):
+    # set gradient to zero
+    self.__gradient.fill(0)
+    for energy in self.energies:
+      energy.computeHessianAndGradient(self.__gradient)

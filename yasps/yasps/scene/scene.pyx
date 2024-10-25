@@ -141,6 +141,10 @@ class scene:
     self.__minimizer.addEnergy(newEnergy)
 
 
-  def minimizeEnergy(self, wrt: List[attribute]):
-    self.__minimizer.addWrt(wrt)
+  def minimizeEnergy(self, ):
+    self.__minimizer.computeHessianAndGradient()
+    return self.__minimizer.gradientSegments
+
+  def addMinimizeTarget(self, target: List[attribute]):
+    self.__minimizer.addWrt(target)
     self.__minimizer.generateHessianAndGradient()

@@ -29,6 +29,8 @@ class codeGenerator:
         pass
       elif current.operator == ya.INDEX:
         pass
+      elif current.isFloatMat:
+        self.__order.append(current)
       elif current.correspondance.fullName == self.__input.correspondance.fullName:
         if current.name != "":
           # we will also generate the kernel for datas and named attribute
@@ -40,15 +42,10 @@ class codeGenerator:
           self.__order.append(current)
           # check if we have already generated the kernel for it
           if current.hash not in self.__childrenAttributeKernels:
-            # if current.fullName == "scene_mesh_edge_pair_d_scene_mesh_vertex_4751934927072571522926939811690662007008092393643494922003777497913959258393109802892957861802463902152300288974682765455609473845080651745173354917039320_d_scene_mesh_vertex_translation_0":
-            #   print("we tried to generate code for it")
             childCodeGenerator = codeGenerator(current)
             childCodeGenerator.generateCode()
             self.__childrenAttributeKernels[current.hash] = current
           else:
-            # if current.fullName == "scene_mesh_edge_pair_d_scene_mesh_vertex_4751934927072571522926939811690662007008092393643494922003777497913959258393109802892957861802463902152300288974682765455609473845080651745173354917039320_d_scene_mesh_vertex_translation_0":
-            #   print("we have already generated the code for it")
-            #   print(self.__childrenAttributeKernels[current.hash].fullName)
             if current.fullName != self.__childrenAttributeKernels[current.hash].fullName:
               # we add a macro to make the two functions the same
               self.__code_strings.append(f'''
@@ -98,8 +95,6 @@ class codeGenerator:
 
 
   def generateCode(self) -> None:
-    # if self.__input.fullName == "scene_mesh_edge_pair_d_scene_mesh_vertex_4751934927072571522926939811690662007008092393643494922003777497913959258393109802892957861802463902152300288974682765455609473845080651745173354917039320_d_scene_mesh_vertex_translation_0":
-    #   print("we are generating code for it")
     if self.__input.deviceKernel is not None:
       # nothing to do
       return
@@ -153,6 +148,11 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
             attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}"
           else:
             attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}"
+        if current.isFloatMat:
+          if current.size == 1:
+            attribute_initialization = f"float {attribute_name} = {current.float_value};"
+          else:
+            attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name};\n{attribute_name} << {', '.join([str(x.float_value) for x in current.children])};"
 
         # now we generate the computation code
         if current.operator.type == 0:
@@ -224,13 +224,20 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
 ''')
         if current.deviceKernel is not None:
           self.__code_strings.append(f'''
-    {current.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}{"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}{"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
+  {current.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}{"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}{"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
+  ''')
+        else:
+          # we found the same kernel
+          # we need to replace the kernel calls
+          replacement = self.__childrenAttributeKernels[current.hash]
+          self.__code_strings.append(f'''
+  {current.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in replacement.deviceKernel.kernelDatas])}{"".join([f'{x.code_generation_index_name}, ' for x in replacement.deviceKernel.kernelConnectivity])}{"".join([f'{x.code_generation_csr_name}, ' for x in replacement.deviceKernel.kernelConnectivity if x.dimension == 0])}{replacement.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
   ''')
         if current.size > 1:
           if current.rows == 1 or current.cols == 1:
             self.__code_strings.append(f'''
-    Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
-  ''')
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
+''')
           else:
             self.__code_strings.append(f'''
   Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
