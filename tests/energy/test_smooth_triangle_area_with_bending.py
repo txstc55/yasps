@@ -20,7 +20,7 @@ def bending(x, x_init, bendStiff):
   x_init3 = x_init.row(3)
   t_init = edgeTheta(x_init0, x_init1, x_init2, x_init3)
   # bend_energy = bendStiff * (x_init1 - x_init0).norm()
-  bend_energy = bendStiff * (t - t_init) * (t - t_init) * (x_init1 - x_init0).norm()
+  bend_energy = bendStiff * (t - t_init) * (t - t_init) * (x_init1 - x_init0).norm() + bendStiff * ((x3 - x2).norm() - (x_init3 - x_init2).norm()) * ((x3 - x2).norm() - (x_init3 - x_init2).norm())
   return bend_energy
 
 
@@ -116,11 +116,11 @@ average_area = (sum(area.compute().value.get())) / faces.shape[0]
 print(f"average area is: {average_area}")
 
 
-area_energy = bunny_faces.addAttribute("area_energy", computed_attribute = (area - float(average_area)) * (area - float(average_area)))
+area_energy = bunny_faces.addAttribute("area_energy", computed_attribute = 0.1 * (area - float(average_area)) * (area - float(average_area)))
 # now we add the bending energy
 #
 normal = (v1 - v0).cross(v2 - v0)
-normal_sum = (normal[0].abs() + normal[1].abs() + normal[2].abs()) * 0.05
+normal_sum = (normal[0].abs() + normal[1].abs() + normal[2].abs()) * 0.5
 normal_energy = bunny_faces.addAttribute("normal_energy", computed_attribute = normal_sum)
 bending_energy = bunny_edge_pairs.addAttribute("bending_energy", computed_attribute = bending(edge_pair_smoothed_positions, edge_pair_rest_positions, 1.0))
 print(bending_energy.compute().value.get().flatten())
@@ -153,7 +153,7 @@ def update_position():
   #     print("NaN detected at position", i)
   #     exit()
   # return
-  new_positions = bunny_vertices_smoothed_positions.compute().value.get().flatten() - 0.01 * change_value
+  new_positions = bunny_vertices_smoothed_positions.compute().value.get().flatten() - 0.001 * change_value
   bunny_vertices_smoothed_positions.updateValue(new_positions)
   # Update the mesh points
   mesh.points = new_positions.reshape(-1, 3)
@@ -170,5 +170,5 @@ def update_position():
 while True:
   update_position()
   total_frames += 1
-  # if total_frames > 10:
-  #   break
+  if total_frames % 10000 == 0:
+    plotter.export_obj(f"bunny_{total_frames}.obj")
