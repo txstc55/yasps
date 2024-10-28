@@ -44,9 +44,9 @@ class globalKernel:
     # now actually generate the global kernel
     attributeName: str = ""
     if attr.name == "":
-      attributeName = f'attr_{attr.hash}'.replace("-", "_neg_")
+      attributeName = attr.fullName.replace("-", "_neg_")
     else:
-      attributeName = attr.fullName
+      attributeName = attr.fullName.replace("-", "_neg_")
 
     kernelRawName = f'''
 __global__ void {attributeName}_global_function({"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}double* result, unsigned int MAX_INDEX)'''

@@ -19,7 +19,9 @@ class autodiff:
     # we have done this differentiation before
     if (current, wrt) in self.__seen_differentiations:
       result = self.__seen_differentiations[(current, wrt)]
-    if current.operator == ya.ADD:
+    if current.operator == ya.ABS:
+      result = self.__diff_abs(current, wrt)
+    elif current.operator == ya.ADD:
       result = self.__diff_add(current, wrt)
     elif current.operator == ya.SUB:
       result = self.__diff_sub(current, wrt)
@@ -29,6 +31,8 @@ class autodiff:
       result = self.__diff_div(current, wrt)
     elif current.operator == ya.POW:
       return self.__diff_pow(current, wrt)
+    elif current.operator == ya.ATAN2:
+      return self.__diff_atan2(current, wrt)
     elif current.operator == ya.SQRT:
       return self.__diff_sqrt(current, wrt)
     elif current.operator == ya.LOG:
@@ -43,6 +47,8 @@ class autodiff:
       result = self.__diff_data(current, wrt)
     elif current.operator == ya.ARRAY_ACCESS:
       result = self.__diff_array_access(current, wrt)
+    elif current.operator == ya.ARRAY:
+      result = self.__diff_array(current, wrt)
     elif current.operator == ya.ROW:
       result = self.__diff_row(current, wrt)
     elif current.operator == ya.COL:
@@ -66,6 +72,10 @@ class autodiff:
     dA = self.__diff(current.children[0], wrt)
     dB = self.__diff(current.children[1], wrt)
     return dA.sub_explicit(dB)
+
+  def __diff_abs(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    dA = self.__diff(current.children[0], wrt)
+    return ya.attribute.to_array([x.abs() for x in dA.children], rows = dA.rows, cols = dA.cols)
 
   def __diff_mul(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     # we explicitly do the multiplication
@@ -143,6 +153,14 @@ class autodiff:
     result = current.mul_explicit(d_gx_ln_fx.add_explicit(gx_d_fx_fx))
     return result
 
+  def __diff_atan2(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    # d/dx of atan2(f(x), g(x)) = (g(x) * f'(x) - f(x) * g'(x)) / (f(x)^2 + g(x)^2)
+    denominator = current.children[0] * current.children[0] + current.children[1] * current.children[1]
+    d_fx = self.__diff(current.children[0], wrt)
+    d_gx = self.__diff(current.children[1], wrt)
+    result = (current.children[1].mul_explicit(d_fx) - current.children[0].mul_explicit(d_gx)) / denominator
+    return result
+
   def __diff_log(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     df = self.__diff(current.children[0], wrt)
     return df.div_explicit(current.children[0])
@@ -177,6 +195,8 @@ class autodiff:
       return ya.attribute.zeros(current.size, wrt.size)
     if current.fullName == wrt.fullName:
       return ya.attribute.identity(current.size)
+    else:
+      return ya.attribute.zeros(current.size, wrt.size)
 
 
   def __diff_data(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
@@ -187,6 +207,12 @@ class autodiff:
       return ya.attribute.identity(current.size)
     else:
       return ya.attribute.zeros(current.size, wrt.size)
+
+  def __diff_array(self, current: ya.attribute, wrt: ya.attribute):
+    result = []
+    for i in range(current.size):
+      result += self.__diff(current.children[i], wrt).children
+    return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
 
   def __diff_array_access(self, current: ya.attribute, wrt: ya.attribute):
     # differentiating an array access

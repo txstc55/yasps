@@ -25,6 +25,7 @@ SUB = operator("-", 1, False)
 MUL = operator("*", 1, True)
 DIV = operator("/", 1, False)
 POW = operator("pow", 2, False)
+ATAN2 = operator("atan2", 2, False)
 NEG = operator("-", 0, False)
 SIN = operator("sin", 0, False)
 COS = operator("cos", 0, False)
@@ -515,11 +516,30 @@ class attribute:
   def cross(self, other: attribute) -> attribute:
     if self.size != 3 or other.size != 3:
       raise ValueError("attribute.cross: cross product is only defined for 3D vectors.")
-    if self.rows != 3:
-      return self.transpose().cross(other)
-    if other.rows != 3:
-      return self.cross(other.transpose())
-    return attribute(children = [self, other], operator = CROSS, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 3, cols = 1)
+    # if self.rows != 3:
+    #   return self.transpose().cross(other)
+    # if other.rows != 3:
+    #   return self.cross(other.transpose())
+    u0 = self[0]
+    u1 = self[1]
+    u2 = self[2]
+    v0 = other[0]
+    v1 = other[1]
+    v2 = other[2]
+    return attribute.to_array([u1*v2 - u2*v1, u2*v0 - u0*v2, u0*v1 - u1*v0], rows = 3, cols = 1)
+
+  def atan2(self, other: attribute) -> attribute:
+    if self.size != 1 or other.size != 1:
+      raise ValueError("attribute.atan2: atan2 is only defined for scalar attributes.")
+    if self.operator == FLOAT and other.operator == FLOAT:
+      import math
+      return attribute(float_value = math.atan2(self.float_value, other.float_value))
+    return attribute(children = [self, other], operator = ATAN2, correspondance = attribute.__check_heritage(self, other).correspondance, rows = self.rows, cols = self.cols)
+
+  def abs(self) -> attribute:
+    if self.operator == FLOAT:
+      return attribute(float_value = abs(self.float_value))
+    return attribute(children = [self], operator = ABS, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
 
   # transpose operator
   def transpose(self)->attribute:
@@ -556,13 +576,10 @@ class attribute:
       return attribute(children = [self], operator = DET, correspondance = self.correspondance, rows = 1, cols = 1)
 
   def dot(self, other: attribute) -> attribute:
-    if self.size != other.size:
-      raise ValueError("attribute.dot: cannot compute dot product of vectors of different sizes.")
-    if not (self.rows == 1 or self.cols == 1):
-      raise ValueError(f"attribute.dot: dot product is only defined for vectors, got dimension {self.rows}x{self.cols}.")
-    if not (other.rows == 1 or other.cols == 1):
-      raise ValueError(f"attribute.dot: dot product is only defined for vectors, got dimension {other.rows}x{other.cols}.")
-    return attribute(children = [self, other], operator = DOT, correspondance = attribute.__check_heritage(self, other).correspondance, rows = 1, cols = 1)
+    # just use dot explicit
+    return self.dot_explicit(other)
+
+
 
   def dot_explicit(self, other: attribute) -> attribute:
     if self.size != other.size:
@@ -681,8 +698,8 @@ class attribute:
     elapsed_time_ms = start_call.time_till(end_call)
     end_compute.record()
     end_compute.synchronize()
-    print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
-    print(f"Total time: {start_compute.time_till(end_compute):.5f} ms")
+    # print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
+    # print(f"Total time: {start_compute.time_till(end_compute):.5f} ms")
     return self
     # print(self.value)
 

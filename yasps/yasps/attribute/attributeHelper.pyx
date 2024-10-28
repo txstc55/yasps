@@ -16,6 +16,9 @@ def hashAttribute(att: ya.attribute) -> int:
   elif att.operator == ya.POW:
     power_string:str = f"{att.children[0].hash}**{att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(power_string.encode()).hexdigest(), 16)
+  elif att.operator == ya.ATAN2:
+    atan2_string:str = f"atan2({att.children[0].hash},{att.children[1].hash})"
+    att._attribute__hash = int(hashlib.sha256(atan2_string.encode()).hexdigest(), 16)
   elif att.operator == ya.NEG:
     att._attribute__hash = -att.children[0].hash
   elif att.operator == ya.SIN:

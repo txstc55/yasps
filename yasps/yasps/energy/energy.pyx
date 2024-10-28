@@ -31,8 +31,8 @@ class energy:
     self.__indices: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the indices
     self.__gradient_sizes: List[int] = [] # save the sizes of the gradient
     self.__gradient_sizes_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the sizes of the gradient
-    self.__hessian: attribute = attribute(float_value = 0.0) # save the hessian for each wrt input
-    self.__gradient: attribute = attribute(float_value = 0.0) # save the gradient for each wrt input
+    self.__hessian: Optional[attribute] = None # save the hessian for each wrt input
+    self.__gradient: Optional[attribute] = None # save the gradient for each wrt input
     self.__hessianAndGradientKernel: Optional[hessianAndGradientKernel] = None
 
 
@@ -317,6 +317,9 @@ class energy:
     start_compute = cuda.Event()
     end_compute = cuda.Event()
     start_compute.record()
+    if self.__gradient is None:
+      # the gradient is 0, return the 0 array
+      return
     if self.__hessianAndGradientKernel is None:
       from yasps.codeGenerator import codeGenerator
       from yasps.hessianAndGradientKernel import hessianAndGradientKernel
@@ -344,8 +347,8 @@ class energy:
     elapsed_time_ms = start_call.time_till(end_call)
     end_compute.record()
     end_compute.synchronize()
-    print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
-    print(f"Total time: {start_compute.time_till(end_compute):.5f} ms")
+    # print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
+    # print(f"Total time: {start_compute.time_till(end_compute):.5f} ms")
     # print(f"Gradient is: {gradient_array.get()}")
     return self
 
