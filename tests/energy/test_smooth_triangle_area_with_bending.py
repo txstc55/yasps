@@ -145,6 +145,7 @@ plotter.show(interactive_update=True)
 total_frames = 0
 start = time.time()
 iteration = 0
+weight = 0.001
 def update_position():
   global total_frames, start
   change_value = s0.minimizeEnergy()[0].get()
@@ -153,7 +154,7 @@ def update_position():
   #     print("NaN detected at position", i)
   #     exit()
   # return
-  new_positions = bunny_vertices_smoothed_positions.compute().value.get().flatten() - 0.001 * change_value
+  new_positions = bunny_vertices_smoothed_positions.compute().value.get().flatten() - weight * change_value
   bunny_vertices_smoothed_positions.updateValue(new_positions)
   # Update the mesh points
   mesh.points = new_positions.reshape(-1, 3)
@@ -170,5 +171,6 @@ def update_position():
 while True:
   update_position()
   total_frames += 1
-  if total_frames % 10000 == 0:
-    plotter.export_obj(f"bunny_{total_frames}.obj")
+  if total_frames % 1000 == 0:
+    # plotter.export_obj(f"bunny_{total_frames}.obj")
+    weight *= 0.9

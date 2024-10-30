@@ -118,9 +118,9 @@ class energy:
     currentIndex = 0
     allIndices: List[np.uint32] = []
 
-    print("Used paths: ")
-    for path in usedPaths:
-      print([p.fullName for p in path])
+    # print("Used paths: ")
+    # for path in usedPaths:
+    #   print([p.fullName for p in path])
     duplicatedPaths = []
     for path in usedPaths:
       duplicatedPaths += self.__duplicatePath(path)
@@ -149,7 +149,7 @@ class energy:
     # print("All indices are: ", allIndices)
     self.__indices = gpuarray.to_gpu(np.array(allIndices, dtype = np.uint32))
     self.__gradient_sizes = [x[-1].size for x in duplicatedPaths]
-    print("Corresponding sizes are: ", [x[-1].size for x in duplicatedPaths])
+    # print("Corresponding sizes are: ", [x[-1].size for x in duplicatedPaths])
     return allIndices
 
 
@@ -195,9 +195,6 @@ class energy:
       # do it in reverse order
       for i in range(len(path) - 2, -1, -1):
         # # we will compute the jacobian for each neighboring nodes
-        # # print("Differentiating: ", path[i].fullName, path[i+1].fullName)
-        # result = differentiater.diff(path[i], path[i+1])
-        # # print(result)
         lead_node = path[i]
         follow_node = path[i+1]
         if lead_node.operator == GATHER:
@@ -212,10 +209,6 @@ class energy:
             child_diff = differentiater.diff(child_att, follow_node)
             if diff_att_name not in child_att_correspondance.attributes:
               child_att_correspondance.addAttribute(diff_att_name, computed_attribute = child_diff)
-            # print(f"Diff {child_att_full_name} wrt {follow_node_full_name} done")
-            # print(f"name is: {diff_att_name}")
-            # print("Jacobian is: ")
-            # print(child_diff)
           else:
             child_diff = child_att_correspondance.attributes[diff_att_name]
         # now that we have the child jacobian, we need to differentiate the gather wrt to the child
@@ -227,7 +220,6 @@ class energy:
             diff_att = differentiater.diff(lead_node, follow_node)
             if diff_att_name not in lead_node.correspondance.attributes:
               lead_node.correspondance.addAttribute(diff_att_name, computed_attribute = diff_att)
-            # print(f"Diff {lead_node.fullName} wrt {follow_node.fullName} done")
       # ok now we have done the differentiation from node to node
       # we need to assemble the actual jacobian matrix for the gather operator
       if len(path) == 2:
@@ -304,12 +296,10 @@ class energy:
         gradients.append(final_jacobian)
     gradients_assembled_children = []
     for gradient in gradients:
-      # print("Gradient is: ", gradient)
       for i in range(gradient.size):
         gradients_assembled_children.append(gradient[i])
     if f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}' not in self.__energy.correspondance.attributes:
       g = self.__energy.correspondance.addAttribute(f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}', computed_attribute = attribute.to_array(gradients_assembled_children, rows = self.__energy.size, cols = len(gradients_assembled_children)))
-    print(self.__energy.correspondance[f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}'].fullName)
     self.__gradient = self.__energy.correspondance[f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}']
 
 
