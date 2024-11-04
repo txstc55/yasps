@@ -57,6 +57,12 @@ class autodiff:
       result = self.__diff_gather(current, wrt)
     elif current.operator == ya.SELECT:
       result = self.__diff_select(current, wrt)
+    elif current.operator == ya.DET:
+      result = self.__diff_det(current, wrt)
+    elif current.operator == ya.TRANSPOSE:
+      result = self.__diff_transpose(current, wrt)
+    elif current.operator == ya.INV:
+      result = self.__diff_inv(current, wrt)
     else:
       raise ValueError(f"autodiff: The operator is not supported: {current.operator}")
     self.__seen_differentiations[(current, wrt)] = result
@@ -239,3 +245,49 @@ class autodiff:
 
   def __diff_float(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     return ya.attribute.zeros(current.size, wrt.size)
+
+
+  def __diff_det(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    # differentiating det(f(x))
+    # is equal to det(f(x)) * tr(f(x)^-1 * df/dx)
+    f_inv = current.children[0].inverse()
+    d_fx = self.__diff(current.children[0], wrt)
+    result = [None] * current.size * wrt.size
+    for i in range(wrt.size):
+      mat = ya.attribute.to_array([d_fx[j * wrt.size + i] for j in range(current.children[0].size)], rows = current.children[0].rows, cols = current.children[0].cols)
+      result[i] = current * (f_inv.mul_explicit(mat).trace())
+    return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
+
+  def __diff_transpose(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    d_fx = self.__diff(current.children[0], wrt)
+    # ok now we need to reorient the matrix
+    result = [None] * current.size * wrt.size
+    for i in range(current.rows):
+      for j in range(current.cols):
+        ind = i * current.cols + j
+        transposed_ind = j * current.rows + i
+        for k in range(wrt.size):
+          result[transposed_ind * wrt.size + k] = d_fx[ind * wrt.size + k]
+    return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
+
+  def __diff_inv(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    d_fx = self.__diff(current.children[0], wrt)
+    result = [None] * current.size * wrt.size
+    for i in range(wrt.size):
+      d_fx_i = ya.attribute.to_array([d_fx[j * wrt.size + i] for j in range(current.children[0].size)], rows = current.children[0].rows, cols = current.children[0].cols)
+      result_i = current.mul_explicit(d_fx_i).mul_explicit(current).mul_explicit(-1.0)
+      for j in range(result_i.size):
+        result[j * wrt.size + i] = result_i[j]
+    return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
+
+  # def __diff_trace(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+  #   # differentiating trace(f(x))
+  #   # is equal to trace(df/dx)
+  #   d_fx = self.diff(current.children[0], wrt)
+  #   result = [None] * wrt.size
+  #   for i in range(wrt.size):
+  #     trace_sum = 0.0
+  #     for j in range(current.children[0].rows):
+  #       trace_sum += d_fx[j * current.children[0].cols * wrt.size + j * wrt.size + i]
+  #     result[i] = trace_sum
+  #   return ya.attribute.to_array(result, rows = 1, cols = wrt.size)

@@ -37,8 +37,6 @@ class codeGenerator:
           # even though in reality we never call kernel for datas
           # the reason we generate this is to know what attributes are needed
           # for the kernel
-          # if current.fullName == "scene_mesh_edge_pair_d_scene_mesh_vertex_4751934927072571522926939811690662007008092393643494922003777497913959258393109802892957861802463902152300288974682765455609473845080651745173354917039320_d_scene_mesh_vertex_translation_0":
-          #   print("we reached here")
           self.__order.append(current)
           # check if we have already generated the kernel for it
           if current.hash not in self.__childrenAttributeKernels:
