@@ -253,13 +253,16 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     else:
       attributeName = self.__input.fullName
     # we have finished the computation, add a line to store the result
-    self.__code_strings.append(f'''
-  // put the result back
-  #pragma unroll
-  for (unsigned int i = 0; i < {self.__input.size}; i++){{
-    result[i] = {self.getIntermediateName(self.__input)}{"" if self.__input.size == 1 else ".data()[i]"};
-  }}
+    if self.__input.size == 1:
+      self.__code_strings.append(f'''
+    result[0] = {self.getIntermediateName(self.__input)};
 ''')
+    else:
+      self.__code_strings.append(f'''
+    // put the result back
+    Eigen::Map<Eigen::MatrixXd> resultMap(result, {self.__input.rows}, {self.__input.cols});
+    resultMap = {self.getIntermediateName(self.__input)};
+  ''')
     # now we need to get the datas for generating this kernel
     allNamedAttributeChildren = self.__childrenAttributeKernels.values()
     # get the datas they need
