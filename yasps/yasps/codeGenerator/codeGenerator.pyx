@@ -37,6 +37,8 @@ class codeGenerator:
           # even though in reality we never call kernel for datas
           # the reason we generate this is to know what attributes are needed
           # for the kernel
+          # if current.fullName == "scene_mesh_edge_pair_d_scene_mesh_vertex_4751934927072571522926939811690662007008092393643494922003777497913959258393109802892957861802463902152300288974682765455609473845080651745173354917039320_d_scene_mesh_vertex_translation_0":
+          #   print("we reached here")
           self.__order.append(current)
           # check if we have already generated the kernel for it
           if current.hash not in self.__childrenAttributeKernels:
@@ -253,14 +255,17 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     # we have finished the computation, add a line to store the result
     if self.__input.size == 1:
       self.__code_strings.append(f'''
-    result[0] = {self.getIntermediateName(self.__input)};
+  result[0] = {self.getIntermediateName(self.__input)};
 ''')
     else:
       self.__code_strings.append(f'''
-    // put the result back
-    Eigen::Map<Eigen::MatrixXd> resultMap(result, {self.__input.rows}, {self.__input.cols});
-    resultMap = {self.getIntermediateName(self.__input)};
-  ''')
+  // put the result back
+  Eigen::Matrix<double, {self.__input.rows}, {self.__input.cols}{'' if self.__input.rows == 1 or self.__input.cols == 1 else ', Eigen::RowMajor'}> {self.getIntermediateName(self.__input)}_materialized({self.getIntermediateName(self.__input)});
+  #pragma unroll
+  for (unsigned int i = 0; i < {self.__input.size}; i++){{
+    result[i] = {self.getIntermediateName(self.__input)}_materialized.data()[i];
+  }}
+''')
     # now we need to get the datas for generating this kernel
     allNamedAttributeChildren = self.__childrenAttributeKernels.values()
     # get the datas they need
