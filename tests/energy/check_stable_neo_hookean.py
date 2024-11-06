@@ -56,27 +56,27 @@ grad_energy = [sp.diff(energy, pos) for pos in positions]
 
 # For substituting numerical values, create a dictionary
 subs_dict = {
-    mu: 2.0,     # Example value for mu
-    lam: 1.0,    # Example value for lambda
-    vol: 1.0 / 6.0,    # Example value for volume
-    x0_x: 0.0, x0_y: 0.0, x0_z: 0.0,
-    x1_x: 2.0, x1_y: 0.0, x1_z: 0.0,
-    x2_x: 0.0, x2_y: 2.0, x2_z: 0.0,
-    x3_x: 0.0, x3_y: 2.0, x3_z: 2.0,
-    # Substitute values for IB components
-    'IB_11': 1.0, 'IB_12': 0.0, 'IB_13': 0.0,
-    'IB_21': 0.0, 'IB_22': 1.0, 'IB_23': 0.0,
-    'IB_31': 0.0, 'IB_32': -1.0, 'IB_33': 1.0
+  mu: 2.0,     # Example value for mu
+  lam: 1.0,    # Example value for lambda
+  vol: 1.0 / 6.0,    # Example value for volume
+  x0_x: 0.0, x0_y: 0.0, x0_z: 0.0,
+  x1_x: 2.0, x1_y: 0.0, x1_z: 0.0,
+  x2_x: 0.0, x2_y: 2.0, x2_z: 0.0,
+  x3_x: 0.0, x3_y: 2.0, x3_z: 2.0,
+  # Substitute values for IB components
+  'IB_11': 1.0, 'IB_12': 0.0, 'IB_13': 0.0,
+  'IB_21': 0.0, 'IB_22': 1.0, 'IB_23': 0.0,
+  'IB_31': 0.0, 'IB_32': -1.0, 'IB_33': 1.0
 }
 
 # Replace IB component symbols with their actual symbols for substitution
 for i in range(3):
-    for j in range(3):
-        key = f'IB_{i+1}{j+1}'
-        if key in subs_dict:
-            IB[i, j] = subs_dict[key]
-        else:
-            IB[i, j] = sp.Symbol(key)
+  for j in range(3):
+    key = f'IB_{i+1}{j+1}'
+    if key in subs_dict:
+      IB[i, j] = subs_dict[key]
+    else:
+      IB[i, j] = sp.Symbol(key)
 
 # Substitute numerical values into the energy
 energy_numeric = energy.subs(subs_dict)
@@ -93,4 +93,4 @@ print("Energy Value:")
 print(energy_value)
 print("\nGradient of Energy with respect to positions:")
 for var, val in zip(positions, grad_energy_values):
-    print(f"dEnergy/d{var} = {val}")
+  print(f"dEnergy/d{var} = {val}")

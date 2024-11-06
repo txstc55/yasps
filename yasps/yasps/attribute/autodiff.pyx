@@ -63,6 +63,8 @@ class autodiff:
       result = self.__diff_transpose(current, wrt)
     elif current.operator == ya.INV:
       result = self.__diff_inv(current, wrt)
+    elif current.operator == ya.RESIZE:
+      result = self.__diff_resize(current, wrt)
     else:
       raise ValueError(f"autodiff: The operator is not supported: {current.operator}")
     self.__seen_differentiations[(current, wrt)] = result
@@ -279,6 +281,9 @@ class autodiff:
       for j in range(result_i.size):
         result[j * wrt.size + i] = result_i[j]
     return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
+
+  def __diff_resize(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    return self.__diff(current.children[0], wrt)
 
   # def __diff_trace(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
   #   # differentiating trace(f(x))

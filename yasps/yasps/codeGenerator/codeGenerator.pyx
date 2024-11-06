@@ -13,7 +13,7 @@ class codeGenerator:
     self.__order: List[ya.attribute] = [input]
     self.__stack: List[ya.attribute] = list(input.children)
     self.__childrenAttributeKernels: Dict[int, ya.attribute] = {}
-    self.__attribute_replacements: Dict[int, int] = {}
+    self.__attribute_replacements: Dict[int, Tuple[ya.attribute, int]] = {}
     self.__num_intermediates: int = 0
     self.__code_strings: List[str] = []
     self.__repeated_intermediates: Set[int] = set()
@@ -37,8 +37,6 @@ class codeGenerator:
           # even though in reality we never call kernel for datas
           # the reason we generate this is to know what attributes are needed
           # for the kernel
-          # if current.fullName == "scene_mesh_edge_pair_d_scene_mesh_vertex_4751934927072571522926939811690662007008092393643494922003777497913959258393109802892957861802463902152300288974682765455609473845080651745173354917039320_d_scene_mesh_vertex_translation_0":
-          #   print("we reached here")
           self.__order.append(current)
           # check if we have already generated the kernel for it
           if current.hash not in self.__childrenAttributeKernels:
@@ -46,6 +44,8 @@ class codeGenerator:
             childCodeGenerator.generateCode()
             self.__childrenAttributeKernels[current.hash] = current
           else:
+            # there's a kernel generated that does exactly the same thing
+            # we add a macro to handle this
             if current.fullName != self.__childrenAttributeKernels[current.hash].fullName:
               # we add a macro to make the two functions the same
               self.__code_strings.append(f'''
@@ -135,10 +135,10 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
         attribute_name: str = ""
         if current.name != "":
           attribute_name = current.fullName + "_local_data"
-          self.__attribute_replacements[current.hash] = -1
+          self.__attribute_replacements[current.hash] = (current, -1)
         else:
           attribute_name = f"INTERMEDIATE_{self.__num_intermediates}"
-          self.__attribute_replacements[current.hash] = self.__num_intermediates
+          self.__attribute_replacements[current.hash] = (current, self.__num_intermediates)
           self.__num_intermediates += 1
 
         if current.size == 1:
@@ -243,7 +243,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
   Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
 ''')
         # add to intermediate names
-        self.__attribute_replacements[current.hash] = -1
+        self.__attribute_replacements[current.hash] = (current, -1)
 
     # now we are done with the computation
     # need to put back the result
@@ -307,10 +307,10 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     attribute_hash = attribute.hash
     if attribute_hash not in self.__attribute_replacements:
       raise ValueError("codeGenerator.getIntermediateName: attribute hash not found in self.__attribute_replacements.", str(attribute))
-    if self.__attribute_replacements[attribute_hash] == -1:
-      return f"{attribute.fullName}_local_data"
+    if self.__attribute_replacements[attribute_hash][1] == -1:
+      return f"{self.__attribute_replacements[attribute_hash][0].fullName}_local_data"
     else:
-      return f"INTERMEDIATE_{self.__attribute_replacements[attribute_hash]}"
+      return f"INTERMEDIATE_{self.__attribute_replacements[attribute_hash][1]}"
 
 
 
@@ -335,9 +335,9 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     attribute_name: str = ""
     if current.name != "":
       attribute_name = current.fullName + "_local_data"
-      self.__attribute_replacements[current.hash] = -1
+      self.__attribute_replacements[current.hash] = (current, -1)
     else:
-      ind = self.__attribute_replacements[current.hash]
+      ind: int = self.__attribute_replacements[current.hash][1]
       attribute_name = f"INTERMEDIATE_{ind}"
 
     if current.size == 1:
@@ -589,3 +589,24 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.dot({self.getIntermediateName(current.children[1])});''')
+
+  def __generate_code_for_resize(self, current: ya.attribute) -> None:
+    # we need to generate the code accordingly
+    origin_mat = current.children[0]
+    attribute_initialization: str = ""
+    attribute_name: str = ""
+    if current.name != "":
+      attribute_name = current.fullName + "_local_data"
+      self.__attribute_replacements[current.hash] = (current, -1)
+    else:
+      ind: int = self.__attribute_replacements[current.hash][1]
+      attribute_name = f"INTERMEDIATE_{ind}"
+
+      if origin_mat.rows == 1 or origin_mat.cols == 1:
+        attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}> {attribute_name}"
+      else:
+        attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}, Eigen::RowMajor> {attribute_name}"
+    # copy the data and resize
+    self.__code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])};
+  {attribute_name}.resize({current.rows}, {current.cols});''')

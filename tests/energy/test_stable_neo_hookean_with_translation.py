@@ -5,8 +5,6 @@ import time
 def extract_surface_triangles(tets):
   from collections import defaultdict
   face_count = defaultdict(int)
-
-  # Define all faces of a tetrahedron (4 faces per tetrahedron)
   tet_faces = np.array([
     [0, 1, 2],
     [0, 1, 3],
@@ -18,7 +16,6 @@ def extract_surface_triangles(tets):
       face_vertices = tet[face]
       sorted_face = tuple(sorted(face_vertices))
       face_count[sorted_face] += 1
-  # Extract faces that occur only once (surface triangles)
   surface_triangles = [list(face) for face, count in face_count.items() if count == 1]
   return np.array(surface_triangles)
 # # initialize some fake data
@@ -28,8 +25,6 @@ def extract_surface_triangles(tets):
 # tet_indices = np.array([[1, 2, 3, 7]])
 
 # initialize with real data
-# Function to extract surface triangles
-
 f = open("../data/bunny.ele", 'r')
 f.readline()
 tet_indices = []
@@ -37,7 +32,6 @@ for line in f:
   tet_indices.append([int(x) - 1 for x in line.split()[3:]])
 f.close()
 tet_indices = np.array(tet_indices)
-
 f = open("../data/bunny.node", 'r')
 f.readline()
 position = []
@@ -45,8 +39,23 @@ for line in f:
   position.append([float(x) for x in line.split()[1:]])
 f.close()
 position = np.array(position, dtype = np.float64)
-
 surface_triangle_indices = extract_surface_triangles(tet_indices)
+
+
+# rotate each vertex by degree of x value
+x = position[:, 0]  # Shape: (N,)
+y = position[:, 1]  # Shape: (N,)
+z = position[:, 2]  # Shape: (N,)
+theta_degrees = x  # Each x_i is the rotation angle in degrees
+theta_radians = np.deg2rad(theta_degrees * 100.0)  # np.deg2rad converts degrees to radians
+cos_theta = np.cos(theta_radians)  # Shape: (N,)
+sin_theta = np.sin(theta_radians)  # Shape: (N,)
+y_rotated = y * cos_theta - z * sin_theta
+z_rotated = y * sin_theta + z * cos_theta
+x_rotated = x
+rotated_positions = np.column_stack((x_rotated, y_rotated, z_rotated))
+# rotated_positions = position
+rotated_position_translations = rotated_positions - 2 * position
 
 s0 = scene("scene0")
 bunny = s0.addMesh("bunny")
@@ -59,37 +68,19 @@ bunny.attributes["size"].updateValue(1.0)
 
 # add vertices
 vertices = bunny.addPrimitive("vertices", numInstances = position.shape[0])
-vertex_positions = vertices.addAttribute("position", rows = 1, cols = 3)
-vertices["position"].updateValue(position)
+vertex_translations = vertices.addAttribute("translation", rows = 1, cols = 3)
+vertex_scales = vertices.addAttribute("scale", rows = 1, cols = 1)
+vertex_rest_positions = vertices.addAttribute("rest_position", rows = 1, cols = 3)
+vertex_positions = vertices.addAttribute("position", computed_attribute = vertex_rest_positions * vertex_scales + vertex_translations)
+vertex_translations.updateValue(rotated_position_translations)
+vertex_scales.updateValue([1.0] * position.shape[0])
+vertex_rest_positions.updateValue(position * 2.0)
 
 
 tets = bunny.addPrimitive("tets", numInstances = tet_indices.shape[0])
 tet_to_vertex = tets.addConnectivity("tet_to_vertex", vertices, tet_indices, 4)
 tet_positions = tets.addAttribute("position", through = tet_to_vertex)
-tet_position_rest = tets.addAttribute("position_rest", rows = 4, cols = 3)
-tet_position_rest.updateValue(tet_positions.compute().value.get() * 2.0, deepCopy = True) # make a deep copy
-
-
-
-
-# # rotate each vertex by degree of x value
-# x = position[:, 0]  # Shape: (N,)
-# y = position[:, 1]  # Shape: (N,)
-# z = position[:, 2]  # Shape: (N,)
-# # Convert x-coordinates to rotation angles in degrees
-# theta_degrees = x  # Each x_i is the rotation angle in degrees
-# # Convert degrees to radians
-# theta_radians = np.deg2rad(theta_degrees * 10.0)  # np.deg2rad converts degrees to radians
-# cos_theta = np.cos(theta_radians)  # Shape: (N,)
-# sin_theta = np.sin(theta_radians)  # Shape: (N,)
-# # Compute the new y and z coordinates after rotation
-# y_rotated = y * cos_theta - z * sin_theta
-# z_rotated = y * sin_theta + z * cos_theta
-# # x remains the same
-# x_rotated = x
-# rotated_positions = np.column_stack((x_rotated, y_rotated, z_rotated))
-# rotated_positions = position
-# vertices["position"].updateValue(rotated_positions)
+tet_position_rest = tets.addAttribute("rest_position", through = tet_to_vertex)
 
 
 # here we compute the rest position deformation gradient
@@ -152,14 +143,14 @@ snh = tet_deform.addAttribute("stable_neo_hookean", computed_attribute = stable_
 # print(snh.compute().value.get())
 
 s0.addEnergy(snh)
-s0.addMinimizeTarget([vertices["position"]])
-s0.minimizeEnergy()
+s0.addMinimizeTarget([vertices["translation"], vertices["scale"]])
+# s0.minimizeEnergy()
 # print(tets.attributes.keys())
 
 import pyvista as pv
 triangles = np.array(surface_triangle_indices)
 cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
-mesh = pv.PolyData(np.array(position), cells)
+mesh = pv.PolyData(vertex_positions.compute().value.get(), cells)
 mesh2 = pv.PolyData(np.array(position * 2.0), cells)
 
 plotter = pv.Plotter()
@@ -172,16 +163,26 @@ plotter.show(interactive_update=True)
 total_frames = 0
 start = time.time()
 iteration = 0
-weight = 0.0001
+weight = 0.00001
 def update_position():
   global total_frames, start
-  change_value = s0.minimizeEnergy()[0].get()
-  print("Change value", change_value)
-  for i in range(len(change_value)):
-    if np.isnan(change_value[i]):
-      print("NaN detected at position", i)
+  delta_translation, delta_scale = s0.minimizeEnergy()
+  delta_translation = delta_translation.get()
+  delta_scale = delta_scale.get()
+  for i in range(len(delta_translation)):
+    if np.isnan(delta_translation[i]):
+      print(f"NaN detected at position {i} for translation")
       exit()
-  new_positions = vertex_positions.compute().value.get().flatten() - weight * change_value
+  for i in range(len(delta_scale)):
+    if np.isnan(delta_scale[i]):
+      print(f"NaN detected at position {i} for scale")
+      exit()
+  new_translations = vertex_translations.compute().value.get().flatten() - weight * delta_translation
+  new_scales = vertex_scales.compute().value.get().flatten() - weight * delta_scale
+  print(f"New scales average: {np.mean(new_scales)}")
+  vertex_translations.updateValue(new_translations)
+  vertex_scales.updateValue(new_scales)
+  new_positions = vertex_positions.compute().value.get().flatten()
   vertex_positions.updateValue(new_positions)
   # Update the mesh points
   mesh.points = new_positions.reshape(-1, 3)

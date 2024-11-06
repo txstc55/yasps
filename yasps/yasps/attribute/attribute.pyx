@@ -61,6 +61,8 @@ NORM = operator("norm", 3, False) # for norm
 DET = operator("det", 3, False) # determinant of the matrix
 INV = operator("inverse", 3, False) # matrix inverse
 DOT = operator("dot", 3, False) # dot product
+SPD = operator("spd", 3, False) # spd projection
+RESIZE = operator("resize", 3, False) # resize the matrix
 
 
 
@@ -184,6 +186,13 @@ class attribute:
       raise ValueError("attribute.reshape: new shape must have the same number of elements.")
     self.__n_rows = rows
     self.__n_cols = cols
+
+  def resize(self, rows, cols):
+    if self.rows * self.cols != rows * cols:
+      raise ValueError("attribute.resize: new shape must have the same number of elements.")
+    if self.size == 1:
+      return self
+    return attribute(children = [self, attribute(index_value = rows), attribute(index_value = cols)], operator = RESIZE)
 
   @property
   def operator(self):
@@ -511,6 +520,12 @@ class attribute:
     for i in range(1, self.rows):
       result += self[i, i]
     return result
+
+  def spd(self) -> attribute:
+    if self.rows != self.cols:
+      raise ValueError("attribute.spd: cannot compute spd projection of a non-square matrix.")
+    return attribute(children = [self], operator = SPD, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+
 
 
   def cross(self, other: attribute) -> attribute:
