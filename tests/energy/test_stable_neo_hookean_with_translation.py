@@ -114,7 +114,7 @@ x0 = row1 - row0
 x1 = row2 - row0
 x2 = row3 - row0
 F = attribute.to_array([x0[0], x0[1], x0[2], x1[0], x1[1], x1[2], x2[0], x2[1], x2[2]], rows = 3, cols = 3)
-deformation = tets.addAttribute("deformation_gradient", computed_attribute = F)
+# deformation = tets.addAttribute("deformation_gradient", computed_attribute = F)
 
 # we add one more level of join for the deformation gradient, which has 1 to 1 relationship to tets
 tet_deform = bunny.addPrimitive("tet_deform", numInstances = tet_indices.shape[0])
@@ -124,7 +124,7 @@ tet_deform.addConnectivity("tet_deform_to_tet", tets, np.arange(tet_indices.shap
 vol = tet_deform.addAttribute("vol", through = tet_deform.connectivities["tet_deform_to_tet"])
 IB = tet_deform.addAttribute("IB", through = tet_deform.connectivities["tet_deform_to_tet"])
 IB.reshape(3, 3) # need to reshape
-deformation = tet_deform.addAttribute("deformation_gradient", through = tet_deform.connectivities["tet_deform_to_tet"])
+deformation = tet_deform.addAttribute("deformation_gradient", through = tet_deform.connectivities["tet_deform_to_tet"], source = F)
 deformation.reshape(3, 3) # need to reshape
 # print("Deformation gradient")
 # print(deformation.compute().value.get().reshape(3, 3))

@@ -311,7 +311,7 @@ class attribute:
         raise ValueError("attribute.__getitem__: index out of range.")
       if self.operator == ARRAY:
         return self.children[index]
-      elif self.operator == SELECT:
+      if self.operator == SELECT:
         # for select, if the two values are the same
         # then we return it
         # otherwise we need to return another select
@@ -321,11 +321,15 @@ class attribute:
           return true_value[index]
         else:
           return attribute.select(self.children[0], true_value[index], false_value[index])
-      elif self.operator == DATA:
+      if self.operator == DATA:
         indexAttribute = attribute(operator = INDEX, index_value = index)
         return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
-      elif self.size == 1 and index == 0:
+      if self.size == 1 and index == 0:
         return self
+      if self.operator == TRANSPOSE:
+        row = index // self.cols
+        col = index % self.cols
+        return self.children[0][row, col]
       indexAttribute = attribute(operator = INDEX, index_value = index)
       return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
     elif isinstance(index, tuple):
@@ -335,7 +339,7 @@ class attribute:
         raise ValueError(f"attribute.__getitem__: index out of range, acceessing index of {index} in a matrix of {self.rows}x{self.cols}.")
       if self.operator == ARRAY:
         return self.children[index[0] * self.cols + index[1]]
-      elif self.operator == SELECT:
+      if self.operator == SELECT:
         # for select, if the two values are the same
         # then we return it
         # otherwise we need to return another select
@@ -346,11 +350,14 @@ class attribute:
           return true_value[new_ind]
         else:
           return attribute.select(self.children[0], true_value[new_ind], false_value[new_ind])
-      elif self.operator == DATA:
+      if self.operator == DATA:
         indexAttribute = attribute(operator = INDEX, index_value = index[0] * self.cols + index[1])
         return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
-      elif self.size == 0 and index[0] == 0 and index[1] == 0:
+      if self.size == 0 and index[0] == 0 and index[1] == 0:
         return self
+      if self.operator == TRANSPOSE:
+        return self.children[0][index[1], index[0]]
+
       indexAttribute = attribute(operator = INDEX, index_value = index[0] * self.cols + index[1])
       return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
     else:

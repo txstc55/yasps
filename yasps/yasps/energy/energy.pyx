@@ -265,6 +265,8 @@ class energy:
             # ok now we need to create new attributes for the non skipped indices
             included_paths = [lead_att.children[0]] + path[i + 1: -1]
             included_path_str = "_d_".join([x.fullName for x in included_paths])
+            # print("Lead attribute fullname", lead_att.fullName)
+            # print("Included path str:", included_path_str)
             for j in range(multiplied_jacobian.size):
               if j in skipped_indices:
                 continue
@@ -275,15 +277,17 @@ class energy:
             new_jacobian_children = [attribute(float_value = 0.0) for _ in range(multiplied_jacobian.size * lead_att.through.dimension * lead_att.through.dimension)]
             # ok, if the child jacobian is m by n, then the new jacobian has k by k blocks, each block is m by n
             # and only the diagonal blocks will have nonzero values
+            # the jacobian is corresponding to per data
+            # so there's no need to reorient them
             for j in range(multiplied_jacobian.size):
-              m = multiplied_jacobian.rows
-              n = multiplied_jacobian.cols
-              k = lead_att.through.dimension
-              child_jacobian_row = j // n
-              child_jacobian_col = j % n
+              m = multiplied_jacobian.rows # rows
+              n = multiplied_jacobian.cols # cols
+              k = lead_att.through.dimension # how many times we need to repeat the jacobian through gather
+              child_jacobian_row = j // n # which row of the child jacobian
+              child_jacobian_col = j % n # which col of the child jacobian
               for l in range(lead_att.through.dimension):
-                leading_index = m * n * k * l
-                element_index = leading_index + child_jacobian_row * n * k + n * l + child_jacobian_col
+                leading_index = m * n * k * l # offset because we are doing jacobian by jacobian
+                element_index = leading_index + child_jacobian_row * (n * k) + (n * l + child_jacobian_col)
                 if j in skipped_indices:
                   new_jacobian_children[element_index] = multiplied_jacobian[j]
                 else:
@@ -311,6 +315,7 @@ class energy:
       self.__gradient = self.__energy.correspondance[f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}']
 
   def __generateHessianForParts(self, differentiater: autodiff, currentPaths: List[List[attribute]]) -> None:
+    from yasps.attribute import DATA, GATHER, FLOAT
     # we need to recursively generate the hessian for parts
     # the input currentPaths all have the same first element
     # then we just need to find the hessian for this part of the path
@@ -339,21 +344,90 @@ class energy:
       diff_att = child_att.correspondance.attributes[diff_att_name]
       h_f_g_size += diff_att.size / child_att.size # because hessian is generated for each element of the child att
     h_f_g_children = [attribute(float_value = 0.0) for _ in range(h_f_g_size * h_f_g_size * child_att.size)] # a hessian for each element of the child att
-    i_offset = 0
+    row_offset = 0
     for i in range(len(allChildren)):
       follow_node = allChildren[i]
       follow_node_full_name = follow_node.fullName
       diff_att_name = f'd_{child_att_full_name}_d_{follow_node_full_name}'
-      j_offset = 0
+      col_offset = 0 # whenever we go to a new child, we need to reset the col_offset
       for j in range(i, len(allChildren)):
         diff_target_node = allChildren[j]
         diff_target_node_full_name = diff_target_node.fullName
         d2_name = f'd_{diff_att_name}_d_{diff_target_node_full_name}'
+        # we have computed this hessian for sure
         d2_attribute = child_att.correspondance.attributes[d2_name]
         single_att_d2_size = d2_attribute / child_att.size
         for l in range(child_att.size):
           d2_attribute_partial = d2_attribute[l * single_att_d2_size: (l + 1) * single_att_d2_size]
-      i_offset += follow_node.size
+          # the block has size follow_node.size * diff_target_node.size
+          # we need to put this block into the hessian
+          # the offset are row_offset and col_offset
+          for m in range(follow_node.size):
+            for n in range(diff_target_node.size):
+              h_f_g_children[l * h_f_g_size * h_f_g_size + (row_offset + m) * h_f_g_size + col_offset + n] = d2_attribute_partial[m * diff_target_node.size + n]
+              # make it symmetric
+              h_f_g_children[l * h_f_g_size * h_f_g_size + (col_offset + n) * h_f_g_size + row_offset + m] = d2_attribute_partial[m * diff_target_node.size + n]
+        col_offset += diff_target_node.size
+      row_offset += follow_node.size
+    # ok now we need to assemble J of g(x)
+    # we have previously computed them supposedly
+    j_g_x_col_size = 0
+    for path in currentPaths:
+      next_node = path[1]
+      if next_node.operator == DATA:
+        j_g_x_col_size += next_node.size
+      else:
+        data_node = path[-1]
+        included_paths = path[1: -1]
+        included_path_str = "_d_".join([x.fullName for x in included_paths])
+        next_jacobian_name = f"d_{included_path_str}_d_{data_node.fullName}"
+        next_jacobian = next_node.correspondance.attributes[next_jacobian_name]
+        j_g_x_col_size += next_jacobian.cols
+    j_g_x_children = [attribute(float_value = 0.0) for _ in range(h_f_g_size * j_g_x_col_size)] # allocate space for the jacobian
+    passed_next_node = [currentPaths[0][1]] # check if we already passed this node
+    row_offset = 0
+    col_offset = 0
+    for path in currentPaths:
+      next_node = path[1]
+      if next_node not in passed_next_node:
+        passed_next_node.append(next_node)
+        row_offset += passed_next_node[-1].size # we moved to the next node, row_offset updates
+      if next_node.operator == DATA:
+        # this is easy
+        # we put the identity matrix inside
+        for i in range(next_node.size):
+          index = (row_offset + i) * j_g_x_col_size + col_offset + i
+          j_g_x_children[index] = attribute(float_value = 1.0)
+        col_offset += next_node.size
+      else:
+        # it's not easy
+        # we need to get the jacobian now
+        included_paths = path[2: -1]
+        data_node = path[-1]
+        included_path_str = "_d_".join([x.fullName for x in included_paths])
+        next_jacobian_name = f"d_{included_path_str}_d_{data_node.fullName}"
+        next_jacobian = next_node.correspondance.attributes[next_jacobian_name]
+        for i in range(next_jacobian.rows):
+          for j in range(next_jacobian.cols):
+            index = (row_offset + i) * j_g_x_col_size + col_offset + j
+            j_g_x_children[index] = next_jacobian[i * next_jacobian.cols + j]
+        col_offset += next_jacobian.cols
+    # now we can compute the first part of the hessian by doing the multiplication
+    j_g_x = attribute.to_array(j_g_x_children, rows = h_f_g_size, cols = j_g_x_col_size)
+    multiplication_result = [] # the multiplied out first term, we do this for each element of child_att
+    for i in range(child_att.size):
+      hessian_children = h_f_g_children[i * h_f_g_size * h_f_g_size: (i + 1) * h_f_g_size * h_f_g_size]
+      hessian = attribute.to_array(hessian_children, rows = h_f_g_size, cols = h_f_g_size)
+      multiplication_result.append(j_g_x.transpose().mul_explicit(hessian).mul_explicit(j_g_x))
+
+    # we've finished the first part of the hessian now
+    # now we need to compute the second part
+
+
+
+
+
+
 
 
 
