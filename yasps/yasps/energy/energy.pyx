@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from yasps.attribute import attribute
 from yasps.autodiff import autodiff
 import pycuda.driver as cuda
+from yasps.helper import extract_block
 if TYPE_CHECKING:
   from yasps.operator import operator
   from yasps.scene import scene
@@ -54,7 +55,7 @@ class energy:
     seenRoots: Set[attribute] = set([])
     roots: List[attribute] = []
     while stack:
-      current = stack.pop()
+      current: attribute = stack.pop()
       if current.operator == DATA:
         if current not in seenRoots:
           roots.append(current)
@@ -90,7 +91,7 @@ class energy:
     return trueRoots, allPaths
 
   def getHessianOffDiagonalBlockSizes(self, wrt: List[attribute]) -> List[Tuple[int, int]]:
-    sizePairs = []
+    sizePairs: List[Tuple[int, int]] = []
     for i in range(len(self.roots)):
       if self.roots[i] in wrt:
         for j in range(i+1, len(self.roots)):
@@ -153,7 +154,7 @@ class energy:
             else:
               currentIndex = wrt_start_indices[dataIndexInWrt]
               allIndices.append(np.uint32(currentIndex))
-    # print("All indices are: ", allIndices)
+    print("All indices are: ", allIndices)
     self.__indices = gpuarray.to_gpu(np.array(allIndices, dtype = np.uint32))
     self.__gradient_sizes = [x[-1].size for x in duplicatedPaths]
     # print("Corresponding sizes are: ", [x[-1].size for x in duplicatedPaths])
@@ -161,7 +162,7 @@ class energy:
 
 
   def __duplicatePath(self, path: List[attribute]) -> List[List[attribute]]:
-    from yasps.attribute import DATA, GATHER
+    from yasps.attribute import DATA, GATHER, FLOAT
     if path[0].operator == DATA:
       # we've reached the end
       # return itself
@@ -200,6 +201,8 @@ class energy:
     else:
       # now we generate from the bottom up
       for path in filteredPath:
+        # print("generate gradient")
+        # print(f'At path: {", ".join([x.fullName for x in path])}')
         # do it in reverse order
         for i in range(len(path) - 2, -1, -1):
           # # we will compute the jacobian for each neighboring nodes
@@ -304,6 +307,10 @@ class energy:
           children_path_str = "_d_".join([x.fullName for x in children_path])
           neighboring_jacobian = path[0].correspondance[f'd_{path[0].fullName}_d_{path[1].fullName}']
           last_data_jacobian = path[1].correspondance[f'd_{children_path_str}_d_{path[-1].fullName}']
+          # print(f"Neighboring jacobian size: {neighboring_jacobian.rows} x {neighboring_jacobian.cols}")
+          # print(f"Neighboring jacobian: {str(neighboring_jacobian)}")
+          # print(f"Last data jacobian size: {last_data_jacobian.rows} x {last_data_jacobian.cols}")
+          # print(f"Last data jacobian: {str(last_data_jacobian)}")
           final_jacobian = neighboring_jacobian.mul_explicit(last_data_jacobian)
           gradients.append(final_jacobian)
       gradients_assembled_children = []
@@ -325,43 +332,48 @@ class energy:
     # same node will always be batched together
 
     # we first check if H of f(g) is already computed
-    lead_node = currentPaths[0][0]
-    child_att = lead_node.children[0]
-    child_att_full_name = child_att.fullName
+    lead_node: attribute = currentPaths[0][0]
+    child_att: attribute
+    # differentiate between the gather canse and the top node, which is the energy
+    if lead_node.operator != GATHER:
+      child_att = lead_node
+    else:
+      child_att = lead_node.children[0]
+    child_att_full_name: str = child_att.fullName
     # we need to get the hessian from child_att to data node
-    # first, we construct the Hessian of f(g(x))
+    # first, we construct the Hessian of f(g(x)) wrt g(x)
     # which is essentially the hessian from child_att to all of its children
-    h_f_g_size = 0
-    allChildren: List[attribute] = []
+    h_f_g_size: int = 0
+    allChildren: List[attribute] = [] # all the following nodes
     for path in currentPaths:
-      follow_node = path[1]
+      follow_node: attribute = path[1]
       if follow_node not in allChildren:
         allChildren.append(follow_node)
     for follow_node in allChildren:
-      follow_node_full_name = follow_node.fullName
-      # we know this is definitely computed
-      diff_att_name = f'd_{child_att_full_name}_d_{follow_node_full_name}'
-      diff_att = child_att.correspondance.attributes[diff_att_name]
-      h_f_g_size += diff_att.size / child_att.size # because hessian is generated for each element of the child att
-    h_f_g_children = [attribute(float_value = 0.0) for _ in range(h_f_g_size * h_f_g_size * child_att.size)] # a hessian for each element of the child att
-    row_offset = 0
+      h_f_g_size += follow_node.size # we just need to know for each follow node, its size and we can accumulate the hessian size
+    h_f_g_children: List[attribute] = [attribute(float_value = 0.0) for _ in range(h_f_g_size * h_f_g_size * child_att.size)] # a hessian for each element of the child att
+    row_offset: int = 0
     for i in range(len(allChildren)):
-      follow_node = allChildren[i]
-      follow_node_full_name = follow_node.fullName
-      diff_att_name = f'd_{child_att_full_name}_d_{follow_node_full_name}'
-      col_offset = 0 # whenever we go to a new child, we need to reset the col_offset
+      follow_node: attribute = allChildren[i]
+      follow_node_full_name: str = follow_node.fullName
+      diff_att_name: str = f'd_{child_att_full_name}_d_{follow_node_full_name}'
+      previous_children = allChildren[: i]
+      col_offset = sum([x.size for x in previous_children]) # whenever we go to a new child, we need to reset the col_offset
       for j in range(i, len(allChildren)):
-        diff_target_node = allChildren[j]
-        diff_target_node_full_name = diff_target_node.fullName
-        d2_name = f'd_{diff_att_name}_d_{diff_target_node_full_name}'
-        # we have computed this hessian for sure
-        d2_attribute = child_att.correspondance.attributes[d2_name]
-        single_att_d2_size = d2_attribute / child_att.size
+        diff_target_node: attribute = allChildren[j]
+        diff_target_node_full_name: str = diff_target_node.fullName
+        d2_name: str = f'd_{diff_att_name}_d_{diff_target_node_full_name}' # we have computed this hessian for sure
+        d2_attribute: attribute = child_att.correspondance.attributes[d2_name]
+        # print(f"D2 attribute: {d2_name}")
+        # print(d2_attribute.compute().value.get())
+        single_att_d2_size: int = d2_attribute.size // child_att.size # because this jacobian is computed for each
+        assert single_att_d2_size * child_att.size == d2_attribute.size # make sure the size is integer division
         for l in range(child_att.size):
-          d2_attribute_partial = d2_attribute[l * single_att_d2_size: (l + 1) * single_att_d2_size]
+          d2_attribute_partial: List[attribute] = [d2_attribute[k] for k in range(l * single_att_d2_size, (l + 1) * single_att_d2_size)]
           # the block has size follow_node.size * diff_target_node.size
           # we need to put this block into the hessian
           # the offset are row_offset and col_offset
+          # print(f"Row and column offset: {row_offset}, {col_offset}")
           for m in range(follow_node.size):
             for n in range(diff_target_node.size):
               h_f_g_children[l * h_f_g_size * h_f_g_size + (row_offset + m) * h_f_g_size + col_offset + n] = d2_attribute_partial[m * diff_target_node.size + n]
@@ -371,27 +383,30 @@ class energy:
       row_offset += follow_node.size
     # ok now we need to assemble J of g(x)
     # we have previously computed them supposedly
-    j_g_x_col_size = 0
+    j_g_x_col_size: int = 0
+    j_g_x_col_sizes: List[int] = []
     for path in currentPaths:
       next_node = path[1]
       if next_node.operator == DATA:
         j_g_x_col_size += next_node.size
+        j_g_x_col_sizes.append(next_node.size)
       else:
         data_node = path[-1]
-        included_paths = path[1: -1]
-        included_path_str = "_d_".join([x.fullName for x in included_paths])
-        next_jacobian_name = f"d_{included_path_str}_d_{data_node.fullName}"
-        next_jacobian = next_node.correspondance.attributes[next_jacobian_name]
+        included_paths: List[attribute] = path[1: -1]
+        included_path_str: str = "_d_".join([x.fullName for x in included_paths])
+        next_jacobian_name: str = f"d_{included_path_str}_d_{data_node.fullName}"
+        next_jacobian: attribute = next_node.correspondance.attributes[next_jacobian_name]
         j_g_x_col_size += next_jacobian.cols
-    j_g_x_children = [attribute(float_value = 0.0) for _ in range(h_f_g_size * j_g_x_col_size)] # allocate space for the jacobian
-    passed_next_node = [currentPaths[0][1]] # check if we already passed this node
-    row_offset = 0
-    col_offset = 0
+        j_g_x_col_sizes.append(next_jacobian.cols)
+    j_g_x_children: List[attribute] = [attribute(float_value = 0.0) for _ in range(h_f_g_size * j_g_x_col_size)] # allocate space for the jacobian
+    passed_next_node: List[attribute] = [currentPaths[0][1]] # check if we already passed this node
+    row_offset: int = 0
+    col_offset: int = 0
     for path in currentPaths:
-      next_node = path[1]
+      next_node: attribute = path[1]
       if next_node not in passed_next_node:
-        passed_next_node.append(next_node)
         row_offset += passed_next_node[-1].size # we moved to the next node, row_offset updates
+        passed_next_node.append(next_node)
       if next_node.operator == DATA:
         # this is easy
         # we put the identity matrix inside
@@ -402,10 +417,11 @@ class energy:
       else:
         # it's not easy
         # we need to get the jacobian now
-        included_paths = path[2: -1]
+        included_paths = path[1: -1]
         data_node = path[-1]
         included_path_str = "_d_".join([x.fullName for x in included_paths])
         next_jacobian_name = f"d_{included_path_str}_d_{data_node.fullName}"
+        # print(next_node.correspondance.attributes.keys())
         next_jacobian = next_node.correspondance.attributes[next_jacobian_name]
         for i in range(next_jacobian.rows):
           for j in range(next_jacobian.cols):
@@ -414,14 +430,177 @@ class energy:
         col_offset += next_jacobian.cols
     # now we can compute the first part of the hessian by doing the multiplication
     j_g_x = attribute.to_array(j_g_x_children, rows = h_f_g_size, cols = j_g_x_col_size)
-    multiplication_result = [] # the multiplied out first term, we do this for each element of child_att
+    multiplication_result = [] # the multiplied out first term, we do this for each element of child_att\
+    # print(f"j_g_x size, {j_g_x.rows} x {j_g_x.cols}")
+    # print(f"hessian size, {h_f_g_size} x {h_f_g_size}")
     for i in range(child_att.size):
       hessian_children = h_f_g_children[i * h_f_g_size * h_f_g_size: (i + 1) * h_f_g_size * h_f_g_size]
       hessian = attribute.to_array(hessian_children, rows = h_f_g_size, cols = h_f_g_size)
-      multiplication_result.append(j_g_x.transpose().mul_explicit(hessian).mul_explicit(j_g_x))
+      # print("Hessian inner")
+      # print(hessian.compute().value.get())
+      # print("Hessian str: ")
+      # print(str(hessian))
+      mul1 = hessian.mul_explicit(j_g_x)
+      # print("jgx str: ")
+      # print(str(j_g_x))
+      mul2 = j_g_x.transpose().mul_explicit(mul1)
+      multiplication_result.append(mul2)
 
     # we've finished the first part of the hessian now
     # now we need to compute the second part
+    # the second part is the sum of k
+    # df/dg_k of g(x) times the hessian of g_k(x)
+    # df/dg_k of g(x) we should have already computed
+    all_df_dg: List[attribute] = [] # for each next node
+    for follow_node in allChildren:
+      follow_node_full_name = follow_node.fullName
+      # we know this is definitely computed
+      diff_att_name: str = f'd_{child_att_full_name}_d_{follow_node_full_name}'
+      diff_att: attribute = child_att.correspondance.attributes[diff_att_name]
+      all_df_dg.append(diff_att)
+
+    # now, for each next node, we will need to have a permutation matrix
+    # this is because when we have gather, we cannot simply have on diagonal H0, H1, H2
+    # instead, because we store the index by attribute, we need to put the same attribute at the same place
+    # first, we will need to know for each of the follow node, their follow node and the size of the attribute
+    attribute_sizes: List[List[int]] = [[]]
+    corresponding_data_attributes: List[List[attribute]] = [[]]
+    last_checked_attribute: attribute = currentPaths[0][1]
+    for i in range(len(currentPaths)):
+      path: List[attribute] = currentPaths[i]
+      grandchildren_path: List[attribute] = path[2:]
+      attribute_size = 1
+      for item in grandchildren_path:
+        if item.operator != DATA:
+          attribute_size *= item.through.dimension
+        else:
+          attribute_size *= item.size
+      if path[1] != last_checked_attribute:
+        last_checked_attribute = path[1]
+        attribute_sizes.append([])
+        corresponding_data_attributes.append([])
+      attribute_sizes[-1].append(attribute_size)
+      corresponding_data_attributes[-1].append(path[-1])
+    # ok now we have for each next node, all the attributes and the sizes
+    # we should know how to reorient them when we get them
+    # now, for each of the next node, we will get the hessian
+    h_g_full_mat_children = [[attribute(float_value = 0.0) for _ in range(j_g_x_col_size * j_g_x_col_size)] for _ in range(child_att.size)]
+    mat_offset = 0 # the offset for the diagonal block
+    for i in range(len(allChildren)):
+      follow_node: attribute = allChildren[i]
+      if follow_node.operator == DATA:
+        # great, the hessian is 0, all we need to do is set the offset
+        mat_offset += follow_node.size
+      else:
+        # first of all, we check if the hessian exists
+        data_attributes: List[attribute] = corresponding_data_attributes[i]
+        h_g_name = f'd2_{follow_node.children[0].fullName}_d_{"__".join([x.fullName for x in data_attributes])}'
+        if h_g_name not in follow_node.children[0].correspondance.attributes:
+          # ok here we finally do the recursion part
+          # first we select all the paths that are relevant
+          relevant_paths: List[List[attribute]] = []
+          for path in currentPaths:
+            if path[1] == follow_node:
+              relevant_paths.append(path[1:])
+          self.__generateHessianForParts(autodiff, relevant_paths)
+        h_g: attribute = follow_node.children[0].correspondance.attributes[h_g_name] # h_g has size j_g_x_col_size * j_g_x_col_size * (number of elements for the follow node's child 0, because we have a hessian for each of the element)
+        follow_node_child_size = follow_node.children[0].size # the number of blocks in h_g
+        follow_node_dimension = follow_node.through.dimension # how many children is gathered
+        h_g_true_size = h_g.size // follow_node_child_size # for each h_g, what's the size
+        assert h_g_true_size * follow_node_child_size == h_g.size # make sure the division is integer
+        h_g_true_row_size = sum(attribute_sizes[i]) # how many rows in this hessian
+        # let's do an assert here
+        assert h_g_true_size == sum(attribute_sizes[i]) * sum(attribute_sizes[i])
+        # now we check how many elements of h_g we actually need, because it's possible that many of them are constants
+        skipped_indices = []
+        for j in range(h_g.size):
+          if h_g[j].operator == FLOAT:
+            skipped_indices.append(j)
+          else:
+            # we add the attribute
+            if f'{h_g_name}_{j}' not in follow_node.correspondance.attributes:
+              follow_node.correspondance.addAttribute(f'{h_g_name}_{j}', through = follow_node.through, source = h_g[j])
+        # now we actually need to accumulate the new matrix, which is going to be the size of
+        # h_g_true_size * follow_node_child_size * follow_node_dimension
+        expanded_second_term_hessians = [attribute(float_value = 0.0) for _ in range(h_g.size * follow_node_dimension)]
+        for j in range(h_g.size):
+          if j in skipped_indices:
+            # we know exactly it is a float, put it in corresponding place
+            for k in range(follow_node_dimension):
+              expanded_second_term_hessians[k * h_g.size + j] = h_g[j]
+          else:
+            # we have the accumulated attribute, put it in
+            for k in range(follow_node_dimension):
+              expanded_second_term_hessians[k * h_g.size + j] = follow_node.correspondance.attributes[f'{h_g_name}_{j}'][k]
+        # we have assembled the expanded
+        # now, do the following for each of the element in child_att
+        for j in range(child_att.size):
+          # get the correct row elements of df_dg
+          dfj_dg = [all_df_dg[i][k] for k in range(j * follow_node.size, (j + 1) * follow_node.size)]
+          compressed_second_term_hessians: List[attribute] = [attribute(float_value = 0.0) for _ in range(h_g_true_size * follow_node_dimension)] # because for the child, let's say i have an attribute, that is accumulated 4 times, and the attribute itself has dimension 3, with the final data size of 8, then because each of the 3 elements are corresponding to the same 8 data attributes, we actually can accumulate them together for the 3 hessians, multiplied by the correct df_dg
+          for k in range(follow_node_child_size * follow_node_dimension):
+            nth_gathered_element = k // follow_node_child_size # which gathered index it is
+            nth_child_element = k % follow_node_child_size # which child it is
+            selected_hessian = expanded_second_term_hessians[k * h_g_true_size : (k + 1) * h_g_true_size] # extract the hessian block
+            selected_hessian = [dfj_dg[k] * selected_hessian[m] for m in range(len(selected_hessian))] # multiply by the correct dfj_dg
+            # now we add it back
+            for m in range(h_g_true_size):
+              compressed_second_term_hessians[nth_gathered_element * h_g_true_size + m] += selected_hessian[m]
+          # ok now we reorient the children attributes
+          # here's what we need to do
+          # we have N hessians, N is the gather dimension
+          # and in each of the hessian, the blocks are sorted by data
+          # now we need to put the same data in the same block
+          # we have the mat_offset, which is the offset on both the row and col
+          current_children_sizes: List[int] = attribute_sizes[i]
+          for k in range(len(current_children_sizes)):
+            block_row_size = current_children_sizes[k]
+            block_row_start = sum(current_children_sizes[:k])
+            for m in range(k, len(current_children_sizes)):
+              block_col_size = current_children_sizes[m]
+              block_col_start = sum(current_children_sizes[:m])
+              for n in range(follow_node_dimension): # for each gather
+                # first we get the correct block
+                block = extract_block(compressed_second_term_hessians, h_g_true_row_size * follow_node_dimension, h_g_true_row_size, h_g_true_row_size * n + block_row_start, block_col_start, block_row_size, block_col_size)
+                # ok now we have the block, we need to know where to put it in the final matrix
+                block_row_start_in_final_matrix = mat_offset + block_row_start * follow_node_dimension + block_row_size * n
+                block_col_start_in_final_matrix = mat_offset + block_col_start * follow_node_dimension + block_col_size * n
+                # now we put it in
+                for p in range(block_row_size):
+                  for q in range(block_col_size):
+                    h_g_full_mat_children[j][(block_row_start_in_final_matrix + p) * j_g_x_col_size + block_col_start_in_final_matrix + q] = block[p * block_col_size + q]
+        # now we set the mat offset
+        mat_offset += h_g_true_row_size * follow_node_dimension
+    # now for all h_g_full_mat, we need to make it symmetric
+    for i in range(len(h_g_full_mat_children)):
+      for j in range(j_g_x_col_size):
+        for k in range(j):
+          index = j * j_g_x_col_size + k
+          transpose_index = k * j_g_x_col_size + j
+          h_g_full_mat_children[i][index] = h_g_full_mat_children[i][transpose_index]
+    # ok so now h_g_full_mat is constructed, we need to flatten it and give it the attribute name
+    all_datas = [x[-1] for x in currentPaths]
+    h_g_name = f'd2_{child_att.fullName}_d_{"__".join([x.fullName for x in all_datas])}'
+    h_g_full_mats = [attribute.to_array(x, rows = j_g_x_col_size, cols = j_g_x_col_size) for x in h_g_full_mat_children]
+    h_g_full_mat_children: List[attribute] = []
+    for i in range(child_att.size):
+      h_g_full_mats[i] = h_g_full_mats[i].add_explicit(multiplication_result[i])
+      for j in range(h_g_full_mats[i].size):
+        h_g_full_mat_children.append(h_g_full_mats[i][j])
+    if h_g_name not in child_att.correspondance.attributes:
+      child_att.correspondance.addAttribute(h_g_name, computed_attribute = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols))
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -489,6 +668,7 @@ class energy:
               if double_diff_att_name not in lead_node.correspondance.attributes:
                 double_diff_att = differentiater.diff(diff_att, descendant)
                 lead_node.correspondance.addAttribute(double_diff_att_name, computed_attribute = double_diff_att)
+    self.__generateHessianForParts(differentiater, filteredPath)
 
 
   def generateHessianAndGradient(self, wrt: List[attribute]) -> None:
@@ -496,6 +676,7 @@ class energy:
     differentiater = autodiff()
     # generate the symbolic code for gradient and hessian
     self.__generateGradient(wrt, differentiater)
+    self.__generateHessian(wrt, differentiater)
 
 
 
@@ -535,8 +716,8 @@ class energy:
     elapsed_time_ms = start_call.time_till(end_call)
     end_compute.record()
     end_compute.synchronize()
-    # print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
-    # print(f"Total time: {start_compute.time_till(end_compute):.5f} ms")
+    print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
+    print(f"Total time: {start_compute.time_till(end_compute):.5f} ms")
     # print(f"Gradient is: {gradient_array.get()}")
     return self
 

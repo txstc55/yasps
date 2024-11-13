@@ -91,7 +91,7 @@ class minimizer:
         self.__diagonalBlockCounts.append(item.correspondance.numInstances)
       else:
         index = self.__diagonalBlockSizes.index(item.size)
-        self.__diagonalBlockCounts[index] += item.numInstances
+        self.__diagonalBlockCounts[index] += item.correspondance.numInstances
     # print(f"The diagonal block sizes are: {self.__diagonalBlockSizes}")
     # print(f"The diagonal block counts are: {self.__diagonalBlockCounts}")
     # allocate the gpu array

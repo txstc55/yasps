@@ -171,12 +171,12 @@ def mul_explicitly(att: ya.attribute, other: ya.attribute) -> ya.attribute:
     return ya.attribute.to_array([att[i] * other for i in range(att.size)], att.rows, att.cols)
   if att.cols == other.rows:
     # start the triple for loop
-    result = ya.attribute.zeros(att.rows, other.cols)
+    result = [ya.attribute(float_value = 0.0) for _ in range(att.rows * other.cols)]
     for i in range(att.rows):
       for j in range(other.cols):
         for k in range(att.cols):
-          result.children[i * other.cols + j] += att[i * att.cols + k] * other[k * other.cols + j]
-    return result
+          result[i * other.cols + j] += att[i * att.cols + k] * other[k * other.cols + j]
+    return ya.attribute.to_array(result, rows = att.rows, cols = other.cols)
   else:
     raise ValueError(f"attribute.mul_explicit: dimension mismatch, cannot multiply {att.rows}x{att.cols} with {other.rows}x{other.cols}.")
 

@@ -7,6 +7,7 @@ from pycuda.compiler import SourceModule
 import pycuda.driver as pd
 from typing import Optional, List
 from yasps.helper import get_mangled_name
+from yasps.helper import prune_duplicate_functions
 
 testing_kernel = ""
 
@@ -71,6 +72,8 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
   }}
 }}
 '''
+    # prune duplicate functions
+    self.__kernelString = prune_duplicate_functions(self.__kernelString)
     # generate the code to check
     f = open("testing_hessian_and_gradient_kernel.cu", "w")
     f.write(self.__kernelString)

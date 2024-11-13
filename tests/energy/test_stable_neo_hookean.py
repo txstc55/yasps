@@ -21,31 +21,38 @@ def extract_surface_triangles(tets):
   # Extract faces that occur only once (surface triangles)
   surface_triangles = [list(face) for face, count in face_count.items() if count == 1]
   return np.array(surface_triangles)
-# # initialize some fake data
-# position = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 2.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0], [2.0, 0.0, 2.0], [2.0, 2.0, 2.0], [0.0, 2.0, 2.0]], dtype = np.float64)
 
-# tet_indices = np.array([[0, 1, 3, 7], [1, 2, 3, 7], [0, 1, 4, 7], [1, 5, 4, 7], [1, 2, 6, 7], [1, 5, 6, 7]])
-# tet_indices = np.array([[1, 2, 3, 7]])
+##################################################
+## initialize with fake data
+##################################################
+position = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 2.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0], [2.0, 0.0, 2.0], [2.0, 2.0, 2.0], [0.0, 2.0, 2.0]], dtype = np.float64)
 
-# initialize with real data
-# Function to extract surface triangles
+tet_indices = np.array([[0, 1, 3, 7], [1, 2, 3, 7], [0, 1, 4, 7], [1, 5, 4, 7], [1, 2, 6, 7], [1, 5, 6, 7]])
+tet_indices = np.array([[1, 2, 3, 7]])
 
-f = open("../data/bunny.ele", 'r')
-f.readline()
-tet_indices = []
-for line in f:
-  tet_indices.append([int(x) - 1 for x in line.split()[3:]])
-f.close()
-tet_indices = np.array(tet_indices)
+##################################################
+## initialize with real data
+##################################################
 
-f = open("../data/bunny.node", 'r')
-f.readline()
-position = []
-for line in f:
-  position.append([float(x) for x in line.split()[1:]])
-f.close()
-position = np.array(position, dtype = np.float64)
+# f = open("../data/bunny.ele", 'r')
+# f.readline()
+# tet_indices = []
+# for line in f:
+#   tet_indices.append([int(x) - 1 for x in line.split()[3:]])
+# f.close()
+# tet_indices = np.array(tet_indices)
 
+# f = open("../data/bunny.node", 'r')
+# f.readline()
+# position = []
+# for line in f:
+#   position.append([float(x) for x in line.split()[1:]])
+# f.close()
+# position = np.array(position, dtype = np.float64)
+
+##################################################
+## extract surface triangles
+##################################################
 surface_triangle_indices = extract_surface_triangles(tet_indices)
 
 s0 = scene("scene0")
@@ -68,7 +75,8 @@ tet_to_vertex = tets.addConnectivity("tet_to_vertex", vertices, tet_indices, 4)
 tet_positions = tets.addAttribute("position", through = tet_to_vertex)
 tet_position_rest = tets.addAttribute("position_rest", rows = 4, cols = 3)
 tet_position_rest.updateValue(tet_positions.compute().value.get() * 2.0, deepCopy = True) # make a deep copy
-
+print("Tet position rest")
+print(tet_position_rest.compute().value.get())
 
 
 
@@ -107,12 +115,12 @@ tets.addAttribute("vol", rows = 1, cols = 1)
 tets["vol"].updateValue(vol.compute().value.get())
 tets.addAttribute("IB", rows = 3, cols = 3)
 tets["IB"].updateValue(IB.compute().value.get())
-# print("vol and IB")
-# print(vol.compute().value.get())
-# print(IB.compute().value.get().reshape(3, 3))
+print("vol and IB")
+print(vol.compute().value.get())
+print(IB.compute().value.get().reshape(3, 3))
 
-# print("tet_positions")
-# print(tet_positions.compute().value.get())
+print("tet_positions")
+print(tet_positions.compute().value.get())
 
 # add deformation gradient
 row0 = tet_positions.row(0)
@@ -154,48 +162,57 @@ snh = tet_deform.addAttribute("stable_neo_hookean", computed_attribute = stable_
 s0.addEnergy(snh)
 s0.addMinimizeTarget([vertices["position"]])
 s0.minimizeEnergy()
-# print(tets.attributes.keys())
+print(tet_deform.attributes.keys())
 
-import pyvista as pv
-triangles = np.array(surface_triangle_indices)
-cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
-mesh = pv.PolyData(np.array(position), cells)
-mesh2 = pv.PolyData(np.array(position * 2.0), cells)
+print("Energy")
+print(tet_deform.attributes["stable_neo_hookean"].compute().value.get())
 
-plotter = pv.Plotter()
-plotter.add_mesh(mesh)
-plotter.add_mesh(mesh2, opacity=0.5, color='red')
-plotter.show(interactive_update=True)
+print("Gradient local")
+print(tet_deform.attributes["d_scene0_bunny_tet_deform_stable_neo_hookean_d_scene0_bunny_vertices_position"].compute().value.get())
 
+print("Hessian local")
+print(tet_deform.attributes["d2_scene0_bunny_tet_deform_stable_neo_hookean_d_scene0_bunny_vertices_position"].compute().value.get().reshape(12, 12))
 
+# import pyvista as pv
+# triangles = np.array(surface_triangle_indices)
+# cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
+# mesh = pv.PolyData(np.array(position), cells)
+# mesh2 = pv.PolyData(np.array(position * 2.0), cells)
 
-total_frames = 0
-start = time.time()
-iteration = 0
-weight = 0.0001
-def update_position():
-  global total_frames, start
-  change_value = s0.minimizeEnergy()[0].get()
-  print("Change value", change_value)
-  for i in range(len(change_value)):
-    if np.isnan(change_value[i]):
-      print("NaN detected at position", i)
-      exit()
-  new_positions = vertex_positions.compute().value.get().flatten() - weight * change_value
-  vertex_positions.updateValue(new_positions)
-  # Update the mesh points
-  mesh.points = new_positions.reshape(-1, 3)
-
-  # Refresh the plotter to reflect the updated mesh
-  plotter.update_coordinates(mesh.points, mesh=mesh)
-  plotter.render()
-  # print(f"Average area: {(sum(area.compute().value.get())) / faces.shape[0]}, target is: {average_area}")
-  print(f"Total energy is: {sum(snh.compute().value.get() )}")
+# plotter = pv.Plotter()
+# plotter.add_mesh(mesh)
+# plotter.add_mesh(mesh2, opacity=0.5, color='red')
+# plotter.show(interactive_update=True)
 
 
-while True:
-  update_position()
-  total_frames += 1
-  # if total_frames % 1000 == 0:
-  #   # plotter.export_obj(f"bunny_{total_frames}.obj")
-  #   weight *= 0.9
+
+# total_frames = 0
+# start = time.time()
+# iteration = 0
+# weight = 0.0001
+# def update_position():
+#   global total_frames, start
+#   change_value = s0.minimizeEnergy()[0].get()
+#   print("Change value", change_value)
+#   for i in range(len(change_value)):
+#     if np.isnan(change_value[i]):
+#       print("NaN detected at position", i)
+#       exit()
+#   new_positions = vertex_positions.compute().value.get().flatten() - weight * change_value
+#   vertex_positions.updateValue(new_positions)
+#   # Update the mesh points
+#   mesh.points = new_positions.reshape(-1, 3)
+
+#   # Refresh the plotter to reflect the updated mesh
+#   plotter.update_coordinates(mesh.points, mesh=mesh)
+#   plotter.render()
+#   # print(f"Average area: {(sum(area.compute().value.get())) / faces.shape[0]}, target is: {average_area}")
+#   print(f"Total energy is: {sum(snh.compute().value.get() )}")
+
+
+# while True:
+#   update_position()
+#   total_frames += 1
+#   # if total_frames % 1000 == 0:
+#   #   # plotter.export_obj(f"bunny_{total_frames}.obj")
+#   #   weight *= 0.9

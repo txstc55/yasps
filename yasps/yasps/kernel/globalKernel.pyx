@@ -7,6 +7,7 @@ from pycuda.compiler import SourceModule
 import pycuda.driver as pd
 from typing import Optional, List
 from yasps.helper import get_mangled_name
+from yasps.helper import prune_duplicate_functions
 
 testing_kernel = ""
 
@@ -61,6 +62,8 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
   {attributeName}_device_function({"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}index, result + index * {attr.size});
 }}
 '''
+    # prune duplicate functions
+    self.__kernelString = prune_duplicate_functions(self.__kernelString)
     # generate the code to check
     f = open("testing_kernel.cu", "w")
     f.write(self.__kernelString)
