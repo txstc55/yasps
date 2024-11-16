@@ -29,8 +29,10 @@ class energy:
     self.__roots: List[attribute] = []
     self.__roots, self.__paths = self.getRoots(energy, [energy]) # get the root attributes
     self.__wrt: List[int] = [] # an energy can be minimized for different attributes, for safety let's save all histories
-    self.__indices: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the indices
-    self.__gradient_sizes: List[int] = [] # save the sizes of the gradient
+    self.__indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the indices
+    self.__indices_cpu: np.ndarray = np.array([]) # save the indices on cpu
+    self.__block_indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the block indices
+    self.__gradient_sizes_cpu: List[int] = [] # save the sizes of the gradient
     self.__gradient_sizes_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the sizes of the gradient
     self.__hessian: Optional[attribute] = None # save the hessian for each wrt input
     self.__gradient: Optional[attribute] = None # save the gradient for each wrt input
@@ -47,6 +49,14 @@ class energy:
   @property
   def roots(self) -> List[attribute]:
     return self.__roots
+
+  @property
+  def gradient_sizes(self) -> List[int]:
+    return self.__gradient_sizes_cpu
+
+  @property
+  def indices(self) -> np.ndarray:
+    return self.__indices_cpu
 
 
   def getRoots(self, att: attribute, parentPath: List[attribute]) -> Tuple[List[attribute], List[List[attribute]]]:
@@ -111,8 +121,6 @@ class energy:
     for path in self.__paths:
       if path[-1] in wrt:
         usedPaths.append(path)
-
-
     indicesCPU: Dict[int, np.ndarray] = {} # the indices to cpu
     # now we get the indices of the paths by recursively go over the indices, first we transfer the indices to CPU
     for path in usedPaths:
@@ -122,19 +130,11 @@ class energy:
             indicesCPU[att.hash] = att.through.value.get().reshape(att.through.fromPrimitive.numInstances, att.through.dimension) # reshape to a 2D array with num instances, and dimension
     # now we recursively go over each path
     # we first recursively duplicate the path with rows
-
     currentIndex = 0
     allIndices: List[np.uint32] = []
-
-    # print("Used paths: ")
-    # for path in usedPaths:
-    #   print([p.fullName for p in path])
     duplicatedPaths = []
     for path in usedPaths:
       duplicatedPaths += self.__duplicatePath(path)
-    # print("Duplicated paths: ")
-    # for path in duplicatedPaths:
-    #   print([p.fullName for p in path])
     for i in range(self.__energy.correspondance.numInstances):
       for path in duplicatedPaths:
         currentIndex = i
@@ -154,11 +154,13 @@ class energy:
             else:
               currentIndex = wrt_start_indices[dataIndexInWrt]
               allIndices.append(np.uint32(currentIndex))
-    print("All indices are: ", allIndices)
-    self.__indices = gpuarray.to_gpu(np.array(allIndices, dtype = np.uint32))
-    self.__gradient_sizes = [x[-1].size for x in duplicatedPaths]
-    # print("Corresponding sizes are: ", [x[-1].size for x in duplicatedPaths])
+    # print("All indices are: ", allIndices)
+    self.__indices_cpu = np.array(allIndices, dtype = np.uint32)
+    self.__indices_gpu = gpuarray.to_gpu(self.__indices_cpu)
+    self.__gradient_sizes_cpu = [x[-1].size for x in duplicatedPaths]
     return allIndices
+
+  # def __generate_gradient_block_indices(self, offDiagonalBlockSizes: List[Tuple[int, int]], offDiagonalBlockPositions: List[gpuarray.GPUArray], ):
 
 
   def __duplicatePath(self, path: List[attribute]) -> List[List[attribute]]:
@@ -340,6 +342,11 @@ class energy:
     else:
       child_att = lead_node.children[0]
     child_att_full_name: str = child_att.fullName
+    # we first check if the differentiation has been done before
+    all_datas = [x[-1] for x in currentPaths]
+    h_g_name = f'd2_{child_att.fullName}_d_{"__".join([x.fullName for x in all_datas])}'
+    if lead_node.operator != GATHER and h_g_name in child_att.correspondance.attributes:
+      return
     # we need to get the hessian from child_att to data node
     # first, we construct the Hessian of f(g(x)) wrt g(x)
     # which is essentially the hessian from child_att to all of its children
@@ -436,13 +443,7 @@ class energy:
     for i in range(child_att.size):
       hessian_children = h_f_g_children[i * h_f_g_size * h_f_g_size: (i + 1) * h_f_g_size * h_f_g_size]
       hessian = attribute.to_array(hessian_children, rows = h_f_g_size, cols = h_f_g_size)
-      # print("Hessian inner")
-      # print(hessian.compute().value.get())
-      # print("Hessian str: ")
-      # print(str(hessian))
       mul1 = hessian.mul_explicit(j_g_x)
-      # print("jgx str: ")
-      # print(str(j_g_x))
       mul2 = j_g_x.transpose().mul_explicit(mul1)
       multiplication_result.append(mul2)
 
@@ -695,11 +696,11 @@ class energy:
       codegen: codeGenerator = codeGenerator(self.__gradient)
       codegen.generateCode()
       # now add the global kernel
-      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__gradient, self.__gradient_sizes)
-      self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes, dtype = np.uint32))
+      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__gradient, self.__gradient_sizes_cpu)
+      self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))
     assert self.__hessianAndGradientKernel is not None
     # after we allocated, we invoke the kernel
-    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__gradient.deviceKernel.kernelDatas] + [x.value for x in self.__gradient.deviceKernel.kernelConnectivity]+ [x.compressedRows for x in self.__gradient.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices] + [self.__gradient_sizes_gpu] + [gradient_array]
+    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__gradient.deviceKernel.kernelDatas] + [x.value for x in self.__gradient.deviceKernel.kernelConnectivity]+ [x.compressedRows for x in self.__gradient.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_gpu] + [self.__gradient_sizes_gpu] + [gradient_array]
 
 
     # finally call the kernel

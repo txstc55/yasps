@@ -528,10 +528,13 @@ class attribute:
       result += self[i, i]
     return result
 
-  def spd(self) -> attribute:
+  def spd(self, spd_method: int = 1) -> attribute:
+    # 0 for no projection
+    # 1 for project negative eigen value to absolute value
+    # 2 for project negative eigen value to 0
     if self.rows != self.cols:
       raise ValueError("attribute.spd: cannot compute spd projection of a non-square matrix.")
-    return attribute(children = [self], operator = SPD, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+    return attribute(children = [self, attribute(index_value = spd_method)], operator = SPD, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
 
 
 
