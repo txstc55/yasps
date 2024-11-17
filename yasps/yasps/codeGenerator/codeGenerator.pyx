@@ -201,6 +201,8 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
             self.__generate_code_for_inverse(current)
           elif current.operator == ya.DOT:
             self.__generate_code_for_dot(current)
+          elif current.operator == ya.RESIZE:
+            self.__generate_code_for_resize(current)
       else:
         # it is not an output
         # and it has a name
@@ -610,3 +612,20 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])};
   {attribute_name}.resize({current.rows}, {current.cols});''')
+
+  def __generate_code_for_spd(self, current: ya.attribute) -> None:
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current.size == 1:
+      spd_method = current.children[1].index_value
+      if spd_method == 1:
+        self.__code_strings.append(f'''
+  {attribute_initialization} = abs({self.getIntermediateName(current.children[0])});''')
+      elif spd_method == 2:
+        self.__code_strings.append(f'''
+  {attribute_initialization} = max(0.0, {self.getIntermediateName(current.children[0])});''')
+    else:
+      # we do the normal projection
+      self.__code_strings.append(f'''
+  {attribute_name} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
+  spd_projection({self.getIntermediateName(current.children[0])}.data(), {attribute_name}.data());
+''')

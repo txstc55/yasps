@@ -293,6 +293,9 @@ class autodiff:
   def __diff_resize(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     return self.__diff(current.children[0], wrt)
 
+  def __diff_spd(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    raise ValueError("yasps.autodiff: Differentiation of spd is not supported yet")
+
   # def __diff_trace(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
   #   # differentiating trace(f(x))
   #   # is equal to trace(df/dx)

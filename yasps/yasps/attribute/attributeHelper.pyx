@@ -118,6 +118,9 @@ def hashAttribute(att: ya.attribute) -> int:
   elif att.operator == ya.RESIZE:
     resize_string: str = f"{att.children[0].hash}.resize({att.children[1].hash}, {att.children[2].hash})"
     att._attribute__hash = int(hashlib.sha256(resize_string.encode()).hexdigest(), 16)
+  elif att.operator == ya.SPD:
+    spd_string: str = f"{att.children[0].hash}.spd({att.children[1].hash})"
+    att._attribute__hash = int(hashlib.sha256(spd_string.encode()).hexdigest(), 16)
   return att.hash
 
 
@@ -188,6 +191,8 @@ def attribute2str(att: ya.attribute):
       return f"{att.children[0]} · {att.children[1]}"
     elif att.operator == ya.RESIZE:
       return f"{att.children[0]}.resize({att.children[1]}, {att.children[2]})"
+    elif att.operator == ya.SPD:
+      return f"{att.children[0]}.spd({att.children[1]})"
     else:
       raise ValueError("attribute.__str__: unknown operator type.")
   else:

@@ -87,16 +87,16 @@ class minimizer:
     print(f"The gradient segments sizes are: {self.__gradientSizes}")
 
   def __getBlockSizes(self):
+    # for diagonal blocks we don't remove duplicates
+    # this is for easier access and knowing where the coordinate start and end
     for item in self.wrt:
-      if item.size not in self.__diagonalBlockSizes:
-        self.__diagonalBlockSizes.append(item.size)
-        self.__diagonalBlockCounts.append(item.correspondance.numInstances)
-      else:
-        index = self.__diagonalBlockSizes.index(item.size)
-        self.__diagonalBlockCounts[index] += item.correspondance.numInstances
+      self.__diagonalBlockSizes.append(item.size)
+      self.__diagonalBlockCounts.append(item.correspondance.numInstances)
     # allocate the gpu array
-    for size in self.__diagonalBlockSizes:
-      self.__diagonalBlocks.append(gpuarray.empty(size * size, dtype = np.float64))
+    for i in range(len(self.__diagonalBlockSizes)):
+      size = self.__diagonalBlockSizes[i]
+      count = self.__diagonalBlockCounts[i]
+      self.__diagonalBlocks.append(gpuarray.empty(size * size * count, dtype = np.float64))
     offDiagonalSizes = []
     # now get the off diagonal block sizes
     for energy in self.energies:
@@ -158,21 +158,16 @@ class minimizer:
     self.__offDiagonalBlockIndices = [gpuarray.to_gpu(np.array(item, dtype = np.int32)) for item in compressedIndices]
 
     # now for each of the energy, they need to know where to put the blocks
-
-
-
-
-
-
-
-    # # Convert the list of tuples to a NumPy array, then remove the
-    # np_array = np.array(uncompressedIndices)
-    # unique_sorted_array = np.unique(np_array, axis=0)
-    # compressedIndices = list(map(tuple, unique_sorted_array))
-
-    # now we need to determine the block sizes
-
-
+    for i in range(len(index_start) - 1):
+      start = index_start[i]
+      end = index_start[i + 1]
+      uncompressedIndicesLocal = uncompressedIndices[start:end]
+      hessian_block_dimensions = energy_hessian_block_dimensions[i]
+      where_to_check = [self.__offDiagonalBlockDimensions.index(item) for item in hessian_block_dimensions]
+      # ok now we know for each coordinate, which block to check
+      # we need to get the index of the block
+      hessian_block_indices: List[int] = [compressedIndices[where_to_check[j % len(where_to_check)]].index(uncompressedIndicesLocal[j]) for j in range(len(uncompressedIndicesLocal))]
+      self.energies[i].block_indices_gpu = gpuarray.to_gpu(np.array(hessian_block_indices, dtype = np.uint32))
 
 
 

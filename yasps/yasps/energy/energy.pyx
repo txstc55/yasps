@@ -29,10 +29,12 @@ class energy:
     self.__roots: List[attribute] = []
     self.__roots, self.__paths = self.getRoots(energy, [energy]) # get the root attributes
     self.__wrt: List[int] = [] # an energy can be minimized for different attributes, for safety let's save all histories
-    self.__indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the indices
+    self.__indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the indices, this is used for gradient accumulation
     self.__indices_cpu: np.ndarray = np.array([]) # save the indices on cpu
-    self.__block_indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the block indices
-    self.__gradient_sizes_cpu: List[int] = [] # save the sizes of the gradient
+    self.__block_indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the block indices, this is for hessian accumulation
+    self.__diagonal_block_indices_cpu: List[Tuple[int, int, int]] = []
+    self.__diagonal_block_indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save which list to look at, and the offset
+    self.__gradient_sizes_cpu: List[int] = [] # save the sizes of the gradient, this is to determine for the gradient, how large it is for each segment
     self.__gradient_sizes_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the sizes of the gradient
     self.__hessian: Optional[attribute] = None # save the hessian for each wrt input
     self.__gradient: Optional[attribute] = None # save the gradient for each wrt input
@@ -57,6 +59,15 @@ class energy:
   @property
   def indices(self) -> np.ndarray:
     return self.__indices_cpu
+
+  @property
+  def block_indices_gpu(self) -> gpuarray.GPUArray:
+    return self.__block_indices_gpu
+
+
+  @block_indices_gpu.setter
+  def block_indices_gpu(self, block_indices_gpu: gpuarray.GPUArray):
+    self.__block_indices_gpu = block_indices_gpu
 
 
   def getRoots(self, att: attribute, parentPath: List[attribute]) -> Tuple[List[attribute], List[List[attribute]]]:
@@ -158,6 +169,14 @@ class energy:
     self.__indices_cpu = np.array(allIndices, dtype = np.uint32)
     self.__indices_gpu = gpuarray.to_gpu(self.__indices_cpu)
     self.__gradient_sizes_cpu = [x[-1].size for x in duplicatedPaths]
+    self.__diagonal_block_indices_cpu: List[Tuple[int, int, int]] = [] # which diagonal block, the starting offset, the block size
+    for path in duplicatedPaths:
+      data_node = path[-1]
+      # now we check the position in wrt
+      dataIndexInWrt = wrt.index(data_node)
+      self.__diagonal_block_indices_cpu.append((dataIndexInWrt, sum(wrt_start_indices[:dataIndexInWrt]), data_node.size))
+    self.__diagonal_block_indices_gpu = gpuarray.to_gpu(np.array(self.__diagonal_block_indices_cpu, dtype = np.uint32))
+
     return allIndices
 
   # def __generate_gradient_block_indices(self, offDiagonalBlockSizes: List[Tuple[int, int]], offDiagonalBlockPositions: List[gpuarray.GPUArray], ):
@@ -436,16 +455,8 @@ class energy:
             j_g_x_children[index] = next_jacobian[i * next_jacobian.cols + j]
         col_offset += next_jacobian.cols
     # now we can compute the first part of the hessian by doing the multiplication
-    j_g_x = attribute.to_array(j_g_x_children, rows = h_f_g_size, cols = j_g_x_col_size)
-    multiplication_result = [] # the multiplied out first term, we do this for each element of child_att\
-    # print(f"j_g_x size, {j_g_x.rows} x {j_g_x.cols}")
-    # print(f"hessian size, {h_f_g_size} x {h_f_g_size}")
-    for i in range(child_att.size):
-      hessian_children = h_f_g_children[i * h_f_g_size * h_f_g_size: (i + 1) * h_f_g_size * h_f_g_size]
-      hessian = attribute.to_array(hessian_children, rows = h_f_g_size, cols = h_f_g_size)
-      mul1 = hessian.mul_explicit(j_g_x)
-      mul2 = j_g_x.transpose().mul_explicit(mul1)
-      multiplication_result.append(mul2)
+    # but we defer it to last as we may need to do pd projection with some of the hessian
+
 
     # we've finished the first part of the hessian now
     # now we need to compute the second part
@@ -584,29 +595,44 @@ class energy:
     h_g_name = f'd2_{child_att.fullName}_d_{"__".join([x.fullName for x in all_datas])}'
     h_g_full_mats = [attribute.to_array(x, rows = j_g_x_col_size, cols = j_g_x_col_size) for x in h_g_full_mat_children]
     h_g_full_mat_children: List[attribute] = []
+
+    # here we compute the first part of the hessian
+    second_term_is_zero = False
+    j_g_x = attribute.to_array(j_g_x_children, rows = h_f_g_size, cols = j_g_x_col_size)
+    multiplication_result = [] # the multiplied out first term, we do this for each element of child_att
+    for i in range(child_att.size):
+      hessian_children = h_f_g_children[i * h_f_g_size * h_f_g_size: (i + 1) * h_f_g_size * h_f_g_size]
+      hessian = attribute.to_array(hessian_children, rows = h_f_g_size, cols = h_f_g_size)
+      # ok determine if we want to do hessian projection
+      if lead_node.operator != GATHER:
+        if h_g_full_mats[i].iszero() > 0:
+          second_term_is_zero = True
+          # the second term is zero, we can do hessian projection
+          hessian = hessian.spd()
+      mul1 = hessian.mul_explicit(j_g_x)
+      mul2 = j_g_x.transpose().mul_explicit(mul1)
+      multiplication_result.append(mul2)
+
     for i in range(child_att.size):
       h_g_full_mats[i] = h_g_full_mats[i].add_explicit(multiplication_result[i])
+      if lead_node.operator != GATHER and not second_term_is_zero:
+        # we need to project the whole matrix
+        h_g_full_mats[i] = h_g_full_mats[i].spd()
       for j in range(h_g_full_mats[i].size):
         h_g_full_mat_children.append(h_g_full_mats[i][j])
-    if h_g_name not in child_att.correspondance.attributes:
-      child_att.correspondance.addAttribute(h_g_name, computed_attribute = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols))
+    if lead_node.operator == GATHER:
+      if h_g_name not in child_att.correspondance.attributes:
+        # we only add the hessian if it is a gather node
+        # because for a non gather node, we may have done projection
+        child_att.correspondance.addAttribute(h_g_name, computed_attribute = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols))
+    else:
+      if f"{h_g_name}_projected" not in child_att.correspondance.attributes:
+        child_att.correspondance.addAttribute(f"{h_g_name}_projected", computed_attribute = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols))
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    # this is our hessian now
+    if lead_node.operator != GATHER:
+      self.__hessian = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols)
 
 
 
@@ -700,7 +726,7 @@ class energy:
       self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))
     assert self.__hessianAndGradientKernel is not None
     # after we allocated, we invoke the kernel
-    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__gradient.deviceKernel.kernelDatas] + [x.value for x in self.__gradient.deviceKernel.kernelConnectivity]+ [x.compressedRows for x in self.__gradient.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_gpu] + [self.__gradient_sizes_gpu] + [gradient_array]
+    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__gradient.deviceKernel.kernelDatas] + [x.value for x in self.__gradient.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__gradient.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_gpu] + [self.__gradient_sizes_gpu] + [gradient_array]
 
 
     # finally call the kernel

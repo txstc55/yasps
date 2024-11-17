@@ -534,6 +534,8 @@ class attribute:
     # 2 for project negative eigen value to 0
     if self.rows != self.cols:
       raise ValueError("attribute.spd: cannot compute spd projection of a non-square matrix.")
+    if spd_method == 0:
+      return self
     return attribute(children = [self, attribute(index_value = spd_method)], operator = SPD, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
 
 

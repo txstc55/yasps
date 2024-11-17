@@ -33,6 +33,52 @@ class hessianAndGradientKernel:
 #define EIGEN_USE_GPU
 #include <Eigen/Core>
 #include <Eigen/Dense>
+
+// here we add code for spd projection
+template <unsigned int N> __device__ void spd_projection(const double *A, double* output, int choice){{
+  // Define M as the maximum of N and 4, because 3 by 3 evd is wrong somehow
+  const int M = (N < 4) ? 4 : N;
+
+  // Initialize an M x M matrix with zeros
+  Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Zero();
+
+  // Copy the input N x N matrix into the top-left corner of the M x M matrix
+  for (int row = 0; row < N; ++row) {{
+    for (int col = 0; col < N; ++col) {{
+      symMtr(row, col) = A[row * N + col];
+    }}
+  }}
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, M, M>> eigenSolver(symMtr);
+  Eigen::Matrix<double, M, M> B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, M, 1> eigenValues = eigenSolver.eigenvalues();
+  if (choice == 1) {{
+    for (int i = 0; i < M; i++) {{
+      if (eigenValues.data()[i] < 0) {{
+        eigenValues.data()[i] = abs(eigenValues.data()[i]);
+      }}
+    }}
+  }}else{{
+  for (int i = 0; i < M; i++) {{
+    if (eigenValues.data()[i] < 0) {{
+      eigenValues.data()[i] = 0.0;
+    }}
+  }}
+  // Reconstruct the matrix without using a diagonal matrix
+  // Scale columns of B by corresponding eigenvalues
+  Eigen::Matrix<double, M, M> C;
+  for (int i = 0; i < N; ++i) {{
+    C.col(i) = B.col(i) * eigenValues[i];
+  }}
+  // Compute the reconstructed matrix: A_reconstructed = C * B.transpose()
+  Eigen::Matrix<double, M, M> A_reconstructed = C * B.transpose();
+  // Copy the top-left N x N submatrix back to A
+  for (int row = 0; row < N; ++row) {{
+    for (int col = 0; col < N; ++col) {{
+      output[row * N + col] = A_reconstructed(row, col);
+    }}
+  }}
+  return;
+}}
 '''
 
     for item in sortedDependency:
@@ -51,7 +97,7 @@ class hessianAndGradientKernel:
       attributeName = attr.fullName
 
     kernelRawName = f'''
-__global__ void {attributeName}_global_function({"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}const unsigned int* placements, const unsigned int* block_sizes, double* result, unsigned int MAX_INDEX)'''
+__global__ void {attributeName}_global_function({"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}const unsigned int* placements, const unsigned int* block_sizes, double* gradient, unsigned int MAX_INDEX)'''
     self.__kernelString += f'''
 {kernelRawName}{{
   // first we get the index
@@ -66,7 +112,7 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
   for (unsigned int i = 0; i < {len(self.__block_sizes)}; i++){{
     unsigned int placement_index = placements[index * {len(self.__block_sizes)} + i];
     for (unsigned int j = 0; j < block_sizes[i]; j++){{
-      atomicAdd(&result[placement_index + j], local_result[count]);
+      atomicAdd(&gradient[placement_index + j], local_result[count]);
       count += 1;
     }}
   }}
