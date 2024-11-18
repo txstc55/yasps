@@ -34,7 +34,8 @@ class globalKernel:
 #include <Eigen/Dense>
 
 // here we add code for spd projection
-template <unsigned int N> __device__ void spd_projection(const double *A, double* output, int choice){{
+template <unsigned int N>
+__device__ void spd_projection(const double *A, double* output, int choice){{
   // Define M as the maximum of N and 4, because 3 by 3 evd is wrong somehow
   const int M = (N < 4) ? 4 : N;
 
@@ -57,9 +58,10 @@ template <unsigned int N> __device__ void spd_projection(const double *A, double
       }}
     }}
   }}else{{
-  for (int i = 0; i < M; i++) {{
-    if (eigenValues.data()[i] < 0) {{
-      eigenValues.data()[i] = 0.0;
+    for (int i = 0; i < M; i++) {{
+      if (eigenValues.data()[i] < 0) {{
+        eigenValues.data()[i] = 0.0;
+      }}
     }}
   }}
   // Reconstruct the matrix without using a diagonal matrix

@@ -162,57 +162,57 @@ snh = tet_deform.addAttribute("stable_neo_hookean", computed_attribute = stable_
 s0.addEnergy(snh)
 s0.addMinimizeTarget([vertices["position"]])
 s0.minimizeEnergy()
-print(tet_deform.attributes.keys())
+# print(tet_deform.attributes.keys())
 
-print("Energy")
-print(tet_deform.attributes["stable_neo_hookean"].compute().value.get())
+# print("Energy")
+# print(tet_deform.attributes["stable_neo_hookean"].compute().value.get())
 
-print("Gradient local")
-print(tet_deform.attributes["d_scene0_bunny_tet_deform_stable_neo_hookean_d_scene0_bunny_vertices_position"].compute().value.get())
+# print("Gradient local")
+# print(tet_deform.attributes["d_scene0_bunny_tet_deform_stable_neo_hookean_d_scene0_bunny_vertices_position"].compute().value.get())
 
-print("Hessian local")
-print(tet_deform.attributes["d2_scene0_bunny_tet_deform_stable_neo_hookean_d_scene0_bunny_vertices_position"].compute().value.get().reshape(12, 12))
+# print("Hessian local")
+# print(tet_deform.attributes["d2_scene0_bunny_tet_deform_stable_neo_hookean_d_scene0_bunny_vertices_position"].compute().value.get().reshape(12, 12))
 
-# import pyvista as pv
-# triangles = np.array(surface_triangle_indices)
-# cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
-# mesh = pv.PolyData(np.array(position), cells)
-# mesh2 = pv.PolyData(np.array(position * 2.0), cells)
+# # import pyvista as pv
+# # triangles = np.array(surface_triangle_indices)
+# # cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
+# # mesh = pv.PolyData(np.array(position), cells)
+# # mesh2 = pv.PolyData(np.array(position * 2.0), cells)
 
-# plotter = pv.Plotter()
-# plotter.add_mesh(mesh)
-# plotter.add_mesh(mesh2, opacity=0.5, color='red')
-# plotter.show(interactive_update=True)
-
-
-
-# total_frames = 0
-# start = time.time()
-# iteration = 0
-# weight = 0.0001
-# def update_position():
-#   global total_frames, start
-#   change_value = s0.minimizeEnergy()[0].get()
-#   print("Change value", change_value)
-#   for i in range(len(change_value)):
-#     if np.isnan(change_value[i]):
-#       print("NaN detected at position", i)
-#       exit()
-#   new_positions = vertex_positions.compute().value.get().flatten() - weight * change_value
-#   vertex_positions.updateValue(new_positions)
-#   # Update the mesh points
-#   mesh.points = new_positions.reshape(-1, 3)
-
-#   # Refresh the plotter to reflect the updated mesh
-#   plotter.update_coordinates(mesh.points, mesh=mesh)
-#   plotter.render()
-#   # print(f"Average area: {(sum(area.compute().value.get())) / faces.shape[0]}, target is: {average_area}")
-#   print(f"Total energy is: {sum(snh.compute().value.get() )}")
+# # plotter = pv.Plotter()
+# # plotter.add_mesh(mesh)
+# # plotter.add_mesh(mesh2, opacity=0.5, color='red')
+# # plotter.show(interactive_update=True)
 
 
-# while True:
-#   update_position()
-#   total_frames += 1
-#   # if total_frames % 1000 == 0:
-#   #   # plotter.export_obj(f"bunny_{total_frames}.obj")
-#   #   weight *= 0.9
+
+# # total_frames = 0
+# # start = time.time()
+# # iteration = 0
+# # weight = 0.0001
+# # def update_position():
+# #   global total_frames, start
+# #   change_value = s0.minimizeEnergy()[0].get()
+# #   print("Change value", change_value)
+# #   for i in range(len(change_value)):
+# #     if np.isnan(change_value[i]):
+# #       print("NaN detected at position", i)
+# #       exit()
+# #   new_positions = vertex_positions.compute().value.get().flatten() - weight * change_value
+# #   vertex_positions.updateValue(new_positions)
+# #   # Update the mesh points
+# #   mesh.points = new_positions.reshape(-1, 3)
+
+# #   # Refresh the plotter to reflect the updated mesh
+# #   plotter.update_coordinates(mesh.points, mesh=mesh)
+# #   plotter.render()
+# #   # print(f"Average area: {(sum(area.compute().value.get())) / faces.shape[0]}, target is: {average_area}")
+# #   print(f"Total energy is: {sum(snh.compute().value.get() )}")
+
+
+# # while True:
+# #   update_position()
+# #   total_frames += 1
+# #   # if total_frames % 1000 == 0:
+# #   #   # plotter.export_obj(f"bunny_{total_frames}.obj")
+# #   #   weight *= 0.9

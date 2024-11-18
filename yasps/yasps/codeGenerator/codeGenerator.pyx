@@ -203,6 +203,8 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
             self.__generate_code_for_dot(current)
           elif current.operator == ya.RESIZE:
             self.__generate_code_for_resize(current)
+          elif current.operator == ya.SPD:
+            self.__generate_code_for_spd(current)
       else:
         # it is not an output
         # and it has a name
@@ -626,6 +628,6 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     else:
       # we do the normal projection
       self.__code_strings.append(f'''
-  {attribute_name} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
-  spd_projection({self.getIntermediateName(current.children[0])}.data(), {attribute_name}.data());
+  {attribute_initialization} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
+  spd_projection<{current.children[0].rows}>({self.getIntermediateName(current.children[0])}.data(), {attribute_name}.data(), {current.children[1].index_value});
 ''')

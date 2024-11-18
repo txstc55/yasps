@@ -59,8 +59,8 @@ w_num[0] = np.cos(np.pi / 8)
 z_num[0] = np.sin(np.pi / 8)
 w_num[1] = np.cos(-np.pi / 8)
 z_num[1] = np.sin(-np.pi / 8)
-w_num[2] = np.cos(-np.pi / 8)
-z_num[2] = np.sin(-np.pi / 8)
+w_num[2] = np.cos(-np.pi / 6)
+z_num[2] = np.sin(-np.pi / 6)
 # The rest remain at initial 0
 
 # Create a dictionary for substitutions

@@ -240,7 +240,7 @@ class autodiff:
     mat_diff = self.__diff(current.children[0], wrt)
     mat_cols = current.children[0].cols
     row_index = current.children[1].index_value
-    return ya.attribute.to_array(ya.attribute.to_array([mat_diff[row_index * mat_cols * wrt.size + i] for i in range(mat_cols * wrt.size)], rows = mat_cols, cols = wrt.size))
+    return ya.attribute.to_array([mat_diff[row_index * mat_cols * wrt.size + i] for i in range(mat_cols * wrt.size)], rows = mat_cols, cols = wrt.size)
     # return ya.attribute.to_array(mat_diff.children[row_index * mat_cols * wrt.size:(row_index + 1) * mat_cols * wrt.size], rows = mat_cols, cols = wrt.size)
 
   def __diff_col(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
