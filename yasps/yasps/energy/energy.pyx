@@ -722,7 +722,7 @@ class energy:
 
 
 
-  def computeHessianAndGradient(self, hessian_diagonal_blocks_start_indices: gpuarray.GPUArray, hessian_off_diagonal_blocks_start_indices: gpuarray.GPUArray,  gradient_array: gpuarray.GPUArray, diagonal_blocks: gpuarray.GPUArray, off_diagonal_blocks: gpuarray.GPUArray):
+  def computeHessianAndGradient(self, hessian_off_diagonal_blocks_start_indices: gpuarray.GPUArray,  gradient_array: gpuarray.GPUArray, off_diagonal_blocks: gpuarray.GPUArray):
     start_compute = cuda.Event()
     end_compute = cuda.Event()
     start_compute.record()
@@ -759,7 +759,7 @@ class energy:
     print("Off diagonal blocks start indices")
     print(hessian_off_diagonal_blocks_start_indices.get())
     # after we allocated, we invoke the kernel
-    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_gpu, self.__gradient_sizes_gpu, hessian_diagonal_blocks_start_indices, hessian_off_diagonal_blocks_start_indices, self.__diagonal_block_infos_gpu, self.__hessian_off_diagonal_block_where_to_check, self.__block_indices_gpu, gradient_array, diagonal_blocks, off_diagonal_blocks]
+    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_gpu, self.__gradient_sizes_gpu, hessian_off_diagonal_blocks_start_indices, self.__hessian_off_diagonal_block_where_to_check, self.__block_indices_gpu, gradient_array, off_diagonal_blocks]
 
 
 

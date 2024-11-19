@@ -28,7 +28,7 @@ def extract_surface_triangles(tets):
 position = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 2.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0], [2.0, 0.0, 2.0], [2.0, 2.0, 2.0], [0.0, 2.0, 2.0]], dtype = np.float64)
 
 tet_indices = np.array([[0, 1, 3, 7], [1, 2, 3, 7], [0, 1, 4, 7], [1, 5, 4, 7], [1, 2, 6, 7], [1, 5, 6, 7]])
-tet_indices = np.array([[1, 2, 3, 7]])
+# tet_indices = np.array([[0, 1, 3, 7], [1, 2, 3, 7]])
 
 ##################################################
 ## initialize with real data
@@ -80,24 +80,24 @@ print(tet_position_rest.compute().value.get())
 
 
 
-# # rotate each vertex by degree of x value
-# x = position[:, 0]  # Shape: (N,)
-# y = position[:, 1]  # Shape: (N,)
-# z = position[:, 2]  # Shape: (N,)
-# # Convert x-coordinates to rotation angles in degrees
-# theta_degrees = x  # Each x_i is the rotation angle in degrees
-# # Convert degrees to radians
-# theta_radians = np.deg2rad(theta_degrees * 10.0)  # np.deg2rad converts degrees to radians
-# cos_theta = np.cos(theta_radians)  # Shape: (N,)
-# sin_theta = np.sin(theta_radians)  # Shape: (N,)
-# # Compute the new y and z coordinates after rotation
-# y_rotated = y * cos_theta - z * sin_theta
-# z_rotated = y * sin_theta + z * cos_theta
-# # x remains the same
-# x_rotated = x
-# rotated_positions = np.column_stack((x_rotated, y_rotated, z_rotated))
+# rotate each vertex by degree of x value
+x = position[:, 0]  # Shape: (N,)
+y = position[:, 1]  # Shape: (N,)
+z = position[:, 2]  # Shape: (N,)
+# Convert x-coordinates to rotation angles in degrees
+theta_degrees = x  # Each x_i is the rotation angle in degrees
+# Convert degrees to radians
+theta_radians = np.deg2rad(theta_degrees * 10.0)  # np.deg2rad converts degrees to radians
+cos_theta = np.cos(theta_radians)  # Shape: (N,)
+sin_theta = np.sin(theta_radians)  # Shape: (N,)
+# Compute the new y and z coordinates after rotation
+y_rotated = y * cos_theta - z * sin_theta
+z_rotated = y * sin_theta + z * cos_theta
+# x remains the same
+x_rotated = x
+rotated_positions = np.column_stack((x_rotated, y_rotated, z_rotated))
 # rotated_positions = position
-# vertices["position"].updateValue(rotated_positions)
+vertices["position"].updateValue(rotated_positions)
 
 
 # here we compute the rest position deformation gradient
@@ -117,7 +117,7 @@ tets.addAttribute("IB", rows = 3, cols = 3)
 tets["IB"].updateValue(IB.compute().value.get())
 print("vol and IB")
 print(vol.compute().value.get())
-print(IB.compute().value.get().reshape(3, 3))
+print(IB.compute().value.get().reshape(-1, 3))
 
 print("tet_positions")
 print(tet_positions.compute().value.get())
@@ -161,11 +161,13 @@ snh = tet_deform.addAttribute("stable_neo_hookean", computed_attribute = stable_
 
 s0.addEnergy(snh)
 s0.addMinimizeTarget([vertices["position"]])
-s0.minimizeEnergy()
+grad = s0.minimizeEnergy()
+print(grad)
+
 # print(tet_deform.attributes.keys())
 
-# print("Energy")
-# print(tet_deform.attributes["stable_neo_hookean"].compute().value.get())
+print("Energy")
+print(sum(tet_deform.attributes["stable_neo_hookean"].compute().value.get()))
 
 # print("Gradient local")
 # print(tet_deform.attributes["d_scene0_bunny_tet_deform_stable_neo_hookean_d_scene0_bunny_vertices_position"].compute().value.get())
