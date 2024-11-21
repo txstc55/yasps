@@ -43,3 +43,5 @@ yasps/*/*.c
 
 yasps/build/*
 yasps/yasps.egg-info/*
+.mypy_cache/*
+.ropeproject/*
