@@ -32,14 +32,12 @@ class energy:
     self.__indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the indices, this is used for gradient accumulation
     self.__indices_cpu: np.ndarray = np.array([]) # save the indices on cpu
     self.__block_indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the block indices, this is for hessian accumulation
-    self.__diagonal_block_infos_cpu: List[Tuple[int, int]] = []
-    self.__diagonal_block_infos_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save which list to look at, and the offset
     self.__gradient_sizes_cpu: List[int] = [] # save the sizes of the gradient, this is to determine for the gradient, how large it is for each segment
     self.__gradient_sizes_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the sizes of the gradient
     self.__hessian: Optional[attribute] = None # save the hessian for each wrt input
     self.__gradient: Optional[attribute] = None # save the gradient for each wrt input
     self.__hessianAndGradientKernel: Optional[hessianAndGradientKernel] = None
-    self.__hessian_off_diagonal_block_where_to_check: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # we have a flattened array which stores the off diagonal blocks. The off diagonal blocks are sorted by dimensions. We need to know which block we are in for each smaller blocks in the hessian
+    self.__hessian_blocks_where_to_check: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # we have a flattened array which stores the blocks. The blocks are sorted by dimensions. We need to know which block we are in for each smaller blocks in the hessian
     self.__merged_hessian_and_gradient_attribute: Optional[attribute] = None
     self.__project_entire_hessian = False
 
@@ -66,12 +64,12 @@ class energy:
     self.__block_indices_gpu = block_indices_gpu
 
   @property
-  def hessian_off_diagonal_block_where_to_check(self) -> gpuarray.GPUArray:
-    return self.__hessian_off_diagonal_block_where_to_check
+  def hessian_blocks_where_to_check(self) -> gpuarray.GPUArray:
+    return self.__hessian_blocks_where_to_check
 
-  @hessian_off_diagonal_block_where_to_check.setter
-  def hessian_off_diagonal_block_where_to_check(self, hessian_off_diagonal_block_where_to_check: gpuarray.GPUArray):
-    self.__hessian_off_diagonal_block_where_to_check = hessian_off_diagonal_block_where_to_check
+  @hessian_blocks_where_to_check.setter
+  def hessian_blocks_where_to_check(self, hessian_blocks_where_to_check: gpuarray.GPUArray):
+    self.__hessian_blocks_where_to_check = hessian_blocks_where_to_check
 
 
   def getRoots(self, att: attribute, parentPath: List[attribute]) -> Tuple[List[attribute], List[List[attribute]]]:
@@ -115,15 +113,6 @@ class energy:
     #   print(root.fullName)
     return trueRoots, allPaths
 
-  # def getHessianOffDiagonalBlockSizes(self, wrt: List[attribute]) -> List[Tuple[int, int]]:
-  #   sizePairs: List[Tuple[int, int]] = []
-  #   for i in range(len(self.roots)):
-  #     if self.roots[i] in wrt:
-  #       for j in range(i+1, len(self.roots)):
-  #         if self.roots[j] in wrt:
-  #           sizePairs.append((self.roots[i].size, self.roots[j].size))
-  #   sizePairs = list(set(sizePairs))
-  #   return sizePairs
 
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
     self.__wrt = wrt
@@ -173,16 +162,7 @@ class energy:
     self.__indices_cpu = np.array(allIndices, dtype = np.uint32)
     self.__indices_gpu = gpuarray.to_gpu(self.__indices_cpu)
     self.__gradient_sizes_cpu = [x[-1].size for x in duplicatedPaths]
-    self.__diagonal_block_infos_cpu = [] # ok we need to record, for each diagonal block later on generated in the hessian, which segment of diagonal block memory it is in, the offset in that data array, for example if the index is at 153, and it's at the second segment, we need to know the distance from the beginning of the second segment to 153, then the last one is how large is the block
-    for path in duplicatedPaths:
-      data_node = path[-1]
-      # now we check the position in wrt
-      dataIndexInWrt = wrt.index(data_node)
-      self.__diagonal_block_infos_cpu.append((dataIndexInWrt, wrt_start_indices[dataIndexInWrt]))
-    self.__diagonal_block_infos_gpu = gpuarray.to_gpu(np.array(self.__diagonal_block_infos_cpu, dtype = np.uint32))
     return allIndices
-
-  # def __generate_gradient_block_indices(self, offDiagonalBlockSizes: List[Tuple[int, int]], offDiagonalBlockPositions: List[gpuarray.GPUArray], ):
 
 
   def __duplicatePath(self, path: List[attribute]) -> List[List[attribute]]:
@@ -611,8 +591,8 @@ class energy:
         if h_g_full_mats[i].isZero > 0: # check if the second part is just zero matrix
           second_term_is_zero = True
           # the second term is zero, we can do hessian projection
-          hessian = hessian.spd(0)
-          print("We can project the inner hessian")
+          hessian = hessian.spd(1)
+          # print("We can project the inner hessian")
       mul1 = hessian.mul_explicit(j_g_x)
       mul2 = j_g_x.transpose().mul_explicit(mul1)
       multiplication_result.append(mul2)
@@ -622,7 +602,7 @@ class energy:
       if lead_node.operator != GATHER and not second_term_is_zero:
         # # we need to project the whole matrix
         # h_g_full_mats[i] = h_g_full_mats[i].spd(0)
-        print("We project the entire hessian")
+        # print("We project the entire hessian")
         self.__project_entire_hessian = True
       for j in range(h_g_full_mats[i].size):
         h_g_full_mat_children.append(h_g_full_mats[i][j])
@@ -637,8 +617,8 @@ class energy:
       # finally we assign the hessian
 
       self.__hessian = lead_node.correspondance.attributes[f"{h_g_name}_projected"]
-      if self.__hessian is not None:
-        print(f"Final hessian correspondance: {self.__hessian.correspondance}")
+      # if self.__hessian is not None:
+        # print(f"Final hessian correspondance: {self.__hessian.correspondance}")
 
 
     # # this is our hessian now
@@ -714,15 +694,15 @@ class energy:
     differentiater = autodiff()
     # generate the symbolic code for gradient and hessian
     self.__generateGradient(wrt, differentiater)
-    print("Gradient generated")
+    # print("Gradient generated")
     self.__generateHessian(wrt, differentiater)
-    print("Hessian generated")
+    # print("Hessian generated")
 
 
 
 
 
-  def computeHessianAndGradient(self, hessian_off_diagonal_blocks_start_indices: gpuarray.GPUArray,  gradient_array: gpuarray.GPUArray, off_diagonal_blocks: gpuarray.GPUArray):
+  def computeHessianAndGradient(self, hessian_blocks_start_indices: gpuarray.GPUArray,  gradient_array: gpuarray.GPUArray, hessian_blocks: gpuarray.GPUArray, diagonal: gpuarray.GPUArray):
     start_compute = cuda.Event()
     end_compute = cuda.Event()
     start_compute.record()
@@ -750,16 +730,17 @@ class energy:
       print("Code generated")
       # now add the global kernel
       self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__gradient_sizes_cpu, self.__project_entire_hessian)
+      print("Code compiled")
       self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))
 
     # assertion here
     assert self.__hessianAndGradientKernel is not None
     assert self.__merged_hessian_and_gradient_attribute is not None
 
-    print("Off diagonal blocks start indices")
-    print(hessian_off_diagonal_blocks_start_indices.get())
+    # print("blocks start indices")
+    # print(hessian_blocks_start_indices.get())
     # after we allocated, we invoke the kernel
-    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_gpu, self.__gradient_sizes_gpu, hessian_off_diagonal_blocks_start_indices, self.__hessian_off_diagonal_block_where_to_check, self.__block_indices_gpu, gradient_array, off_diagonal_blocks]
+    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_gpu, self.__gradient_sizes_gpu, hessian_blocks_start_indices, self.__hessian_blocks_where_to_check, self.__block_indices_gpu, gradient_array, hessian_blocks, diagonal]
 
 
 

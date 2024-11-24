@@ -1,6 +1,5 @@
 # cython: language_level=3
 from __future__ import annotations
-from sympy.logic.boolalg import Boolean
 from yasps.deviceKernel import deviceKernel
 from yasps.attribute import attribute
 from yasps.connectivity import connectivity
@@ -36,13 +35,12 @@ class hessianAndGradientKernel:
 #define EIGEN_USE_GPU
 #include <Eigen/Core>
 #include <Eigen/Dense>
-
 // here we add code for spd projection
-template <unsigned int N>
-__device__ void spd_projection(const double *A, double* output, int choice){{
-  // Define M as the maximum of N and 4, because 3 by 3 evd is wrong somehow
-  const int M = (N < 4) ? 4 : N;
 
+// for small matrix < 4
+template <unsigned int N>
+__device__ void spd_projection_small(const double *A, double* output, int choice){{
+  int M = 4;
   // Initialize an M x M matrix with zeros
   Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Zero();
 
@@ -55,17 +53,9 @@ __device__ void spd_projection(const double *A, double* output, int choice){{
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, M, M>> eigenSolver(symMtr);
   Eigen::Matrix<double, M, M> B = eigenSolver.eigenvectors();
   Eigen::Matrix<double, M, 1> eigenValues = eigenSolver.eigenvalues();
-  if (choice == 1) {{
-    for (int i = 0; i < M; i++) {{
-      if (eigenValues.data()[i] < 0) {{
-        eigenValues.data()[i] = abs(eigenValues.data()[i]);
-      }}
-    }}
-  }}else{{
-    for (int i = 0; i < M; i++) {{
-      if (eigenValues.data()[i] < 0) {{
-        eigenValues.data()[i] = 0.0;
-      }}
+  for (int i = 0; i < N; i++){{
+    if (eigenValues[i] < 0) {{
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }}
   }}
   // Reconstruct the matrix without using a diagonal matrix
@@ -80,6 +70,56 @@ __device__ void spd_projection(const double *A, double* output, int choice){{
   for (int row = 0; row < N; ++row) {{
     for (int col = 0; col < N; ++col) {{
       output[row * N + col] = A_reconstructed(row, col);
+    }}
+  }}
+  return;
+}}
+
+template <unsigned int N>
+__device__ void spd_projection(const double *A, double* output, int choice){{
+  // Map A to an N x N Eigen matrix without copying
+  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
+  Eigen::Matrix<double, N, N> B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
+  for (int i = 0; i < N; i++){{
+    if (eigenValues[i] < 0) {{
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+    }}
+  }}
+  // Reconstruct the matrix without using a diagonal matrix
+  // Scale columns of B by corresponding eigenvalues
+  Eigen::Matrix<double, N, N> C;
+  for (int i = 0; i < N; ++i) {{
+    C.col(i) = B.col(i) * eigenValues[i];
+  }}
+  // Compute the reconstructed matrix: A_reconstructed = C * B.transpose()
+  Eigen::Matrix<double, N, N> A_reconstructed = C * B.transpose();
+  // Copy the top-left N x N submatrix back to output
+  Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>>(output) = A_reconstructed;
+  return;
+}}
+
+template <unsigned int N>
+__device__ void spd_projection_inplace(double *A, int choice){{
+  // Map A to an N x N Eigen matrix without copying
+  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
+  Eigen::Matrix<double, N, N> B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
+  for (int i = 0; i < N; i++){{
+    if (eigenValues[i] < 0) {{
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+    }}
+  }}
+  // Reconstruct the matrix directly without using an intermediate matrix
+  for (int i = 0; i < N; ++i) {{
+    for (int j = 0; j < N; ++j) {{
+      double sum = 0.0;
+      for (int k = 0; k < N; ++k) {{
+        sum += B(i, k) * eigenValues[k] * B(j, k);
+      }}
+      A[i * N + j] = sum;
     }}
   }}
   return;
@@ -102,16 +142,17 @@ __device__ void spd_projection(const double *A, double* output, int choice){{
       attributeName = attr.fullName
 
     kernelRawName = f'''
-__global__ void accumulate_hessian_and_gradient_global_function({"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}const unsigned int* gradient_placements, const unsigned int* block_sizes, const unsigned int* hessian_off_diagonal_blocks_start_indices, const unsigned int* off_diagonal_blocks_where_to_check, const unsigned int* off_diagonal_blocks_indices, double* gradient, double* hessian_off_diagonal_blocks, unsigned int MAX_INDEX)'''
+__global__ void accumulate_hessian_and_gradient_global_function({"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}const unsigned int* gradient_placements, const unsigned int* block_sizes, const unsigned int* hessian_blocks_start_indices, const unsigned int* hessian_blocks_where_to_check, const unsigned int* hessian_blocks_indices, double* gradient, double* hessian_blocks, double* diagonal, unsigned int MAX_INDEX)'''
     self.__kernelString += f'''
 {kernelRawName}{{
   // gradient_placements: for the gradient generated for each local element, and for all the small segments inside, where to place it
-  // block_sizes: the gradient is segmented into small parts, for each parts, what's the size. This is also used for hessian block sizes
-  // hessian_off_diagonal_blocks_start_indices: the hessian generated can be segmented into smaller blocks, each block may have different dimensions. This array tells us, for each dimension, where does the block start
-  // off_diagonal_blocks_where_to_check: for each off diagonal block, we have its dimension, we need to know for this dimension, where does the segment start
-  // off_diagonal_blocks_indices: for each off diagonal block, we have its dimension, we need to know for this dimension, where to put it in the corresponding segment
+  // block_sizes: the gradient is segmented into small parts, for each parts, what's the dimension. This is also used for hessian block sizes
+  // hessian_blocks_start_indices: the hessian generated can be segmented into smaller blocks, each block may have different dimensions. This array tells us, for each dimension, where does the block start
+  // hessian_blocks_where_to_check: for each block, we have its dimension, we need to know for this dimension, where does the segment start
+  // hessian_blocks_indices: for each block, we have its dimension, we need to know for this dimension, where to put it in the corresponding segment
   // gradient: the accumulated gradient
-  // hessian_off_diagonal_blocks: the accumulated off diagonal blocks
+  // hessian_blocks: the accumulated blocks
+  // diagonal: the accumulated diagonal
 
   // first we get the index
   unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -139,7 +180,7 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
   if ({int(self.__needs_projection)}){{
   // if (0){{
     // project the hessian
-    spd_projection<{sum(self.__block_sizes)}>(hg_mat.data(), hg_mat.data(), 1);
+    {"spd_projection_inplace" if sum(self.__block_sizes) >= 4 else "spd_projection_small"}<{sum(self.__block_sizes)}>(hg_mat.data(), {"h_g_mat.data(), " if sum(self.__block_sizes) < 4 else ""}1);
   }}
   // printf("Hessian projected\\n");
   // now we need to place the hessian into the correct places
@@ -155,11 +196,11 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
       // printf("block rows: %u, block cols: %u, ij: %u, %u\\n", block_rows, block_cols, i, j);
       // now we know the size of the block, we need to put it to the correct block
       // we need to put it in the off diagonal blocks
-      unsigned int where_to_check = off_diagonal_blocks_where_to_check[off_diagonal_counts]; // know which off diagonal block we are in
+      unsigned int where_to_check = hessian_blocks_where_to_check[off_diagonal_counts]; // know which off diagonal block we are in
       // printf("where to check: %u\\n", where_to_check);
-      unsigned int off_diagonal_block_start_index = hessian_off_diagonal_blocks_start_indices[where_to_check]; // get the start index of this off diagonal block
+      unsigned int off_diagonal_block_start_index = hessian_blocks_start_indices[where_to_check]; // get the start index of this off diagonal block
       // printf("off diagonal block start index: %u\\n", off_diagonal_block_start_index);
-      unsigned int placement_index = off_diagonal_blocks_indices[index * {len(self.__block_sizes) * (len(self.__block_sizes) + 1) // 2} + off_diagonal_counts]; // get the placement index
+      unsigned int placement_index = hessian_blocks_indices[index * {len(self.__block_sizes) * (len(self.__block_sizes) + 1) // 2} + off_diagonal_counts]; // get the placement index
       // printf("off diagonal block placement index: %u\\n", placement_index);
       unsigned int off_diagonal_block_placement = off_diagonal_block_start_index + placement_index * block_rows * block_cols; // get the placement index
       // printf("off diagonal block placement: %u\\n", off_diagonal_block_placement);
@@ -168,7 +209,14 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
         for (unsigned int l = 0; l < block_cols; l++){{
           // printf("k: %u, l: %u, row offset: %u, col offset: %u\\n", k, l, row_offset, col_offset);
           // printf("hg_mat: %lf\\n", hg_mat(row_offset + k, col_offset + l));
-          atomicAdd(&hessian_off_diagonal_blocks[off_diagonal_block_placement + k * block_cols + l], hg_mat(row_offset + k, col_offset + l));
+          atomicAdd(&hessian_blocks[off_diagonal_block_placement + k * block_cols + l], hg_mat(row_offset + k, col_offset + l));
+        }}
+      }}
+      if (i == j){{
+        // we know it is a diagonal block
+        // we need to put the diagonal element into diagonal
+        for (unsigned int k = 0; k < block_rows; k++){{
+          atomicAdd(&diagonal[raw_position_i + k], hg_mat(row_offset + k, col_offset + k));
         }}
       }}
       if (raw_position_i == raw_position_j && i != j){{
@@ -178,8 +226,13 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
           for (unsigned int l = 0; l < block_cols; l++){{
             // printf("k: %u, l: %u, row offset: %u, col offset: %u\\n", k, l, row_offset, col_offset);
             // printf("hg_mat: %lf\\n", hg_mat(row_offset + k, col_offset + l));
-            atomicAdd(&hessian_off_diagonal_blocks[off_diagonal_block_placement + k * block_cols + l], hg_mat(col_offset + l, row_offset + k));
+            atomicAdd(&hessian_blocks[off_diagonal_block_placement + k * block_cols + l], hg_mat(col_offset + l, row_offset + k));
           }}
+        }}
+        // this is a off diagonal block, but when assembled, it is a diagonal block
+        // which means we need to put 2 * the value into the diagonal
+        for (unsigned int k = 0; k < block_rows; k++){{
+          atomicAdd(&diagonal[raw_position_i + k], 2.0 * hg_mat(row_offset + k, col_offset + k));
         }}
       }}
       off_diagonal_counts += 1;
@@ -215,7 +268,7 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
     # )
     mod = SourceModule(
       self.__kernelString,
-      options = ["-std=c++11", '-O2', '-I/usr/include/eigen3', "--expt-relaxed-constexpr", "--disable-warnings"],
+      options = ["-std=c++11", '-O3', '-I/usr/include/eigen3', "--expt-relaxed-constexpr", "--disable-warnings"],
       no_extern_c = True
     )
     kernel_name: str = get_mangled_name(kernelRawName, f'accumulate_hessian_and_gradient_global_function')

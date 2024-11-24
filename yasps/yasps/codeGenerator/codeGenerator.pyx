@@ -115,13 +115,13 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
     self.__generateCodeOrder()
     # go from bottom to top
     # check how many items appeared more than once
-    order_counts = {}
+    order_counts: Dict[int, int] = {}
 
     # we check if the item actually needs to be initialized
     # since some of the elements are only computed once
     for item in self.__order:
       if item.hash in order_counts:
-        self.__repeated_intermediates.add(item.hash)
+        order_counts[item.hash] += 1
       else:
         order_counts[item.hash] = 1
 

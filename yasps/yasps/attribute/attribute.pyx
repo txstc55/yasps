@@ -706,7 +706,7 @@ class attribute:
       assert self.__globalKernel is not None
       if self.__value is None or self.__value.size < self.__correspondance.numInstances * self.size:
         # reallocate a new pycuda array with the correct size
-        print(f"Reallocation needed, old size: {self.__value.size}, new size: {self.__correspondance.numInstances * self.size}")
+        # print(f"Reallocation needed, old size: {self.__value.size}, new size: {self.__correspondance.numInstances * self.size}")
         self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
     # after we allocated, we invoke the kernel
     arguments: List[gpuarray.GPUArray] = [x.value for x in self.__deviceKernel.kernelDatas] + [x.value for x in self.__deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__value]

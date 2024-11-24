@@ -3,27 +3,43 @@ from __future__ import annotations
 import pycuda.autoinit
 import numpy as np
 import pycuda.gpuarray as gpuarray
-from typing import List, Dict, Union, Tuple, Set
+from typing import List, Tuple, Set, Optional
 from yasps.energy import energy
 from yasps.attribute import attribute
+from yasps.solverKernel import solverKernel
+import ctypes
 
 class minimizer:
   def __init__(self):
     self.__energies: List[energy] = []
     self.__wrt: List[attribute] = []
     self.__gradient: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
+    self.__diagonal: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # only store the diagonal elements
 
     self.__blockDimensions: List[Tuple[int, int]] = [] # record the dimension of blocks
     self.__blocks: List[gpuarray.GPUArray] = [] # for each different block dimensions, the datas
     self.__blocksFlattened: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # the flattened blocks
-    self.__blocksStartIndex: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32) # for each off diagonal block, where do they start, this is to navigate through the flattened off diagonal blocks
-    self.__blockPositions: List[gpuarray.GPUArray] = [] # for each different off diagonal block sizes, for each block, what's its coordinate, we will use it for spmv
-    self.__blockCounts: List[int] = [] # record for each size of off diagonal block, the number of blocks
+    self.__blocksStartIndices: List[int] = [] # for each different block dimensions, where do they start, this is to navigate through the flattened blocks
+    self.__blocksStartIndicesGPU: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32) # for each block, where do they start, this is to navigate through the flattened blocks
+    self.__blockPositions: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32) # for each block, what's its coordinate, we will use it for spmv
+    self.__blockPositionsList: List[gpuarray.GPUArray] = [] # for each different block sizes, for each block, what's its coordinate, we will use it for spmv, this is just segmented from blockPositions
+    self.__blockCounts: List[int] = [] # record for each size of block, the number of blocks
     self.__gradientSizes: List[int] = []
     self.__gradientSegments: List[gpuarray.GPUArray] = []
     self.__wrtStartIndices: List[int] = []
-    # first we check if the wrt has duplicates
-    # if it has duplicates, we will raise an error
+    self.__solver: Optional[solverKernel] = None
+    ## auxilary variables for solver
+    self.__d_p1_b: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
+    self.__d_r: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
+    self.__d_c: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
+    self.__d_q: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
+    self.__d_s: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
+    self.__solution: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
+    self.__solutionSegments: List[gpuarray.GPUArray] = []
+
+  @property
+  def solutionSegments(self) -> List[gpuarray.GPUArray]:
+    return self.__solutionSegments
 
   @property
   def gradient(self) -> gpuarray.GPUArray:
@@ -56,21 +72,21 @@ class minimizer:
   def addWrt(self, wrt: List[attribute]) -> None:
     seenAttributeHashes: Set[int] = set()
     from yasps.attribute import DATA
-    for attribute in wrt:
-      if attribute.hash in seenAttributeHashes:
+    for att in wrt:
+      if att.hash in seenAttributeHashes:
         raise ValueError("minimizer.__init__: wrt has duplicate attributes.")
-      if attribute.operator is not DATA:
+      if att.operator is not DATA:
         raise ValueError("minimizer.__init__: wrt has non-data attributes.")
       seenAttributeHashes.add(attribute.hash)
     self.__wrt.extend(wrt)
     # at this time, we can start initializing the dense vectors
     # and everything else
     self.__getGradientSize() # get the size of the gradient
-    print(f"The size of the gradient is: {sum(self.__gradientSizes)}")
+    # print(f"The size of the gradient is: {sum(self.__gradientSizes)}")
     # self.__getblockSizes() # get the block sizes
     # print(f"The size of the diagonal blocks are: {self.__diagonalblockSizes}")
     self.__getSparseIndices() # get the sparse indices
-    print(f"sparse indices computation is done")
+    # print(f"sparse indices computation is done")
 
 
   def __getGradientSize(self) -> None:
@@ -78,6 +94,7 @@ class minimizer:
       self.__gradientSizes.append(item.size * item.correspondance.numInstances)
     # allocate the array
     self.__gradient = gpuarray.empty(sum(self.__gradientSizes), dtype = np.float64)
+    self.__diagonal = gpuarray.empty(sum(self.__gradientSizes), dtype = np.float64)
     # assign the gradient segments by reference
     start = 0
     self.__wrtStartIndices.append(start) # get where each data element starts
@@ -85,8 +102,8 @@ class minimizer:
       self.__gradientSegments.append(self.__gradient[start:start + size])
       start += size
       self.__wrtStartIndices.append(start)
-    print(f"The size of the gradient is: {sum(self.__gradientSizes)}")
-    print(f"The gradient segments sizes are: {self.__gradientSizes}")
+    # print(f"The size of the gradient is: {sum(self.__gradientSizes)}")
+    # print(f"The gradient segments sizes are: {self.__gradientSizes}")
 
   def __getblockSizes(self):
     pass
@@ -94,7 +111,7 @@ class minimizer:
   def __getSparseIndices(self):
     for energy in self.energies:
       energy.getSparseIndices(self.wrt, self.__wrtStartIndices)
-    # ok now we have the indices for all off diagonal block in their uncompressed order
+    # ok now we have the indices for blocks in their uncompressed order
     # what we need to do is to find the compressed sparse indices
     uncompressedIndices: List[Tuple[int, int]] = []
     index_start: List[int] = [0] # for each energy, where does the index start
@@ -129,8 +146,8 @@ class minimizer:
     # get the unique block sizes and sort them based on the block sizes
     self.__blockDimensions = list(set([item for sublist in energy_hessian_block_dimensions for item in sublist]))
     self.__blockDimensions.sort()
-    print('Dimensions of the blocks are: ')
-    print(self.__blockDimensions)
+    # print('Dimensions of the blocks are: ')
+    # print(self.__blockDimensions)
 
     # we now need to know, for each energy, for each block, where does it reside in the compressed coordinates in different block sizes
     uncompressedIndicesByDimensions: List[List[Tuple[int, int]]] = [[] for _ in range(len(self.__blockDimensions))]
@@ -148,19 +165,24 @@ class minimizer:
     # ok now we have the indices put to their corresponding place
     # we can remove the duplicates
     compressedIndices: List[List[Tuple[int, int]]] = [list(map(tuple, (np.unique(np.array(item), axis = 0)))) for item in uncompressedIndicesByDimensions]
-    print('Compressed indices are: ')
-    print(compressedIndices)
     self.__blockCounts = [len(item) for item in compressedIndices]
-    self.__blockPositions = [gpuarray.to_gpu(np.array(item, dtype = np.uint32)) for item in compressedIndices]
+    self.__blockPositions = gpuarray.to_gpu(np.array([item for sublist in compressedIndices for tup in sublist for item in tup]))
+    # now we segment the list to the positions list
+    total_count: int = 0
+    for i in range(len(self.__blockCounts)):
+      last_count = total_count
+      total_count += self.__blockCounts[i]
+      self.__blockPositionsList.append(self.__blockPositions[last_count * 2: total_count * 2])
     # now we need to allocate the gpu arrays, first we allocate memory for the entire chunk
     blocksStartIndices_cpu = [0]
     for i in range(len(self.__blockDimensions)):
       blocksStartIndices_cpu.append(blocksStartIndices_cpu[-1] + self.__blockCounts[i] * self.__blockDimensions[i][0] * self.__blockDimensions[i][1])
-    self.__blocksStartIndices = gpuarray.to_gpu(np.array(blocksStartIndices_cpu, dtype = np.uint32))
+    self.__blocksStartIndices = blocksStartIndices_cpu
+    self.__blocksStartIndicesGPU = gpuarray.to_gpu(np.array(blocksStartIndices_cpu, dtype = np.uint32))
     self.__blocksFlattened = gpuarray.empty(blocksStartIndices_cpu[-1], dtype = np.float64)
-    self.__blocksStartIndex = gpuarray.to_gpu(np.array(blocksStartIndices_cpu, dtype = np.uint32))
+    self.__blocksStartIndicesGPU = gpuarray.to_gpu(np.array(blocksStartIndices_cpu, dtype = np.uint32))
 
-    # now we need to assign the correct block to each off diagonal block
+    # now we need to assign the correct block to each block
     for i in range(len(self.__blockDimensions)):
       self.__blocks.append(self.__blocksFlattened[blocksStartIndices_cpu[i]: blocksStartIndices_cpu[i + 1]])
 
@@ -172,47 +194,94 @@ class minimizer:
       start = index_start[i]
       end = index_start[i + 1]
       uncompressedIndicesLocal = uncompressedIndices[start:end] # get the coordinates in the uncompressed order
-      print("Uncompressed indices are: ")
-      print(uncompressedIndicesLocal)
+      # print("Uncompressed indices are: ")
+      # print(uncompressedIndicesLocal)
       hessian_block_dimensions = energy_hessian_block_dimensions[i] # get the dimensions of the blocks
       where_to_check = [self.__blockDimensions.index(item) for item in hessian_block_dimensions] # we need to know where to check (the index of that dimension)
-      self.__energies[i].hessian_off_diagonal_block_where_to_check = gpuarray.to_gpu(np.array(where_to_check, dtype = np.uint32)) # we store where to check for each block
+      self.__energies[i].hessian_blocks_where_to_check = gpuarray.to_gpu(np.array(where_to_check, dtype = np.uint32)) # we store where to check for each block
       # ok now we know for each coordinate, which block to check
       # we need to get the index of the block
       hessian_block_indices: List[int] = [compressedIndices[where_to_check[j % len(where_to_check)]].index(uncompressedIndicesLocal[j]) for j in range(len(uncompressedIndicesLocal))]
-      print("Hessian block indices are: ")
-      print(hessian_block_indices)
+      # print("Hessian block indices are: ")
+      # print(hessian_block_indices)
       self.energies[i].block_indices_gpu = gpuarray.to_gpu(np.array(hessian_block_indices, dtype = np.uint32)) # we now store for each smaller block, what is the index in the data array
 
   def generateHessianAndGradient(self):
-    for energy in self.energies:
-      energy.generateHessianAndGradient(self.wrt)
+    for e in self.energies:
+      e.generateHessianAndGradient(self.wrt)
 
   def computeHessianAndGradient(self):
     # set gradient and hessian to 0
     self.__gradient.fill(0)
     self.__blocksFlattened.fill(0)
-    for energy in self.energies:
-      energy.computeHessianAndGradient(self.__blocksStartIndex, self.__gradient, self.__blocksFlattened)
+    self.__diagonal.fill(0)
+    for e in self.energies:
+      e.computeHessianAndGradient(self.__blocksStartIndicesGPU, self.__gradient, self.__blocksFlattened, self.__diagonal)
 
 
-    full_mat = np.zeros((self.__gradient.shape[0], self.__gradient.shape[0]))
-    for i in range(len(self.__blockDimensions)):
-      print(f"Dimension: {self.__blockDimensions[i][0]}, {self.__blockDimensions[i][0]}")
-      block_size = self.__blockDimensions[i][0] * self.__blockDimensions[i][1]
-      block_rows = self.__blockDimensions[i][0]
-      block_cols = self.__blockDimensions[i][1]
-      for j in range(self.__blockPositions[i].get().shape[0]):
-        # print(f"Pos {self.__blockPositions[i].get()[j]}")
-        pos = self.__blockPositions[i].get()[j]
-        x_pos = pos[0]
-        y_pos = pos[1]
-        if x_pos == y_pos:
-          full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
-        else:
-          full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
-          full_mat[y_pos: y_pos + block_rows, x_pos: x_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols).T
-        # block = self.__blocks[i].get()[j * block_size: (j + 1) * block_size]
-        # print(block.reshape(self.__blockDimensions[i][0], self.__blockDimensions[i][1]))
-      print("Assembled full mat: ")
-      print(full_mat)
+    # now we have the hessian and gradient
+    # we need to solve the system
+    if self.__solver is None:
+      self.__solver = solverKernel(self.__blockDimensions)
+      self.__d_p1_b = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
+      self.__d_r = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
+      self.__d_c = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
+      self.__d_q = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
+      self.__d_s = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
+      self.__solution = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
+      print("Gradient shape is: ")
+      print(self.__gradient.shape)
+      count = 0
+      for i in range(len(self.__gradientSegments)):
+        self.__solutionSegments.append(self.__solution[count: count + self.__gradientSegments[i].shape[0]])
+        count += self.__gradientSegments[i].shape[0]
+
+    assert self.__solver is not None
+    # setting zeros
+    self.__d_p1_b.fill(0)
+    self.__d_r.fill(0)
+    self.__d_c.fill(0)
+    self.__d_q.fill(0)
+    self.__d_s.fill(0)
+    self.__solution.fill(0)
+
+    cuda_context = pycuda.autoinit.context
+    context_ptr = int(cuda_context.handle)
+    context_ptr_c = ctypes.c_void_p(context_ptr)
+    # call the kernel
+    self.__solver.computeSolution(context_ptr_c, 10000, 1e-6, self.__blocksFlattened, self.__blockPositions, self.__blocksStartIndices, self.__blockCounts, self.__diagonal, self.__gradient, self.__d_p1_b, self.__d_r, self.__d_c, self.__d_q, self.__d_s, self.__solution)
+
+
+#######################################################################################
+## for checking the hessian and diagonals
+#######################################################################################
+    # full_mat = np.zeros((self.__gradient.shape[0], self.__gradient.shape[0]))
+    # for i in range(len(self.__blockDimensions)):
+    #   # print(f"Dimension: {self.__blockDimensions[i][0]}, {self.__blockDimensions[i][0]}")
+    #   block_size = self.__blockDimensions[i][0] * self.__blockDimensions[i][1]
+    #   block_rows = self.__blockDimensions[i][0]
+    #   block_cols = self.__blockDimensions[i][1]
+    #   for j in range(self.__blockPositionsList[i].get().shape[0] // 2):
+    #     # print(f"Pos {self.__blockPositionsList[i].get()[j]}")
+    #     # pos = self.__blockPositionsList[i].get()[j]
+    #     x_pos = self.__blockPositionsList[i].get()[j * 2]
+    #     y_pos = self.__blockPositionsList[i].get()[j * 2 + 1]
+    #     if x_pos == y_pos:
+    #       full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
+    #     else:
+    #       full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
+    #       full_mat[y_pos: y_pos + block_rows, x_pos: x_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols).T
+    #     # block = self.__blocks[i].get()[j * block_size: (j + 1) * block_size]
+    #     # print(block.reshape(self.__blockDimensions[i][0], self.__blockDimensions[i][1]))
+    # print("Assembled full mat: ")
+    # print(full_mat)
+    # print("Diagonal: ")
+    # diagonal = self.__diagonal.get()
+    # print(diagonal)
+
+    # # let's check if diagonal is the diagonal of full_mat
+
+    # full_mat_diagonal = full_mat.diagonal()
+
+    # print("Diagonal diff:")
+    # print(np.linalg.norm(diagonal - full_mat_diagonal))

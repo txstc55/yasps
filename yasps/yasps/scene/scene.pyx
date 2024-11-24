@@ -143,6 +143,9 @@ class scene:
 
   def minimizeEnergy(self, ):
     self.__minimizer.computeHessianAndGradient()
+    return self.__minimizer.solutionSegments
+
+  def gradient(self):
     return self.__minimizer.gradientSegments
 
   def addMinimizeTarget(self, target: List[attribute]):
