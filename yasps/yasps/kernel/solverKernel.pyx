@@ -4,7 +4,7 @@ from typing import List, Tuple
 import pycuda.gpuarray as gpuarray
 import ctypes
 import numpy as np
-import pycuda.autoinit
+import pycuda.driver as cuda
 
 
 class solverKernel:
@@ -306,8 +306,6 @@ int computeSolution(CUcontext ctx,
     if (h_delta_new <= relativeTolerance){
       printf("Converged in %d iterations with residual %lf\\n", iteration, h_delta_new);
       return iteration;
-    }else{
-      printf("Iteration %d with residual: %lf\\n", iteration, h_delta_new);
     }
   }
   return maxIteration + 1;
@@ -348,6 +346,9 @@ int computeSolution(CUcontext ctx,
     return ctypes.c_void_p(int(x.gpudata))
 
   def computeSolution(self, cuda_context, maxIteration, threshold, block_values: gpuarray.GPUArray, block_positions: gpuarray.GPUArray, block_values_start: List[int], block_counts: List[int], diagonal: gpuarray.GPUArray, gradient: gpuarray.GPUArray, d_p1_b: gpuarray.GPUArray, d_r: gpuarray.GPUArray, d_c: gpuarray.GPUArray, d_q: gpuarray.GPUArray, d_s: gpuarray.GPUArray, solution: gpuarray.GPUArray):
+    start_call = cuda.Event()
+    end_call = cuda.Event()
+    start_call.record()
     self.__cg_kernel(
       cuda_context,
       maxIteration,
@@ -366,3 +367,10 @@ int computeSolution(CUcontext ctx,
       self.__to_void_p(d_s),
       self.__to_void_p(solution)
     )
+    # Record the end event
+    end_call.record()
+    # Wait for the end event to complete
+    end_call.synchronize()
+    # Calculate the elapsed time in milliseconds
+    elapsed_time_ms = start_call.time_till(end_call)
+    print(f"Solver time: {elapsed_time_ms:.5f} ms")

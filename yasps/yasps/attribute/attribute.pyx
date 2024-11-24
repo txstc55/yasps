@@ -9,14 +9,12 @@ import pycuda.driver as cuda
 
 from yasps.operator import operator
 if TYPE_CHECKING:
-  from yasps.operator import operator
   from yasps.scene import scene
   from yasps.mesh import mesh
   from yasps.primitive import primitive
   from yasps.connectivity import connectivity
   from yasps.deviceKernel import deviceKernel
   from yasps.globalKernel import globalKernel
-  from yasps.codeGenerator import codeGenerator
 
 
 

@@ -2,7 +2,6 @@ from yasps import scene
 from yasps import attribute
 import math
 import numpy as np
-import pyvista as pv
 
 def quaternion_to_rotation(w, z):
   # quaternion to a 2d rotation matrix
@@ -64,130 +63,67 @@ vertex_positions = vertices.addAttribute("position", computed_attribute = weight
 
 segments[-1].addAttribute("target_position", rows = 2, cols = 1)
 segments[-1]["target_position"].updateValue(TARGET_POSITION)
+distance_vector = segments[-1]["end_point_position"] - segments[-1]["target_position"]
 segments[-1].addAttribute("position_penalty", computed_attribute = (segments[-1]["end_point_position"] - segments[-1]["target_position"]).norm())
-print("Penalty value")
-print(segments[-1]["position_penalty"].compute().value.get())
 
 
 s0.addEnergy(segments[-1]["position_penalty"])
 s0.addMinimizeTarget([segment["w"] for segment in segments] + [segment["z"] for segment in segments])
 result = s0.minimizeEnergy()
-print("Result ours")
-print(np.array([x.get() for x in result]))
-# print([5, 0, 6, 1, 5, 0, 7, 2, 6, 1, 5, 0, 8, 3, 7, 2, 6, 1, 5, 0, 9, 4, 8, 3, 7, 2, 6, 1, 5, 0])
-# print(result)
-# # # gradient = (np.array([x.get() for x in result]).flatten())
-longest_key = ""
-keys = segments[-1].attributes.keys()
-for key in keys:
-  if 'd2' in key:
-    if len(key) > len(longest_key):
-      longest_key = key
-print("Hessian name for checking")
-print(longest_key)
-hessian = (segments[-1][longest_key].spd(1).compute().value.get().reshape(SEGMENT_COUNT * (SEGMENT_COUNT + 1), SEGMENT_COUNT * (SEGMENT_COUNT + 1)))
-# print(hessian)
-# project to positive definite
 
+import matplotlib.pyplot as plt
+data = vertex_positions.compute().value.get()
+points = data.reshape(-1, 2)
+x = points[:, 0]
+y = points[:, 1]
+plt.ion()
+fig, ax = plt.subplots(figsize=(6, 8))
+line, = ax.plot([], [], marker='o', linestyle='-')
+line.set_data(x, y)
+ax.set_xlim(-(SEGMENT_COUNT + 2), (SEGMENT_COUNT + 2))
+ax.set_ylim(-(SEGMENT_COUNT + 2), (SEGMENT_COUNT + 2))
+ax.plot(TARGET_POSITION[0], TARGET_POSITION[1], 'ro', color='red', label = 'Target Position')
+ax.legend()
+plt.axis('off')
+plt.gca().set_aspect('equal', adjustable='box')
+plt.show()
 
+# Loop to update the plot
+t = 0.3
+last_penalty = 50
+for iteration in range(150):
+  result = s0.minimizeEnergy()
+  dx = (np.array([x.get() for x in result]).flatten())
+  print("Penalty value")
+  last_penalty = segments[-1]["position_penalty"].compute().value.get()[0]
+  if last_penalty < 0.1 :
+    t *= 0.99
+  print(last_penalty)
 
+  for i in range(SEGMENT_COUNT):
+    w_origin = segments[i]["w"].compute().value.get()
+    z_origin = segments[i]["z"].compute().value.get()
+    d_w = dx[i]
+    d_z = dx[i + SEGMENT_COUNT]
+    w_new = w_origin - t * d_w
+    z_new = z_origin - t * d_z
+    norm = math.sqrt(w_new * w_new + z_new * z_new)
+    w_new /= norm
+    z_new /= norm
+    segments[i]["w"].updateValue([w_new])
+    segments[i]["z"].updateValue([z_new])
 
-positions = [5, 0, 6, 1, 5, 0, 7, 2, 6, 1, 5, 0, 8, 3, 7, 2, 6, 1, 5, 0, 9, 4, 8, 3, 7, 2, 6, 1, 5, 0]
-true_hessian = np.zeros((SEGMENT_COUNT * 2, SEGMENT_COUNT * 2))
-for i in range(len(positions)):
-  for j in range(len(positions)):
-    true_hessian[positions[i], positions[j]] += hessian[i, j]
-print("True Hessian")
-print(true_hessian)
+  data = vertex_positions.compute().value.get()
+  points = data.reshape(-1, 2)
+  x = points[:, 0]
+  y = points[:, 1]
+  line.set_data(x, y)
 
-gradient = np.array([x.get() for x in s0.gradient()])
-print("Gradient")
-print(gradient)
-solution = np.linalg.solve(true_hessian, gradient)
-print("Solution")
-print(solution)
+  # Save the current frame as an image
+  # plt.savefig(f'pendulum_results/frame_{iteration:04d}.png', dpi=600)
+  fig.canvas.draw()
+  fig.canvas.flush_events()
 
-print("Hessian @ gradient")
-print(true_hessian @ gradient)
-
-# eigenvalues, eigenvectors = np.linalg.eig(true_hessian)
-# eigenvalues = abs(eigenvalues)
-# true_hessian = eigenvectors @ np.diag(eigenvalues) @ np.linalg.inv(eigenvectors)
-# print("True Hessian after projection")
-# print(true_hessian)
-
-# # result = s0.minimizeEnergy()
-
-
-# import matplotlib.pyplot as plt
-# data = vertex_positions.compute().value.get()
-# points = data.reshape(-1, 2)
-# x = points[:, 0]
-# y = points[:, 1]
-# plt.ion()
-# fig, ax = plt.subplots(figsize=(6, 8))
-# line, = ax.plot([], [], marker='o', linestyle='-')
-# line.set_data(x, y)
-# ax.set_xlim(-(SEGMENT_COUNT + 2), (SEGMENT_COUNT + 2))
-# ax.set_ylim(-(SEGMENT_COUNT + 2), (SEGMENT_COUNT + 2))
-# # add the target position
-# ax.plot(TARGET_POSITION[0], TARGET_POSITION[1], 'ro', color='red', label = 'Target Position')
-# ax.legend()
-# # turn off the axis
-# plt.axis('off')
-# # Set the aspect ratio to 1:1
-# plt.gca().set_aspect('equal', adjustable='box')
-# plt.show()
-
-# # Loop to update the plot
-# t = 0.3
-# last_penalty = 50
-# for iteration in range(1500):
-#   result = s0.minimizeEnergy()
-#   gradient = (np.array([x.get() for x in result]).flatten())
-#   # true_hessian = np.identity(SEGMENT_COUNT * 2) * 1
-#   true_hessian = np.zeros((SEGMENT_COUNT * 2, SEGMENT_COUNT * 2))
-#   hessian = (segments[-1][longest_key].compute().value.get().reshape(SEGMENT_COUNT * (SEGMENT_COUNT + 1), SEGMENT_COUNT * (SEGMENT_COUNT + 1)))
-#   # w, v = np.linalg.eig(hessian)
-#   # w = np.abs(w)
-#   # hessian = v @ np.diag(w) @ v.T
-#   for i in range(len(positions)):
-#     for j in range(len(positions)):
-#       true_hessian[positions[i], positions[j]] += hessian[i, j]
-#   w, v = np.linalg.eig(true_hessian)
-#   w = np.abs(w)
-#   true_hessian = v @ np.diag(w) @ v.T
-#   dx = np.linalg.solve(true_hessian, gradient)
-#   print("Penalty value")
-#   last_penalty = segments[-1]["position_penalty"].compute().value.get()[0]
-#   if last_penalty < 0.1 :
-#     t *= 0.99
-#   print(last_penalty)
-
-#   for i in range(SEGMENT_COUNT):
-#     w_origin = segments[i]["w"].compute().value.get()
-#     z_origin = segments[i]["z"].compute().value.get()
-#     d_w = dx[i]
-#     d_z = dx[i + SEGMENT_COUNT]
-#     w_new = w_origin - t * d_w
-#     z_new = z_origin - t * d_z
-#     norm = math.sqrt(w_new * w_new + z_new * z_new)
-#     w_new /= norm
-#     z_new /= norm
-#     segments[i]["w"].updateValue([w_new])
-#     segments[i]["z"].updateValue([z_new])
-
-#   data = vertex_positions.compute().value.get()
-#   points = data.reshape(-1, 2)
-#   x = points[:, 0]
-#   y = points[:, 1]
-#   line.set_data(x, y)
-
-#   # Save the current frame as an image
-#   # plt.savefig(f'pendulum_results/frame_{iteration:04d}.png', dpi=600)
-#   fig.canvas.draw()
-#   fig.canvas.flush_events()
-
-# # Disable interactive mode if no longer needed
-# plt.ioff()
-# plt.show()
+# Disable interactive mode if no longer needed
+plt.ioff()
+plt.show()

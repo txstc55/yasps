@@ -34,7 +34,8 @@ def hashAttribute(att: ya.attribute) -> int:
     cot_string:str = f"cot({att.children[0].hash})"
     att._attribute__hash = int(hashlib.sha256(cot_string.encode()).hexdigest(), 16)
   elif att.operator == ya.ABS:
-    att._attribute__hash = abs(att.children[0].hash)
+    abs_string:str = f"abs({att.children[0].hash})"
+    att._attribute__hash = int(hashlib.sha256(abs_string.encode()).hexdigest(), 16)
   elif att.operator == ya.LOG:
     log_string = f"ln({att.children[0].hash})"
     att._attribute__hash = int(hashlib.sha256(log_string.encode()).hexdigest(), 16)
