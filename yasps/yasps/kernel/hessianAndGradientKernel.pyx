@@ -40,9 +40,9 @@ class hessianAndGradientKernel:
 // for small matrix < 4
 template <unsigned int N>
 __device__ void spd_projection_small(const double *A, double* output, int choice){{
-  int M = 4;
+  const int M = 4;
   // Initialize an M x M matrix with zeros
-  Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Zero();
+  Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Identity();
 
   // Copy the input N x N matrix into the top-left corner of the M x M matrix
   for (int row = 0; row < N; ++row) {{
@@ -96,7 +96,8 @@ __device__ void spd_projection(const double *A, double* output, int choice){{
   // Compute the reconstructed matrix: A_reconstructed = C * B.transpose()
   Eigen::Matrix<double, N, N> A_reconstructed = C * B.transpose();
   // Copy the top-left N x N submatrix back to output
-  Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>>(output) = A_reconstructed;
+  Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>> outputMap(output);
+  outputMap = A_reconstructed;
   return;
 }}
 
@@ -159,30 +160,15 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
   if (index >= MAX_INDEX){{
     return;
   }}
-  Eigen::Matrix<double, {sum(self.__block_sizes) + 1}, {sum(self.__block_sizes)}, Eigen::RowMajor> hg_mat = Eigen::Matrix<double, {sum(self.__block_sizes) + 1}, {sum(self.__block_sizes)}, Eigen::RowMajor>::Zero(); // get the merged gradient and hessian
+  Eigen::Matrix<double, {sum(self.__block_sizes) + 1}, {sum(self.__block_sizes)}{", Eigen::RowMajor" if sum(self.__block_sizes) > 1 else ""}> hg_mat = Eigen::Matrix<double, {sum(self.__block_sizes) + 1}, {sum(self.__block_sizes)}, Eigen::RowMajor>::Zero(); // get the merged gradient and hessian
   // now we call the device function
   {attributeName}_device_function({"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}index, hg_mat.data());
-  // printf("gradient: ");
-  // for (unsigned int i = 0; i < {sum(self.__block_sizes)}; i++){{
-  //   printf("%lf, ", hg_mat({sum(self.__block_sizes)}, i));
-  // }}
-  // printf("\\n");
-  // printf("Hessian");
-  // for (unsigned int i = 0; i < {sum(self.__block_sizes)}; i++){{
-  //   for (unsigned int j = 0; j < {sum(self.__block_sizes)}; j++){{
-  //     printf("%lf, ", hg_mat(i, j));
-  //   }}
-  //   printf("\\n");
-  // }}
-  // printf("\\n");
   // now maybe we need to project the entire hessian
   // the true false value is generated at compile time
   if ({int(self.__needs_projection)}){{
-  // if (0){{
     // project the hessian
-    {"spd_projection_inplace" if sum(self.__block_sizes) >= 4 else "spd_projection_small"}<{sum(self.__block_sizes)}>(hg_mat.data(), {"h_g_mat.data(), " if sum(self.__block_sizes) < 4 else ""}1);
+    {"spd_projection_inplace" if sum(self.__block_sizes) >= 4 else "spd_projection_small"}<{sum(self.__block_sizes)}>(hg_mat.data(), {"hg_mat.data(), " if sum(self.__block_sizes) < 4 else ""}1);
   }}
-  // printf("Hessian projected\\n");
   // now we need to place the hessian into the correct places
   unsigned int row_offset = 0;
   unsigned int off_diagonal_counts = 0;
@@ -193,17 +179,12 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
     for (unsigned int j = i; j < {len(self.__block_sizes)}; j++){{
       unsigned int raw_position_j = gradient_placements[index * {len(self.__block_sizes)} + j];
       unsigned int block_cols = block_sizes[j];
-      // printf("block rows: %u, block cols: %u, ij: %u, %u\\n", block_rows, block_cols, i, j);
       // now we know the size of the block, we need to put it to the correct block
       // we need to put it in the off diagonal blocks
       unsigned int where_to_check = hessian_blocks_where_to_check[off_diagonal_counts]; // know which off diagonal block we are in
-      // printf("where to check: %u\\n", where_to_check);
       unsigned int off_diagonal_block_start_index = hessian_blocks_start_indices[where_to_check]; // get the start index of this off diagonal block
-      // printf("off diagonal block start index: %u\\n", off_diagonal_block_start_index);
       unsigned int placement_index = hessian_blocks_indices[index * {len(self.__block_sizes) * (len(self.__block_sizes) + 1) // 2} + off_diagonal_counts]; // get the placement index
-      // printf("off diagonal block placement index: %u\\n", placement_index);
       unsigned int off_diagonal_block_placement = off_diagonal_block_start_index + placement_index * block_rows * block_cols; // get the placement index
-      // printf("off diagonal block placement: %u\\n", off_diagonal_block_placement);
       // place the block
       for (unsigned int k = 0; k < block_rows; k++){{
         for (unsigned int l = 0; l < block_cols; l++){{
@@ -240,7 +221,6 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
     }}
     row_offset += block_rows; // move the row offset
   }}
-  // printf("Hessian assembled\\n");
   // now we need to place the gradient
   unsigned int count = 0;
   for (unsigned int i = 0; i < {len(self.__block_sizes)}; i++){{
@@ -250,7 +230,6 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
       count += 1;
     }}
   }}
-  // printf("Gradient assembled\\n");
 }}
 '''
     # prune duplicate functions

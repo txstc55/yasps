@@ -25,30 +25,30 @@ def extract_surface_triangles(tets):
 ##################################################
 ## initialize with fake data
 ##################################################
-position = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 2.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0], [2.0, 0.0, 2.0], [2.0, 2.0, 2.0], [0.0, 2.0, 2.0]], dtype = np.float64)
+# position = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 2.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0], [2.0, 0.0, 2.0], [2.0, 2.0, 2.0], [0.0, 2.0, 2.0]], dtype = np.float64)
 
-tet_indices = np.array([[0, 1, 3, 7], [1, 2, 3, 7], [0, 1, 4, 7], [1, 5, 4, 7], [1, 2, 6, 7], [1, 5, 6, 7]])
-# tet_indices = np.array([[0, 1, 3, 7], [1, 2, 3, 7]])
+# tet_indices = np.array([[0, 1, 3, 7], [1, 2, 3, 7], [0, 1, 4, 7], [1, 5, 4, 7], [1, 2, 6, 7], [1, 5, 6, 7]])
+# # tet_indices = np.array([[0, 1, 3, 7], [1, 2, 3, 7]])
 
 ##################################################
 ## initialize with real data
 ##################################################
 
-# f = open("../data/bunny.ele", 'r')
-# f.readline()
-# tet_indices = []
-# for line in f:
-#   tet_indices.append([int(x) - 1 for x in line.split()[3:]])
-# f.close()
-# tet_indices = np.array(tet_indices)
+f = open("../data/bunny.ele", 'r')
+f.readline()
+tet_indices = []
+for line in f:
+  tet_indices.append([int(x) - 1 for x in line.split()[3:]])
+f.close()
+tet_indices = np.array(tet_indices)
 
-# f = open("../data/bunny.node", 'r')
-# f.readline()
-# position = []
-# for line in f:
-#   position.append([float(x) for x in line.split()[1:]])
-# f.close()
-# position = np.array(position, dtype = np.float64)
+f = open("../data/bunny.node", 'r')
+f.readline()
+position = []
+for line in f:
+  position.append([float(x) for x in line.split()[1:]])
+f.close()
+position = np.array(position, dtype = np.float64)
 
 ##################################################
 ## extract surface triangles
@@ -69,36 +69,33 @@ vertices = bunny.addPrimitive("vertices", numInstances = position.shape[0])
 vertex_positions = vertices.addAttribute("position", rows = 1, cols = 3)
 vertices["position"].updateValue(position)
 
-
 tets = bunny.addPrimitive("tets", numInstances = tet_indices.shape[0])
 tet_to_vertex = tets.addConnectivity("tet_to_vertex", vertices, tet_indices, 4)
 tet_positions = tets.addAttribute("position", through = tet_to_vertex)
 tet_position_rest = tets.addAttribute("position_rest", rows = 4, cols = 3)
 tet_position_rest.updateValue(tet_positions.compute().value.get() * 2.0, deepCopy = True) # make a deep copy
-print("Tet position rest")
-print(tet_position_rest.compute().value.get())
 
 
 
-# rotate each vertex by degree of x value
-x = position[:, 0]  # Shape: (N,)
-y = position[:, 1]  # Shape: (N,)
-z = position[:, 2]  # Shape: (N,)
-# Convert x-coordinates to rotation angles in degrees
-theta_degrees = x  # Each x_i is the rotation angle in degrees
-# Convert degrees to radians
-theta_radians = np.deg2rad(theta_degrees * 10.0)  # np.deg2rad converts degrees to radians
-cos_theta = np.cos(theta_radians)  # Shape: (N,)
-sin_theta = np.sin(theta_radians)  # Shape: (N,)
-# Compute the new y and z coordinates after rotation
-y_rotated = y * cos_theta - z * sin_theta
-z_rotated = y * sin_theta + z * cos_theta
-# x remains the same
-x_rotated = x
-rotated_positions = np.column_stack((x_rotated, y_rotated, z_rotated))
-# rotated_positions = position
-vertices["position"].updateValue(rotated_positions)
-
+# # rotate each vertex by degree of x value
+# x = position[:, 0]  # Shape: (N,)
+# y = position[:, 1]  # Shape: (N,)
+# z = position[:, 2]  # Shape: (N,)
+# # Convert x-coordinates to rotation angles in degrees
+# theta_degrees = x  # Each x_i is the rotation angle in degrees
+# # Convert degrees to radians
+# theta_radians = np.deg2rad(theta_degrees * 100.0)  # np.deg2rad converts degrees to radians
+# cos_theta = np.cos(theta_radians)  # Shape: (N,)
+# sin_theta = np.sin(theta_radians)  # Shape: (N,)
+# # Compute the new y and z coordinates after rotation
+# y_rotated = y * cos_theta - z * sin_theta
+# z_rotated = y * sin_theta + z * cos_theta
+# # x remains the same
+# x_rotated = x
+# rotated_positions = np.column_stack((x_rotated, y_rotated, z_rotated))
+# # rotated_positions = position
+# vertices["position"].updateValue(rotated_positions)
+# print("Vertex positions rotated")
 
 # here we compute the rest position deformation gradient
 row0 = tet_position_rest.row(0)
@@ -115,12 +112,6 @@ tets.addAttribute("vol", rows = 1, cols = 1)
 tets["vol"].updateValue(vol.compute().value.get())
 tets.addAttribute("IB", rows = 3, cols = 3)
 tets["IB"].updateValue(IB.compute().value.get())
-print("vol and IB")
-print(vol.compute().value.get())
-print(IB.compute().value.get().reshape(-1, 3))
-
-print("tet_positions")
-print(tet_positions.compute().value.get())
 
 # add deformation gradient
 row0 = tet_positions.row(0)
@@ -143,8 +134,6 @@ IB = tet_deform.addAttribute("IB", through = tet_deform.connectivities["tet_defo
 IB.reshape(3, 3) # need to reshape
 deformation = tet_deform.addAttribute("deformation_gradient", through = tet_deform.connectivities["tet_deform_to_tet"])
 deformation.reshape(3, 3) # need to reshape
-# print("Deformation gradient")
-# print(deformation.compute().value.get().reshape(3, 3))
 
 def stable_neo_hookean(mu, lam, vol, IB, F):
   FI = F.transpose() * IB
@@ -156,65 +145,50 @@ def stable_neo_hookean(mu, lam, vol, IB, F):
 
 
 snh = tet_deform.addAttribute("stable_neo_hookean", computed_attribute = stable_neo_hookean(bunny["mu"], bunny["lam"], vol, IB, deformation))
-# print("stable neo hookean")
-# print(snh.compute().value.get())
 
 s0.addEnergy(snh)
 s0.addMinimizeTarget([vertices["position"]])
-grad = s0.minimizeEnergy()
-print(grad)
 
-# print(tet_deform.attributes.keys())
 
-print("Energy")
-print(sum(tet_deform.attributes["stable_neo_hookean"].compute().value.get()))
+import pyvista as pv
+triangles = np.array(surface_triangle_indices)
+cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
+mesh = pv.PolyData(np.array(position), cells)
+mesh2 = pv.PolyData(np.array(position * 2.0), cells)
 
-# print("Gradient local")
-# print(tet_deform.attributes["d_scene0_bunny_tet_deform_stable_neo_hookean_d_scene0_bunny_vertices_position"].compute().value.get())
-
-# print("Hessian local")
-# print(tet_deform.attributes["d2_scene0_bunny_tet_deform_stable_neo_hookean_d_scene0_bunny_vertices_position"].compute().value.get().reshape(12, 12))
-
-# # import pyvista as pv
-# # triangles = np.array(surface_triangle_indices)
-# # cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
-# # mesh = pv.PolyData(np.array(position), cells)
-# # mesh2 = pv.PolyData(np.array(position * 2.0), cells)
-
-# # plotter = pv.Plotter()
-# # plotter.add_mesh(mesh)
-# # plotter.add_mesh(mesh2, opacity=0.5, color='red')
-# # plotter.show(interactive_update=True)
+plotter = pv.Plotter()
+plotter.add_mesh(mesh)
+plotter.add_mesh(mesh2, opacity=0.5, color='red')
+# plotter.show()
+plotter.show(interactive_update=True)
 
 
 
-# # total_frames = 0
-# # start = time.time()
-# # iteration = 0
-# # weight = 0.0001
-# # def update_position():
-# #   global total_frames, start
-# #   change_value = s0.minimizeEnergy()[0].get()
-# #   print("Change value", change_value)
-# #   for i in range(len(change_value)):
-# #     if np.isnan(change_value[i]):
-# #       print("NaN detected at position", i)
-# #       exit()
-# #   new_positions = vertex_positions.compute().value.get().flatten() - weight * change_value
-# #   vertex_positions.updateValue(new_positions)
-# #   # Update the mesh points
-# #   mesh.points = new_positions.reshape(-1, 3)
+total_frames = 0
+start = time.time()
+iteration = 0
+weight = 0.01
+def update_position():
+  global total_frames, start
+  change_value = s0.minimizeEnergy()[0].get()
+  for i in range(len(change_value)):
+    if np.isnan(change_value[i]):
+      print("NaN detected at position", i)
+      exit()
+  new_positions = vertex_positions.compute().value.get().flatten() - weight * change_value
+  vertex_positions.updateValue(new_positions)
+  # Update the mesh points
+  mesh.points = new_positions.reshape(-1, 3)
 
-# #   # Refresh the plotter to reflect the updated mesh
-# #   plotter.update_coordinates(mesh.points, mesh=mesh)
-# #   plotter.render()
-# #   # print(f"Average area: {(sum(area.compute().value.get())) / faces.shape[0]}, target is: {average_area}")
-# #   print(f"Total energy is: {sum(snh.compute().value.get() )}")
+  # Refresh the plotter to reflect the updated mesh
+  plotter.update_coordinates(mesh.points, mesh=mesh)
+  plotter.render()
+  print(f"Total energy is: {sum(snh.compute().value.get() )}")
 
 
-# # while True:
-# #   update_position()
-# #   total_frames += 1
-# #   # if total_frames % 1000 == 0:
-# #   #   # plotter.export_obj(f"bunny_{total_frames}.obj")
-# #   #   weight *= 0.9
+while True:
+  update_position()
+  total_frames += 1
+  # if total_frames % 1000 == 0:
+  #   # plotter.export_obj(f"bunny_{total_frames}.obj")
+  #   weight *= 0.9

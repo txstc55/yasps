@@ -138,7 +138,7 @@ void spmvWithSystem(const double* block_values, // the value of the blocks in th
 __global__ void jacobiPreconditioner(const double* diagonal, const double* x, double* y, unsigned int N){
   unsigned int id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id < N){
-    y[id] = x[id] / diagonal[id];
+    y[id] = x[id] / (diagonal[id] < 1e-9 ? 1.0 : diagonal[id]);
   }
 }
 

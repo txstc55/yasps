@@ -9,7 +9,7 @@ def quaternion_to_rotation(w, z):
 
 # define segments
 SEGMENT_COUNT = 5
-TARGET_POSITION = [5.0, 5.0]
+TARGET_POSITION = [1.0, 2.0]
 s0 = scene("scene0")
 pendulum = s0.addMesh("pendulum")
 segments = []
@@ -89,15 +89,15 @@ plt.gca().set_aspect('equal', adjustable='box')
 plt.show()
 
 # Loop to update the plot
-t = 0.3
+t = 0.03
 last_penalty = 50
-for iteration in range(150):
+for iteration in range(1500):
   result = s0.minimizeEnergy()
   dx = (np.array([x.get() for x in result]).flatten())
   print("Penalty value")
   last_penalty = segments[-1]["position_penalty"].compute().value.get()[0]
-  if last_penalty < 0.1 :
-    t *= 0.99
+  if last_penalty < 0.01 :
+    exit(0)
   print(last_penalty)
 
   for i in range(SEGMENT_COUNT):

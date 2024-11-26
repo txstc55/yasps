@@ -21,6 +21,7 @@ def bending(x, x_init, bendStiff):
   t_init = edgeTheta(x_init0, x_init1, x_init2, x_init3)
   # bend_energy = bendStiff * (x_init1 - x_init0).norm()
   bend_energy = bendStiff * (t - t_init) * (t - t_init) * (x_init1 - x_init0).norm() + bendStiff * ((x3 - x2).norm() - (x_init3 - x_init2).norm()) * ((x3 - x2).norm() - (x_init3 - x_init2).norm())
+  bend_energy = bendStiff * (t - t_init) * (t - t_init) * (x_init1 - x_init0).norm()
   return bend_energy
 
 
@@ -74,8 +75,6 @@ for item in edge_to_triangle:
           break
       if triangle_ind < 0:
         indices[3] = new_ind
-        # if new_ind == 55971 // 3:
-        #   print("check:", faces[true_ind])
       else:
         indices[2] = new_ind
     edge_to_triangle_vertices.append(indices)
@@ -101,8 +100,6 @@ face_positions = bunny_faces.addAttribute("face_positions", through = face_conne
 edge_pair_rest_positions = bunny_edge_pairs.addAttribute("edge_pair_rest_positions", through = edge_pairs_connect_vertex, source = bunny_vertices_rest_positions)
 edge_pair_smoothed_positions = bunny_edge_pairs.addAttribute("edge_pair_smoothed_positions", through = edge_pairs_connect_vertex, source = bunny_vertices_smoothed_positions)
 
-# print(list(edge_pair_rest_positions.compute().value.get()))
-# print(list(edge_pair_smoothed_positions.compute().value.get()))
 
 
 # compute the average areas
@@ -111,23 +108,24 @@ v1 = face_positions.row(1)
 v2 = face_positions.row(2)
 # compute the area
 area = 0.5 * ((v1 - v0).cross(v2 - v0)).norm()
-# print(area)
 average_area = (sum(area.compute().value.get())) / faces.shape[0]
 print(f"average area is: {average_area}")
 
 
-area_energy = bunny_faces.addAttribute("area_energy", computed_attribute = 0.1 * (area - float(average_area)) * (area - float(average_area)))
+area_energy = bunny_faces.addAttribute("area_energy", computed_attribute = 1.0 * (area - float(average_area)) * (area - float(average_area)))
 # now we add the bending energy
 #
 normal = (v1 - v0).cross(v2 - v0)
-normal_sum = (normal[0].abs() + normal[1].abs() + normal[2].abs()) * 0.5
+normal_sum = (normal[0].abs() + normal[1].abs() + normal[2].abs()) * 0.1
 normal_energy = bunny_faces.addAttribute("normal_energy", computed_attribute = normal_sum)
-bending_energy = bunny_edge_pairs.addAttribute("bending_energy", computed_attribute = bending(edge_pair_smoothed_positions, edge_pair_rest_positions, 1.0))
-print(bending_energy.compute().value.get().flatten())
+bending_energy = bunny_edge_pairs.addAttribute("bending_energy", computed_attribute = bending(edge_pair_smoothed_positions, edge_pair_rest_positions, 1000.0))
+normal_plus_area = bunny_faces.addAttribute("normal_plus_area", computed_attribute = normal_sum + area_energy)
 
-s0.addEnergy(area_energy)
-s0.addEnergy(normal_energy)
+
+# s0.addEnergy(area_energy)
+# s0.addEnergy(normal_energy)
 s0.addEnergy(bending_energy)
+s0.addEnergy(normal_plus_area)
 s0.addMinimizeTarget([bunny_vertices_smoothed_positions])
 
 
@@ -145,15 +143,10 @@ plotter.show(interactive_update=True)
 total_frames = 0
 start = time.time()
 iteration = 0
-weight = 0.001
+weight = 0.1
 def update_position():
   global total_frames, start
   change_value = s0.minimizeEnergy()[0].get()
-  # for i in range(len(change_value)):
-  #   if np.isnan(change_value[i]):
-  #     print("NaN detected at position", i)
-  #     exit()
-  # return
   new_positions = bunny_vertices_smoothed_positions.compute().value.get().flatten() - weight * change_value
   bunny_vertices_smoothed_positions.updateValue(new_positions)
   # Update the mesh points
@@ -162,15 +155,17 @@ def update_position():
   # Refresh the plotter to reflect the updated mesh
   plotter.update_coordinates(mesh.points, mesh=mesh)
   plotter.render()
-  # print(f"Average area: {(sum(area.compute().value.get())) / faces.shape[0]}, target is: {average_area}")
   print(f"Variance is: {sum((area.compute().value.get() - average_area) ** 2) / faces.shape[0]}")
-  print("Total bending energy is:", sum(bending_energy.compute().value.get().flatten()))
+  # print("Total bending energy is:", sum(bending_energy.compute().value.get().flatten()))
   print("Total area energy is:", sum(area_energy.compute().value.get().flatten()))
 
 
 while True:
   update_position()
   total_frames += 1
-  if total_frames % 1000 == 0:
-    # plotter.export_obj(f"bunny_{total_frames}.obj")
-    weight *= 0.9
+  # if total_frames % 1000 == 0:
+  #   weight *= 0.9
+  if total_frames % 200 == 0:
+    # export the mesh
+    filename = f"../data/output_bunny_{total_frames}.obj"
+    mesh.save(filename)

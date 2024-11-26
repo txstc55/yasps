@@ -1,5 +1,4 @@
 import yasps.attribute as ya
-from typing import Union
 import math
 def add(att: ya.attribute, other: ya.attribute) -> ya.attribute:
   if att.rows != other.rows or att.cols != other.cols:
@@ -230,6 +229,24 @@ def sqrt_op(att: ya.attribute):
   if att.operator == ya.FLOAT:
     return ya.attribute(float_value = math.sqrt(att.float_value))
   return ya.attribute(children = [att], operator = ya.SQRT, correspondance = att.correspondance, rows = att.rows, cols = att.cols)
+
+def sin_op(att: ya.attribute):
+  if att.size != 1:
+    raise ValueError("attribute.__sin__: cannot take sin of a non scalar.")
+  if att.isZero:
+    return ya.attribute(float_value = 0.0)
+  if att.operator == ya.FLOAT:
+    return ya.attribute(float_value = math.sin(att.float_value))
+  return ya.attribute(children = [att], operator = ya.SIN, correspondance = att.correspondance, rows = 1, cols = 1)
+
+def cos_op(att: ya.attribute):
+  if att.size != 1:
+    raise ValueError("attribute.__cos__: cannot take cos of a non scalar.")
+  if att.isZero:
+    return ya.attribute(float_value = 1.0)
+  if att.operator == ya.FLOAT:
+    return ya.attribute(float_value = math.cos(att.float_value))
+  return ya.attribute(children = [att], operator = ya.COS, correspondance = att.correspondance, rows = 1, cols = 1)
 
 def log_op(att: ya.attribute):
   if att.size != 1:

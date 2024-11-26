@@ -10,14 +10,6 @@ from yasps.autodiff import autodiff
 import pycuda.driver as cuda
 from yasps.helper import extract_block
 if TYPE_CHECKING:
-  from yasps.operator import operator
-  from yasps.scene import scene
-  from yasps.mesh import mesh
-  from yasps.primitive import primitive
-  from yasps.connectivity import connectivity
-  from yasps.deviceKernel import deviceKernel
-  from yasps.globalKernel import globalKernel
-  from yasps.codeGenerator import codeGenerator
   from yasps.hessianAndGradientKernel import hessianAndGradientKernel
 
 class energy:
@@ -187,7 +179,7 @@ class energy:
       return [[path[0]] + childrenPath for childrenPath in childrenPaths]
 
   def __generateGradient(self, wrt: List[attribute], differentiater: autodiff) -> None:
-    from yasps.attribute import DATA, GATHER, FLOAT
+    from yasps.attribute import GATHER, FLOAT
     # generate the symbolic code for gradient and hessian
     # first we check which path we need
     filteredPath: List[List[attribute]] = []
@@ -321,8 +313,12 @@ class energy:
       for gradient in gradients:
         for i in range(gradient.size):
           gradients_assembled_children.append(gradient[i])
-      if f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}' not in self.__energy.correspondance.attributes:
-        g = self.__energy.correspondance.addAttribute(f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}', computed_attribute = attribute.to_array(gradients_assembled_children, rows = self.__energy.size, cols = len(gradients_assembled_children)))
+      gradient_assembled_attribute = attribute.to_array(gradients_assembled_children, rows = self.__energy.size, cols = len(gradients_assembled_children))
+      if gradient_assembled_attribute.name != "":
+        self.__gradient = gradient_assembled_attribute
+        return
+      elif f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}' not in self.__energy.correspondance.attributes:
+        self.__energy.correspondance.addAttribute(f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}', computed_attribute = gradient_assembled_attribute)
       self.__gradient = self.__energy.correspondance[f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}']
 
   def __generateHessianForParts(self, differentiater: autodiff, currentPaths: List[List[attribute]]) -> None:
@@ -535,7 +531,7 @@ class energy:
           compressed_second_term_hessians: List[attribute] = [attribute(float_value = 0.0) for _ in range(h_g_true_size * follow_node_dimension)] # because for the child, let's say i have an attribute, that is accumulated 4 times, and the attribute itself has dimension 3, with the final data size of 8, then because each of the 3 elements are corresponding to the same 8 data attributes, we actually can accumulate them together for the 3 hessians, multiplied by the correct df_dg
           for k in range(follow_node_child_size * follow_node_dimension):
             nth_gathered_element = k // follow_node_child_size # which gathered index it is
-            nth_child_element = k % follow_node_child_size # which child it is
+            # nth_child_element = k % follow_node_child_size # which child it is
             selected_hessian = expanded_second_term_hessians[k * h_g_true_size : (k + 1) * h_g_true_size] # extract the hessian block
             selected_hessian = [dfj_dg[k] * selected_hessian[m] for m in range(len(selected_hessian))] # multiply by the correct dfj_dg
             # now we add it back
@@ -578,7 +574,6 @@ class energy:
     h_g_name = f'd2_{child_att.fullName}_d_{"__".join([x.fullName for x in all_datas])}'
     h_g_full_mats = [attribute.to_array(x, rows = j_g_x_col_size, cols = j_g_x_col_size) for x in h_g_full_mat_children]
     h_g_full_mat_children: List[attribute] = []
-
     # here we compute the first part of the hessian
     second_term_is_zero = False
     j_g_x = attribute.to_array(j_g_x_children, rows = h_f_g_size, cols = j_g_x_col_size)
@@ -615,11 +610,9 @@ class energy:
       if f"{h_g_name}_projected" not in child_att.correspondance.attributes:
         child_att.correspondance.addAttribute(f"{h_g_name}_projected", computed_attribute = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols))
       # finally we assign the hessian
-
       self.__hessian = lead_node.correspondance.attributes[f"{h_g_name}_projected"]
       # if self.__hessian is not None:
         # print(f"Final hessian correspondance: {self.__hessian.correspondance}")
-
 
     # # this is our hessian now
     # if lead_node.operator != GATHER:
@@ -629,15 +622,18 @@ class energy:
 
 
   def __generateHessian(self, wrt: List[attribute], differentiater: autodiff) -> None:
-    from yasps.attribute import DATA, GATHER, FLOAT
+    from yasps.attribute import GATHER
     # first we check which path we need
     filteredPath: List[List[attribute]] = []
     for path in self.__paths:
       if path[-1] in wrt:
         filteredPath.append(path)
     # check if hessian is already generated
-    if f'd2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in wrt])}' in self.__energy.correspondance.attributes:
-      self.__hessian = self.__energy.correspondance.attributes[f'd2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in wrt])}']
+    all_datas = [x[-1] for x in filteredPath]
+    h_g_name = f'd2_{self.__energy.fullName}_d_{"__".join([x.fullName for x in all_datas])}'
+
+    if f'{h_g_name}_projected' in self.__energy.correspondance.attributes:
+      self.__hessian = self.__energy.correspondance.attributes[f'{h_g_name}_projected']
     else:
       # now we need to compute the hessian
       # the first step is mapping out the attribute to descendant from the paths
@@ -694,9 +690,7 @@ class energy:
     differentiater = autodiff()
     # generate the symbolic code for gradient and hessian
     self.__generateGradient(wrt, differentiater)
-    # print("Gradient generated")
     self.__generateHessian(wrt, differentiater)
-    # print("Hessian generated")
 
 
 
@@ -710,9 +704,8 @@ class energy:
       # the gradient is 0, return the 0 array
       return
     if self.__hessian is None:
-      raise ValueError(f"yasps.energy.computeHessianAndGradient: The hessian is not computed yet. Please call generateHessianAndGradient first.")
+      raise ValueError("yasps.energy.computeHessianAndGradient: The hessian is not computed yet. Please call generateHessianAndGradient first.")
     if self.__hessianAndGradientKernel is None:
-      from yasps.codeGenerator import codeGenerator
       from yasps.hessianAndGradientKernel import hessianAndGradientKernel
       # we need to put the gradient and the hessian together
       # we know the graidient sizes square is the hessian size
@@ -724,7 +717,7 @@ class energy:
         merged_hessian_and_gradient.append(self.__gradient[i])
       self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = sum(self.__gradient_sizes_cpu) + 1, cols = sum(self.__gradient_sizes_cpu)))
       print("Merged hessian and gradient attribute created")
-
+      from yasps.codeGenerator import codeGenerator
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
       codegen.generateCode()
       print("Code generated")

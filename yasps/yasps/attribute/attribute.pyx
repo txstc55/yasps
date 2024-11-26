@@ -517,6 +517,14 @@ class attribute:
     from yasps.attributeOperations import log_op
     return log_op(self)
 
+  def sin(self) -> attribute:
+    from yasps.attributeOperations import sin_op
+    return sin_op(self)
+
+  def cos(self) -> attribute:
+    from yasps.attributeOperations import cos_op
+    return cos_op(self)
+
   def trace(self) -> attribute:
     if self.rows != self.cols:
       raise ValueError("attribute.trace: cannot compute trace of a non-square matrix.")
@@ -527,11 +535,28 @@ class attribute:
     return result
 
   def spd(self, spd_method: int = 1) -> attribute:
+    import numpy as np
     # 0 for no projection
     # 1 for project negative eigen value to absolute value
     # 2 for project negative eigen value to 0
     if self.rows != self.cols:
       raise ValueError("attribute.spd: cannot compute spd projection of a non-square matrix.")
+    if self.size == 1 and self.operator == FLOAT:
+      if spd_method == 1:
+        return attribute(float_value = abs(self.float_value))
+      elif spd_method == 2:
+        return attribute(float_value = max([0, self.float_value]))
+    if self.isFloatMat:
+      # reconstruct the matrix in numpy
+      mat = np.array(self.children, dtype = np.float64).reshape(self.rows, self.cols)
+      ev, evc = np.linalg.eig(mat)
+      if spd_method == 1:
+        ev = np.abs(ev)
+      elif spd_method == 2:
+        ev[ev < 0] = 0
+      reconstructed_mat = evc @ np.diag(ev) @ evc.T
+      m = [attribute(float_value = float(x)) for x in reconstructed_mat.flatten()]
+      return attribute.to_array(m, self.rows, self.cols)
     if spd_method == 0:
       return self
     return attribute(children = [self, attribute(index_value = spd_method)], operator = SPD, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
@@ -569,6 +594,8 @@ class attribute:
   # transpose operator
   def transpose(self)->attribute:
     if self.size == 0:
+      return self
+    if self.size == 1:
       return self
     else:
       if self.operator == TRANSPOSE:

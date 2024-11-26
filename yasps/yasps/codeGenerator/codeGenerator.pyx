@@ -10,19 +10,93 @@ class codeGenerator:
   # generate the code for attribute
   def __init__(self, input: ya.attribute):
     self.__input: ya.attribute = input
-    self.__order: List[ya.attribute] = [input]
+    self.__order: List[ya.attribute] = []
     self.__stack: List[ya.attribute] = list(input.children)
     self.__childrenAttributeKernels: Dict[int, ya.attribute] = {}
     self.__attribute_replacements: Dict[int, Tuple[ya.attribute, int]] = {}
     self.__num_intermediates: int = 0
     self.__code_strings: List[str] = []
     self.__repeated_intermediates: Set[int] = set()
+    self.__seen_elements: Set[int] = set()
+
+
+  def __generateCodeOrderDFS(self, current):
+    if self.__input.deviceKernel is not None:
+      # nothing to do
+      return
+    if current.hash in self.__seen_elements:
+      return
+    if current.operator == ya.FLOAT or current.operator == ya.INDEX:
+      return
+    elif current.isFloatMat:
+      self.__order.append(current)
+    elif current.correspondance.fullName == self.__input.correspondance.fullName:
+      if current.name != "":
+        # this is a named attribute, lets use the generated kernel for it
+        # instead of going over all its children
+        self.__order.append(current)
+        # check if we have already generated the kernel for it
+        if current.hash not in self.__childrenAttributeKernels:
+          childCodeGenerator = codeGenerator(current)
+          childCodeGenerator.generateCode()
+          self.__childrenAttributeKernels[current.hash] = current
+        else:
+
+          # there's a kernel generated that does exactly the same thing
+          # we add a macro to handle this
+          if current.fullName != self.__childrenAttributeKernels[current.hash].fullName:
+            # we add a macro to make the two functions the same
+            self.__code_strings.append(f'''
+#define {current.fullName}_device_function {self.__childrenAttributeKernels[current.hash].fullName}_device_function
+''')
+      else:
+        # we go over its children first
+        for item in current.children:
+          self.__generateCodeOrderDFS(item)
+        # we went over the children, now we know if we need to put it in the order
+        if current.hash not in self.__seen_elements:
+          self.__seen_elements.add(current.hash)
+          self.__order.append(current)
+    else:
+      # when correspondance is different
+      # there are couple of scenarios
+      # 1. the correspondance is a scene or mesh, which means this is an operation done on scene or mesh attributes, we will allow that
+      if current.correspondance.type != "primitive":
+        if current.name != "":
+          # data or named attributes
+          self.__order.append(current)
+          # check if we have already generated the kernel for it
+          if current.hash not in self.__childrenAttributeKernels:
+            childCodeGenerator = codeGenerator(current)
+            childCodeGenerator.generateCode()
+            self.__childrenAttributeKernels[current.hash] = current
+        else:
+          for item in current.children:
+            self.__generateCodeOrderDFS(item)
+          if current.hash not in self.__seen_elements:
+            self.__seen_elements.add(current.hash)
+            self.__order.append(current)
+      else:
+        # this is an operation on other primitive attributes probably
+        # this is only done through gather
+        # so it must have a name at that point
+        # if current.name != "":
+        # we dont add it to order
+        # but we will create a code generator to generate the code for it
+        if current.hash not in self.__childrenAttributeKernels:
+          childCodeGenerator = codeGenerator(current)
+          childCodeGenerator.generateCode()
+          self.__childrenAttributeKernels[current.hash] = current
+
+
+
 
   def __generateCodeOrder(self) -> None:
     if self.__input.deviceKernel is not None:
       # nothing to do
       return
     # generate code for the attributes with names
+    seenNodes: Set[int] = set()
     while self.__stack:
       current = self.__stack.pop()
       if current.operator == ya.FLOAT:
@@ -55,6 +129,8 @@ class codeGenerator:
           # doesnt have a name
           # probably just operations
           # we will go over all the children
+          if current.hash not in seenNodes:
+            seenNodes.add(current.hash)
           self.__order.append(current)
           self.__stack.extend(current.children)
       else:
@@ -72,6 +148,8 @@ class codeGenerator:
               self.__childrenAttributeKernels[current.hash] = current
           else:
             # this is an operation on scene or mesh
+            if current.hash not in seenNodes:
+              seenNodes.add(current.hash)
             self.__order.append(current)
             self.__stack.extend(current.children)
         else:
@@ -112,47 +190,34 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
       return
 
     # actually generate the code
-    self.__generateCodeOrder()
+    for item in self.__input.children:
+      self.__generateCodeOrderDFS(item)
+    self.__order.append(self.__input)
     # go from bottom to top
     # check how many items appeared more than once
-    order_counts: Dict[int, int] = {}
+    # order_counts: Dict[int, int] = {}
 
-    # we check if the item actually needs to be initialized
-    # since some of the elements are only computed once
-    for item in self.__order:
-      if item.hash in order_counts:
-        order_counts[item.hash] += 1
-      else:
-        order_counts[item.hash] = 1
-
-    for current in self.__order[::-1]:
+    # # we check if the item actually needs to be initialized
+    # # since some of the elements are only computed once
+    # for item in self.__order:
+    #   if item.hash in order_counts:
+    #     order_counts[item.hash] += 1
+    #   else:
+    #     order_counts[item.hash] = 1
+    for current in self.__order:
+      # print("Generating code for")
+      # print(str(current))
+      # print(current.hash)
       if current.hash in self.__attribute_replacements:
         # we don't need to do anything about it
         pass
       elif current.hash == self.__input.hash or current.name == "":
         # we need to generate the code accordingly
-        attribute_initialization: str = ""
-        attribute_name: str = ""
         if current.name != "":
-          attribute_name = current.fullName + "_local_data"
           self.__attribute_replacements[current.hash] = (current, -1)
         else:
-          attribute_name = f"INTERMEDIATE_{self.__num_intermediates}"
           self.__attribute_replacements[current.hash] = (current, self.__num_intermediates)
           self.__num_intermediates += 1
-
-        if current.size == 1:
-          attribute_initialization = f"double {attribute_name}"
-        else:
-          if current.rows == 1 or current.cols == 1:
-            attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}"
-          else:
-            attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}"
-        if current.isFloatMat:
-          if current.size == 1:
-            attribute_initialization = f"float {attribute_name} = {current.float_value};"
-          else:
-            attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name};\n{attribute_name} << {', '.join([str(x.float_value) for x in current.children])};"
 
         # now we generate the computation code
         if current.operator.type == 0:
@@ -310,7 +375,7 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     # return the name of the intermediate value
     attribute_hash = attribute.hash
     if attribute_hash not in self.__attribute_replacements:
-      raise ValueError("codeGenerator.getIntermediateName: attribute hash not found in self.__attribute_replacements.", str(attribute))
+      raise ValueError("codeGenerator.getIntermediateName: attribute hash not found in self.__attribute_replacements.", str(attribute), "hash is", attribute_hash)
     if self.__attribute_replacements[attribute_hash][1] == -1:
       return f"{self.__attribute_replacements[attribute_hash][0].fullName}_local_data"
     else:

@@ -19,7 +19,7 @@ class autodiff:
     # we have done this differentiation before
     if (current, wrt) in self.__seen_differentiations:
       result = self.__seen_differentiations[(current, wrt)]
-    if current.operator == ya.ABS:
+    elif current.operator == ya.ABS:
       result = self.__diff_abs(current, wrt)
     elif current.operator == ya.ADD:
       result = self.__diff_add(current, wrt)
@@ -37,6 +37,10 @@ class autodiff:
       return self.__diff_sqrt(current, wrt)
     elif current.operator == ya.LOG:
       return self.__diff_log(current, wrt)
+    elif current.operator == ya.SIN:
+      return self.__diff_sin(current, wrt)
+    elif current.operator == ya.COS:
+      return self.__diff_cos(current, wrt)
     elif current.operator == ya.NORM:
       return self.__diff_norm(current, wrt)
     elif current.operator == ya.NEG:
@@ -168,6 +172,17 @@ class autodiff:
     d_gx = self.__diff(current.children[1], wrt)
     result = (current.children[1].mul_explicit(d_fx) - current.children[0].mul_explicit(d_gx)) / denominator
     return result
+
+  def __diff_sin(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    df = self.__diff(current.children[0], wrt)
+    cosf = current.children[0].cos()
+    return df.mul_explicit(cosf)
+
+  def __diff_cos(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    df = self.__diff(current.children[0], wrt)
+    sinf = current.children[0].sin()
+    return df.mul_explicit(-sinf)
+
 
   def __diff_log(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     df = self.__diff(current.children[0], wrt)

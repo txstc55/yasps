@@ -3,7 +3,7 @@ from __future__ import annotations
 import pycuda.autoinit
 import numpy as np
 import pycuda.gpuarray as gpuarray
-from typing import List, Tuple, Set, Optional
+from typing import List, Tuple, Set, Optional, Dict
 from yasps.energy import energy
 from yasps.attribute import attribute
 from yasps.solverKernel import solverKernel
@@ -134,6 +134,7 @@ class minimizer:
       uncompressedIndices += flattened_pairs
       # know for each energy, where does the first coordinate starts
       index_start.append(len(uncompressedIndices))
+    print("Uncompressed indices set")
 
     # we now need to know for each energy, what are the dimension of the blocks
     energy_hessian_block_dimensions: List[List[Tuple[int, int]]] = []
@@ -162,6 +163,7 @@ class minimizer:
       for j in range(len(where_to_put)):
         # for each dimension, we need to put all the uncompressed indices
         uncompressedIndicesByDimensions[where_to_put[j]] += uncompressedIndices[start + j : end : len(hessian_block_dimensions)]
+    print("Compressed indices set")
     # ok now we have the indices put to their corresponding place
     # we can remove the duplicates
     compressedIndices: List[List[Tuple[int, int]]] = [list(map(tuple, (np.unique(np.array(item), axis = 0)))) for item in uncompressedIndicesByDimensions]
@@ -190,21 +192,25 @@ class minimizer:
     self.__blockIndices = [gpuarray.to_gpu(np.array(item, dtype = np.uint32)) for item in compressedIndices]
 
     # now for each of the energy, they need to know where to put the blocks
+    compressedIndicesMap: Dict[Tuple[int, int, int], int] = {
+      (i, pos_x, pos_y): j
+      for i, indices in enumerate(compressedIndices)
+      for j, (pos_x, pos_y) in enumerate(indices)
+    }
+
+
     for i in range(len(index_start) - 1):
       start = index_start[i]
       end = index_start[i + 1]
       uncompressedIndicesLocal = uncompressedIndices[start:end] # get the coordinates in the uncompressed order
-      # print("Uncompressed indices are: ")
-      # print(uncompressedIndicesLocal)
       hessian_block_dimensions = energy_hessian_block_dimensions[i] # get the dimensions of the blocks
       where_to_check = [self.__blockDimensions.index(item) for item in hessian_block_dimensions] # we need to know where to check (the index of that dimension)
       self.__energies[i].hessian_blocks_where_to_check = gpuarray.to_gpu(np.array(where_to_check, dtype = np.uint32)) # we store where to check for each block
       # ok now we know for each coordinate, which block to check
       # we need to get the index of the block
-      hessian_block_indices: List[int] = [compressedIndices[where_to_check[j % len(where_to_check)]].index(uncompressedIndicesLocal[j]) for j in range(len(uncompressedIndicesLocal))]
-      # print("Hessian block indices are: ")
-      # print(hessian_block_indices)
+      hessian_block_indices: List[int] = [compressedIndicesMap[(where_to_check[j % len(where_to_check)], uncompressedIndicesLocal[j][0], uncompressedIndicesLocal[j][1])] for j in range(len(uncompressedIndicesLocal))]
       self.energies[i].block_indices_gpu = gpuarray.to_gpu(np.array(hessian_block_indices, dtype = np.uint32)) # we now store for each smaller block, what is the index in the data array
+    print("Sparse indices set")
 
   def generateHessianAndGradient(self):
     for e in self.energies:
@@ -217,7 +223,8 @@ class minimizer:
     self.__diagonal.fill(0)
     for e in self.energies:
       e.computeHessianAndGradient(self.__blocksStartIndicesGPU, self.__gradient, self.__blocksFlattened, self.__diagonal)
-
+    # print("Gradient is before solve: ")
+    # print(self.__gradient.get())
 
     # now we have the hessian and gradient
     # we need to solve the system
@@ -229,8 +236,8 @@ class minimizer:
       self.__d_q = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       self.__d_s = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       self.__solution = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
-      print("Gradient shape is: ")
-      print(self.__gradient.shape)
+      # print("Gradient shape is: ")
+      # print(self.__gradient.shape)
       count = 0
       for i in range(len(self.__gradientSegments)):
         self.__solutionSegments.append(self.__solution[count: count + self.__gradientSegments[i].shape[0]])
@@ -249,39 +256,52 @@ class minimizer:
     context_ptr = int(cuda_context.handle)
     context_ptr_c = ctypes.c_void_p(context_ptr)
     # call the kernel
-    self.__solver.computeSolution(context_ptr_c, 10000, 1e-6, self.__blocksFlattened, self.__blockPositions, self.__blocksStartIndices, self.__blockCounts, self.__diagonal, self.__gradient, self.__d_p1_b, self.__d_r, self.__d_c, self.__d_q, self.__d_s, self.__solution)
+    self.__solver.computeSolution(context_ptr_c, 10000, 1e-3, self.__blocksFlattened, self.__blockPositions, self.__blocksStartIndices, self.__blockCounts, self.__diagonal, self.__gradient, self.__d_p1_b, self.__d_r, self.__d_c, self.__d_q, self.__d_s, self.__solution)
+    # print("gradient")
+    # print(self.__gradient.get())
+    # exit(0)
 
 
-#######################################################################################
-## for checking the hessian and diagonals
-#######################################################################################
-    # full_mat = np.zeros((self.__gradient.shape[0], self.__gradient.shape[0]))
-    # for i in range(len(self.__blockDimensions)):
-    #   # print(f"Dimension: {self.__blockDimensions[i][0]}, {self.__blockDimensions[i][0]}")
-    #   block_size = self.__blockDimensions[i][0] * self.__blockDimensions[i][1]
-    #   block_rows = self.__blockDimensions[i][0]
-    #   block_cols = self.__blockDimensions[i][1]
-    #   for j in range(self.__blockPositionsList[i].get().shape[0] // 2):
-    #     # print(f"Pos {self.__blockPositionsList[i].get()[j]}")
-    #     # pos = self.__blockPositionsList[i].get()[j]
-    #     x_pos = self.__blockPositionsList[i].get()[j * 2]
-    #     y_pos = self.__blockPositionsList[i].get()[j * 2 + 1]
-    #     if x_pos == y_pos:
-    #       full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
-    #     else:
-    #       full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
-    #       full_mat[y_pos: y_pos + block_rows, x_pos: x_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols).T
-    #     # block = self.__blocks[i].get()[j * block_size: (j + 1) * block_size]
-    #     # print(block.reshape(self.__blockDimensions[i][0], self.__blockDimensions[i][1]))
-    # print("Assembled full mat: ")
-    # print(full_mat)
-    # print("Diagonal: ")
-    # diagonal = self.__diagonal.get()
-    # print(diagonal)
+# #######################################################################################
+# ## for checking the hessian and diagonals
+# #######################################################################################
+#     full_mat = np.zeros((self.__gradient.shape[0], self.__gradient.shape[0]))
+#     for i in range(len(self.__blockDimensions)):
+#       # print(f"Dimension: {self.__blockDimensions[i][0]}, {self.__blockDimensions[i][0]}")
+#       block_size = self.__blockDimensions[i][0] * self.__blockDimensions[i][1]
+#       block_rows = self.__blockDimensions[i][0]
+#       block_cols = self.__blockDimensions[i][1]
+#       for j in range(self.__blockPositionsList[i].get().shape[0] // 2):
+#         # print(f"Pos {self.__blockPositionsList[i].get()[j]}")
+#         # pos = self.__blockPositionsList[i].get()[j]
+#         x_pos = self.__blockPositionsList[i].get()[j * 2]
+#         y_pos = self.__blockPositionsList[i].get()[j * 2 + 1]
+#         if x_pos == y_pos:
+#           full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
+#         else:
+#           full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
+#           full_mat[y_pos: y_pos + block_rows, x_pos: x_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols).T
+#         # block = self.__blocks[i].get()[j * block_size: (j + 1) * block_size]
+#         # print(block.reshape(self.__blockDimensions[i][0], self.__blockDimensions[i][1]))
+#     # print("Assembled full mat: ")
+#     # print(full_mat)
+#     # get the eigen value and eigen vector of the mat
+#     # ev, evec = np.linalg.eig(full_mat)
+#     # for value in ev:
+#     #   if value <= 0:
+#     #     print("Negative eigen value")
+#     #     print(ev)
+#     #     exit(1)
 
-    # # let's check if diagonal is the diagonal of full_mat
 
-    # full_mat_diagonal = full_mat.diagonal()
+#     gradient = self.__gradient.get()
+#     cpu_solution = np.linalg.solve(full_mat, gradient)
+#     print("CPU Solution")
+#     print(cpu_solution)
 
-    # print("Diagonal diff:")
-    # print(np.linalg.norm(diagonal - full_mat_diagonal))
+#     ## update the gpu solution to the cpu solution
+#     self.__solution.set(cpu_solution)
+
+#     # print("GPU Solution")
+#     # print(self.__solution.get())
+#     # exit(0)
