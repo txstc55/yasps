@@ -53,7 +53,7 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, M, M>> eigenSolver(symMtr);
   Eigen::Matrix<double, M, M> B = eigenSolver.eigenvectors();
   Eigen::Matrix<double, M, 1> eigenValues = eigenSolver.eigenvalues();
-  for (int i = 0; i < N; i++){{
+  for (int i = 0; i < M; i++){{
     if (eigenValues[i] < 0) {{
       eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }}
@@ -61,7 +61,7 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
   // Reconstruct the matrix without using a diagonal matrix
   // Scale columns of B by corresponding eigenvalues
   Eigen::Matrix<double, M, M> C;
-  for (int i = 0; i < N; ++i) {{
+  for (int i = 0; i < M; ++i) {{
     C.col(i) = B.col(i) * eigenValues[i];
   }}
   // Compute the reconstructed matrix: A_reconstructed = C * B.transpose()

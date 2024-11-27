@@ -56,18 +56,18 @@ def inertia(v0, vel, dt, x, mass):
   return (0.5 * (x - x_target).transpose() * mass * (x - x_target))
 
 BLOCK_MASS = 5.0
-TOP_SPRING_REST_ANGLE = np.pi / 10
-TOP_SPRING_INITIAL_ANGLE = np.pi / 20
+TOP_SPRING_REST_ANGLE = np.pi / 20
+TOP_SPRING_INITIAL_ANGLE = np.pi / 4
 TOP_SPRING_SEGMENT_COUNT = 9.0
 TOP_SPRING_SEGMENT_LENGTH = 1.0
 LEVER_INITIAL_ANGLE = 0.0
 LEVER_LENGTH = 5.0
-RIGHT_SPRING_REST_ANGLE = np.pi / 6
-RIGHT_SPRING_INITIAL_ANGLE = np.pi / 9
+RIGHT_SPRING_REST_ANGLE = np.pi / 20
+RIGHT_SPRING_INITIAL_ANGLE = np.pi / 4
 RIGHT_SPRING_SEGMENT_COUNT = 7
 RIGHT_SPRING_SEGMENT_LENGTH = 1.0
-LEFT_SPRING_REST_ANGLE = np.pi / 4
-LEFT_SPRING_INITIAL_ANGLE = np.pi / 8
+LEFT_SPRING_REST_ANGLE = np.pi / 20
+LEFT_SPRING_INITIAL_ANGLE = np.pi / 4
 LEFT_SPRING_SEGMENT_COUNT = 5
 LEFT_SPRING_SEGMENT_LENGTH = 1.0
 DT = 0.1
@@ -107,7 +107,7 @@ s0.addEnergy(right_spring["right_spring_angle_energy"])
 s0.addEnergy(left_spring["left_spring_angle_energy"])
 s0.addEnergy(right_spring["right_spring_inertia"])
 s0.addEnergy(left_spring["left_spring_inertia"])
-s0.addMinimizeTarget([top_spring["angle"], right_spring["angle"], left_spring["angle"]])
+s0.addMinimizeTarget([top_spring["angle"], right_spring["angle"], left_spring["angle"], lever["angle"]])
 # s0.addMinimizeTarget([top_spring["angle"], right_spring["angle"]])
 
 
@@ -116,12 +116,15 @@ s0.addMinimizeTarget([top_spring["angle"], right_spring["angle"], left_spring["a
 import matplotlib.pyplot as plt
 plt.ion()
 fig, ax = plt.subplots(figsize=(6, 8))
-ceiling_line,  = ax.plot([0, 0], [0, -0.5], linestyle='-')
-top_spring_lines,  = ax.plot([], [], linestyle = '-')
-lever_line, = ax.plot([], [], linestyle='-')
-right_spring_lines, = ax.plot([], [], linestyle='-')
-left_spring_lines, = ax.plot([], [], linestyle='-')
-# plt.axis('off')
+ceiling = ax.plot([-100, 100], [0, 0], linestyle='-', color='black')
+ceiling_line,  = ax.plot([0, 0], [0, -0.5], linestyle='-', color='black')
+top_spring_lines,  = ax.plot([], [], linestyle = '-', color = 'black')
+lever_line, = ax.plot([], [], linestyle='-', color = 'black')
+right_spring_lines, = ax.plot([], [], linestyle='-', color = 'black')
+left_spring_lines, = ax.plot([], [], linestyle='-', color = 'black')
+right_mass_box, = ax.plot([], [], linestyle='-', color = 'black')
+left_mass_box, = ax.plot([], [], linestyle='-', color = 'black')
+plt.axis('off')
 plt.gca().set_aspect('equal', adjustable='box')
 ax.set_xlim(-15, 15)
 ax.set_ylim(-20, 10)
@@ -182,6 +185,7 @@ def update_plot():
   right_spring_xs = x0 + np.concatenate(([0.0], np.cumsum(delta_xs)))
   right_spring_ys = y0 + np.concatenate(([0.0], np.cumsum(delta_ys)))
   right_spring_lines.set_data(right_spring_xs, right_spring_ys)
+  right_mass_box.set_data([right_spring_xs[-1] - 0.5, right_spring_xs[-1] + 0.5, right_spring_xs[-1] + 0.5, right_spring_xs[-1] - 0.5, right_spring_xs[-1] - 0.5], [right_spring_ys[-1], right_spring_ys[-1], right_spring_ys[-1] - 0.6, right_spring_ys[-1] - 0.6, right_spring_ys[-1]])
 
   # update the left spring
   left_spring_angle = left_spring["angle"].compute().value.get()[0]
@@ -206,6 +210,7 @@ def update_plot():
   left_spring_xs = x0 + np.concatenate(([0.0], np.cumsum(delta_xs)))
   left_spring_ys = y0 + np.concatenate(([0.0], np.cumsum(delta_ys)))
   left_spring_lines.set_data(left_spring_xs, left_spring_ys)
+  left_mass_box.set_data([left_spring_xs[-1] - 0.5, left_spring_xs[-1] + 0.5, left_spring_xs[-1] + 0.5, left_spring_xs[-1] - 0.5, left_spring_xs[-1] - 0.5], [left_spring_ys[-1], left_spring_ys[-1], left_spring_ys[-1] - 0.6, left_spring_ys[-1] - 0.6, left_spring_ys[-1]])
 
 
   # update the right spring
@@ -215,7 +220,9 @@ iteration = 0
 
 right_spring_mass_position_last = right_spring["last_position"].compute().value.get()
 left_spring_mass_position_last = left_spring["last_position"].compute().value.get()
-while(True):
+while(iteration < 1500):
+  # print(right_spring["right_spring_inertia"].compute().value.get())
+  # exit(0)
   result = s0.minimizeEnergy()
   # first we update the last position
   right_spring["last_position"].updateValue([right_spring["end_x"].compute().value.get()[0], right_spring["end_y"].compute().value.get()[0]])
@@ -235,5 +242,7 @@ while(True):
   top_spring["angle"].updateValue(top_spring["angle"].compute().value.get()[0] - DT * result[0].get()[0])
   right_spring["angle"].updateValue(right_spring["angle"].compute().value.get()[0] - DT * result[1].get()[0])
   left_spring["angle"].updateValue(left_spring["angle"].compute().value.get()[0] - DT * result[2].get()[0])
+  lever["angle"].updateValue(lever["angle"].compute().value.get()[0] - DT * result[3].get()[0])
   update_plot()
   iteration += 1
+  plt.savefig(f'plots/frame_{iteration:04d}.png', dpi=600)
