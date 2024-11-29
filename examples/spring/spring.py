@@ -55,7 +55,7 @@ def inertia(v0, vel, dt, x, mass):
   x_target = v0 + vel * dt - attribute.to_array([attribute(float_value = 0.0), attribute(float_value = 9.8 * dt * dt)], rows = 2, cols = 1)
   return (0.5 * (x - x_target).transpose() * mass * (x - x_target))
 
-BLOCK_MASS = 5.0
+BLOCK_MASS = 50.0
 TOP_SPRING_REST_ANGLE = np.pi / 20
 TOP_SPRING_INITIAL_ANGLE = np.pi / 4
 TOP_SPRING_SEGMENT_COUNT = 9.0
@@ -63,11 +63,11 @@ TOP_SPRING_SEGMENT_LENGTH = 1.0
 LEVER_INITIAL_ANGLE = 0.0
 LEVER_LENGTH = 5.0
 RIGHT_SPRING_REST_ANGLE = np.pi / 20
-RIGHT_SPRING_INITIAL_ANGLE = np.pi / 4
+RIGHT_SPRING_INITIAL_ANGLE = np.pi / 2.1
 RIGHT_SPRING_SEGMENT_COUNT = 7
 RIGHT_SPRING_SEGMENT_LENGTH = 1.0
 LEFT_SPRING_REST_ANGLE = np.pi / 20
-LEFT_SPRING_INITIAL_ANGLE = np.pi / 4
+LEFT_SPRING_INITIAL_ANGLE = np.pi / 2.5
 LEFT_SPRING_SEGMENT_COUNT = 5
 LEFT_SPRING_SEGMENT_LENGTH = 1.0
 DT = 0.1
@@ -94,9 +94,9 @@ left_spring["last_position"].updateValue([left_spring["end_x"].compute().value.g
 
 # ok now we need to add energy to the system
 # the first is on the spring, spring has a rest angle, which should be followed
-top_spring.addAttribute("top_spring_angle_energy", computed_attribute = (top_spring["angle"] - TOP_SPRING_REST_ANGLE) * (top_spring["angle"] - TOP_SPRING_REST_ANGLE) / (top_spring["angle"] * (np.pi / 2 - top_spring["angle"])) * (TOP_SPRING_SEGMENT_COUNT - 1.0))
-right_spring.addAttribute("right_spring_angle_energy", computed_attribute = (right_spring["angle"] - RIGHT_SPRING_REST_ANGLE) * (right_spring["angle"] - RIGHT_SPRING_REST_ANGLE) / (right_spring["angle"] * (np.pi / 2 - right_spring["angle"])) * (RIGHT_SPRING_SEGMENT_COUNT - 1.0))
-left_spring.addAttribute("left_spring_angle_energy", computed_attribute = (left_spring["angle"] - LEFT_SPRING_REST_ANGLE) * (left_spring["angle"] - LEFT_SPRING_REST_ANGLE) / (left_spring["angle"] * (np.pi / 2 - left_spring["angle"])) * (LEFT_SPRING_SEGMENT_COUNT - 1.0))
+top_spring.addAttribute("top_spring_angle_energy", computed_attribute = (top_spring["angle"] - TOP_SPRING_REST_ANGLE) * (top_spring["angle"] - TOP_SPRING_REST_ANGLE) / (top_spring["angle"] * (np.pi / 2 - top_spring["angle"])) * (TOP_SPRING_SEGMENT_COUNT - 1.0) * 30.0)
+right_spring.addAttribute("right_spring_angle_energy", computed_attribute = (right_spring["angle"] - RIGHT_SPRING_REST_ANGLE) * (right_spring["angle"] - RIGHT_SPRING_REST_ANGLE) / (right_spring["angle"] * (np.pi / 2 - right_spring["angle"])) * (RIGHT_SPRING_SEGMENT_COUNT - 1.0) * 2.0)
+left_spring.addAttribute("left_spring_angle_energy", computed_attribute = (left_spring["angle"] - LEFT_SPRING_REST_ANGLE) * (left_spring["angle"] - LEFT_SPRING_REST_ANGLE) / (left_spring["angle"] * (np.pi / 2 - left_spring["angle"])) * (LEFT_SPRING_SEGMENT_COUNT - 1.0) * 50.0)
 
 # add inertia for the mass at the end of the spring_system
 right_spring.addAttribute("right_spring_inertia", computed_attribute = inertia(right_spring["last_position"], right_spring["velocity"], DT, attribute.to_array([right_spring["end_x"], right_spring["end_y"]], rows = 2, cols = 1), BLOCK_MASS))
@@ -108,7 +108,29 @@ s0.addEnergy(left_spring["left_spring_angle_energy"])
 s0.addEnergy(right_spring["right_spring_inertia"])
 s0.addEnergy(left_spring["left_spring_inertia"])
 s0.addMinimizeTarget([top_spring["angle"], right_spring["angle"], left_spring["angle"], lever["angle"]])
-# s0.addMinimizeTarget([top_spring["angle"], right_spring["angle"]])
+
+from matplotlib.colors import LinearSegmentedColormap
+# Define the color stops for the gradient
+colors = ['#28A745', '#FFFF00', '#FFA500', '#FF0000']  # Green → Yellow → Orange → Red# Create a colormap
+cmap = LinearSegmentedColormap.from_list('stress_gradient', colors)
+def get_lerped_color(value):
+  """
+  Given a value between 0 and 1, return the corresponding color in the gradient.
+  Parameters:
+      value: float - A value between 0 (no stress) and 1 (extreme stress)
+  Returns:
+    str - The interpolated color in hex format.
+  """
+  # Clamp the value to be between 0 and 1
+  value = max(0, min(1, value))
+  # Get the interpolated color from the colormap
+  rgb_color = cmap(value)  # Returns an (R, G, B, A) tuple
+  return '#{:02x}{:02x}{:02x}'.format(
+    int(rgb_color[0] * 255),
+    int(rgb_color[1] * 255),
+    int(rgb_color[2] * 255)
+  )
+
 
 
 
@@ -118,12 +140,14 @@ plt.ion()
 fig, ax = plt.subplots(figsize=(6, 8))
 ceiling = ax.plot([-100, 100], [0, 0], linestyle='-', color='black')
 ceiling_line,  = ax.plot([0, 0], [0, -0.5], linestyle='-', color='black')
-top_spring_lines,  = ax.plot([], [], linestyle = '-', color = 'black')
-lever_line, = ax.plot([], [], linestyle='-', color = 'black')
-right_spring_lines, = ax.plot([], [], linestyle='-', color = 'black')
-left_spring_lines, = ax.plot([], [], linestyle='-', color = 'black')
+top_spring_lines,  = ax.plot([], [], linestyle = '-', color = '#28A745')
+lever_line, = ax.plot([], [], linestyle='-', color = '#005082')
+right_spring_lines, = ax.plot([], [], linestyle='-', color = '#28A745')
+left_spring_lines, = ax.plot([], [], linestyle='-', color = '#28A745')
 right_mass_box, = ax.plot([], [], linestyle='-', color = 'black')
 left_mass_box, = ax.plot([], [], linestyle='-', color = 'black')
+plt.tight_layout()
+
 plt.axis('off')
 plt.gca().set_aspect('equal', adjustable='box')
 ax.set_xlim(-15, 15)
@@ -154,6 +178,9 @@ def update_plot():
   top_spring_xs = x0 + np.concatenate(([0.0], np.cumsum(delta_xs)))
   top_spring_ys = y0 + np.concatenate(([0.0], np.cumsum(delta_ys)))
   top_spring_lines.set_data(top_spring_xs, top_spring_ys)
+  top_spring_energy = top_spring["top_spring_angle_energy"].compute().value.get()[0]
+  color = get_lerped_color(top_spring_energy / (top_spring_energy + 1.0))
+  top_spring_lines.set_color(color)
 
   # update the lever
   lever_right_x = lever["right_end_x"].compute().value.get()[0]
@@ -186,6 +213,9 @@ def update_plot():
   right_spring_ys = y0 + np.concatenate(([0.0], np.cumsum(delta_ys)))
   right_spring_lines.set_data(right_spring_xs, right_spring_ys)
   right_mass_box.set_data([right_spring_xs[-1] - 0.5, right_spring_xs[-1] + 0.5, right_spring_xs[-1] + 0.5, right_spring_xs[-1] - 0.5, right_spring_xs[-1] - 0.5], [right_spring_ys[-1], right_spring_ys[-1], right_spring_ys[-1] - 0.6, right_spring_ys[-1] - 0.6, right_spring_ys[-1]])
+  right_spring_energy = right_spring["right_spring_angle_energy"].compute().value.get()[0]
+  color = get_lerped_color(right_spring_energy / (right_spring_energy + 1.0))
+  right_spring_lines.set_color(color)
 
   # update the left spring
   left_spring_angle = left_spring["angle"].compute().value.get()[0]
@@ -211,6 +241,9 @@ def update_plot():
   left_spring_ys = y0 + np.concatenate(([0.0], np.cumsum(delta_ys)))
   left_spring_lines.set_data(left_spring_xs, left_spring_ys)
   left_mass_box.set_data([left_spring_xs[-1] - 0.5, left_spring_xs[-1] + 0.5, left_spring_xs[-1] + 0.5, left_spring_xs[-1] - 0.5, left_spring_xs[-1] - 0.5], [left_spring_ys[-1], left_spring_ys[-1], left_spring_ys[-1] - 0.6, left_spring_ys[-1] - 0.6, left_spring_ys[-1]])
+  left_spring_energy = left_spring["left_spring_angle_energy"].compute().value.get()[0]
+  color = get_lerped_color(left_spring_energy / (left_spring_energy + 1.0))
+  left_spring_lines.set_color(color)
 
 
   # update the right spring

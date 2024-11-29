@@ -265,33 +265,34 @@ class minimizer:
 # #######################################################################################
 # ## for checking the hessian and diagonals
 # #######################################################################################
-#     full_mat = np.zeros((self.__gradient.shape[0], self.__gradient.shape[0]))
-#     for i in range(len(self.__blockDimensions)):
-#       # print(f"Dimension: {self.__blockDimensions[i][0]}, {self.__blockDimensions[i][0]}")
-#       block_size = self.__blockDimensions[i][0] * self.__blockDimensions[i][1]
-#       block_rows = self.__blockDimensions[i][0]
-#       block_cols = self.__blockDimensions[i][1]
-#       for j in range(self.__blockPositionsList[i].get().shape[0] // 2):
-#         # print(f"Pos {self.__blockPositionsList[i].get()[j]}")
-#         # pos = self.__blockPositionsList[i].get()[j]
-#         x_pos = self.__blockPositionsList[i].get()[j * 2]
-#         y_pos = self.__blockPositionsList[i].get()[j * 2 + 1]
-#         if x_pos == y_pos:
-#           full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
-#         else:
-#           full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
-#           full_mat[y_pos: y_pos + block_rows, x_pos: x_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols).T
-#         # block = self.__blocks[i].get()[j * block_size: (j + 1) * block_size]
-#         # print(block.reshape(self.__blockDimensions[i][0], self.__blockDimensions[i][1]))
-#     # print("Assembled full mat: ")
-#     # print(full_mat)
-#     # get the eigen value and eigen vector of the mat
-#     # ev, evec = np.linalg.eig(full_mat)
-#     # for value in ev:
-#     #   if value <= 0:
-#     #     print("Negative eigen value")
-#     #     print(ev)
-#     #     exit(1)
+    # full_mat = np.zeros((self.__gradient.shape[0], self.__gradient.shape[0]))
+    # for i in range(len(self.__blockDimensions)):
+    #   # print(f"Dimension: {self.__blockDimensions[i][0]}, {self.__blockDimensions[i][0]}")
+
+    #   block_rows = self.__blockDimensions[i][0]
+    #   block_cols = self.__blockDimensions[i][1]
+    #   block_size = block_rows * block_cols
+    #   for j in range(self.__blockPositionsList[i].get().shape[0] // 2):
+    #     # print(f"Pos {self.__blockPositionsList[i].get()[j]}")
+    #     # pos = self.__blockPositionsList[i].get()[j]
+    #     x_pos = self.__blockPositionsList[i].get()[j * 2]
+    #     y_pos = self.__blockPositionsList[i].get()[j * 2 + 1]
+    #     if x_pos == y_pos:
+    #       full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
+    #     else:
+    #       full_mat[x_pos: x_pos + block_rows, y_pos: y_pos + block_cols] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols)
+    #       full_mat[y_pos: y_pos + block_cols, x_pos: x_pos + block_rows] += self.__blocks[i].get()[j * block_size: (j + 1) * block_size].reshape(block_rows, block_cols).T
+    #     # block = self.__blocks[i].get()[j * block_size: (j + 1) * block_size]
+    #     # print(block.reshape(self.__blockDimensions[i][0], self.__blockDimensions[i][1]))
+    # print("Assembled full mat: ")
+    # print(full_mat)
+    # get the eigen value and eigen vector of the mat
+    # ev, evec = np.linalg.eig(full_mat)
+    # for value in ev:
+    #   if value <= 0:
+    #     print("Negative eigen value")
+    #     print(ev)
+    #     exit(1)
 
 
 #     gradient = self.__gradient.get()

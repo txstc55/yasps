@@ -230,6 +230,8 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
           # special operator with type 3
           if current.operator == ya.INDEX:
             self.__generate_code_for_index(current)
+          if current.operator == ya.NEG:
+            self.__generate_code_for_neg(current)
           elif current.operator == ya.FLOAT:
             self.__generate_code_for_float(current)
           elif current.operator == ya.ARRAY_ACCESS:
@@ -471,6 +473,11 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
   def __generate_code_for_index(self, current: ya.attribute) -> None:
     # this should never ever happen
     raise ValueError("codeGenerator.generateCode: INDEX operator should never be reached.")
+
+  def __generate_code_for_neg(self, current: ya.attribute) -> None:
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    self.__code_strings.append(f'''
+    {attribute_initialization} = -{self.getIntermediateName(current.children[0])};''')
 
   def __generate_code_for_float(self, current: ya.attribute) -> None:
     # the float attribute can only happen if it is a root node

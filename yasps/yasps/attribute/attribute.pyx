@@ -24,7 +24,7 @@ MUL = operator("*", 1, True)
 DIV = operator("/", 1, False)
 POW = operator("pow", 2, False)
 ATAN2 = operator("atan2", 2, False)
-NEG = operator("-", 0, False)
+NEG = operator("neg", 3, False)
 SIN = operator("sin", 0, False)
 COS = operator("cos", 0, False)
 TAN = operator("tan", 0, False)
@@ -307,6 +307,8 @@ class attribute:
     if isinstance(index, int):
       if index >= self.rows * self.cols:
         raise ValueError("attribute.__getitem__: index out of range.")
+      if self.isFloatMat:
+        return self.children[index]
       if self.operator == ARRAY:
         return self.children[index]
       if self.operator == SELECT:
@@ -335,6 +337,8 @@ class attribute:
         raise ValueError("attribute.__getitem__: index must be a tuple of two integers.")
       if index[0] >= self.rows or index[1] >= self.cols:
         raise ValueError(f"attribute.__getitem__: index out of range, acceessing index of {index} in a matrix of {self.rows}x{self.cols}.")
+      if self.isFloatMat:
+        return self.children[index[0] * self.cols + index[1]]
       if self.operator == ARRAY:
         return self.children[index[0] * self.cols + index[1]]
       if self.operator == SELECT:
@@ -443,6 +447,8 @@ class attribute:
   def __neg__(self)->attribute:
     if self.operator == FLOAT:
       return attribute(float_value = -self.float_value)
+    if self.isFloatMat:
+      return attribute(children = [-x for x in self.children], operator = ARRAY, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
     return attribute(children = [self], operator = NEG, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
 
 

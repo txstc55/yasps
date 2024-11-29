@@ -132,13 +132,14 @@ void spmvWithSystem(const double* block_values, // the value of the blocks in th
   spmvOffDiagonalBlocks<{blockRowSize}, {blockColSize}><<<(block_counts[{index}] + 32) / 32, 32>>>(block_values, block_values_start[{index}], block_positions, positions_start, positions_end, x, y);
   positions_start = positions_end;
 '''
+      index += 1
     self.__kernelString += '''
 }
 
 __global__ void jacobiPreconditioner(const double* diagonal, const double* x, double* y, unsigned int N){
   unsigned int id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id < N){
-    y[id] = x[id] / (diagonal[id] < 1e-9 ? 1.0 : diagonal[id]);
+    y[id] = x[id] / (abs(diagonal[id]) < 1e-6 ? 1.0 : diagonal[id]);
   }
 }
 
