@@ -4,12 +4,39 @@ from yasps.autodiff import autodiff
 import numpy as np
 import math
 np.random.seed(13)
+
+############################################
+# initialize with real data
+############################################
+f = open('../data/bunny_small.obj', 'r')
+vertices = []
+faces = []
+for line in f:
+  line_split = line.split()
+  if line_split[0] == 'v':
+    vertices.append(list(map(float, line[2:].split())))
+  elif line_split[0] == 'f':
+    faces.append([int(item.split("//")[0]) - 1 for item in line_split[1:]])
+f.close()
+
+vertices = np.array(vertices, dtype = np.float64)
+vertices = vertices - np.mean(vertices, axis = 0)
+# normalize
+norm = np.linalg.norm(vertices, axis=1)
+# get the maximum norm
+max_norm = np.max(norm)
+vertices = vertices / max_norm
+vertices *= 5.5
+
+faces = np.array(faces)
+
+
 NUM_POINTS = 100
-NUM_LOOPS = 10
+NUM_LOOPS = 2
 def generate_points_near_equator(num_points, delta_phi_deg=5):
   theta = np.linspace(0, 2 * np.pi, num_points, endpoint=False, dtype=np.float64)
   delta_phi_rad = np.radians(delta_phi_deg)
-  phi = np.random.uniform(-delta_phi_rad, delta_phi_rad, num_points)
+  phi = np.zeros(num_points)
   x = np.cos(phi) * np.cos(theta)
   y = np.cos(phi) * np.sin(theta)
   z = np.sin(phi)
@@ -59,9 +86,9 @@ print(f"There are {len(different_loop_edge_pair_indices)} different loop pairs")
 s = scene("scene")
 m = s.addMesh("mesh")
 m.addAttribute("same_repulsive_weight", rows = 1, cols = 1)
-m.attributes["same_repulsive_weight"].updateValue(np.array([2.0], dtype=np.float64))
+m.attributes["same_repulsive_weight"].updateValue(np.array([15.0], dtype=np.float64))
 m.addAttribute("diff_repulsive_weight", rows = 1, cols = 1)
-m.attributes["diff_repulsive_weight"].updateValue(np.array([5.0], dtype=np.float64))
+m.attributes["diff_repulsive_weight"].updateValue(np.array([15.0], dtype=np.float64))
 m.addAttribute("barrier_weight", rows = 1, cols = 1)
 m.attributes["barrier_weight"].updateValue(np.array([1000.0], dtype=np.float64))
 m.addAttribute("alpha", rows = 1, cols = 1)
@@ -75,11 +102,6 @@ diff_edge_pairs = m.addPrimitive("diff_edge_pair", len(different_loop_edge_pair_
 
 vertex_positions = vertex.addAttribute("rest_position", rows = 3, cols = 1)
 vertex_positions.updateValue(vertex_positions_value)
-# making it more complicated by adding translation and scale to the points
-translations = vertex.addAttribute("translation", rows = 3, cols = 1)
-translations.updateValue(np.zeros((NUM_POINTS * NUM_LOOPS, 3)))
-scales = vertex.addAttribute("scale", rows = 1, cols = 1)
-scales.updateValue(np.ones((NUM_POINTS * NUM_LOOPS, 1)))
 
 # add the relation between edge pairs and vertices
 c0 = same_edge_pairs.addConnectivity("edge_pair_to_vertex", vertex, same_loop_edge_pair_indices, 4)
@@ -89,11 +111,34 @@ true_position = vertex_positions
 same_edge_pair_positions = same_edge_pairs.addAttribute("position", through = c0, source = true_position)
 diff_edge_pair_positions = diff_edge_pairs.addAttribute("position", through = c1, source = true_position)
 
+## here we initialize the bunny
+bunny_vertices = m.addPrimitive("bunny_vertices", len(vertices))
+bunny_positions = bunny_vertices.addAttribute("position", rows = 3, cols = 1)
+bunny_positions.updateValue(vertices)
+bunny_faces = m.addPrimitive("bunny_faces", len(faces))
+bunny_faces.addConnectivity("bunny_face_to_vertex", bunny_vertices, faces, 3)
+bunny_faces.addAttribute("position", through = bunny_faces.connectivities["bunny_face_to_vertex"])
 
-# add the sphere boundary energy
-sphere_boundary_energy = attribute.select((true_position).norm() > 1.0, 100.0 * ((true_position).norm() - 1.0), -(1.0 - true_position.norm()).log())
-# sphere_boundary_energy = -(1.0 - true_position.norm()).log()
-sphere_boundary_energy = vertex.addAttribute("sphere_boundary_energy", computed_attribute = sphere_boundary_energy * m.attributes["barrier_weight"])
+# now we add the pair from the loop vertex to bunny face
+loop_vertex_to_bunny_face_pairs = m.addPrimitive("loop_vertex_to_bunny_face_pairs", NUM_POINTS * NUM_LOOPS * len(faces))
+loop_vertex_to_bunny_face_pairs.addConnectivity("loop_vertex_to_bunny_face_loop_vertices", vertex, [[i] * len(faces) for i in range(NUM_POINTS * NUM_LOOPS)], 1)
+loop_vertex_to_bunny_face_pairs.addConnectivity("loop_vertex_to_bunny_face_bunny_faces", bunny_faces, [[i] for i in range(len(faces)) for j in range(NUM_POINTS * NUM_LOOPS)], 1)
+
+loop_vertex_position = loop_vertex_to_bunny_face_pairs.addAttribute("loop_vertex_position", through = loop_vertex_to_bunny_face_pairs.connectivities["loop_vertex_to_bunny_face_loop_vertices"], source = true_position)
+bunny_face_position = loop_vertex_to_bunny_face_pairs.addAttribute("bunny_face_position", through = loop_vertex_to_bunny_face_pairs.connectivities["loop_vertex_to_bunny_face_bunny_faces"], source = bunny_faces.attributes["position"])
+bunny_face_position.reshape(3, 3)
+
+def pt_energy(v0, v1, v2, v3, dHat, kappa):
+  b = (v2 - v1).cross(v3 - v1)
+  aTb = (v0 - v1) * (b)
+  d = aTb.dot(aTb) / (b.dot(b))
+  b = -((d - dHat) * (d - dHat)) * (d / dHat).log()
+  # check the distance from v0 to the plane
+  b = attribute.select(d > dHat, attribute(float_value = 0.0), b)
+  return kappa * b
+
+
+barrier_energy = loop_vertex_to_bunny_face_pairs.addAttribute("barrier_energy", computed_attribute = pt_energy(loop_vertex_position, bunny_face_position.row(2), bunny_face_position.row(1), bunny_face_position.row(0), 0.5, 1000.0))
 
 # add the repulsive force
 def repulsive_energy(points, alpha, beta):
@@ -112,8 +157,8 @@ def repulsive_energy(points, alpha, beta):
   r += T23.dot_explicit(p2 - p1).pow(alpha) / (p2 - p1).norm().pow(beta)
   r += T23.dot_explicit(p3 - p0).pow(alpha) / (p3 - p0).norm().pow(beta)
   r += T23.dot_explicit(p3 - p1).pow(alpha) / (p3 - p1).norm().pow(beta)
-  # r = 1.0 / (p0 - p2).norm() + 1.0 / (p0 - p3).norm() + 1.0 / (p1 - p2).norm() + 1.0 / (p1 - p3).norm()
-  # r += ((p0 - p1).norm() - (p2 - p3).norm())
+  # make the segment longer
+  r += 10.0 / (p0 - p1).dot(p0 - p1)
   return r
 
 same_repulsive_energy_value = repulsive_energy(same_edge_pair_positions, m["alpha"], m["beta"])
@@ -124,7 +169,7 @@ diff_repulsive_energy = diff_edge_pairs.addAttribute("diff_repulsive_energy", co
 
 s.addEnergy(same_repulsive_energy)
 s.addEnergy(diff_repulsive_energy)
-s.addEnergy(sphere_boundary_energy)
+s.addEnergy(barrier_energy)
 s.addMinimizeTarget([vertex_positions])
 
 import matplotlib.pyplot as plt
@@ -139,9 +184,9 @@ all_lines = []
 for i in range(NUM_LOOPS):
   line,  = ax.plot([], [], [], linewidth=2)
   all_lines.append(line)
-ax.set_xlim([-1, 1])
-ax.set_ylim([-1, 1])
-ax.set_zlim([-1, 1])
+ax.set_xlim([-6, 6])
+ax.set_ylim([-6, 6])
+ax.set_zlim([-6, 6])
 # for i in range(NUM_LOOPS):
 #   x = [vertex_positions_value[j + i * NUM_POINTS, 0] for j in range(NUM_POINTS)]
 #   y = [vertex_positions_value[j + i * NUM_POINTS, 1] for j in range(NUM_POINTS)]
@@ -161,7 +206,7 @@ def plot_segments(points):
   fig.canvas.draw()
   fig.canvas.flush_events()
 
-weight = 0.05
+weight = 0.1
 for i in range(10000):
   result = s.minimizeEnergy()
   updated_value = (vertex_positions.value - weight * result[0]).get().reshape(NUM_POINTS * NUM_LOOPS, 3)
