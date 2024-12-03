@@ -49,36 +49,36 @@ grad_E = [diff(E, var) for var in vars]
 # Compute Hessian
 Hessian_E = hessian(E, vars)
 
-# Substitute numerical values for initial w_i and z_i
-# Initial numerical values (adjust as needed)
-w_num = [np.cos(0) for _ in range(N)]
-z_num = [np.sin(0) for _ in range(N)]
+# # Substitute numerical values for initial w_i and z_i
+# # Initial numerical values (adjust as needed)
+# w_num = [np.cos(0) for _ in range(N)]
+# z_num = [np.sin(0) for _ in range(N)]
 
-# Modify specific initial values (if any)
-w_num[0] = np.cos(np.pi / 8)
-z_num[0] = np.sin(np.pi / 8)
-w_num[1] = np.cos(-np.pi / 8)
-z_num[1] = np.sin(-np.pi / 8)
-w_num[2] = np.cos(-np.pi / 6)
-z_num[2] = np.sin(-np.pi / 6)
-# The rest remain at initial 0
+# # Modify specific initial values (if any)
+# w_num[0] = np.cos(np.pi / 8)
+# z_num[0] = np.sin(np.pi / 8)
+# w_num[1] = np.cos(-np.pi / 8)
+# z_num[1] = np.sin(-np.pi / 8)
+# w_num[2] = np.cos(-np.pi / 6)
+# z_num[2] = np.sin(-np.pi / 6)
+# # The rest remain at initial 0
 
-# Create a dictionary for substitutions
-subs_dict = {}
-for i in range(N):
-    subs_dict[w[i]] = w_num[i]
-    subs_dict[z[i]] = z_num[i]
+# # Create a dictionary for substitutions
+# subs_dict = {}
+# for i in range(N):
+#     subs_dict[w[i]] = w_num[i]
+#     subs_dict[z[i]] = z_num[i]
 
-# Evaluate the energy, gradient, and Hessian numerically
-E_val = E.evalf(subs=subs_dict)
-grad_E_val = [expr.evalf(subs=subs_dict) for expr in grad_E]
-Hessian_E_val = Hessian_E.evalf(subs=subs_dict)
+# # Evaluate the energy, gradient, and Hessian numerically
+# E_val = E.evalf(subs=subs_dict)
+# grad_E_val = [expr.evalf(subs=subs_dict) for expr in grad_E]
+# Hessian_E_val = Hessian_E.evalf(subs=subs_dict)
 
-# Print the results
-print("Energy (E):", E_val)
-print("\nGradient of Energy:")
-for var, val in zip(vars, grad_E_val):
-    print(f"dE/d{var} =", val)
+# # Print the results
+# print("Energy (E):", E_val)
+# print("\nGradient of Energy:")
+# for var, val in zip(vars, grad_E_val):
+#     print(f"dE/d{var} =", val)
 
-print("\nHessian of Energy:")
-print(Hessian_E_val)
+# print("\nHessian of Energy:")
+# print(Hessian_E_val)
