@@ -149,5 +149,14 @@ class scene:
     return self.__minimizer.gradientSegments
 
   def addMinimizeTarget(self, target: List[attribute]):
+    import time
+    start = time.time()
     self.__minimizer.addWrt(target)
+    end = time.time()
+    print(f"Sparse indices generation: {1000.0 * (end - start)} ms")
+
+    start = time.time()
     self.__minimizer.generateHessianAndGradient()
+    end = time.time()
+    # get the time in milliseconds
+    print(f"Autodiff computation: {1000.0 * (end - start)} ms")

@@ -251,7 +251,7 @@ int computeSolution(CUcontext ctx,
   // check tolerance
   double relativeTolerance = threshold * h_delta_0;
   printf("Initial residual %lf, relative tolerance: %lf\\n", h_delta_new, relativeTolerance);
-  if (h_delta_new < relativeTolerance){
+  if (h_delta_new <= relativeTolerance){
     printf("Converged in 0 iterations with residual %lf\\n", h_delta_new);
     return 0;
   }

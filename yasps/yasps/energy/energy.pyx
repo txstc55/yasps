@@ -3,12 +3,13 @@ from __future__ import annotations
 import pycuda.autoinit
 import numpy as np
 import pycuda.gpuarray as gpuarray
-from typing import Optional, List, Union, Tuple, Set, Dict
+from typing import Optional, List, Tuple, Set, Dict
 from typing import TYPE_CHECKING
 from yasps.attribute import attribute
 from yasps.autodiff import autodiff
 import pycuda.driver as cuda
 from yasps.helper import extract_block
+import time
 if TYPE_CHECKING:
   from yasps.hessianAndGradientKernel import hessianAndGradientKernel
 
@@ -716,14 +717,17 @@ class energy:
       for i in range(sum(self.__gradient_sizes_cpu)):
         merged_hessian_and_gradient.append(self.__gradient[i])
       self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = sum(self.__gradient_sizes_cpu) + 1, cols = sum(self.__gradient_sizes_cpu)))
-      print("Merged hessian and gradient attribute created")
       from yasps.codeGenerator import codeGenerator
+      start_generator = time.time()
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
       codegen.generateCode()
-      print("Code generated")
+      end_generator = time.time()
+      print(f"Code generation time: {(end_generator - start_generator) * 1000.0:.5f} ms")
       # now add the global kernel
+      start_compile = time.time()
       self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__gradient_sizes_cpu, self.__project_entire_hessian)
-      print("Code compiled")
+      end_compile = time.time()
+      print(f"Compilation time: {(end_compile - start_compile) * 1000.0:.5f} ms")
       self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))
 
     # assertion here

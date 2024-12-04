@@ -154,6 +154,6 @@ def update_position():
     exit()
 
 
-while True:
+while total_frames < 1000:
   update_position()
   total_frames += 1

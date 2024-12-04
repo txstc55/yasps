@@ -284,18 +284,23 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
           self.__code_strings.append(f'''
   double {current.fullName}_local_data_temp[{current.size}];
 ''')
-        if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
-          # we also need to check if the indexing is already a part of the input
-          if self.__input.correspondance.type != "scene" and self.__input.correspondance.type != "mesh":
-            # this is one piece of data, that doesn't really need indexing
-            # we set the index to 0
-            self.__code_strings.append(f'''
-// add 0 indexing since it is a scene or mesh data
-#define {current.correspondance.fullName}_index 0
-''')
+#         if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
+#           # we also need to check if the indexing is already a part of the input
+#           if self.__input.correspondance.type != "scene" and self.__input.correspondance.type != "mesh":
+#             # this is one piece of data, that doesn't really need indexing
+#             # we set the index to 0
+#             self.__code_strings.append(f'''
+# // add 0 indexing since it is a scene or mesh data
+# #define {current.correspondance.fullName}_index 0
+# ''')
         if current.deviceKernel is not None:
           self.__code_strings.append(f'''
-  {current.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}{"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}{"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
+  {current.fullName}_device_function(
+  {"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}
+  {"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}
+  {"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}
+  {"0" if ((current.correspondance.type == "scene" or current.correspondance.type == "mesh") and (self.__input.correspondance.type != "scene" and self.__input.correspondance.type != "mesh")) else f"{current.correspondance.fullName}_index"},
+  {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
   ''')
         else:
           # we found the same kernel
