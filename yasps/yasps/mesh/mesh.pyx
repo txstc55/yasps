@@ -110,7 +110,7 @@ class mesh:
       if key in self.__attributes:
         return self.__attributes[key]
       else:
-        raise KeyError(f"mesh.__getitem__: attribute with name '{key}' not found in mesh.")
+        raise KeyError(f"mesh.__getitem__: attribute with name '{key}' not found in mesh. Available attributes are {list(self.__attributes.keys())}")
     elif isinstance(key, tuple):
       from yasps.attribute import attribute
       # first we check if all names are in the attributes

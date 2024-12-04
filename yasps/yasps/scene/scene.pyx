@@ -130,15 +130,13 @@ class scene:
     return self.name
 
   @property
-  def energyes(self) -> Dict[int, attribute]:
+  def energies(self) -> Dict[int, attribute]:
     return self.__energies
 
   def addEnergy(self, e: attribute) -> None:
-    from yasps.energy import energy
-    newEnergy = energy(e)
     if e.name == "":
       raise ValueError("scene.addEnergy: energy attribute must have a name.")
-    self.__minimizer.addEnergy(newEnergy)
+    self.__minimizer.addEnergy(e)
 
 
   def minimizeEnergy(self, ):

@@ -119,9 +119,18 @@ class primitive:
         if source is not None:
           # first we check if the source attribute is in the fromPrimitive
           if source.correspondance != toPrimitive:
-            raise ValueError(f"primitive.addAttribute: the source attribute must be in the toPrimitive of the through construction.")
+            # ok here are some cases
+            # if the source is actually a mesh or scene attribute
+            # and the primitive itself is a descendant
+            # then we can add the attribute
+            if source.correspondance.fullName == self.mesh.fullName or source.correspondance.fullName == self.scene.fullName:
+              self.__attributes[name] = source
+              if source.name == "":
+                source.setName(name)
+            else:
+              raise ValueError(f"primitive.addAttribute: the primitive {self.fullName} has no connection to the attribute, whose correspondance is {source.correspondance.fullName}.")
           if through.dimension == 0 and operation is None:
-            raise ValueError(f"primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
+            raise ValueError("primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
           op = GATHER
           newRows: int = through.dimension
           newCols: int = source.rows * source.cols
@@ -144,7 +153,7 @@ class primitive:
         if name not in toPrimitive.__attributes:
           raise ValueError(f"primitive.addAttribute: attribute with name '{name}' does not exist in primitive '{toPrimitive.name}'. The through construction is not successful for the gathering operation.")
         if through.dimension == 0 and operation is None:
-          raise ValueError(f"primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
+          raise ValueError("primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
         op = GATHER
         newRows: int = through.dimension
         newCols: int = toPrimitive[name].rows * toPrimitive[name].cols
@@ -162,7 +171,7 @@ class primitive:
         self.__attributes[name] = newAttribute
         return newAttribute
       else:
-        raise ValueError(f"primitive.addAttribute: the through construction must have the fromPrimitive as the primitive where the attribute is being added.")
+        raise ValueError("primitive.addAttribute: the through construction must have the fromPrimitive as the primitive where the attribute is being added.")
 
     else:
       newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols)

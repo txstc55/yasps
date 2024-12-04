@@ -63,10 +63,14 @@ class minimizer:
         raise ValueError("minimizer.addEnergies: energies has duplicate energies.")
     self.__energies.extend(energies)
 
-  def addEnergy(self, energy: energy) -> None:
-    if energy.hash in [energy.hash for energy in self.__energies]:
+  def addEnergy(self, e: attribute) -> None:
+    if e.name == "":
+      raise ValueError("scene.addEnergy: energy attribute must have a name.")
+    from yasps.energy import energy
+    newEnergy = energy(e)
+    if newEnergy.hash in [energy.hash for energy in self.__energies]:
       raise ValueError("minimizer.addEnergy: energy already exists.")
-    self.__energies.append(energy)
+    self.__energies.append(newEnergy)
 
 
   def addWrt(self, wrt: List[attribute]) -> None:
@@ -215,6 +219,10 @@ class minimizer:
   def generateHessianAndGradient(self):
     for e in self.energies:
       e.generateHessianAndGradient(self.wrt)
+
+  def computeSolution(self) -> List[gpuarray.GPUArray]:
+    self.computeHessianAndGradient()
+    return self.solutionSegments
 
   def computeHessianAndGradient(self):
     # set gradient and hessian to 0

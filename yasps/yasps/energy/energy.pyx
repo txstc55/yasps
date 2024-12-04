@@ -239,10 +239,10 @@ class energy:
           # we go from bottom up
           # and for the first one, we will deal with it separately
           for i in range(len(path) - 2, 0, -1):
-            lead_att = path[i]
+            lead_att = path[i] # we know this has to be a gather node
             next_att = path[i+1]
             data_node = path[-1]
-            neighboring_jacobian = next_att.correspondance[f'd_{lead_att.children[0].fullName}_d_{next_att.fullName}']
+            neighboring_jacobian = lead_att.children[0].correspondance[f'd_{lead_att.children[0].fullName}_d_{next_att.fullName}']
             multiplied_jacobian: attribute
             if i == len(path) - 2:
               # just return the neighboring jacobian as the multiplied
@@ -698,6 +698,7 @@ class energy:
 
 
   def computeHessianAndGradient(self, hessian_blocks_start_indices: gpuarray.GPUArray,  gradient_array: gpuarray.GPUArray, hessian_blocks: gpuarray.GPUArray, diagonal: gpuarray.GPUArray):
+    print(f"Computing hessian and gradient for energy: {self.__energy.fullName}")
     start_compute = cuda.Event()
     end_compute = cuda.Event()
     start_compute.record()
