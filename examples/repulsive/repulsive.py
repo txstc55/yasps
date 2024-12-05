@@ -4,12 +4,13 @@ from yasps.autodiff import autodiff
 import numpy as np
 import math
 np.random.seed(13)
-NUM_POINTS = 500
-NUM_LOOPS = 5
+NUM_POINTS = 400
+NUM_LOOPS = 2
 def generate_points_near_equator(num_points, delta_phi_deg=5):
   theta = np.linspace(0, 2 * np.pi, num_points, endpoint=False, dtype=np.float64)
-  delta_phi_rad = np.radians(delta_phi_deg)
-  phi = np.random.uniform(-delta_phi_rad, delta_phi_rad, num_points)
+  # delta_phi_rad = np.radians(delta_phi_deg)
+  # phi = np.zeros(num_points)
+  phi = np.random.uniform(-0.1, 0.1, num_points)
   x = np.cos(phi) * np.cos(theta)
   y = np.cos(phi) * np.sin(theta)
   z = np.sin(phi)
@@ -164,25 +165,22 @@ def plot_segments(points):
   fig.canvas.draw()
   fig.canvas.flush_events()
 
-weight = 0.05
+weight = 0.1
 for i in range(10000):
   result = s.minimizeEnergy()
-  updated_value = (vertex_positions.value - weight * result[0]).get().reshape(NUM_POINTS * NUM_LOOPS, 3)
-  # # vertex_positions.updateValue(vertex_positions.value - 0.01 * result[0])
-  # Reshape updated_value to a 3D array:
-  # Shape: (NUM_LOOPS, NUM_POINTS, 3)
+  updated_value = (vertex_positions.value - weight * result[0]).get()
   updated_value = updated_value.reshape(NUM_LOOPS, NUM_POINTS, 3)
 
-  # Perform the vectorized computation within each loop
-  updated_value = (
-      0.8 * updated_value +
-      0.1 * np.roll(updated_value, shift=-1, axis=1) +  # Next point in the same loop
-      0.1 * np.roll(updated_value, shift=1, axis=1)     # Previous point in the same loop
-  )
-  # If needed, reshape updated_value back to its original shape
+  # # Perform the vectorized computation within each loop
+  # updated_value = (
+  #     0.8 * updated_value +
+  #     0.1 * np.roll(updated_value, shift=-1, axis=1) +  # Next point in the same loop
+  #     0.1 * np.roll(updated_value, shift=1, axis=1)     # Previous point in the same loop
+  # )
+  # # If needed, reshape updated_value back to its original shape
   updated_value = updated_value.reshape(-1, 3)
   vertex_positions.updateValue(updated_value)
   plot_segments(updated_value)
-  if i % 1000 == 0:
+  if i % 100 == 0:
     # save the updated value to a file using numpy
-    np.save(f"output_{i}.npy", updated_value)
+    np.save(f"repulsive_data/output_{i}.npy", updated_value)

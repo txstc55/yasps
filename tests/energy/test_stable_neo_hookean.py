@@ -73,29 +73,29 @@ tets = bunny.addPrimitive("tets", numInstances = tet_indices.shape[0])
 tet_to_vertex = tets.addConnectivity("tet_to_vertex", vertices, tet_indices, 4)
 tet_positions = tets.addAttribute("position", through = tet_to_vertex)
 tet_position_rest = tets.addAttribute("position_rest", rows = 4, cols = 3)
-tet_position_rest.updateValue(tet_positions.compute().value.get() * 2.0, deepCopy = True) # make a deep copy
+tet_position_rest.updateValue(tet_positions.compute().value.get(), deepCopy = True) # make a deep copy
 
 
 
-# # rotate each vertex by degree of x value
-# x = position[:, 0]  # Shape: (N,)
-# y = position[:, 1]  # Shape: (N,)
-# z = position[:, 2]  # Shape: (N,)
-# # Convert x-coordinates to rotation angles in degrees
-# theta_degrees = x  # Each x_i is the rotation angle in degrees
-# # Convert degrees to radians
-# theta_radians = np.deg2rad(theta_degrees * 100.0)  # np.deg2rad converts degrees to radians
-# cos_theta = np.cos(theta_radians)  # Shape: (N,)
-# sin_theta = np.sin(theta_radians)  # Shape: (N,)
-# # Compute the new y and z coordinates after rotation
-# y_rotated = y * cos_theta - z * sin_theta
-# z_rotated = y * sin_theta + z * cos_theta
-# # x remains the same
-# x_rotated = x
-# rotated_positions = np.column_stack((x_rotated, y_rotated, z_rotated))
-# # rotated_positions = position
-# vertices["position"].updateValue(rotated_positions)
-# print("Vertex positions rotated")
+# rotate each vertex by degree of x value
+x = position[:, 0]  # Shape: (N,)
+y = position[:, 1]  # Shape: (N,)
+z = position[:, 2]  # Shape: (N,)
+# Convert x-coordinates to rotation angles in degrees
+theta_degrees = x  # Each x_i is the rotation angle in degrees
+# Convert degrees to radians
+theta_radians = np.deg2rad(theta_degrees * 100.0)  # np.deg2rad converts degrees to radians
+cos_theta = np.cos(theta_radians)  # Shape: (N,)
+sin_theta = np.sin(theta_radians)  # Shape: (N,)
+# Compute the new y and z coordinates after rotation
+y_rotated = y * cos_theta - z * sin_theta
+z_rotated = y * sin_theta + z * cos_theta
+# x remains the same
+x_rotated = x
+rotated_positions = np.column_stack((x_rotated, y_rotated, z_rotated))
+# rotated_positions = position
+vertices["position"].updateValue(rotated_positions)
+print("Vertex positions rotated")
 
 # here we compute the rest position deformation gradient
 row0 = tet_position_rest.row(0)
