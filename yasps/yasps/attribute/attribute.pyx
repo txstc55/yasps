@@ -555,7 +555,9 @@ class attribute:
         return attribute(float_value = max([0, self.float_value]))
     if self.isFloatMat:
       # reconstruct the matrix in numpy
-      mat = np.array(self.children, dtype = np.float64).reshape(self.rows, self.cols)
+      mat = np.array([x.float_value for x in self.children], dtype = np.float64).reshape(self.rows, self.cols)
+      # print("Directly projecting a float matrix")
+      # print(mat)
       ev, evc = np.linalg.eig(mat)
       if spd_method == 1:
         ev = np.abs(ev)
