@@ -9,7 +9,7 @@ def quaternion_to_rotation(w, z):
 
 # define segments
 SEGMENT_COUNT = 5
-TARGET_POSITION = [1.0, 2.0]
+TARGET_POSITION = [6.0, 6.0]
 s0 = scene("scene0")
 pendulum = s0.addMesh("pendulum")
 segments = []
@@ -83,7 +83,7 @@ line.set_data(x, y)
 ax.set_xlim(-(SEGMENT_COUNT + 2), (SEGMENT_COUNT + 2))
 ax.set_ylim(-(SEGMENT_COUNT + 2), (SEGMENT_COUNT + 2))
 ax.plot(TARGET_POSITION[0], TARGET_POSITION[1], 'ro', color='red', label = 'Target Position')
-ax.legend()
+# ax.legend()
 plt.axis('off')
 plt.gca().set_aspect('equal', adjustable='box')
 plt.show()

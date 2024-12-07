@@ -66,7 +66,7 @@ RIGHT_SPRING_REST_ANGLE = np.pi / 20
 RIGHT_SPRING_INITIAL_ANGLE = np.pi / 2.1
 RIGHT_SPRING_SEGMENT_COUNT = 7
 RIGHT_SPRING_SEGMENT_LENGTH = 1.0
-LEFT_SPRING_REST_ANGLE = np.pi / 20
+LEFT_SPRING_REST_ANGLE = np.pi / 10
 LEFT_SPRING_INITIAL_ANGLE = np.pi / 2.5
 LEFT_SPRING_SEGMENT_COUNT = 5
 LEFT_SPRING_SEGMENT_LENGTH = 1.0
@@ -140,9 +140,17 @@ plt.ion()
 fig, ax = plt.subplots(figsize=(6, 8))
 ceiling = ax.plot([-100, 100], [0, 0], linestyle='-', color='black')
 ceiling_line,  = ax.plot([0, 0], [0, -0.5], linestyle='-', color='black')
+CEILING_LINES_COUNT = 300
+for i in range(CEILING_LINES_COUNT):
+  starting_x = -100 + 200 / CEILING_LINES_COUNT * i
+  ending_x = -100 + 200 / CEILING_LINES_COUNT * (i + 1)
+  ending_y = ending_x - starting_x
+  ax.plot([starting_x, ending_x], [0, ending_y], linestyle='-', color='black')
 top_spring_lines,  = ax.plot([], [], linestyle = '-', color = '#28A745')
 lever_line, = ax.plot([], [], linestyle='-', color = '#005082')
+right_spring_hanger, = ax.plot([], [], linestyle='-', color = 'black')
 right_spring_lines, = ax.plot([], [], linestyle='-', color = '#28A745')
+left_spring_hanger, = ax.plot([], [], linestyle='-', color = 'black')
 left_spring_lines, = ax.plot([], [], linestyle='-', color = '#28A745')
 right_mass_box, = ax.plot([], [], linestyle='-', color = 'black')
 left_mass_box, = ax.plot([], [], linestyle='-', color = 'black')
@@ -189,6 +197,9 @@ def update_plot():
   lever_left_y = lever["left_end_y"].compute().value.get()[0]
   lever_line.set_data([lever_right_x, lever_left_x], [lever_right_y, lever_left_y])
 
+  right_spring_hanger.set_data([lever_right_x, lever_right_x], [lever_right_y, lever_right_y - 0.5])
+  left_spring_hanger.set_data([lever_left_x, lever_left_x], [lever_left_y, lever_left_y - 0.5])
+
   # update the right spring
   right_spring_angle = right_spring["angle"].compute().value.get()[0]
   cos_angle = math.cos(right_spring_angle)
@@ -211,6 +222,7 @@ def update_plot():
   y0 = lever_right_y  # Starting y-coordinate
   right_spring_xs = x0 + np.concatenate(([0.0], np.cumsum(delta_xs)))
   right_spring_ys = y0 + np.concatenate(([0.0], np.cumsum(delta_ys)))
+  right_spring_ys = right_spring_ys - 0.5
   right_spring_lines.set_data(right_spring_xs, right_spring_ys)
   right_mass_box.set_data([right_spring_xs[-1] - 0.5, right_spring_xs[-1] + 0.5, right_spring_xs[-1] + 0.5, right_spring_xs[-1] - 0.5, right_spring_xs[-1] - 0.5], [right_spring_ys[-1], right_spring_ys[-1], right_spring_ys[-1] - 0.6, right_spring_ys[-1] - 0.6, right_spring_ys[-1]])
   right_spring_energy = right_spring["right_spring_angle_energy"].compute().value.get()[0]
@@ -239,6 +251,7 @@ def update_plot():
   y0 = lever_left_y  # Starting y-coordinate
   left_spring_xs = x0 + np.concatenate(([0.0], np.cumsum(delta_xs)))
   left_spring_ys = y0 + np.concatenate(([0.0], np.cumsum(delta_ys)))
+  left_spring_ys = left_spring_ys - 0.5
   left_spring_lines.set_data(left_spring_xs, left_spring_ys)
   left_mass_box.set_data([left_spring_xs[-1] - 0.5, left_spring_xs[-1] + 0.5, left_spring_xs[-1] + 0.5, left_spring_xs[-1] - 0.5, left_spring_xs[-1] - 0.5], [left_spring_ys[-1], left_spring_ys[-1], left_spring_ys[-1] - 0.6, left_spring_ys[-1] - 0.6, left_spring_ys[-1]])
   left_spring_energy = left_spring["left_spring_angle_energy"].compute().value.get()[0]
@@ -278,4 +291,4 @@ while(iteration < 1500):
   lever["angle"].updateValue(lever["angle"].compute().value.get()[0] - DT * result[3].get()[0])
   update_plot()
   iteration += 1
-  plt.savefig(f'plots/frame_{iteration:04d}.png', dpi=600)
+  plt.savefig(f'plots/frame_{iteration:04d}.png', dpi=600) # 1829, 1895, 1026, 1693 for cropping image

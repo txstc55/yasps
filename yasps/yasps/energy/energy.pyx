@@ -698,7 +698,7 @@ class energy:
 
 
   def computeHessianAndGradient(self, hessian_blocks_start_indices: gpuarray.GPUArray,  gradient_array: gpuarray.GPUArray, hessian_blocks: gpuarray.GPUArray, diagonal: gpuarray.GPUArray):
-    print(f"Computing hessian and gradient for energy: {self.__energy.fullName}")
+    # print(f"Computing hessian and gradient for energy: {self.__energy.fullName}")
     start_compute = cuda.Event()
     end_compute = cuda.Event()
     start_compute.record()
