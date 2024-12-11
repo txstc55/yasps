@@ -9,11 +9,7 @@ def quaternion_to_rotation(w, z):
 
 # define segments
 SEGMENT_COUNT = 5
-TARGET_POSITION = [4.0, 0.0]
-OBSTACLE_POSITION0 = [-0.8, 0.0]
-OBSTACLE_POSITION1 = [0.8, 0.0]
-OBSTACLE_POSITION0_ATTRIBUTE = attribute.to_array([attribute(float_value = OBSTACLE_POSITION0[0]), attribute(float_value = OBSTACLE_POSITION0[1])], rows = 2, cols = 1)
-OBSTACLE_POSITION1_ATTRIBUTE = attribute.to_array([attribute(float_value = OBSTACLE_POSITION1[0]), attribute(float_value = OBSTACLE_POSITION1[1])], rows = 2, cols = 1)
+TARGET_POSITION = [6.0, 6.0]
 s0 = scene("scene0")
 pendulum = s0.addMesh("pendulum")
 segments = []
@@ -37,8 +33,6 @@ segments[2]["z"].updateValue([math.sin(-math.pi / 6)])
 
 # the rest position of segment 0
 segments[0].addAttribute("global_rotation", computed_attribute = quaternion_to_rotation(segments[0]["w"], segments[0]["z"]))
-segments[0].addAttribute("previous_end_position", rows = 2, cols = 1)
-segments[0]["previous_end_position"].updateValue([0.0, 0.0])
 segments[0].addAttribute("end_point_position", computed_attribute = segments[0]["global_rotation"] * attribute.to_array([attribute(float_value = 0.0), -segments[0]["length"]], rows = 2, cols = 1))
 
 # first we add the connectivity to the last element
@@ -70,36 +64,31 @@ vertex_positions = vertices.addAttribute("position", computed_attribute = weight
 segments[-1].addAttribute("target_position", rows = 2, cols = 1)
 segments[-1]["target_position"].updateValue(TARGET_POSITION)
 distance_vector = segments[-1]["end_point_position"] - segments[-1]["target_position"]
-segments[-1].addAttribute("position_penalty", computed_attribute = (distance_vector.norm()))
+segments[-1].addAttribute("position_penalty", computed_attribute = (segments[-1]["end_point_position"] - segments[-1]["target_position"]).norm())
 
 
 s0.addEnergy(segments[-1]["position_penalty"])
-
-def repulsive_energy(p0, p1, o, alpha, beta):
-  SE = p1 - p0
-  SE_norm = SE.norm()
-  T = SE / SE_norm  # Unit tangent vector
-  v0 = p0 - o
-  v1 = p1 - o
-  T_dot_v0 = T.dot(v0)
-  T_dot_v1 = T.dot(v1)
-  norm_v0 = v0.norm()
-  norm_v1 = v1.norm()
-  epsilon = 1e-8
-  norm_v0 = norm_v0 + epsilon
-  norm_v1 = norm_v1 + epsilon
-  energy_p0 = (T_dot_v0.pow(alpha)) / (norm_v0.pow(beta))
-  energy_p1 = (T_dot_v1.pow(alpha)) / (norm_v1.pow(beta))
-  r = (energy_p0 + energy_p1)
-  return r
-
-for i in range(SEGMENT_COUNT):
-  segments[i].addAttribute("repulsive", computed_attribute = repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION0_ATTRIBUTE, 3.0, 6.0) + repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION1_ATTRIBUTE, 3.0, 6.0))
-  s0.addEnergy(segments[i]["repulsive"])
-
-
 s0.addMinimizeTarget([segment["w"] for segment in segments] + [segment["z"] for segment in segments])
 result = s0.minimizeEnergy()
+
+## for extracting the hessian and merge it
+longest_key = ""
+keys = segments[-1].attributes.keys()
+for key in keys:
+  if 'd2' in key:
+    if len(key) > len(longest_key):
+      longest_key = key
+
+hessian = (segments[-1][longest_key].spd(0).compute().value.get().reshape(SEGMENT_COUNT * (SEGMENT_COUNT + 1), SEGMENT_COUNT * (SEGMENT_COUNT + 1)))
+
+positions = [5, 0, 6, 1, 5, 0, 7, 2, 6, 1, 5, 0, 8, 3, 7, 2, 6, 1, 5, 0, 9, 4, 8, 3, 7, 2, 6, 1, 5, 0]
+true_hessian = np.zeros((SEGMENT_COUNT * 2, SEGMENT_COUNT * 2))
+for i in range(len(positions)):
+  for j in range(len(positions)):
+    true_hessian[positions[i], positions[j]] += hessian[i, j]
+print("True Hessian")
+print(true_hessian)
+# project to positive definite
 
 import matplotlib.pyplot as plt
 data = vertex_positions.compute().value.get()
@@ -112,22 +101,38 @@ line, = ax.plot([], [], marker='o', linestyle='-')
 line.set_data(x, y)
 ax.set_xlim(-(SEGMENT_COUNT + 2), (SEGMENT_COUNT + 2))
 ax.set_ylim(-(SEGMENT_COUNT + 2), (SEGMENT_COUNT + 2))
-ax.plot(TARGET_POSITION[0], TARGET_POSITION[1], 'ro', color='cyan', label = 'Target Position')
-ax.plot(OBSTACLE_POSITION0[0], OBSTACLE_POSITION0[1], 'ro', color='red', label = 'Target Position')
-ax.plot(OBSTACLE_POSITION1[0], OBSTACLE_POSITION1[1], 'ro', color='red', label = 'Target Position')
+ax.plot(TARGET_POSITION[0], TARGET_POSITION[1], 'ro', color='red', label = 'Target Position')
 # ax.legend()
 plt.axis('off')
 plt.gca().set_aspect('equal', adjustable='box')
 plt.show()
 
 # Loop to update the plot
-t = 0.1
+t = 0.0000000000000001
 last_penalty = 50
-for iteration in range(100000):
+for iteration in range(1501):
   result = s0.minimizeEnergy()
-  dx = (np.array([x.get() for x in result]).flatten())
+  ############################################################################
+  # for projecting the global hessian only
+  ############################################################################
+  gradient = (np.array([x.get() for x in s0.gradient()]).flatten())
+  true_hessian = np.zeros((SEGMENT_COUNT * 2, SEGMENT_COUNT * 2))
+  hessian = (segments[-1][longest_key].compute().value.get().reshape(SEGMENT_COUNT * (SEGMENT_COUNT + 1), SEGMENT_COUNT * (SEGMENT_COUNT + 1)))
+  for i in range(len(positions)):
+    for j in range(len(positions)):
+      true_hessian[positions[i], positions[j]] += hessian[i, j]
+  w, v = np.linalg.eig(true_hessian)
+  w[w < 0] = 0
+  true_hessian = v @ np.diag(w) @ v.T
+  dx = np.linalg.solve(true_hessian, gradient)
+  ############################################################################
+  # for normal computation
+  ############################################################################
+  # dx = (np.array([x.get() for x in result]).flatten())
   print("Penalty value")
   last_penalty = segments[-1]["position_penalty"].compute().value.get()[0]
+  if last_penalty < 0.01 :
+    exit(0)
   print(last_penalty)
 
   for i in range(SEGMENT_COUNT):
@@ -150,10 +155,10 @@ for iteration in range(100000):
   line.set_data(x, y)
 
   # Save the current frame as an image
-  # plt.savefig(f'pendulum_results/frame_{iteration:04d}.png', dpi=600)
+  if iteration % 100 == 0:
+    plt.savefig(f'results/frame_{iteration:04d}.png', dpi=600) # 1811, 1995, 1312, 1173 for crop image
   fig.canvas.draw()
   fig.canvas.flush_events()
-  # 1890, 1257, 1004, 2055 use this paramater to crop image
 
 # Disable interactive mode if no longer needed
 plt.ioff()

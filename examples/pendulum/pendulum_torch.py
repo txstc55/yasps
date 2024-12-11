@@ -104,8 +104,8 @@ def loss_function(segments):
   for i in range(SEGMENT_COUNT):
     p0 = positions[i]
     p1 = positions[i + 1]
-    loss = loss + repulsive_energy(p0, p1, OBSTACLE_POSITION0, 3.0, 6)
-    loss = loss + repulsive_energy(p0, p1, OBSTACLE_POSITION1, 3.0, 6)
+    loss = loss + repulsive_energy(p0, p1, OBSTACLE_POSITION0, 3.0, 6.)
+    loss = loss + repulsive_energy(p0, p1, OBSTACLE_POSITION1, 3.0, 6.)
 
   return loss
 
@@ -158,7 +158,7 @@ for i in range(num_iterations):
     line.set_data(x, y)
     fig.canvas.draw()
     fig.canvas.flush_events()
-    plt.savefig(f'pendulum_pytorch_results/frame_{i:04d}.png', dpi=600)
+    # plt.savefig(f'pendulum_pytorch_results/frame_{i:04d}.png', dpi=600)
 
 # After optimization, print the results
 positions = forward_kinematics(segments)
