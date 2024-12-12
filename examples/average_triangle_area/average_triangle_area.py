@@ -114,7 +114,7 @@ bending_energy = bunny_edge_pairs.addAttribute("bending_energy", computed_attrib
 
 
 s0.addEnergy(area_energy)
-# s0.addEnergy(bending_energy)
+s0.addEnergy(bending_energy)
 s0.addMinimizeTarget([bunny_vertices_smoothed_positions])
 
 
