@@ -29,6 +29,9 @@ class codeGenerator:
     if current.operator == ya.FLOAT or current.operator == ya.INDEX:
       return
     elif current.isFloatMat:
+      # special case for transpose
+      if current.operator == ya.TRANSPOSE:
+        self.__generateCodeOrderDFS(current.children[0])
       self.__order.append(current)
     elif current.correspondance.fullName == self.__input.correspondance.fullName:
       if current.name != "":
@@ -300,7 +303,7 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
     # return the name of the intermediate value
     attribute_hash = attribute.hash
     if attribute_hash not in self.__attribute_replacements:
-      raise ValueError("codeGenerator.getIntermediateName: attribute hash not found in self.__attribute_replacements.", str(attribute), "hash is", attribute_hash)
+      raise ValueError(f"codeGenerator.getIntermediateName: attribute hash not found in self.__attribute_replacements. {str(attribute)} hash is: {attribute_hash}")
     if self.__attribute_replacements[attribute_hash][1] == -1:
       return f"{self.__attribute_replacements[attribute_hash][0].fullName}_local_data"
     else:
