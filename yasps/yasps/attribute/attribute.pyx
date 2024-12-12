@@ -290,17 +290,25 @@ class attribute:
 
   # construct a new attribute from a list of attributes
   @staticmethod
-  def to_array(children: List[attribute], rows: int, cols: int) -> attribute:
+  def to_array(children: List[Union[attribute, float, int]], rows: int, cols: int) -> attribute:
     if rows * cols != len(children):
       raise ValueError(f"attribute.to_array: number of elements must match the number of children. {rows} * {cols} != {len(children)}.")
+    convertedChildren: List[attribute] = []
+    for item in children:
+      if isinstance(item, float):
+        convertedChildren.append(attribute(float_value = item))
+      elif isinstance(item, int):
+        convertedChildren.append(attribute(float_value = float(item)))
+      else:
+        convertedChildren.append(item)
     if rows * cols == 1:
       # no need to create an array for a single element
-      return children[0]
+      return convertedChildren[0]
     # let's get the correspondance
-    youngest_child: attribute = children[0]
-    for i in range(1, len(children)):
-      youngest_child = attribute.__check_heritage(youngest_child, children[i])
-    return attribute(name = "", rows = rows, cols = cols, children = children, operator = ARRAY, correspondance = youngest_child.correspondance)
+    youngest_child: attribute = convertedChildren[0]
+    for i in range(1, len(convertedChildren)):
+      youngest_child = attribute.__check_heritage(youngest_child, convertedChildren[i])
+    return attribute(name = "", rows = rows, cols = cols, children = convertedChildren, operator = ARRAY, correspondance = youngest_child.correspondance)
 
   # every attribute is actually a vector or a mat
   # so accessing them through [] operator returns an access attribute
