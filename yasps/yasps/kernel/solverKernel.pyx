@@ -250,9 +250,9 @@ int computeSolution(CUcontext ctx,
 
   // check tolerance
   double relativeTolerance = threshold * h_delta_0;
-  printf("Initial residual %lf, relative tolerance: %lf\\n", h_delta_new, relativeTolerance);
+  // printf("Initial residual %lf, relative tolerance: %lf\\n", h_delta_new, relativeTolerance);
   if (h_delta_new <= relativeTolerance){
-    printf("Converged in 0 iterations with residual %lf\\n", h_delta_new);
+    // printf("Converged in 0 iterations with residual %lf\\n", h_delta_new);
     return 0;
   }
   CUDA_CHECK_ERROR(cudaDeviceSynchronize());
@@ -305,7 +305,7 @@ int computeSolution(CUcontext ctx,
     vecAddWithScalar<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_s, d_c, d_c, h_delta_new / h_delta_old, MATRIX_SIZE);
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     if (h_delta_new <= relativeTolerance){
-      printf("Converged in %d iterations with residual %lf\\n", iteration, h_delta_new);
+      // printf("Converged in %d iterations with residual %lf\\n", iteration, h_delta_new);
       return iteration;
     }
   }
@@ -350,7 +350,7 @@ int computeSolution(CUcontext ctx,
     start_call = cuda.Event()
     end_call = cuda.Event()
     start_call.record()
-    self.__cg_kernel(
+    result = self.__cg_kernel(
       cuda_context,
       maxIteration,
       threshold,
@@ -374,4 +374,5 @@ int computeSolution(CUcontext ctx,
     end_call.synchronize()
     # Calculate the elapsed time in milliseconds
     elapsed_time_ms = start_call.time_till(end_call)
+    print(f"Solver converged in {result} iterations")
     print(f"Solver time: {elapsed_time_ms:.5f} ms")
