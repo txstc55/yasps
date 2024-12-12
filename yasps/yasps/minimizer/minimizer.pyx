@@ -7,6 +7,7 @@ from typing import List, Tuple, Set, Optional, Dict
 from yasps.energy import energy
 from yasps.attribute import attribute
 from yasps.solverKernel import solverKernel
+import time
 import ctypes
 
 class minimizer:
@@ -74,6 +75,7 @@ class minimizer:
 
 
   def addWrt(self, wrt: List[attribute]) -> None:
+    start = time.time()
     seenAttributeHashes: Set[int] = set()
     from yasps.attribute import DATA
     for att in wrt:
@@ -83,14 +85,10 @@ class minimizer:
         raise ValueError("minimizer.__init__: wrt has non-data attributes.")
       seenAttributeHashes.add(attribute.hash)
     self.__wrt.extend(wrt)
-    # at this time, we can start initializing the dense vectors
-    # and everything else
     self.__getGradientSize() # get the size of the gradient
-    # print(f"The size of the gradient is: {sum(self.__gradientSizes)}")
-    # self.__getblockSizes() # get the block sizes
-    # print(f"The size of the diagonal blocks are: {self.__diagonalblockSizes}")
     self.__getSparseIndices() # get the sparse indices
-    # print(f"sparse indices computation is done")
+    end = time.time()
+    print(f"Sparse indices generation: {1000.0 * (end - start)} ms")
 
 
   def __getGradientSize(self) -> None:
@@ -106,7 +104,7 @@ class minimizer:
       self.__gradientSegments.append(self.__gradient[start:start + size])
       start += size
       self.__wrtStartIndices.append(start)
-    # print(f"The size of the gradient is: {sum(self.__gradientSizes)}")
+    print(f"The size of the gradient is: {sum(self.__gradientSizes)}")
     # print(f"The gradient segments sizes are: {self.__gradientSizes}")
 
   def __getblockSizes(self):
@@ -171,6 +169,40 @@ class minimizer:
     # ok now we have the indices put to their corresponding place
     # we can remove the duplicates
     compressedIndices: List[List[Tuple[int, int]]] = [list(map(tuple, (np.unique(np.array(item), axis = 0)))) for item in uncompressedIndicesByDimensions]
+    ###################################################
+    ## remove this code, this is for analysis
+    ###################################################
+    sorted_block_sizes = []
+    sorted_positions = []
+
+    for i in range(len(compressedIndices)):
+      dimension = self.__blockDimensions[i]
+      dimension = sorted(dimension)
+      index = i
+      if dimension in sorted_block_sizes:
+        index = sorted_block_sizes.index(dimension)
+      else:
+        sorted_block_sizes.append(dimension)
+        sorted_positions.append([])
+        index = len(sorted_block_sizes) - 1
+      sorted_positions[index] += compressedIndices[i]
+
+    totalNNZ = 0
+    for i in range(len(sorted_positions)):
+      uniquePairs = {tuple(sorted((x, y))) for x, y in sorted_positions[i]}
+      diagonalPairs = sum(x == y for x, y in uniquePairs)
+      uniquePairsCount = len(uniquePairs)
+      diagonalBlockCount = diagonalPairs
+      dimension = sorted_block_sizes[i]
+      nnz = dimension[0] * dimension[1] * uniquePairsCount * 2 - dimension[0] * dimension[1] * diagonalBlockCount
+      totalNNZ += nnz
+    print(f"Total NNZ is: {totalNNZ}")
+    ###################################################
+    ## End of analysis
+    ###################################################
+
+
+
     self.__blockCounts = [len(item) for item in compressedIndices]
     self.__blockPositions = gpuarray.to_gpu(np.array([item for sublist in compressedIndices for tup in sublist for item in tup]))
     # now we segment the list to the positions list
@@ -217,8 +249,11 @@ class minimizer:
     print("Sparse indices set")
 
   def generateHessianAndGradient(self):
+    start = time.time()
     for e in self.energies:
       e.generateHessianAndGradient(self.wrt)
+    end = time.time()
+    print(f"Autodiff computation: {1000.0 * (end - start)} ms")
 
   def computeSolution(self) -> List[gpuarray.GPUArray]:
     self.computeHessianAndGradient()
