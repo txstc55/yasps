@@ -47,3 +47,4 @@ yasps/yasps.egg-info/*
 .mypy_cache/*
 .ropeproject/*
 blender_files/*
+*.log
