@@ -251,6 +251,8 @@ class attribute:
         if not self.children[i].operator == FLOAT:
           return False
       return True
+    if self.operator == TRANSPOSE:
+      return self.children[0].isFloatMat
     return False
 
   @staticmethod
@@ -316,6 +318,10 @@ class attribute:
     if isinstance(index, int):
       if index >= self.rows * self.cols:
         raise ValueError("attribute.__getitem__: index out of range.")
+      if self.operator == TRANSPOSE:
+        row = index // self.cols
+        col = index % self.cols
+        return self.children[0][col, row]
       if self.isFloatMat:
         return self.children[index]
       if self.operator == ARRAY:
@@ -335,10 +341,6 @@ class attribute:
         return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
       if self.size == 1 and index == 0:
         return self
-      if self.operator == TRANSPOSE:
-        row = index // self.cols
-        col = index % self.cols
-        return self.children[0][col, row]
       indexAttribute = attribute(operator = INDEX, index_value = index)
       return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
     elif isinstance(index, tuple):
@@ -346,6 +348,8 @@ class attribute:
         raise ValueError("attribute.__getitem__: index must be a tuple of two integers.")
       if index[0] >= self.rows or index[1] >= self.cols:
         raise ValueError(f"attribute.__getitem__: index out of range, acceessing index of {index} in a matrix of {self.rows}x{self.cols}.")
+      if self.operator == TRANSPOSE:
+        return self.children[0][index[1], index[0]]
       if self.isFloatMat:
         return self.children[index[0] * self.cols + index[1]]
       if self.operator == ARRAY:
@@ -366,8 +370,6 @@ class attribute:
         return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
       if self.size == 1 and index[0] == 0 and index[1] == 0:
         return self
-      if self.operator == TRANSPOSE:
-        return self.children[0][index[1], index[0]]
 
       indexAttribute = attribute(operator = INDEX, index_value = index[0] * self.cols + index[1])
       return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)

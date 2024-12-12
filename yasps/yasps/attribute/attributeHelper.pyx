@@ -203,6 +203,10 @@ def attribute2str(att: ya.attribute):
 def checkHeritage(a1: ya.attribute, a2: ya.attribute) -> ya.attribute:
   # we check if two attribute are from the same line of blood
   # return the younger one always
+  if a1.operator == ya.TRANSPOSE:
+    return checkHeritage(a1.children[0], a2)
+  if a2.operator == ya.TRANSPOSE:
+    return checkHeritage(a1, a2.children[0])
   if a1.correspondance is None and (a1.operator != ya.FLOAT and not a1.isFloatMat):
     raise ValueError(f"attribute.__check_heritage: a1 must have a correspondance since it is not a float value. a1 is: {a1}")
   if a2.correspondance is None and (a2.operator != ya.FLOAT and not a2.isFloatMat):
