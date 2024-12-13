@@ -255,11 +255,11 @@ class minimizer:
     end = time.time()
     print(f"Autodiff computation: {1000.0 * (end - start)} ms")
 
-  def computeSolution(self) -> List[gpuarray.GPUArray]:
-    self.computeHessianAndGradient()
+  def computeSolution(self, tolerance = 1e-3) -> List[gpuarray.GPUArray]:
+    self.computeHessianAndGradient(tolerance = tolerance)
     return self.solutionSegments
 
-  def computeHessianAndGradient(self):
+  def computeHessianAndGradient(self, tolerance = 1e-3):
     # set gradient and hessian to 0
     self.__gradient.fill(0)
     self.__blocksFlattened.fill(0)
@@ -299,7 +299,7 @@ class minimizer:
     context_ptr = int(cuda_context.handle)
     context_ptr_c = ctypes.c_void_p(context_ptr)
     # call the kernel
-    self.__solver.computeSolution(context_ptr_c, 10000, 1e-3, self.__blocksFlattened, self.__blockPositions, self.__blocksStartIndices, self.__blockCounts, self.__diagonal, self.__gradient, self.__d_p1_b, self.__d_r, self.__d_c, self.__d_q, self.__d_s, self.__solution)
+    self.__solver.computeSolution(context_ptr_c, 10000, tolerance, self.__blocksFlattened, self.__blockPositions, self.__blocksStartIndices, self.__blockCounts, self.__diagonal, self.__gradient, self.__d_p1_b, self.__d_r, self.__d_c, self.__d_q, self.__d_s, self.__solution)
     # print("gradient")
     # print(self.__gradient.get())
     # exit(0)

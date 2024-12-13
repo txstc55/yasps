@@ -139,8 +139,8 @@ class scene:
     self.__minimizer.addEnergy(e)
 
 
-  def minimizeEnergy(self, ):
-    self.__minimizer.computeHessianAndGradient()
+  def minimizeEnergy(self, tolerance = 1e-3):
+    self.__minimizer.computeHessianAndGradient(tolerance = tolerance)
     return self.__minimizer.solutionSegments
 
   def gradient(self):

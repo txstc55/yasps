@@ -292,7 +292,7 @@ class autodiff:
         ind = i * current.cols + j
         transposed_ind = j * current.rows + i
         for k in range(wrt.size):
-          result[transposed_ind * wrt.size + k] = d_fx[ind * wrt.size + k]
+          result[ind * wrt.size + k] = d_fx[transposed_ind * wrt.size + k]
     return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
 
   def __diff_inv(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
