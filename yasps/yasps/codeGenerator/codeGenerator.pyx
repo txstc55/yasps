@@ -624,8 +624,14 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
         self.__code_strings.append(f'''
   {attribute_initialization} = max(0.0, {self.getIntermediateName(current.children[0])});''')
     else:
-      # we do the normal projection
-      self.__code_strings.append(f'''
+      if current.rows <= 3:
+        self.__code_strings.append(f'''
+    {attribute_initialization} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
+    spd_projection_small<{current.children[0].rows}>({self.getIntermediateName(current.children[0])}.data(), {attribute_name}.data(), {current.children[1].index_value});
+  ''')
+      else:
+        # we do the normal projection
+        self.__code_strings.append(f'''
   {attribute_initialization} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
   spd_projection<{current.children[0].rows}>({self.getIntermediateName(current.children[0])}.data(), {attribute_name}.data(), {current.children[1].index_value});
 ''')

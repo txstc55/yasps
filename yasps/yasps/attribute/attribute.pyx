@@ -564,6 +564,7 @@ class attribute:
       elif spd_method == 2:
         return attribute(float_value = max([0, self.float_value]))
     if self.isFloatMat:
+      print("We are directly constructing positive definite matrix since input is constant value")
       # reconstruct the matrix in numpy
       mat = np.array([x.float_value for x in self.children], dtype = np.float64).reshape(self.rows, self.cols)
       # print("Directly projecting a float matrix")
