@@ -1,4 +1,4 @@
-file_path = "pendulum/pendulum.log"
+file_path = "cloth/cloth_1000.log"
 file = open(file_path, "r")
 
 import re

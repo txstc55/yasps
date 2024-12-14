@@ -1,7 +1,7 @@
 from yasps import scene
 from yasps import attribute
 import numpy as np
-
+NUM_SEGMENTS = 10
 def generate_cloth_mesh(length_of_square, num_subdivisions):
   num_vertices_per_side = num_subdivisions + 1
   # Compute step size along one edge
@@ -94,8 +94,6 @@ def closest_point_on_triangle(pt, v0, v1, v2):
   dot11 = v0v1.dot(v0v1)
   dot12 = v0v1.dot(v0p)
   denom = dot00 * dot11 - dot01 * dot01
-  # If denom == 0, triangle is degenerate (handle separately if needed)
-  # Barycentric coordinates (alpha for v2 direction, beta for v1 direction)
   alpha = (dot11 * dot02 - dot01 * dot12) / denom
   beta  = (dot00 * dot12 - dot01 * dot02) / denom
   alpha = attribute.select(alpha < attribute(float_value = 0.0), attribute(float_value = 0.0), alpha)
@@ -118,25 +116,9 @@ def triangle_sphere_collision(v0, v1, v2, center, radius, dHat, kappa):
 ###################################################
 ## initialize vertices and faces
 ###################################################
-vertices, faces = generate_cloth_mesh(3.0, 2)
+vertices, faces = generate_cloth_mesh(3.0, NUM_SEGMENTS)
 vertices = np.array(vertices) + np.array([0.0, 3.0, 0.0])
-# print(vertices)
 faces = np.array(faces)
-# print(list(faces.flatten()))
-# f = open("../data/cloth_large.ele", 'r')
-# f.readline()
-# vertices = []
-# faces = []
-# for line in f:
-#   faces.append([int(x) - 1 for x in line.split()[1:]])
-# f.close()
-# f = open("../data/cloth_large.node", 'r')
-# f.readline()
-# for line in f:
-#   vertices.append([float(x) for x in line.split()[1:]])
-# f.close()
-# vertices = rotate_points(np.array(vertices), 0.00, 0.00) * 3.0 + np.array([0.0, 3.0, 0.0])
-# faces = np.array(faces).reshape(-1, 3)
 
 
 ###################################################
@@ -161,7 +143,7 @@ vrp.updateValue(vertices)
 vp = v.addAttribute("position", rows = 3, cols = 1)
 vp.updateValue(vertices)
 vm = v.addAttribute("mass", rows = 1, cols = 1)
-vm.updateValue(np.ones(vertices.shape[0]) * 0.001)
+vm.updateValue(np.ones(vertices.shape[0]) * 100.0 / vertices.shape[0])
 vv = v.addAttribute("velocity", rows = 3, cols = 1)
 vv.updateValue(np.zeros(vertices.shape))
 vlp = v.addAttribute("last_position", rows = 3, cols = 1)
@@ -179,27 +161,15 @@ shear.updateValue(np.ones(len(faces)) * 1000.0)
 ###################################################
 ## add energy
 ###################################################
-# print("Positions and rest positions")
-# print(fp.compute().value.get())
-# print(frp.compute().value.get())
-bw = f.addAttribute("baraff_witkin", computed_attribute = baraff_witkin_energy(frp, fp, 10000000, 1000000, 0.01, DT))
+bw = f.addAttribute("baraff_witkin", computed_attribute = baraff_witkin_energy(frp, fp, 10000, 1000, 0.1, DT))
 triangle_collision = f.addAttribute("triangle_collision", computed_attribute = triangle_sphere_collision(fp.row(0), fp.row(1), fp.row(2), cloth["sphere_center"].transpose(), cloth["sphere_radius"], 0.1, 1.0))
 point_collision = v.addAttribute("point_collision", computed_attribute = point_sphere_collision(vp, cloth["sphere_center"], cloth["sphere_radius"], 0.1, 1.0))
-inertia_energy = v.addAttribute("inertia", computed_attribute = inertia(vlp, vv, DT, vp, 1.0))
+inertia_energy = v.addAttribute("inertia", computed_attribute = inertia(vlp, vv, DT, vp, vm))
 s0.addEnergy(point_collision)
 s0.addEnergy(triangle_collision)
 s0.addEnergy(bw)
 s0.addEnergy(inertia_energy)
 s0.addMinimizeTarget([vp])
-# print("energies: ")
-# print(bw.compute().value.get())
-# print(point_collision.compute().value.get())
-# print(inertia_energy.compute().value.get())
-# exit(0)
-# print(f.attributes.keys())
-# exit(0)
-# print(v["d2_scene0_cloth_vertices_inertia_d_scene0_cloth_vertices_position_projected"])
-# exit(0)
 
 ###################################################
 ## visualize the mesh
@@ -223,33 +193,23 @@ plotter.camera_position = camera_position
 plotter.show(interactive_update=True)
 
 iteration = 0
-cloth_vertices_last = vp.value
-import time
-while iteration <= 20000:
-  # print("Face positions rest")
-  # print(frp.compute().value.get().flatten().tolist())
-  # print("Face positions current")
-  # print(fp.compute().value.get().flatten().tolist())
-
+cloth_vertices_last = vp.value.copy()
+while iteration <= 400:
   solution = s0.minimizeEnergy(tolerance = 1e-6)
-  # print("Energy")
-  # print(sum(bw.compute().value.get()))
-  # print("Gradient")
-  # print(s0.gradient()[0].get())
-
   dp = solution[0]
   vp_new = vp.value - dp * DT
   vp.updateValue(vp_new, deepCopy = True)
   mesh.points = vp_new.get().reshape(-1, 3)
   plotter.update_coordinates(mesh.points, mesh=mesh)
   plotter.render()
-  # exit()
   cloth_vertices = vp_new
   plotter.update()
   # update velocities
-  if iteration % 10 == 0:
-    # vlp.updateValue(cloth_vertices)
-    vv.updateValue((cloth_vertices - cloth_vertices_last) / DT, deepCopy = True)
+  if iteration % 1 == 0:
+    vlp.updateValue(cloth_vertices)
+    vv.updateValue((cloth_vertices - cloth_vertices_last), deepCopy = True) # damp the velocity a bit
     bunny_vertices_last = cloth_vertices.copy()
   iteration += 1
-  # time.sleep(1)
+
+# export the final mesh
+mesh.save(f"cloth_out/cloth_{faces.shape[0]}.obj")

@@ -185,16 +185,16 @@ plotter.show(interactive_update=True)
 iteration = 0
 bunny_vertices_last = bunny_vertices.copy() # copy just to be safe
 while iteration <= 200000:
-  if iteration % 100 == 0:
-    # save the mesh of the bunny
-    bunny_vertices = bvp.compute().value.get()
-    line_vertices = lvp.compute().value.get()
-    cells = np.hstack([np.full((faces.shape[0], 1), 3), faces])
-    mesh = pv.PolyData(bunny_vertices, cells)
-    mesh.save(f"results/bunny_{iteration}.obj")
-    # save the line as npy file
-    line_points = np.vstack([np.array([0, 0, 0]).reshape(-1, 3), line_vertices.reshape(-1, 3), bunny_vertices.reshape(-1, 3)[max_y_index].reshape(-1, 3)])
-    np.save(f"results/line_{iteration}.npy", line_points)
+  # if iteration % 100 == 0:
+  #   # save the mesh of the bunny
+  #   bunny_vertices = bvp.compute().value.get()
+  #   line_vertices = lvp.compute().value.get()
+  #   cells = np.hstack([np.full((faces.shape[0], 1), 3), faces])
+  #   mesh = pv.PolyData(bunny_vertices, cells)
+  #   mesh.save(f"results/bunny_{iteration}.obj")
+  #   # save the line as npy file
+  #   line_points = np.vstack([np.array([0, 0, 0]).reshape(-1, 3), line_vertices.reshape(-1, 3), bunny_vertices.reshape(-1, 3)[max_y_index].reshape(-1, 3)])
+  #   np.save(f"results/line_{iteration}.npy", line_points)
 
   solution = s0.minimizeEnergy()
   d_roll = solution[0].get()
