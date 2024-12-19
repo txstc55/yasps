@@ -779,7 +779,7 @@ class attribute:
     elapsed_time_ms = start_call.time_till(end_call)
     end_compute.record()
     end_compute.synchronize()
-    # print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
+    print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
     # print(f"Total time: {start_compute.time_till(end_compute):.5f} ms")
     return self
     # print(self.value)

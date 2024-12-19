@@ -1,4 +1,4 @@
-file_path = "cloth/cloth_1000.log"
+file_path = "untwist_bunny/untwist_bunny_without_rotation.log"
 file = open(file_path, "r")
 
 import re
