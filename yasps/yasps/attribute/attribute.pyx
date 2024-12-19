@@ -80,6 +80,7 @@ class attribute:
     self.__operator: operator = operator
     self.__float_value: float = 0.0
     self.__index_value: int = 0
+    self.__is_intermediate = False # if this is an intermediate value, we will need to generate the code and compute it before it being promped to another computation
     # first let's check if it is a constant value
     if float_value is not None:
       self.__float_value = float_value
@@ -254,6 +255,15 @@ class attribute:
     if self.operator == TRANSPOSE:
       return self.children[0].isFloatMat
     return False
+
+  ################################################
+  ################################################
+  #     SOME METHODS
+  ################################################
+  ################################################
+  def setAsIntermediate(self) -> None:
+    self.__is_intermediate = True
+
 
   @staticmethod
   def zeros(rows: int, cols: int) -> attribute:

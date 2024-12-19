@@ -14,7 +14,7 @@ if TYPE_CHECKING:
   from yasps.hessianAndGradientKernel import hessianAndGradientKernel
 
 class energy:
-  def __init__(self, energy: attribute):
+  def __init__(self, energy: attribute, projection_method = 1):
     if energy.size != 1:
       raise ValueError("energy.__init__: energy must be size 1.")
     self.__energy: attribute = energy
@@ -33,6 +33,7 @@ class energy:
     self.__hessian_blocks_where_to_check: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # we have a flattened array which stores the blocks. The blocks are sorted by dimensions. We need to know which block we are in for each smaller blocks in the hessian
     self.__merged_hessian_and_gradient_attribute: Optional[attribute] = None
     self.__project_entire_hessian = False
+    self.__projection_method = projection_method # 0 for no projection, 1 for absolute, 0 for max(0, val)
 
 
   @property
@@ -587,7 +588,7 @@ class energy:
         if h_g_full_mats[i].isZero > 0: # check if the second part is just zero matrix
           second_term_is_zero = True
           # the second term is zero, we can do hessian projection
-          hessian = hessian.spd(1)
+          hessian = hessian.spd(self.__projection_method)
           # print("We can project the inner hessian")
       mul1 = hessian.mul_explicit(j_g_x)
       mul2 = j_g_x.transpose().mul_explicit(mul1)
@@ -726,7 +727,7 @@ class energy:
       print(f"Code generation time: {(end_generator - start_generator) * 1000.0:.5f} ms")
       # now add the global kernel
       start_compile = time.time()
-      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__gradient_sizes_cpu, self.__project_entire_hessian)
+      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__gradient_sizes_cpu, self.__project_entire_hessian, self.__projection_method)
       end_compile = time.time()
       print(f"Compilation time: {(end_compile - start_compile) * 1000.0:.5f} ms")
       self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))
