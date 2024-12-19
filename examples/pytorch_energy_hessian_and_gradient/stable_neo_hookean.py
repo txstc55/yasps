@@ -86,14 +86,6 @@ tet_id = 0
 rest_single_tet = rest_tet_pos[tet_id:tet_id+1]
 current_single_tet = current_tet_pos[tet_id:tet_id+1].clone().detach().requires_grad_(True)
 
-# Define a function that returns the energy for this single tet
-def single_tet_energy(x):
-  # x is a (4,3) tensor representing current positions of this tet
-  x = x.view(1,4,3)
-  totalE = 0.0
-  for i in range(1000):
-      totalE += stable_neo_hookean_energy(x, rest_single_tet, mu, lam) * i
-  return totalE
 
 NUM_TETS = 79935
 
