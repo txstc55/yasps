@@ -35,6 +35,7 @@ class energy:
     self.__project_entire_hessian = False
     self.__projection_method = projection_method # 0 for no projection, 1 for absolute, 0 for max(0, val)
     self.__save_intermediate = save_intermediate # save intermediate gradient and hessian result
+    self.__intermediate_compute_pairs: Dict[str, Tuple[attribute, attribute]] = {} # save the intermediate compute pairs
 
 
   @property
@@ -264,17 +265,44 @@ class energy:
               if multiplied_jacobian[j].correspondance is None or (multiplied_jacobian[j].correspondance.type != "primitive") or multiplied_jacobian[j].operator == FLOAT:
                 skipped_indices.append(j)
 
+            multiplied_jacobian_materialized: attribute = None
+            # multiplied_jacobian_materialized_name: str = ""
+            if self.__save_intermediate:
+              # ok we want to materialize the jacobian to a data variable
+              # and we can use it later
+              materialized_jacobian_list = []
+              for j in range(multiplied_jacobian.size):
+                if j not in skipped_indices:
+                  materialized_jacobian_list.append(multiplied_jacobian[j])
+              if len(materialized_jacobian_list) > 0:
+                materialized_jacobian = attribute.to_array(materialized_jacobian_list, rows = len(materialized_jacobian_list), cols = 1)
+                # add the name
+                included_paths = [lead_att.children[0]] + path[i + 1: -1]
+                included_path_str = "_d_".join([x.fullName for x in included_paths])
+                attribute_name = f"d_{included_path_str}_d_{data_node.fullName}_lead_materialized"
+                # multiplied_jacobian_materialized_name = attribute_name # save the name for later
+                if attribute_name not in materialized_jacobian.correspondance.attributes:
+                  multiplied_jacobian_materialized = multiplied_jacobian.correspondance.addAttribute(attribute_name, rows = len(materialized_jacobian_list), cols = 1)
+                  self.__intermediate_compute_pairs[attribute_name] = (multiplied_jacobian, multiplied_jacobian_materialized)
+
+
             # ok now we need to create new attributes for the non skipped indices
             included_paths = [lead_att.children[0]] + path[i + 1: -1]
             included_path_str = "_d_".join([x.fullName for x in included_paths])
             # print("Lead attribute fullname", lead_att.fullName)
             # print("Included path str:", included_path_str)
+            sequential_count = 0 # for accessing the materialized jacobian sequentially
             for j in range(multiplied_jacobian.size):
               if j in skipped_indices:
                 continue
               # we need to create a new attribute for the ith element through gather
               if f"d_{included_path_str}_d_{data_node.fullName}_{j}" not in lead_att.correspondance.attributes:
-                lead_att.correspondance.addAttribute(f"d_{included_path_str}_d_{data_node.fullName}_{j}", through = lead_att.through, source = multiplied_jacobian[j]) # we add the new gathering attribute and use it later on
+                if not self.__save_intermediate:
+                  lead_att.correspondance.addAttribute(f"d_{included_path_str}_d_{data_node.fullName}_{j}", through = lead_att.through, source = multiplied_jacobian[j]) # we add the new gathering attribute and use it later on
+                else:
+                  assert multiplied_jacobian_materialized is not None
+                  lead_att.correspondance.addAttribute(f"d_{included_path_str}_d_{data_node.fullName}_{j}", through = lead_att.through, source = multiplied_jacobian_materialized[sequential_count])
+                  sequential_count += 1
             # now we have a new gather attribute which is the jacobian
             new_jacobian_children = [attribute(float_value = 0.0) for _ in range(multiplied_jacobian.size * lead_att.through.dimension * lead_att.through.dimension)]
             # ok, if the child jacobian is m by n, then the new jacobian has k by k blocks, each block is m by n
@@ -510,10 +538,36 @@ class energy:
         for j in range(h_g.size):
           if h_g[j].operator == FLOAT:
             skipped_indices.append(j)
-          else:
+
+        second_term_hessian_before_join_materialized: attribute = None
+        # multiplied_jacobian_materialized_name: str = ""
+        if self.__save_intermediate:
+          # ok we want to materialize the jacobian to a data variable
+          # and we can use it later
+          materialized_second_term_list = []
+          for j in range(h_g.size):
+            if j not in skipped_indices:
+              materialized_second_term_list.append(h_g[j])
+          if len(materialized_second_term_list) > 0:
+            materialized_second_term = attribute.to_array(materialized_second_term_list, rows = len(materialized_second_term_list), cols = 1)
+            # add the name
+            attribute_name = f"{h_g_name}_nonconstant_materialized"
+            # multiplied_jacobian_materialized_name = attribute_name # save the name for later
+            if attribute_name not in h_g.correspondance.attributes:
+              second_term_hessian_before_join_materialized = h_g.correspondance.addAttribute(attribute_name, rows = len(materialized_second_term_list), cols = 1)
+              self.__intermediate_compute_pairs[attribute_name] = (materialized_second_term, second_term_hessian_before_join_materialized)
+
+        sequential_count = 0 # for sequentially adding materialized attribute
+        for j in range(h_g.size):
+          if j not in skipped_indices:
             # we add the attribute
             if f'{h_g_name}_{j}' not in follow_node.correspondance.attributes:
-              follow_node.correspondance.addAttribute(f'{h_g_name}_{j}', through = follow_node.through, source = h_g[j])
+              if not self.__save_intermediate:
+                follow_node.correspondance.addAttribute(f'{h_g_name}_{j}', through = follow_node.through, source = h_g[j])
+              else:
+                assert second_term_hessian_before_join_materialized is not None
+                follow_node.correspondance.addAttribute(f'{h_g_name}_{j}', through = follow_node.through, source = second_term_hessian_before_join_materialized[sequential_count])
+                sequential_count += 1
         # now we actually need to accumulate the new matrix, which is going to be the size of
         # h_g_true_size * follow_node_child_size * follow_node_dimension
         expanded_second_term_hessians = [attribute(float_value = 0.0) for _ in range(h_g.size * follow_node_dimension)]
@@ -689,7 +743,6 @@ class energy:
 
 
   def generateHessianAndGradient(self, wrt: List[attribute]) -> None:
-    from yasps.attribute import DATA, GATHER, FLOAT
     differentiater = autodiff()
     # generate the symbolic code for gradient and hessian
     self.__generateGradient(wrt, differentiater)
@@ -732,6 +785,12 @@ class energy:
       end_compile = time.time()
       print(f"Compilation time: {(end_compile - start_compile) * 1000.0:.5f} ms")
       self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))
+
+    print(f"There are {len(self.__intermediate_compute_pairs)} intermediate attributes")
+    # make sure that we also compute the intermediate values
+    for _, value in self.__intermediate_compute_pairs.items():
+      value[0].compute()
+      value[1].updateValue(value[0].value)
 
     # assertion here
     assert self.__hessianAndGradientKernel is not None

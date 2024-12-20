@@ -73,7 +73,7 @@ distance_vector = segments[-1]["end_point_position"] - segments[-1]["target_posi
 segments[-1].addAttribute("position_penalty", computed_attribute = (distance_vector.norm()))
 
 
-s0.addEnergy(segments[-1]["position_penalty"])
+s0.addEnergy(segments[-1]["position_penalty"], save_intermediate = False)
 
 def repulsive_energy(p0, p1, o, alpha, beta):
   SE = p1 - p0
@@ -95,7 +95,7 @@ def repulsive_energy(p0, p1, o, alpha, beta):
 
 for i in range(SEGMENT_COUNT):
   segments[i].addAttribute("repulsive", computed_attribute = repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION0_ATTRIBUTE, 3.0, 6.0) + repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION1_ATTRIBUTE, 3.0, 6.0))
-  s0.addEnergy(segments[i]["repulsive"])
+  s0.addEnergy(segments[i]["repulsive"], save_intermediate = False)
 
 
 s0.addMinimizeTarget([segment["w"] for segment in segments] + [segment["z"] for segment in segments])

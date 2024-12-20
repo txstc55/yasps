@@ -284,7 +284,7 @@ class attribute:
 
     elif isinstance(value, gpuarray.GPUArray):
       if deepCopy:
-        self.__value = value.copy()
+        self.__value = value.copy().ravel()
       else:
         self.__value = value.ravel()
     else:
