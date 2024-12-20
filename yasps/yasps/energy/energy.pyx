@@ -14,7 +14,7 @@ if TYPE_CHECKING:
   from yasps.hessianAndGradientKernel import hessianAndGradientKernel
 
 class energy:
-  def __init__(self, energy: attribute, projection_method = 1):
+  def __init__(self, energy: attribute, projection_method = 1, save_intermediate = False):
     if energy.size != 1:
       raise ValueError("energy.__init__: energy must be size 1.")
     self.__energy: attribute = energy
@@ -34,6 +34,7 @@ class energy:
     self.__merged_hessian_and_gradient_attribute: Optional[attribute] = None
     self.__project_entire_hessian = False
     self.__projection_method = projection_method # 0 for no projection, 1 for absolute, 0 for max(0, val)
+    self.__save_intermediate = save_intermediate # save intermediate gradient and hessian result
 
 
   @property

@@ -133,10 +133,10 @@ class scene:
   def energies(self) -> Dict[int, attribute]:
     return self.__energies
 
-  def addEnergy(self, e: attribute, projection_method = 1) -> None:
+  def addEnergy(self, e: attribute, projection_method = 1, save_intermediate = False) -> None:
     if e.name == "":
       raise ValueError("scene.addEnergy: energy attribute must have a name.")
-    self.__minimizer.addEnergy(e, projection_method = projection_method)
+    self.__minimizer.addEnergy(e, projection_method = projection_method, save_intermediate = save_intermediate)
 
 
   def minimizeEnergy(self, tolerance = 1e-3):
