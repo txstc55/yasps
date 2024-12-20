@@ -1,7 +1,7 @@
 from yasps import scene
 from yasps import attribute
 import numpy as np
-NUM_SEGMENTS = 10
+NUM_SEGMENTS = 100
 def generate_cloth_mesh(length_of_square, num_subdivisions):
   num_vertices_per_side = num_subdivisions + 1
   # Compute step size along one edge
@@ -195,6 +195,7 @@ plotter.show(interactive_update=True)
 iteration = 0
 cloth_vertices_last = vp.value.copy()
 while iteration <= 400:
+  vlp.updateValue(cloth_vertices_last, deepCopy=True)
   solution = s0.minimizeEnergy(tolerance = 1e-6)
   dp = solution[0]
   vp_new = vp.value - dp * DT
@@ -206,8 +207,7 @@ while iteration <= 400:
   plotter.update()
   # update velocities
   if iteration % 1 == 0:
-    vlp.updateValue(cloth_vertices)
-    vv.updateValue((cloth_vertices - cloth_vertices_last), deepCopy = True) # damp the velocity a bit
+    vv.updateValue((cloth_vertices - cloth_vertices_last) / DT, deepCopy = True) # damp the velocity a bit
     bunny_vertices_last = cloth_vertices.copy()
   iteration += 1
 
