@@ -39,6 +39,7 @@ yasps/*/*.c
 *.mp4
 *.png
 *.npy
+*.npz
 
 .venv/*
 
