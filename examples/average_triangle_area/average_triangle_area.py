@@ -155,5 +155,6 @@ def update_position():
 
 
 while total_frames < 1000:
+  print(f"Frame {total_frames}")
   update_position()
   total_frames += 1

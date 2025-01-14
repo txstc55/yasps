@@ -1,7 +1,7 @@
 from yasps import scene
 from yasps import attribute
 import numpy as np
-NUM_SEGMENTS = 100
+NUM_SEGMENTS = 1000
 def generate_cloth_mesh(length_of_square, num_subdivisions):
   num_vertices_per_side = num_subdivisions + 1
   # Compute step size along one edge
@@ -116,7 +116,7 @@ def triangle_sphere_collision(v0, v1, v2, center, radius, dHat, kappa):
 ###################################################
 ## initialize vertices and faces
 ###################################################
-vertices, faces = generate_cloth_mesh(3.0, NUM_SEGMENTS)
+vertices, faces = generate_cloth_mesh(6.0, NUM_SEGMENTS)
 vertices = np.array(vertices) + np.array([0.0, 3.0, 0.0])
 faces = np.array(faces)
 
@@ -194,22 +194,28 @@ plotter.show(interactive_update=True)
 
 iteration = 0
 cloth_vertices_last = vp.value.copy()
-while iteration <= 400:
+while iteration < 1000:
   vlp.updateValue(cloth_vertices_last, deepCopy=True)
   solution = s0.minimizeEnergy(tolerance = 1e-6)
   dp = solution[0]
   vp_new = vp.value - dp * DT
   vp.updateValue(vp_new, deepCopy = True)
-  mesh.points = vp_new.get().reshape(-1, 3)
-  plotter.update_coordinates(mesh.points, mesh=mesh)
-  plotter.render()
+  # mesh.points = vp_new.get().reshape(-1, 3)
+  # plotter.update_coordinates(mesh.points, mesh=mesh)
+  # plotter.render()
   cloth_vertices = vp_new
-  plotter.update()
+  # plotter.update()
   # update velocities
   if iteration % 1 == 0:
     vv.updateValue((cloth_vertices - cloth_vertices_last) / DT, deepCopy = True) # damp the velocity a bit
     bunny_vertices_last = cloth_vertices.copy()
   iteration += 1
+  print("Iteration:", iteration)
+  if iteration == 999:
+    mesh.points = vp_new.get().reshape(-1, 3)
+    plotter.update_coordinates(mesh.points, mesh=mesh)
+    plotter.render()
+    plotter.update()
 
 # export the final mesh
 mesh.save(f"cloth_out/cloth_{faces.shape[0]}.obj")
