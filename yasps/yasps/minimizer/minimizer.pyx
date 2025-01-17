@@ -172,6 +172,7 @@ class minimizer:
     # ok now we have the indices put to their corresponding place
     # we can remove the duplicates
     compressedIndices: List[List[Tuple[int, int]]] = [list(map(tuple, (np.unique(np.array(item), axis = 0)))) for item in uncompressedIndicesByDimensions]
+    print(f"There are {sum([len(x) for x in compressedIndices])} unique blocks")
     ###################################################
     ## remove this code, this is for analysis
     ###################################################
