@@ -172,8 +172,6 @@ class minimizer:
     # ok now we have the indices put to their corresponding place
     # we can remove the duplicates
     compressedIndices: List[List[Tuple[int, int]]] = [list(map(tuple, (np.unique(np.array(item), axis = 0)))) for item in uncompressedIndicesByDimensions]
-    print(f"There are {sum([len(x) for x in compressedIndices])} unique blocks")
-    print(compressedIndices)
     ###################################################
     ## remove this code, this is for analysis
     ###################################################
@@ -247,8 +245,6 @@ class minimizer:
       hessian_block_dimensions = energy_hessian_block_dimensions[i] # get the dimensions of the blocks
       where_to_check = [self.__blockDimensions.index(item) for item in hessian_block_dimensions] # we need to know where to check (the index of that dimension)
       where_to_check += [self.__blockDimensions.index((item[1], item[0])) for item in hessian_block_dimensions] # we also need to check the transposed block
-      print("Where to check length")
-      print(len(where_to_check))
       self.__energies[i].hessian_blocks_where_to_check = gpuarray.to_gpu(np.array(where_to_check, dtype = np.uint32)) # we store where to check for each block
       # ok now we know for each coordinate, which block to check
       # we need to get the index of the block
@@ -265,7 +261,6 @@ class minimizer:
         ]
         for j in range(len(uncompressedIndicesLocal))]
       self.energies[i].block_indices_gpu = gpuarray.to_gpu(np.array(hessian_block_indices, dtype = np.uint32)) # we now store for each smaller block, what is the index in the data array
-    print(self.__blockDimensions)
     print("Sparse indices set")
 
   def generateHessianAndGradient(self):

@@ -198,9 +198,9 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
         }}
       }} else{{
         // we are in the lower triangle
-        for (unsigned int k = 0; k < block_rows; k++){{
-          for (unsigned int l = 0; l < block_cols; l++){{
-            atomicAdd(&hessian_blocks[off_diagonal_block_placement + k * block_cols + l], hg_mat(col_offset + l, row_offset + k));
+        for (unsigned int k = 0; k < block_cols; k++){{
+          for (unsigned int l = 0; l < block_rows; l++){{
+            atomicAdd(&hessian_blocks[off_diagonal_block_placement + k * block_cols + l], hg_mat(row_offset + l, col_offset + k));
           }}
         }}
       }}
