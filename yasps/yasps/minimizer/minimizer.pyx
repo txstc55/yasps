@@ -147,7 +147,7 @@ class minimizer:
           energy_hessian_block_dimensions[-1].append((sizes[i], sizes[j]))
 
     # get the unique block sizes and sort them based on the block sizes
-    self.__blockDimensions = list(set([item for sublist in energy_hessian_block_dimensions for item in sublist]))
+    self.__blockDimensions = list(set([item for sublist in energy_hessian_block_dimensions for item in sublist] + [(item[1], item[0]) for sublist in energy_hessian_block_dimensions for item in sublist])) # add the block dimensions and the transposed block dimension to be safe
     self.__blockDimensions.sort()
     # print('Dimensions of the blocks are: ')
     # print(self.__blockDimensions)
@@ -160,11 +160,14 @@ class minimizer:
       # ok now first, we check where to put the blocks
       hessian_block_dimensions = energy_hessian_block_dimensions[i]
       where_to_put = [self.__blockDimensions.index(item) for item in hessian_block_dimensions]
+      where_to_put_transposed = [self.__blockDimensions.index((item[1], item[0])) for item in hessian_block_dimensions]
       # ok now we know where to put each coordinate
       # let's do it
       for j in range(len(where_to_put)):
         # for each dimension, we need to put all the uncompressed indices
-        uncompressedIndicesByDimensions[where_to_put[j]] += uncompressedIndices[start + j : end : len(hessian_block_dimensions)]
+        uncompressedIndicesByDimensions[where_to_put[j]] += [item for item in uncompressedIndices[start + j : end : len(hessian_block_dimensions)] if item[0] <= item[1]]
+        uncompressedIndicesByDimensions[where_to_put_transposed[j]] += [(item[1], item[0]) for item in uncompressedIndices[start + j : end : len(hessian_block_dimensions)] if item[0] > item[1]]
+
     print("Compressed indices set")
     # ok now we have the indices put to their corresponding place
     # we can remove the duplicates
@@ -242,10 +245,22 @@ class minimizer:
       uncompressedIndicesLocal = uncompressedIndices[start:end] # get the coordinates in the uncompressed order
       hessian_block_dimensions = energy_hessian_block_dimensions[i] # get the dimensions of the blocks
       where_to_check = [self.__blockDimensions.index(item) for item in hessian_block_dimensions] # we need to know where to check (the index of that dimension)
+      where_to_check += [self.__blockDimensions.index((item[1], item[0])) for item in hessian_block_dimensions] # we also need to check the transposed block
       self.__energies[i].hessian_blocks_where_to_check = gpuarray.to_gpu(np.array(where_to_check, dtype = np.uint32)) # we store where to check for each block
       # ok now we know for each coordinate, which block to check
       # we need to get the index of the block
-      hessian_block_indices: List[int] = [compressedIndicesMap[(where_to_check[j % len(where_to_check)], uncompressedIndicesLocal[j][0], uncompressedIndicesLocal[j][1])] for j in range(len(uncompressedIndicesLocal))]
+      hessian_block_indices: List[int] = [
+        compressedIndicesMap[
+          where_to_check[j % (len(where_to_check)) // 2],
+          uncompressedIndicesLocal[j][0],
+          uncompressedIndicesLocal[j][1]
+        ] if (uncompressedIndicesLocal[j][0] <= uncompressedIndicesLocal[j][1]) else
+        compressedIndicesMap[
+          where_to_check[(j % (len(where_to_check)) // 2 + len(where_to_check) // 2)],
+          uncompressedIndicesLocal[j][1],
+          uncompressedIndicesLocal[j][0]
+        ]
+        for j in range(len(uncompressedIndicesLocal))]
       self.energies[i].block_indices_gpu = gpuarray.to_gpu(np.array(hessian_block_indices, dtype = np.uint32)) # we now store for each smaller block, what is the index in the data array
     print("Sparse indices set")
 
