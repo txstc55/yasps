@@ -1,7 +1,7 @@
 from yasps import scene
 from yasps import attribute
 import numpy as np
-NUM_SEGMENTS = 100
+NUM_SEGMENTS = 7
 
 def angle(v, w, axis):
   theta = 2.0 * (v.cross(w).dot(axis) / axis.norm()).atan2(v.dot(w) + v.norm() * w.norm())

@@ -1,7 +1,7 @@
 from yasps import scene
 from yasps import attribute
 import numpy as np
-NUM_SEGMENTS = 1000
+NUM_SEGMENTS = 10
 
 def generate_cloth_mesh(length_of_square, num_subdivisions):
   num_vertices_per_side = num_subdivisions + 1
