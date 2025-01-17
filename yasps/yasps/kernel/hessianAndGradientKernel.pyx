@@ -182,7 +182,7 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
       unsigned int block_cols = block_sizes[j];
       // now we know the size of the block, we need to put it to the correct block
       // we need to put it in the off diagonal blocks
-      unsigned int where_to_check = hessian_blocks_where_to_check[off_diagonal_counts]; // know which off diagonal block we are in
+      unsigned int where_to_check = raw_position_i <= raw_position_j ? hessian_blocks_where_to_check[off_diagonal_counts] : hessian_blocks_where_to_check[off_diagonal_counts + {((len(self.__block_sizes) + 1) * len(self.__block_sizes)) // 2}]; // know which off diagonal block we are in
       unsigned int off_diagonal_block_start_index = hessian_blocks_start_indices[where_to_check]; // get the start index of this off diagonal block
       unsigned int placement_index = hessian_blocks_indices[index * {len(self.__block_sizes) * (len(self.__block_sizes) + 1) // 2} + off_diagonal_counts]; // get the placement index
       unsigned int off_diagonal_block_placement = off_diagonal_block_start_index + placement_index * block_rows * block_cols; // get the placement index
