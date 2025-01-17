@@ -199,7 +199,7 @@ def plot_segments(points):
 # plt.show()
 
 weight = 0.05
-for i in range(501):
+for i in range(500):
   result = s.minimizeEnergy()
   result = result[0].get().reshape(-1, 3)
 
@@ -219,6 +219,6 @@ for i in range(501):
   updated_value = updated_value.reshape(-1, 3)
   vertex_positions.updateValue(updated_value)
   plot_segments(updated_value)
-  if i % 100 == 0:
+  if i % 1 == 0:
     # save the updated value to a file using numpy
     np.save(f"repulsive_data/output_surface_{i}_config1.npy", updated_value)
