@@ -1,7 +1,7 @@
 from yasps import scene
 from yasps import attribute
 import numpy as np
-NUM_SEGMENTS = 500
+NUM_SEGMENTS = 100
 
 def angle(v, w, axis):
   theta = 2.0 * (v.cross(w).dot(axis) / axis.norm()).atan2(v.dot(w) + v.norm() * w.norm())
@@ -242,22 +242,22 @@ s0.addMinimizeTarget([vp])
 ## visualize the mesh
 ###################################################
 import pyvista as pv
-triangles = np.array(faces)
-cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
-mesh = pv.PolyData(vp.value.get().reshape(-1, 3), cells)
+# triangles = np.array(faces)
+# cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
+# mesh = pv.PolyData(vp.value.get().reshape(-1, 3), cells)
 
-plotter = pv.Plotter()
-plotter.add_mesh(mesh)
-sphere_mesh = pv.Sphere(radius=1.0, center=(0,0,0), phi_resolution=30, theta_resolution=30)
-plotter.add_mesh(sphere_mesh, color='cyan')
-# Set the camera position
-camera_position = [
-  (0, 30, 50),    # Camera position
-  (0, 0, 0),    # Focal point (where the camera looks at)
-  (0, 1, 0)     # View up direction
-]
-plotter.camera_position = camera_position
-plotter.show(interactive_update=True)
+# plotter = pv.Plotter()
+# plotter.add_mesh(mesh)
+# sphere_mesh = pv.Sphere(radius=1.0, center=(0,0,0), phi_resolution=30, theta_resolution=30)
+# plotter.add_mesh(sphere_mesh, color='cyan')
+# # Set the camera position
+# camera_position = [
+#   (0, 30, 50),    # Camera position
+#   (0, 0, 0),    # Focal point (where the camera looks at)
+#   (0, 1, 0)     # View up direction
+# ]
+# plotter.camera_position = camera_position
+# plotter.show(interactive_update=True)
 
 iteration = 0
 cloth_vertices_last = vp.value.copy()
@@ -267,22 +267,22 @@ while iteration < 1000:
   dp = solution[0]
   vp_new = vp.value - dp * DT
   vp.updateValue(vp_new, deepCopy = True)
-  mesh.points = vp_new.get().reshape(-1, 3)
-  plotter.update_coordinates(mesh.points, mesh=mesh)
-  plotter.render()
-  plotter.update()
+  # mesh.points = vp_new.get().reshape(-1, 3)
+  # plotter.update_coordinates(mesh.points, mesh=mesh)
+  # plotter.render()
+  # plotter.update()
   cloth_vertices = vp_new
   # update velocities
   if iteration % 1 == 0:
     vv.updateValue((cloth_vertices - cloth_vertices_last) / DT, deepCopy = True) # damp the velocity a bit
     bunny_vertices_last = cloth_vertices.copy()
   iteration += 1
-  print("Iteration:", iteration)
-  if iteration == 999:
-    mesh.points = vp_new.get().reshape(-1, 3)
-    plotter.update_coordinates(mesh.points, mesh=mesh)
-    plotter.render()
-    plotter.update()
+  # print("Iteration:", iteration)
+  # if iteration == 999:
+  #   mesh.points = vp_new.get().reshape(-1, 3)
+  #   plotter.update_coordinates(mesh.points, mesh=mesh)
+  #   plotter.render()
+  #   plotter.update()
 
-# export the final mesh
-mesh.save(f"cloth_out/cloth_{faces.shape[0]}.obj")
+# # export the final mesh
+# mesh.save(f"cloth_out/cloth_{faces.shape[0]}.obj")
