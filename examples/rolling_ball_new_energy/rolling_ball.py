@@ -38,11 +38,13 @@ pyd = pins.addAttribute("y_displacement", rows = 1, cols = 1)
 pins["y_displacement"].updateValue([1.0] * NUM_PINS_PER_DIRECTION * NUM_PINS_PER_DIRECTION)
 # now we add the tangent point energy
 
-def repulsive_energy(pin_base, pin_y_disp, center, radius, target):
+def repulsive_energy(pin_base, pin_y_disp, center, radius, dHat, kappa, target):
   p0 = pin_base + attribute.to_array([0.0, pin_y_disp, 0.0], rows = 3, cols = 1) # this is the top of the pin
-  direction = (center - p0) / (center - p0).norm()
-  target_direction = (target - center) / (target - center).norm()
-  return 1000.0 * (1.0 - (direction.dot(target_direction))) / (center - p0).norm().pow(0.001)
+  p1 = center + ((p0 - center) / (p0 - center).norm()) * radius
+  distance = (p0 - p1).dot(p0 - p1).sqrt()
+  # distance = attribute.select(distance < attribute(float_value = dHat), distance, attribute(float_value = dHat))
+  gradient = (-2.0 * (distance - dHat) * (distance / dHat).log() - (distance - dHat) * (distance - dHat) / distance) * (center - p0) / (p0 - center).norm() # d barrier / d center
+  return attribute.select(distance > attribute(float_value = dHat), attribute(float_value = 0.0), kappa * (gradient / gradient.norm() - (center - target) / (center - target).norm()).norm())
 
 def repel_ball(pin_base, pin_y_disp, center, radius, dHat, kappa):
   p0 = pin_base + attribute.to_array([0.0, pin_y_disp, 0.0], rows = 3, cols = 1) # this is the top of the pin
@@ -52,7 +54,7 @@ def repel_ball(pin_base, pin_y_disp, center, radius, dHat, kappa):
   b = -((distance - dHat) * (distance - dHat)) * (distance / dHat).log()
   return kappa * b
 
-pins.addAttribute("repulsive", computed_attribute = repulsive_energy(pins["base_position"], pins["y_displacement"], pb["ball_center"], pb["ball_radius"], pb["ball_target"]))
+pins.addAttribute("repulsive", computed_attribute = repulsive_energy(pins["base_position"], pins["y_displacement"], pb["ball_center"], pb["ball_radius"], 0.4, 10.0, pb["ball_target"]))
 pins.addAttribute("position_penalty", computed_attribute = 10.0 * (pyd - 1.0) * (pyd - 1.0) / (pyd * (2.0 - pyd)))
 pins.addAttribute("repel_ball_small", computed_attribute = repel_ball(pins["base_position"], pins["y_displacement"], pb["ball_center"], pb["ball_radius"], 0.1, 1.0))
 pins.addAttribute("repel_ball_large", computed_attribute = repel_ball(pins["base_position"], pins["y_displacement"], pb["ball_center"], pb["ball_radius"], 0.1, 2.0))
@@ -118,7 +120,7 @@ while iteration < 5000:
   ball_center_last = pb['ball_center'].value.copy()
 
   # Update visualization if needed
-  if iteration % 1 == 0:
+  if iteration % 100 == 0:
     y_displacements = pins['y_displacement'].value.get()
     for j in range(NUM_PINS_PER_DIRECTION * NUM_PINS_PER_DIRECTION):
       pins_mesh[j].SetPosition(np.array([0.0, y_displacements[j], 0.0]))
