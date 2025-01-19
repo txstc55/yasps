@@ -117,10 +117,6 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
     f.write(self.__kernelString)
     f.close()
 
-    # if "stable" in attributeName:
-    #   f = open("/home/xuan/Desktop/research/yasps/tests/energy/testing_kernel_stable.cu", 'r')
-    #   self.__kernelString = f.read()
-    #   f.close()
 
     mod = SourceModule(
       self.__kernelString,

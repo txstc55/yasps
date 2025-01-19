@@ -249,13 +249,6 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
     f = open("testing_hessian_and_gradient_kernel.cu", "w")
     f.write(self.__kernelString)
     f.close()
-    # f = open("/home/xuan/Desktop/research/yasps/tests/energy/testing_hessian_and_gradient_kernel.cu", 'r')
-    # codes = f.read()
-    # mod = SourceModule(
-    #   codes,
-    #   options = ["-std=c++11", '-O3', '-I/usr/include/eigen3', "--expt-relaxed-constexpr", "--disable-warnings"],
-    #   no_extern_c = True
-    # )
     mod = SourceModule(
       self.__kernelString,
       options = ["-std=c++11", '-O3', '-I/usr/include/eigen3', "--expt-relaxed-constexpr", "--disable-warnings"],
