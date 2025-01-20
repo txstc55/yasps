@@ -251,12 +251,12 @@ class minimizer:
       # we need to get the index of the block
       hessian_block_indices: List[int] = [
         compressedIndicesMap[
-          where_to_check[j % (len(where_to_check)) // 2],
+          where_to_check[j % (len(where_to_check) // 2)],
           uncompressedIndicesLocal[j][0],
           uncompressedIndicesLocal[j][1]
         ] if (uncompressedIndicesLocal[j][0] <= uncompressedIndicesLocal[j][1]) else
         compressedIndicesMap[
-          where_to_check[(j % (len(where_to_check)) // 2 + len(where_to_check) // 2)],
+          where_to_check[((j % (len(where_to_check) // 2)) + (len(where_to_check) // 2))],
           uncompressedIndicesLocal[j][1],
           uncompressedIndicesLocal[j][0]
         ]
