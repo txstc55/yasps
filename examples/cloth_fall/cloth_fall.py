@@ -1,7 +1,31 @@
 from yasps import scene
 from yasps import attribute
 import numpy as np
-NUM_SEGMENTS = 10
+NUM_SEGMENTS = 100
+
+def angle(v, w, axis):
+  theta = 2.0 * (v.cross(w).dot(axis) / axis.norm()).atan2(v.dot(w) + v.norm() * w.norm())
+  return theta
+def edgeTheta(q0, q1, q2, q3):
+  n0 = (q0 - q2).cross(q1 - q2)
+  n1 = (q1 - q3).cross(q0 - q3)
+  axis = q1 - q0
+  theta = angle(n0, n1, axis)
+  return theta
+def bending(x, x_init, bendStiff):
+  x0 = x.row(0)
+  x1 = x.row(1)
+  x2 = x.row(2)
+  x3 = x.row(3)
+  t = edgeTheta(x0, x1, x2, x3)
+  x_init0 = x_init.row(0)
+  x_init1 = x_init.row(1)
+  x_init2 = x_init.row(2)
+  x_init3 = x_init.row(3)
+  t_init = edgeTheta(x_init0, x_init1, x_init2, x_init3)
+  bend_energy = bendStiff * (t - t_init) * (t - t_init) * (x_init1 - x_init0).norm()
+  return bend_energy
+
 
 def generate_cloth_mesh(length_of_square, num_subdivisions):
   num_vertices_per_side = num_subdivisions + 1
@@ -12,7 +36,7 @@ def generate_cloth_mesh(length_of_square, num_subdivisions):
   for j in range(num_vertices_per_side):
     for i in range(num_vertices_per_side):
       x = i * step - length_of_square / 2
-      y = x / 2.0
+      y = 0.0
       z = j * step - length_of_square / 2
       vertices.append((x, y, z))
   faces = []
@@ -85,9 +109,49 @@ def floor_collision(v0, dHat, offset, kappa):
 ## initialize vertices and faces
 ###################################################
 vertices, faces = generate_cloth_mesh(6.0, NUM_SEGMENTS)
+# generate a random rotation matrix with two angles
+phi = 0.38
+theta = 1.23
+rotation_matrix = np.array([[np.cos(phi), 0, np.sin(phi)], [0, 1, 0], [-np.sin(phi), 0, np.cos(phi)]]) @ np.array([[1, 0, 0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]])
+vertices = np.array(vertices) @ rotation_matrix
+
 vertices = np.array(vertices) + np.array([0.0, 3.0, 0.0])
 faces = np.array(faces)
 
+edge_to_triangle = {}
+for i in range(faces.shape[0]):
+  v0 = faces[i, 0]
+  v1 = faces[i, 1]
+  v2 = faces[i, 2]
+  for edge in [(v0, v1), (v1, v2), (v2, v0)]:
+    starting_index = edge[0]
+    ending_index = edge[1]
+    flipped = False
+    if starting_index > ending_index:
+      starting_index, ending_index = ending_index, starting_index
+      flipped = True
+    if (starting_index, ending_index) not in edge_to_triangle:
+      edge_to_triangle[(starting_index, ending_index)] = []
+    edge_to_triangle[(starting_index, ending_index)].append(-i - 1 if flipped else i)
+edge_to_triangle_vertices = []
+for item in edge_to_triangle:
+  if len(edge_to_triangle[item]) == 2:
+    indices = [item[0], item[1], -1, -1]
+    for triangle_ind in edge_to_triangle[item]:
+      # determine the third vertex
+      true_ind = triangle_ind
+      if triangle_ind < 0:
+        true_ind = -triangle_ind - 1
+      new_ind = -1
+      for i in range(3):
+        if faces[true_ind, i] != item[0] and faces[true_ind, i] != item[1]:
+          new_ind = faces[true_ind, i]
+          break
+      if triangle_ind < 0:
+        indices[3] = new_ind
+      else:
+        indices[2] = new_ind
+    edge_to_triangle_vertices.append(indices)
 
 ###################################################
 ## initialize mesh
@@ -103,6 +167,8 @@ cloth["sphere_radius"].updateValue([1.0])
 
 v = cloth.addPrimitive("vertices", numInstances = vertices.shape[0])
 f = cloth.addPrimitive("faces", numInstances = faces.shape[0])
+e = cloth.addPrimitive("edge_pairs", numInstances = len(edge_to_triangle_vertices))
+edge_connect_vertex = e.addConnectivity("edge_to_vertex", v, edge_to_triangle_vertices, 4)
 # add connectivity
 face_connect_vertex = f.addConnectivity("face_to_vertex", v, faces, 3)
 # add position attribute to vertices
@@ -120,6 +186,11 @@ vlp.updateValue(vp.value.get())
 # gather values to each triangle
 frp = f.addAttribute("rest_position", through = face_connect_vertex, source = vrp)
 fp = f.addAttribute("position", through = face_connect_vertex, source = vp)
+
+# gather values to each edge
+erp = e.addAttribute("rest_position", through = edge_connect_vertex, source = vrp)
+ep = e.addAttribute("position", through = edge_connect_vertex, source = vp)
+
 # add attribute to faces
 stretch = f.addAttribute("stretch", rows = 1, cols = 1)
 stretch.updateValue(np.ones(len(faces)) * 10000.0)
@@ -129,12 +200,14 @@ shear.updateValue(np.ones(len(faces)) * 1000.0)
 ###################################################
 ## add energy
 ###################################################
-bw = f.addAttribute("baraff_witkin", computed_attribute = baraff_witkin_energy(frp, fp, 10000, 1000, 0.1, DT))
+bw = f.addAttribute("baraff_witkin", computed_attribute = baraff_witkin_energy(frp, fp, 10000, 1000, 0.01, DT))
 floor_collision_energy = v.addAttribute("floor_collision_energy", computed_attribute = floor_collision(vp, 0.2 , -2.0, 1.0))
 inertia_energy = v.addAttribute("inertia", computed_attribute = inertia(vlp, vv, DT, vp, vm))
+bending_energy = e.addAttribute("bending_energy", computed_attribute = bending(ep, erp, 0.001))
 s0.addEnergy(floor_collision_energy)
 s0.addEnergy(bw)
 s0.addEnergy(inertia_energy)
+s0.addEnergy(bending_energy)
 s0.addMinimizeTarget([vp])
 
 ###################################################

@@ -240,6 +240,7 @@ def update_position():
   # Refresh the plotter to reflect the updated mesh
   plotter.update_coordinates(mesh_moved.points, mesh=mesh_moved)
   plotter.render()
+  print(f"Iteration {total_frames}")
   print(f"Total energy is: {sum(bunny.vertex["position_penalty"].compute().value.get())}")
 
 # save the original
