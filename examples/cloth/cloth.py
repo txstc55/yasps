@@ -275,7 +275,7 @@ while iteration < 1000:
   # update velocities
   if iteration % 1 == 0:
     vv.updateValue((cloth_vertices - cloth_vertices_last) / DT, deepCopy = True) # damp the velocity a bit
-    bunny_vertices_last = cloth_vertices.copy()
+    cloth_vertices_last = cloth_vertices.copy()
   iteration += 1
   print("Iteration:", iteration)
   # if iteration == 999:

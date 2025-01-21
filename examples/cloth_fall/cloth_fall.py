@@ -220,6 +220,7 @@ mesh = pv.PolyData(vp.value.get().reshape(-1, 3), cells)
 
 plotter = pv.Plotter()
 plotter.add_mesh(mesh)
+mesh.save(f"cloth_fall_out/cloth_{faces.shape[0]}_init.obj")
 # sphere_mesh = pv.Sphere(radius=1.0, center=(0,0,0), phi_resolution=30, theta_resolution=30)
 # plotter.add_mesh(sphere_mesh, color='cyan')
 # Set the camera position
@@ -247,7 +248,7 @@ while iteration < 1000:
   # update velocities
   if iteration % 1 == 0:
     vv.updateValue((cloth_vertices - cloth_vertices_last) / DT, deepCopy = True) # damp the velocity a bit
-    bunny_vertices_last = cloth_vertices.copy()
+    cloth_vertices_last = cloth_vertices.copy()
   iteration += 1
   print("Iteration:", iteration)
   if iteration == 999:
