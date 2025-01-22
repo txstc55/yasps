@@ -138,10 +138,10 @@ def repulsive_energy_diff_loop(points, alpha, beta):
   return r
 
 same_repulsive_energy_value = repulsive_energy_same_loop(same_edge_pair_positions, m["alpha"], m["beta"])
-same_repulsive_energy = same_edge_pairs.addAttribute("same_repulsive_energy", computed_attribute = same_repulsive_energy_value * m.attributes["same_repulsive_weight"])
+same_repulsive_energy = same_edge_pairs.addAttribute("same_repulsive_energy", computed_attribute = same_repulsive_energy_value * m["same_repulsive_weight"])
 
 diff_repulsive_energy_value = repulsive_energy_same_loop(diff_edge_pair_positions, m["alpha"], m["beta"])
-diff_repulsive_energy = diff_edge_pairs.addAttribute("diff_repulsive_energy", computed_attribute = diff_repulsive_energy_value * m.attributes["diff_repulsive_weight"])
+diff_repulsive_energy = diff_edge_pairs.addAttribute("diff_repulsive_energy", computed_attribute = diff_repulsive_energy_value * m["diff_repulsive_weight"])
 
 # # we will also two barrier energies to make it repulsive from the shell
 # # the first shell is with radius 0.9, the second is 1.1
@@ -162,7 +162,6 @@ diff_repulsive_energy = diff_edge_pairs.addAttribute("diff_repulsive_energy", co
 
 s.addEnergy(same_repulsive_energy)
 s.addEnergy(diff_repulsive_energy)
-# s.addEnergy(barrier_energy)
 s.addMinimizeTarget([vertex_positions])
 
 import matplotlib.pyplot as plt
@@ -200,18 +199,16 @@ weight = 0.05
 for i in range(500):
   result = s.minimizeEnergy()
   result = result[0].get().reshape(-1, 3)
-
   updated_value = (vertex_positions.value.get().reshape(-1, 3) - weight * result)
   # normalize it
   updated_value = updated_value / np.linalg.norm(updated_value, axis=1)[:, None]
   # get the maximum change's norm
   updated_value = updated_value.reshape(NUM_LOOPS, NUM_POINTS, 3)
-
-  # # Perform the vectorized computation within each loop
+  # Perform the vectorized computation within each loop
   updated_value = (
-      0.9 * updated_value +
-      0.05 * np.roll(updated_value, shift=-1, axis=1) +  # Next point in the same loop
-      0.05 * np.roll(updated_value, shift=1, axis=1)     # Previous point in the same loop
+    0.9 * updated_value +
+    0.05 * np.roll(updated_value, shift=-1, axis=1) +  # Next point in the same loop
+    0.05 * np.roll(updated_value, shift=1, axis=1)     # Previous point in the same loop
   )
   # If needed, reshape updated_value back to its original shape
   updated_value = updated_value.reshape(-1, 3)

@@ -1,7 +1,6 @@
 from yasps import scene
 import numpy as np
 DT = 0.1
-VERTEX_MASS = 0.1
 ELASTICITY_CONSTANT = 100000.0
 # define the string
 NUM_LINE_SEGMENTS = 1000
@@ -107,8 +106,6 @@ ltp = line_top.addAttribute("top_position", through = lt2lv, source = lvp)
 lbbp = line_bottom.addAttribute("bunny_position", through = lb2bv, source = bvp) # the position of the bunny vertex that's connected to the line
 lblp = line_bottom.addAttribute("line_position", through = lb2lv, source = lvp) # the position of the line vertex that's connected to the bunny
 lp = lines.addAttribute("position", through = l2lv, source = lvp) # the position of the line is defined by the line vertices
-# print(lvp.compute().value.get())
-# print(lp.compute().value.get())
 
 ######################################################
 ## add energy
@@ -128,14 +125,8 @@ line_bottom.addAttribute("elasticity", computed_attribute = ELASTICITY_CONSTANT 
 
 # finally, we need to add inertia to the bunny
 def inertia(v0, vel, dt, x, mass):
-  # v0 is the position we got before
-  # vel is velocity
-  # x is the position we are now
   x_target = v0 + vel * dt - attribute.to_array([attribute(float_value = 0.0), attribute(float_value = 9.8 * dt * dt), attribute(float_value = 0.0)], rows = 3, cols = 1)
   return (0.5 * (x - x_target).transpose() * mass * (x - x_target))
-# bm = bv.addAttribute("mass", rows = 1, cols = 1)
-# bm.updateValue(np.square(np.max(np.abs(vertices[:, 0])) + vertices[:, 0]) * 0.05)
-# bm.updateValue(vertices[:, 0])
 bm = bv.addAttribute("mass", computed_attribute = bvp[0])
 bv.addAttribute("inertia", computed_attribute = inertia(bvlp, bvv, DT, bvp, bm))
 
@@ -185,17 +176,6 @@ plotter.show(interactive_update=True)
 iteration = 0
 bunny_vertices_last = bunny_vertices.copy() # copy just to be safe
 while iteration <= 200000:
-  # if iteration % 100 == 0:
-  #   # save the mesh of the bunny
-  #   bunny_vertices = bvp.compute().value.get()
-  #   line_vertices = lvp.compute().value.get()
-  #   cells = np.hstack([np.full((faces.shape[0], 1), 3), faces])
-  #   mesh = pv.PolyData(bunny_vertices, cells)
-  #   mesh.save(f"results/bunny_{iteration}.obj")
-  #   # save the line as npy file
-  #   line_points = np.vstack([np.array([0, 0, 0]).reshape(-1, 3), line_vertices.reshape(-1, 3), bunny_vertices.reshape(-1, 3)[max_y_index].reshape(-1, 3)])
-  #   np.save(f"results/line_{iteration}.npy", line_points)
-
   solution = s0.minimizeEnergy()
   d_roll = solution[0].get()
   d_pitch = solution[1].get()
@@ -219,5 +199,4 @@ while iteration <= 200000:
     bvlp.updateValue(bunny_vertices)
     bvv.updateValue((bunny_vertices - bunny_vertices_last) / DT)
     bunny_vertices_last = bunny_vertices.copy()
-
   iteration += 1
