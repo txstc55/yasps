@@ -1,8 +1,6 @@
 from yasps import scene
 from yasps.attribute import attribute
-from yasps.autodiff import autodiff
 import numpy as np
-import math
 np.random.seed(13)
 NUM_POINTS = 1000
 NUM_LOOPS = 2
