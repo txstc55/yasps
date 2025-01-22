@@ -92,7 +92,7 @@ NUM_TETS = 79935
 
 
 # Move multipliers to device inside the function to ensure they are on GPU
-def batch_tet_energy(current_tet_pos, rest_tet_pos, mu, lam, num_iterations=NUM_TETS)):
+def batch_tet_energy(current_tet_pos, rest_tet_pos, mu, lam, num_iterations=NUM_TETS):
   x = current_tet_pos.repeat(num_iterations, 1, 1)  # Shape: (num_iterations, 4, 3)
   rest = rest_tet_pos.repeat(num_iterations, 1, 1)  # Shape: (num_iterations, 4, 3)
   multipliers = torch.arange(1, num_iterations + 1, dtype=torch.float64, device=device)  # Shape: (num_iterations,)
