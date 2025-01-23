@@ -33,7 +33,7 @@ class energy:
     self.__hessian_blocks_where_to_check: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # we have a flattened array which stores the blocks. The blocks are sorted by dimensions. We need to know which block we are in for each smaller blocks in the hessian
     self.__merged_hessian_and_gradient_attribute: Optional[attribute] = None
     self.__project_entire_hessian = False
-    self.__projection_method = projection_method # 0 for no projection, 1 for absolute, 0 for max(0, val)
+    self.__projection_method = projection_method # 0 for no projection, 1 for absolute, 2 for max(0, val)
     self.__save_intermediate = save_intermediate # save intermediate gradient and hessian result
     self.__intermediate_compute_pairs: Dict[str, Tuple[attribute, attribute]] = {} # save the intermediate compute pairs
 
