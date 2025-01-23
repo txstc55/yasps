@@ -162,7 +162,7 @@ class energy:
 
 
   def __duplicatePath(self, path: List[attribute]) -> List[List[attribute]]:
-    from yasps.attribute import DATA, GATHER, FLOAT
+    from yasps.attribute import DATA, GATHER, ROW
     if path[0].operator == DATA:
       # we've reached the end
       # return itself
@@ -175,7 +175,8 @@ class energy:
       for i in range(path[0].through.dimension):
         # duplicate each path
         for childrenPath in childrenPaths:
-          duplicatedPaths.append([path[0].row(i)] + childrenPath)
+          explicit_row = attribute(children = [path[0], attribute(index_value = i)], operator = ROW, correspondance = path[0].correspondance, rows = 1, cols = path[0].cols)
+          duplicatedPaths.append([explicit_row] + childrenPath)
       return duplicatedPaths
     else:
       # we are at top level
