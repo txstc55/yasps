@@ -257,16 +257,16 @@ class attribute:
     #   return True
     # if self.operator == ARRAY_ACCESS:
     #   return self.children[0].isFloatMat
-    # if self.operator == NEG:
-    #   return self.children[0].isFloatMat
-    # if self.operator == ROW:
-    #   return self.children[0].isFloatMat
-    # if self.operator == COL:
-    #   return self.children[0].isFloatMat
-    # if self.operator == RESIZE:
-    #   return self.children[0].isFloatMat
-    # if self.operator == TRANSPOSE:
-    #   return self.children[0].isFloatMat
+    if self.operator == NEG:
+      return self.children[0].isFloatMat
+    if self.operator == ROW:
+      return self.children[0].isFloatMat
+    if self.operator == COL:
+      return self.children[0].isFloatMat
+    if self.operator == RESIZE:
+      return self.children[0].isFloatMat
+    if self.operator == TRANSPOSE:
+      return self.children[0].isFloatMat
     return False
 
   ################################################
