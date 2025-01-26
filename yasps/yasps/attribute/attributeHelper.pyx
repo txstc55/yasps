@@ -194,10 +194,12 @@ def attribute2str(att: ya.attribute):
       return f"{att.children[0]}.resize({att.children[1]}, {att.children[2]})"
     elif att.operator == ya.SPD:
       return f"{att.children[0]}.spd({att.children[1]})"
+    elif att.operator == ya.NEG:
+      return f"-{att.children[0]}"
     else:
-      raise ValueError("attribute.__str__: unknown operator type.")
+      raise ValueError(f"attribute.__str__: unknown operator type. Name: {att.operator.name}, Type: {att.operator.type}.")
   else:
-    raise ValueError("attribute.__str__: unknown operator type.")
+    raise ValueError(f"attribute.__str__: unknown operator type. Name: {att.operator.name}, Type: {att.operator.type}.")
 
 
 def checkHeritage(a1: ya.attribute, a2: ya.attribute) -> ya.attribute:
@@ -206,6 +208,10 @@ def checkHeritage(a1: ya.attribute, a2: ya.attribute) -> ya.attribute:
   if a1.operator == ya.TRANSPOSE:
     return checkHeritage(a1.children[0], a2)
   if a2.operator == ya.TRANSPOSE:
+    return checkHeritage(a1, a2.children[0])
+  if a1.operator == ya.RESIZE:
+    return checkHeritage(a1.children[0], a2)
+  if a2.operator == ya.RESIZE:
     return checkHeritage(a1, a2.children[0])
   # add special case for select
   if a1.operator == ya.SELECT and a1.correspondance is None:

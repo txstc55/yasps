@@ -605,13 +605,16 @@ __device__ __inline__ void {attributeName}_device_function({"".join([f"const dou
       attribute_name = f"INTERMEDIATE_{ind}"
 
       if origin_mat.rows == 1 or origin_mat.cols == 1:
-        attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}> {attribute_name}"
+        attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
       else:
-        attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}, Eigen::RowMajor> {attribute_name}"
+        attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}, Eigen::RowMajor> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
+      if current.rows == 1 or current.cols == 1:
+        attribute_initialization += f'''Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}'''
+      else:
+        attribute_initialization += f'''Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}'''
     # copy the data and resize
     self.__code_strings.append(f'''
-  {attribute_initialization} = {self.getIntermediateName(current.children[0])};
-  {attribute_name}.resize({current.rows}, {current.cols});''')
+  {attribute_initialization}({attribute_name}_before_resize.data());''')
 
   def __generate_code_for_spd(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)

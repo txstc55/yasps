@@ -165,9 +165,9 @@ tet_deform.addConnectivity("tet_deform_to_tet", bunny.tet, np.arange(tet_indices
 # ok we now accumulate the vol, IB and deformation gradient to tet_deform
 vol = tet_deform.addAttribute("vol", through = tet_deform.connectivities["tet_deform_to_tet"])
 IB = tet_deform.addAttribute("IB", through = tet_deform.connectivities["tet_deform_to_tet"])
-IB.reshape(3, 3) # need to reshape
+IB = IB.resize(3, 3) # need to reshape
 deformation = tet_deform.addAttribute("deformation_gradient", through = tet_deform.connectivities["tet_deform_to_tet"])
-deformation.reshape(3, 3) # need to reshape
+deformation = deformation.resize(3, 3) # need to reshape
 
 def stable_neo_hookean(mu, lam, vol, IB, F):
   FI = F.transpose() * IB

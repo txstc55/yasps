@@ -192,7 +192,7 @@ class attribute:
       raise ValueError("attribute.resize: new shape must have the same number of elements.")
     if self.size == 1:
       return self
-    return attribute(children = [self, attribute(index_value = rows), attribute(index_value = cols)], operator = RESIZE)
+    return attribute(children = [self, attribute(index_value = rows), attribute(index_value = cols)], operator = RESIZE, rows = rows, cols = cols, correspondance = self.correspondance)
 
   @property
   def operator(self):
@@ -249,11 +249,24 @@ class attribute:
     # because it doesnt need correspondance
     if self.operator == ARRAY:
       for i in range(self.size):
-        if not self.children[i].operator == FLOAT:
+        if not (self.children[i].operator == FLOAT):
           return False
       return True
-    if self.operator == TRANSPOSE:
-      return self.children[0].isFloatMat
+    # # SPECIAL CASES FOR CHECKING IF A MAT IS FLOAT
+    # if self.operator == FLOAT:
+    #   return True
+    # if self.operator == ARRAY_ACCESS:
+    #   return self.children[0].isFloatMat
+    # if self.operator == NEG:
+    #   return self.children[0].isFloatMat
+    # if self.operator == ROW:
+    #   return self.children[0].isFloatMat
+    # if self.operator == COL:
+    #   return self.children[0].isFloatMat
+    # if self.operator == RESIZE:
+    #   return self.children[0].isFloatMat
+    # if self.operator == TRANSPOSE:
+    #   return self.children[0].isFloatMat
     return False
 
   ################################################

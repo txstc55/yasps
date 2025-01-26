@@ -111,16 +111,16 @@ lp = lines.addAttribute("position", through = l2lv, source = lvp) # the position
 ## add energy
 ######################################################
 # we first add the elasticity energy to the lines
-lp.reshape(2, 3)
+lp = lp.resize(2, 3)
 lines.addAttribute("elasticity", computed_attribute = ELASTICITY_CONSTANT * (lp.row(1) - lp.row(0)).dot(lp.row(1) - lp.row(0)))
 
 # then we add elasticity for the top vertex to the ceiling, same elasticity
-ltp.reshape(3, 1)
+ltp = ltp.resize(3, 1)
 line_top.addAttribute("elasticity", computed_attribute = ELASTICITY_CONSTANT * ltp.dot(ltp))
 
 # then we add elasticity for the bottom vertex to the bunny, same elasticity
-lbbp.reshape(3, 1)
-lblp.reshape(3, 1)
+lbbp = lbbp.resize(3, 1)
+lblp = lblp.resize(3, 1)
 line_bottom.addAttribute("elasticity", computed_attribute = ELASTICITY_CONSTANT * (lbbp - lblp).dot(lbbp - lblp))
 
 # finally, we need to add inertia to the bunny

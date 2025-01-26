@@ -35,7 +35,7 @@ def add(att: ya.attribute, other: ya.attribute) -> ya.attribute:
 def add_explicitly(att: ya.attribute, other: ya.attribute) -> ya.attribute:
   if att.rows != other.rows or att.cols != other.cols:
     if att.size != 1 and other.size != 1:
-      raise ValueError("attribute.add_explicit: cannot add two attributes of different dimensions.")
+      raise ValueError(f"attribute.add_explicit: cannot add two attributes of different dimensions. Dimension mismatch: {att.rows}x{att.cols} and {other.rows}x{other.cols}.")
   if other.isZero == 1:
     return att
   if other.isZero == 2:
