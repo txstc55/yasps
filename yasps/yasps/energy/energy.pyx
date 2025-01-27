@@ -652,7 +652,7 @@ class energy:
 
     for i in range(child_att.size):
       h_g_full_mats[i] = h_g_full_mats[i].add_explicit(multiplication_result[i])
-      if lead_node.operator != GATHER and not second_term_is_zero:
+      if (lead_node.operator != GATHER) and (not second_term_is_zero) and (self.__projection_method != 0):
         # # we need to project the whole matrix
         # h_g_full_mats[i] = h_g_full_mats[i].spd(0)
         # print("We project the entire hessian")

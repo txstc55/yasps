@@ -106,7 +106,7 @@ class codeGenerator:
     result[i] = {current.code_generation_data_name}[{current.correspondance.fullName}_index * {current.size} + i];
   }}'''
       kernelHeader: str = f'''
-__device__ __inline__ void {current.fullName}_device_function(const double* {current.code_generation_data_name}, unsigned int {current.correspondance.fullName}_index, double* result)'''
+__device__ void {current.fullName}_device_function(const double* {current.code_generation_data_name}, unsigned int {current.correspondance.fullName}_index, double* result)'''
       current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, [current], [], []) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
       return
 
@@ -283,7 +283,7 @@ __device__ __inline__ void {current.fullName}_device_function(const double* {cur
 
     # now we generate header
     headerString: str = f'''
-__device__ __inline__ void {attributeName}_device_function({"".join([f"const double* {x.code_generation_data_name}, " for x in allDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in allConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in allConnectivities if x.dimension == 0])}unsigned int {self.__input.correspondance.fullName}_index, double* result)'''
+__device__ void {attributeName}_device_function({"".join([f"const double* {x.code_generation_data_name}, " for x in allDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in allConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in allConnectivities if x.dimension == 0])}unsigned int {self.__input.correspondance.fullName}_index, double* result)'''
 
     # remove the duplicates, some of the index initialization may be duplicated
     # seen_strings: Set[str] = set()

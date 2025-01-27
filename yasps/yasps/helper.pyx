@@ -1,7 +1,7 @@
 import os
 # for solving the name mangling issue when we compile a file
 def get_mangled_name(kernel_header: str, kernel_name: str) -> str:
-  f = open("tmp_compile.cu", 'w')
+  f = open(".yasps_tmp/tmp_compile.cu", 'w')
   f.write(f'''
 #include <cuda.h>
 {kernel_header}{{
@@ -9,17 +9,17 @@ def get_mangled_name(kernel_header: str, kernel_name: str) -> str:
 ''')
   f.close()
   # compile the code
-  os.system(f"nvcc -c tmp_compile.cu -o tmp_compile.so ")
+  os.system("nvcc -c .yasps_tmp/tmp_compile.cu -o .yasps_tmp/tmp_compile.so ")
   # get the mangled name
-  os.system(f"nm tmp_compile.so | grep {kernel_name} > tmp_compile.nm")
-  f = open(f"tmp_compile.nm", 'r')
+  os.system(f"nm .yasps_tmp/tmp_compile.so | grep {kernel_name} > .yasps_tmp/tmp_compile.nm")
+  f = open(".yasps_tmp/tmp_compile.nm", 'r')
   lines = f.readlines()
   f.close()
 
   # remove files
-  os.system(f"rm tmp_compile.cu")
-  os.system(f"rm tmp_compile.so")
-  os.system(f"rm tmp_compile.nm")
+  os.system("rm .yasps_tmp/tmp_compile.cu")
+  os.system("rm .yasps_tmp/tmp_compile.so")
+  os.system("rm .yasps_tmp/tmp_compile.nm")
   ## sort lines by length of the line
   lines.sort(key=len)
   if len(lines) > 0:
@@ -43,7 +43,7 @@ import re
 
 def prune_duplicate_functions(code_string):
   # Pattern to match function signatures
-  pattern = r'__device__\s+__inline__\s+void\s+\w+\s*\(.*?\)\s*(;|\{)'
+  pattern = r'__device__\s+void\s+\w+\s*\(.*?\)\s*(;|\{)'
   matches = list(re.finditer(pattern, code_string, re.DOTALL))
   functions_seen = set()
   output_code = ''

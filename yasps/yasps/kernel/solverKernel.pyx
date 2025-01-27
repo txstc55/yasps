@@ -315,7 +315,7 @@ int computeSolution(CUcontext ctx,
 } // close the extern "C"
 '''
     # ok now we compile the kernel by saving it to a file and then calling nvcc
-    file_name = f"cg_{'_'.join([f'{x[0]}_{x[1]}' for x in blockDimensions])}"
+    file_name = f".yasps_tmp/cg_{'_'.join([f'{x[0]}_{x[1]}' for x in blockDimensions])}"
     f = open(f"{file_name}.cu", 'w')
     f.write(self.__kernelString)
     f.close()
@@ -323,7 +323,7 @@ int computeSolution(CUcontext ctx,
     # now we compile the kernel
     import os
     os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
-    self.__cg_kernel = ctypes.CDLL(f"./{file_name}.so").computeSolution
+    self.__cg_kernel = ctypes.CDLL(f"{file_name}.so").computeSolution
     self.__cg_kernel.argtypes = [
         ctypes.c_void_p, # cuda context
         ctypes.c_uint,   # maxIteration

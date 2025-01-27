@@ -246,7 +246,7 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
     # prune duplicate functions
     self.__kernelString = prune_duplicate_functions(self.__kernelString)
     # generate the code to check
-    f = open("testing_hessian_and_gradient_kernel.cu", "w")
+    f = open(".yasps_tmp/hessian_and_gradient_kernel.cu", "w")
     f.write(self.__kernelString)
     f.close()
     mod = SourceModule(
@@ -254,7 +254,7 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
       options = ["-std=c++11", '-O3', '-I/usr/include/eigen3', "--expt-relaxed-constexpr", "--disable-warnings"],
       no_extern_c = True
     )
-    kernel_name: str = get_mangled_name(kernelRawName, f'accumulate_hessian_and_gradient_global_function')
+    kernel_name: str = get_mangled_name(kernelRawName, 'accumulate_hessian_and_gradient_global_function')
     self.__kernel = mod.get_function(kernel_name)
 
 

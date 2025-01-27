@@ -113,7 +113,7 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
     # prune duplicate functions
     self.__kernelString = prune_duplicate_functions(self.__kernelString)
     # generate the code to check
-    f = open("testing_kernel.cu", "w")
+    f = open(".yasps_tmp/global_compute_kernel.cu", "w")
     f.write(self.__kernelString)
     f.close()
 

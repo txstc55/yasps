@@ -1,7 +1,5 @@
 from __future__ import annotations
-import pycuda.autoinit
-import pycuda.gpuarray as gpuarray
-import numpy as np
+import os
 
 
 # a scene can have meshes
@@ -16,6 +14,9 @@ import keyword
 class scene:
   scenes: Dict[str, scene] = {}
   def __init__(self, name):
+    # mkdir .yasps_tmp if it does not exist
+    if not os.path.exists(".yasps_tmp"):
+      os.makedirs(".yasps_tmp")
     # check if name exists
     if name == "":
       raise ValueError("scene.__init__: name cannot be empty.")
