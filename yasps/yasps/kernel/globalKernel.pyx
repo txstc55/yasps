@@ -49,7 +49,7 @@ __device__ void spd_projection(const double *A, double* output, int choice){{
     }}
   }}
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, M, M>> eigenSolver(symMtr);
-  Eigen::Matrix<double, M, M> B = eigenSolver.eigenvectors();
+  const Eigen::Matrix<double, M, M> B = eigenSolver.eigenvectors();
   Eigen::Matrix<double, M, 1> eigenValues = eigenSolver.eigenvalues();
   if (choice == 1) {{
     for (int i = 0; i < M; i++) {{

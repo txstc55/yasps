@@ -52,21 +52,15 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
     }}
   }}
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, M, M>> eigenSolver(symMtr);
-  Eigen::Matrix<double, M, M> B = eigenSolver.eigenvectors();
+  const Eigen::Matrix<double, M, M> B = eigenSolver.eigenvectors();
   Eigen::Matrix<double, M, 1> eigenValues = eigenSolver.eigenvalues();
   for (int i = 0; i < M; i++){{
     if (eigenValues[i] < 0) {{
       eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }}
   }}
-  // Reconstruct the matrix without using a diagonal matrix
-  // Scale columns of B by corresponding eigenvalues
-  Eigen::Matrix<double, M, M> C;
-  for (int i = 0; i < M; ++i) {{
-    C.col(i) = B.col(i) * eigenValues[i];
-  }}
-  // Compute the reconstructed matrix: A_reconstructed = C * B.transpose()
-  Eigen::Matrix<double, M, M> A_reconstructed = C * B.transpose();
+  Eigen::Matrix<double, M, M> A_reconstructed;
+  A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
   // Copy the top-left N x N submatrix back to A
   for (int row = 0; row < N; ++row) {{
     for (int col = 0; col < N; ++col) {{
@@ -81,21 +75,17 @@ __device__ void spd_projection(const double *A, double* output, int choice){{
   // Map A to an N x N Eigen matrix without copying
   Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
-  Eigen::Matrix<double, N, N> B = eigenSolver.eigenvectors();
+  const Eigen::Matrix<double, N, N> B = eigenSolver.eigenvectors();
   Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
   for (int i = 0; i < N; i++){{
     if (eigenValues[i] < 0) {{
       eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }}
   }}
-  // Reconstruct the matrix without using a diagonal matrix
-  // Scale columns of B by corresponding eigenvalues
-  Eigen::Matrix<double, N, N> C;
-  for (int i = 0; i < N; ++i) {{
-    C.col(i) = B.col(i) * eigenValues[i];
-  }}
   // Compute the reconstructed matrix: A_reconstructed = C * B.transpose()
-  Eigen::Matrix<double, N, N> A_reconstructed = C * B.transpose();
+  Eigen::Matrix<double, N, N> A_reconstructed;
+  A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
+  // A_reconstructed.noalias() = C * B.transpose();
   // Copy the top-left N x N submatrix back to output
   Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>> outputMap(output);
   outputMap = A_reconstructed;
@@ -107,7 +97,7 @@ __device__ void spd_projection_inplace(double *A, int choice){{
   // Map A to an N x N Eigen matrix without copying
   Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
-  Eigen::Matrix<double, N, N> B = eigenSolver.eigenvectors();
+  const Eigen::Matrix<double, N, N> B = eigenSolver.eigenvectors();
   Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
   for (int i = 0; i < N; i++){{
     if (eigenValues[i] < 0) {{
