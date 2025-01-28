@@ -90,7 +90,7 @@ def prune_duplicate_functions(code_string):
   output_code += code_string[pos:]
   return output_code
 
-def energy_process_work(start_index: int, end_index: int, max_index: int, duplicatedPaths, indicesCPU, wrtStartIndicesAndSize)
+def energy_process_work(start_index: int, end_index: int, max_index: int, duplicatedPaths, indicesCPU, wrtStartIndicesAndSize):
   end_index = min(end_index, max_index)
   current_process_all_indices = []
   for i in range(start_index, end_index):
@@ -111,4 +111,4 @@ def energy_process_work(start_index: int, end_index: int, max_index: int, duplic
             current_process_all_indices.append(np.uint32(currentIndex))
           else:
             current_process_all_indices.append(np.uint32(start_index))
-    return current_process_all_indices
+  return current_process_all_indices

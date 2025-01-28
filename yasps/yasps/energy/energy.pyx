@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING
 from yasps.attribute import attribute
 from yasps.autodiff import autodiff
 import pycuda.driver as cuda
-from yasps.helper import extract_block
+from yasps.helper import extract_block, energy_process_work
 import time
 # for multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+import os
 if TYPE_CHECKING:
   from yasps.hessianAndGradientKernel import hessianAndGradientKernel
 
@@ -141,24 +143,37 @@ class energy:
       duplicatedPaths += self.__duplicatePathForOperation(path)
 
     # here we use multiprocessing to compute the indices
-    for i in range(self.__energy.correspondance.numInstances):
-      for path in duplicatedPaths:
-        currentIndex = i
-        for hashValue, operation in path:
-          if operation >= 0: # its an row operator
-            # get the new index
-            rowIndex = operation
-            currentIndex = indicesCPU[hashValue][currentIndex, rowIndex]
-          elif operation == -1:
-            # because it is a data
-            # and we have a starting position for the data
-            # we will need to aggregate the starting index
-            start_index, size, is_primitive = wrtStartIndicesAndSize[hashValue]
-            if is_primitive:
-              currentIndex = start_index + currentIndex * size
-              allIndices.append(np.uint32(currentIndex))
-            else:
-              allIndices.append(np.uint32(start_index))
+    with ProcessPoolExecutor() as executor:
+      futures = []
+      NUM_THREADS = os.cpu_count() or 1  # Default to 1 if CPU count is None
+      work_per_thread = (self.__energy.correspondance.numInstances // NUM_THREADS) + 1  # Example workload
+      for i in range(NUM_THREADS):
+        start_index = i * work_per_thread
+        end_index = (i + 1) * work_per_thread
+        futures.append(executor.submit(energy_process_work, start_index, end_index, self.__energy.correspondance.numInstances, duplicatedPaths, indicesCPU, wrtStartIndicesAndSize))
+
+      for future in futures:
+        current_process_all_indices = future.result()
+        allIndices += current_process_all_indices
+
+    # for i in range(self.__energy.correspondance.numInstances):
+    #   for path in duplicatedPaths:
+    #     currentIndex = i
+    #     for hashValue, operation in path:
+    #       if operation >= 0: # its an row operator
+    #         # get the new index
+    #         rowIndex = operation
+    #         currentIndex = indicesCPU[hashValue][currentIndex, rowIndex]
+    #       elif operation == -1:
+    #         # because it is a data
+    #         # and we have a starting position for the data
+    #         # we will need to aggregate the starting index
+    #         start_index, size, is_primitive = wrtStartIndicesAndSize[hashValue]
+    #         if is_primitive:
+    #           currentIndex = start_index + currentIndex * size
+    #           allIndices.append(np.uint32(currentIndex))
+    #         else:
+    #           allIndices.append(np.uint32(start_index))
     # print("All indices are: ", allIndices)
     self.__indices_cpu = np.array(allIndices, dtype = np.uint32)
     self.__indices_gpu = gpuarray.to_gpu(self.__indices_cpu)
