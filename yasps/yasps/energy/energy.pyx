@@ -54,6 +54,10 @@ class energy:
   def indices(self) -> np.ndarray:
     return self.__indices_cpu
 
+  def clearIndices(self) -> None:
+    # clear the indices_cpu
+    self.__indices_cpu = np.array([])
+
   @property
   def block_indices_gpu(self) -> gpuarray.GPUArray:
     return self.__block_indices_gpu
