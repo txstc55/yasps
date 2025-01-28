@@ -10,6 +10,8 @@ from yasps.autodiff import autodiff
 import pycuda.driver as cuda
 from yasps.helper import extract_block
 import time
+# for multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
 if TYPE_CHECKING:
   from yasps.hessianAndGradientKernel import hessianAndGradientKernel
 
@@ -112,6 +114,8 @@ class energy:
 
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
     self.__wrt = wrt
+    # the wrt_start_indices, size and if type is primitive
+    wrtStartIndicesAndSize: Dict[int, Tuple[int, int, bool]] = {x.hash: (wrt_start_indices[i], x.size, x.correspondance.type == "primitive") for i, x in enumerate(wrt)}
     from yasps.attribute import ROW, DATA, GATHER
     # we have the path, now determine which path to use since we have the wrt
     usedPaths: List[List[attribute]] = []
@@ -134,54 +138,56 @@ class energy:
     allIndices: List[np.uint32] = []
     duplicatedPaths = []
     for path in usedPaths:
-      duplicatedPaths += self.__duplicatePath(path)
+      duplicatedPaths += self.__duplicatePathForOperation(path)
+
+    # here we use multiprocessing to compute the indices
     for i in range(self.__energy.correspondance.numInstances):
       for path in duplicatedPaths:
         currentIndex = i
-        for node in path:
-          if node.operator == ROW:
+        for hashValue, operation in path:
+          if operation >= 0: # its an row operator
             # get the new index
-            rowIndex = node.children[1].index_value
-            currentIndex = indicesCPU[node.children[0].hash][currentIndex, rowIndex]
-          elif node.operator == DATA:
+            rowIndex = operation
+            currentIndex = indicesCPU[hashValue][currentIndex, rowIndex]
+          elif operation == -1:
             # because it is a data
             # and we have a starting position for the data
             # we will need to aggregate the starting index
-            dataIndexInWrt = wrt.index(node)
-            if node.correspondance.type == "primitive":
-              currentIndex = wrt_start_indices[dataIndexInWrt] + currentIndex * node.size
-              allIndices.append(currentIndex)
-            else:
-              currentIndex = wrt_start_indices[dataIndexInWrt]
+            start_index, size, is_primitive = wrtStartIndicesAndSize[hashValue]
+            if is_primitive:
+              currentIndex = start_index + currentIndex * size
               allIndices.append(np.uint32(currentIndex))
+            else:
+              allIndices.append(np.uint32(start_index))
     # print("All indices are: ", allIndices)
     self.__indices_cpu = np.array(allIndices, dtype = np.uint32)
     self.__indices_gpu = gpuarray.to_gpu(self.__indices_cpu)
-    self.__gradient_sizes_cpu = [x[-1].size for x in duplicatedPaths]
+    self.__gradient_sizes_cpu = [wrtStartIndicesAndSize[x[-1][0]][1] for x in duplicatedPaths]
     return allIndices
 
 
-  def __duplicatePath(self, path: List[attribute]) -> List[List[attribute]]:
+  def __duplicatePathForOperation(self, path: List[attribute]) -> List[List[Tuple[int, int]]]:
+    # we duplicate the paths so that join operations are expanded
+    # and we can later on use ot to get the indices
     from yasps.attribute import DATA, GATHER, ROW
+    # if it is just data, we return the hash and -1
+    # if it is a row operator
+    # instead we return the node hash and row index
+    # if it is something else we return 0 and -2
     if path[0].operator == DATA:
-      # we've reached the end
-      # return itself
-      return [path]
+      return [[(path[0].hash, -1)]]
     elif path[0].operator == GATHER:
-      # we need to duplicate the path
-      # first we need to get the children paths
-      childrenPaths = self.__duplicatePath(path[1:])
+      childrenPaths = self.__duplicatePathForOperation(path[1:])
       duplicatedPaths = []
       for i in range(path[0].through.dimension):
         # duplicate each path
         for childrenPath in childrenPaths:
-          explicit_row = attribute(children = [path[0], attribute(index_value = i)], operator = ROW, correspondance = path[0].correspondance, rows = 1, cols = path[0].cols)
-          duplicatedPaths.append([explicit_row] + childrenPath)
+          duplicatedPaths.append([(path[0].hash, i)] + childrenPath)
       return duplicatedPaths
     else:
       # we are at top level
-      childrenPaths = self.__duplicatePath(path[1:])
-      return [[path[0]] + childrenPath for childrenPath in childrenPaths]
+      childrenPaths = self.__duplicatePathForOperation(path[1:])
+      return childrenPaths
 
   def __generateGradient(self, wrt: List[attribute], differentiater: autodiff) -> None:
     from yasps.attribute import GATHER, FLOAT
