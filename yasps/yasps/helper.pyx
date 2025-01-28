@@ -1,4 +1,5 @@
 import os
+import numpy as np
 # for solving the name mangling issue when we compile a file
 def get_mangled_name(kernel_header: str, kernel_name: str) -> str:
   f = open(".yasps_tmp/tmp_compile.cu", 'w')
@@ -88,3 +89,26 @@ def prune_duplicate_functions(code_string):
   # Append the remaining code
   output_code += code_string[pos:]
   return output_code
+
+def energy_process_work(start_index: int, end_index: int, max_index: int, duplicatedPaths, indicesCPU, wrtStartIndicesAndSize)
+  end_index = min(end_index, max_index)
+  current_process_all_indices = []
+  for i in range(start_index, end_index):
+    for path in duplicatedPaths:
+      currentIndex = i
+      for hashValue, operation in path:
+        if operation >= 0: # its an row operator
+          # get the new index
+          rowIndex = operation
+          currentIndex = indicesCPU[hashValue][currentIndex, rowIndex]
+        elif operation == -1:
+          # because it is a data
+          # and we have a starting position for the data
+          # we will need to aggregate the starting index
+          start_index, size, is_primitive = wrtStartIndicesAndSize[hashValue]
+          if is_primitive:
+            currentIndex = start_index + currentIndex * size
+            current_process_all_indices.append(np.uint32(currentIndex))
+          else:
+            current_process_all_indices.append(np.uint32(start_index))
+    return current_process_all_indices
