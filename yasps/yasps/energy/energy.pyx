@@ -115,6 +115,8 @@ class energy:
 
 
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
+    import time
+    start = time.time()
     self.__wrt = wrt
     # the wrt_start_indices, size and if type is primitive
     wrtStartIndicesAndSize: Dict[int, Tuple[int, int, bool]] = {x.hash: (wrt_start_indices[i], x.size, x.correspondance.type == "primitive") for i, x in enumerate(wrt)}
@@ -141,11 +143,14 @@ class energy:
     duplicatedPaths = []
     for path in usedPaths:
       duplicatedPaths += self.__duplicatePathForOperation(path)
-
+    end = time.time()
+    print("Time to duplicate path: ", end - start)
+    start = time.time()
     # here we use multiprocessing to compute the indices
     with ProcessPoolExecutor() as executor:
       futures = []
       NUM_THREADS = os.cpu_count() or 1  # Default to 1 if CPU count is None
+      print("Number of threads: ", NUM_THREADS)
       work_per_thread = (self.__energy.correspondance.numInstances // NUM_THREADS) + 1  # Example workload
       for i in range(NUM_THREADS):
         start_index = i * work_per_thread
@@ -155,29 +160,15 @@ class energy:
       for future in futures:
         current_process_all_indices = future.result()
         allIndices += current_process_all_indices
-
-    # for i in range(self.__energy.correspondance.numInstances):
-    #   for path in duplicatedPaths:
-    #     currentIndex = i
-    #     for hashValue, operation in path:
-    #       if operation >= 0: # its an row operator
-    #         # get the new index
-    #         rowIndex = operation
-    #         currentIndex = indicesCPU[hashValue][currentIndex, rowIndex]
-    #       elif operation == -1:
-    #         # because it is a data
-    #         # and we have a starting position for the data
-    #         # we will need to aggregate the starting index
-    #         start_index, size, is_primitive = wrtStartIndicesAndSize[hashValue]
-    #         if is_primitive:
-    #           currentIndex = start_index + currentIndex * size
-    #           allIndices.append(np.uint32(currentIndex))
-    #         else:
-    #           allIndices.append(np.uint32(start_index))
+    end = time.time()
+    print("Time to compute indices: ", end - start)
+    start = time.time()
     # print("All indices are: ", allIndices)
     self.__indices_cpu = np.array(allIndices, dtype = np.uint32)
     self.__indices_gpu = gpuarray.to_gpu(self.__indices_cpu)
     self.__gradient_sizes_cpu = [wrtStartIndicesAndSize[x[-1][0]][1] for x in duplicatedPaths]
+    end = time.time()
+    print("Time to transfer indices to GPU: ", end - start)
     return allIndices
 
 
