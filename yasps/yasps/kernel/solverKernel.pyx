@@ -277,6 +277,11 @@ int computeSolution(CUcontext ctx,
     dotProduct<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_c, d_q, d_alpha, MATRIX_SIZE);
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(&h_alpha, d_alpha, sizeof(double), cudaMemcpyDeviceToHost);
+
+    if (h_alpha <= 1e-15){
+      printf("Non SPD matrix detected at in %d iterations with residual %lf\\n", iteration, h_delta_new);
+      return iteration;
+    }
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     h_alpha = h_delta_new / h_alpha;
 
