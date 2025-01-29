@@ -118,7 +118,7 @@ class minimizer:
       print(f"Sparse indices generation for {local_energy}: {1000.0 * (end - start)} ms")
     # ok now we have the indices for blocks in their uncompressed order
     # what we need to do is to find the compressed sparse indices
-    uncompressedIndices: List[Tuple[int, int]] = []
+    uncompressedIndicesNumpy: np.ndarray = np.empty((0, 2), dtype = np.uint32)
     index_start: List[int] = [0] # for each energy, where does the index start
     energy_gradient_sizes: List[List[int]] = []
     for local_energy in self.energies:
@@ -140,10 +140,13 @@ class minimizer:
       row_indices, col_indices = np.triu_indices(L, k=0)
       first_values = arr[:, row_indices].ravel()
       second_values = arr[:, col_indices].ravel()
-      # Option A: Extend uncompressedIndices without building a giant list:
-      uncompressedIndices.extend(zip(first_values, second_values))
+      start_time1 = time.time()
+      uncompressedIndicesNumpy = np.vstack((uncompressedIndicesNumpy, np.vstack((first_values, second_values)).T))
+      end_time1 = time.time()
+      print(f"Energy {local_energy} indices appending using numpy: {1000.0 * (end_time1 - start_time1)} ms")
+      end = time.time()
       # know for each local_energy, where does the first coordinate starts
-      index_start.append(len(uncompressedIndices))
+      index_start.append(uncompressedIndicesNumpy.shape[0])
       end = time.time()
       print(f"Energy {local_energy} indices reshaping and appending: {1000.0 * (end - start)} ms")
     print("Uncompressed indices set")
@@ -186,9 +189,9 @@ class minimizer:
         idx = start + j
         step = len(hessian_block_dimensions)
         while idx < end:
-          item = uncompressedIndices[idx]
+          item = uncompressedIndicesNumpy[idx, :]
           if item[0] <= item[1]:
-            left_items.append(item)
+            left_items.append((item[0], item[1]))
           else:
             right_items.append((item[1], item[0]))
           idx += step
@@ -202,8 +205,8 @@ class minimizer:
     # we can remove the duplicates
     start = time.time()
     compressedIndices: List[List[Tuple[int, int]]] = [
-        sorted(set(item))  # deduplicate (set) and then sort
-        for item in uncompressedIndicesByDimensions
+      sorted(set(item))  # deduplicate (set) and then sort
+      for item in uncompressedIndicesByDimensions
     ]
     end = time.time()
     print(f"Unique blocks set: {1000.0 * (end - start)} ms")
@@ -281,7 +284,7 @@ class minimizer:
       start_time_local = time.time()
       start = index_start[i]
       end = index_start[i + 1]
-      uncompressedIndicesLocal = uncompressedIndices[start:end] # get the coordinates in the uncompressed order
+      uncompressedIndicesLocal = uncompressedIndicesNumpy[start:end, :] # get the coordinates in the uncompressed order
       hessian_block_dimensions = energy_hessian_block_dimensions[i] # get the dimensions of the blocks
       where_to_check = [self.__blockDimensions.index(item) for item in hessian_block_dimensions] # we need to know where to check (the index of that dimension)
       where_to_check += [self.__blockDimensions.index((item[1], item[0])) for item in hessian_block_dimensions] # we also need to check the transposed block
@@ -295,14 +298,14 @@ class minimizer:
         compressedIndicesMap[
           where_to_check[j % (len(where_to_check) // 2)]
         ][
-          uncompressedIndicesLocal[j][0],
-          uncompressedIndicesLocal[j][1]
-        ] if (uncompressedIndicesLocal[j][0] <= uncompressedIndicesLocal[j][1]) else
+          uncompressedIndicesLocal[j, 0],
+          uncompressedIndicesLocal[j, 1]
+        ] if (uncompressedIndicesLocal[j, 0] <= uncompressedIndicesLocal[j, 1]) else
         compressedIndicesMap[
           where_to_check[((j % (len(where_to_check) // 2)) + (len(where_to_check) // 2))]
         ][
-          uncompressedIndicesLocal[j][1],
-          uncompressedIndicesLocal[j][0]
+          uncompressedIndicesLocal[j, 1],
+          uncompressedIndicesLocal[j, 0]
         ]
         for j in range(len(uncompressedIndicesLocal))]
       end_time_local = time.time()

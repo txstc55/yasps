@@ -2,7 +2,7 @@ from yasps import scene
 from yasps.attribute import attribute
 import numpy as np
 np.random.seed(13)
-NUM_POINTS = 1000
+NUM_POINTS = 400
 NUM_LOOPS = 2
 def generate_points_near_equator(num_points, delta_phi_deg=5):
   theta = np.linspace(0, 2 * np.pi, num_points, endpoint=False, dtype=np.float64)

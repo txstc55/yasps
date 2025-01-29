@@ -156,10 +156,10 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
   {attributeName}_device_function({"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}index, hg_mat.data());
   // now maybe we need to project the entire hessian
   // the true false value is generated at compile time
-  if ({int(self.__project_entire_hessian)}){{
-    // project the hessian
-    {"spd_projection_inplace" if sum(self.__block_sizes) >= 4 else "spd_projection_small"}<{sum(self.__block_sizes)}>(hg_mat.data(), {"hg_mat.data(), " if sum(self.__block_sizes) < 4 else ""}{self.__projection_method});
-  }}
+#if {int(self.__project_entire_hessian)}
+  // project the hessian
+  {"spd_projection_inplace" if sum(self.__block_sizes) >= 4 else "spd_projection_small"}<{sum(self.__block_sizes)}>(hg_mat.data(), {"hg_mat.data(), " if sum(self.__block_sizes) < 4 else ""}{self.__projection_method});
+#endif
   // now we need to place the hessian into the correct places
   unsigned int row_offset = 0;
   unsigned int off_diagonal_counts = 0;

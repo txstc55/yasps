@@ -219,9 +219,6 @@ int computeSolution(CUcontext ctx,
     return -1;
   }
 
-  // first resetting the solution
-  cudaMemset(solution, 0, MATRIX_SIZE * sizeof(double));
-
   // now we compute P^-1 * b where P is the preconditioner
   jacobiPreconditioner<<<MATRIX_SIZE / 32 + 1, 32>>>(diagonal, gradient, d_p1_b, MATRIX_SIZE);
   // delta0 = b * A^-1 b
@@ -280,7 +277,7 @@ int computeSolution(CUcontext ctx,
 
     if (h_alpha <= 1e-15){
       printf("Non SPD matrix detected at in %d iterations with residual %lf\\n", iteration, h_delta_new);
-      return iteration;
+      return -iteration;
     }
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     h_alpha = h_delta_new / h_alpha;
@@ -377,7 +374,17 @@ int computeSolution(CUcontext ctx,
     end_call.record()
     # Wait for the end event to complete
     end_call.synchronize()
+    is_non_spd_matrix = False
+    if result == -1:
+      # the kernel failed in the first iteration
+      # we set the solution to gradient instead
+      solution.set(gradient)
+    elif result < 0:
+      is_non_spd_matrix = True
+      result = -result
     # Calculate the elapsed time in milliseconds
     elapsed_time_ms = start_call.time_till(end_call)
     print(f"Solver converged in {result} iterations")
+    if is_non_spd_matrix:
+      print("Non SPD matrix detected")
     print(f"Solver time: {elapsed_time_ms:.5f} ms")
