@@ -10,6 +10,13 @@ from yasps.solverKernel import solverKernel
 import time
 import ctypes
 
+def unique_row_view(data):
+  b = np.ascontiguousarray(data).view(
+    np.dtype((np.void, data.dtype.itemsize * data.shape[1]))
+  )
+  u = np.unique(b).view(data.dtype).reshape(-1, data.shape[1])
+  return u
+
 class minimizer:
   def __init__(self):
     self.__energies: List[energy] = []
@@ -208,9 +215,11 @@ class minimizer:
     # ok now we have the indices put to their corresponding place
     # we can remove the duplicates
     start = time.time()
-    compressedIndices: List[List[Tuple[int, int]]] = [
-      sorted(set(map(tuple, item)))  # deduplicate (set) and then sort
-      for item in uncompressedIndicesByDimensions
+    uncompressedIndicesByDimensions = [item.astype(np.uint64) for item in uncompressedIndicesByDimensions]
+    encoded = [((arr_64[:, 0] << np.uint64(32)) | arr_64[:, 1]) for arr_64 in uncompressedIndicesByDimensions]
+    compressedIndices = [
+      list(set(item))
+      for item in encoded
     ]
     end = time.time()
     print(f"Unique blocks set: {1000.0 * (end - start)} ms")
