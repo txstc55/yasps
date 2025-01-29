@@ -173,7 +173,7 @@ class minimizer:
 
     start_time = time.time()
     # we now need to know, for each energy, for each block, where does it reside in the compressed coordinates in different block sizes
-    uncompressedIndicesByDimensions: List[List[Tuple[int, int]]] = [[] for _ in range(len(self.__blockDimensions))]
+    uncompressedIndicesByDimensions: List[np.ndarray] = [np.zeros((0, 2), dtype = np.uint32) for _ in range(len(self.__blockDimensions))]
     for i in range(len(index_start) - 1):
       start = index_start[i]
       end = index_start[i + 1]
@@ -181,22 +181,26 @@ class minimizer:
       hessian_block_dimensions = energy_hessian_block_dimensions[i]
       where_to_put = [self.__blockDimensions.index(item) for item in hessian_block_dimensions]
       where_to_put_transposed = [self.__blockDimensions.index((item[1], item[0])) for item in hessian_block_dimensions]
+      where_to_put_unique = list(set(where_to_put + where_to_put_transposed)) # get the unique blocks
+      where_to_put_grouped = [[] for _ in range(len(where_to_put_unique))]
+      for j in range(len(where_to_put)):
+        where_to_put_grouped[where_to_put_unique.index(where_to_put[j])].append(j)
+        where_to_put_grouped[where_to_put_unique.index(where_to_put_transposed[j])].append(j)
       # ok now we know where to put each coordinate
       # let's do it
-      for j in range(len(where_to_put)):
-        left_items = []
-        right_items = []
-        idx = start + j
-        step = len(hessian_block_dimensions)
-        while idx < end:
-          item = uncompressedIndicesNumpy[idx, :]
-          if item[0] <= item[1]:
-            left_items.append((item[0], item[1]))
-          else:
-            right_items.append((item[1], item[0]))
-          idx += step
-        uncompressedIndicesByDimensions[where_to_put[j]].extend(left_items)
-        uncompressedIndicesByDimensions[where_to_put_transposed[j]].extend(right_items)
+      step = len(hessian_block_dimensions)
+      for j in range(len(where_to_put_unique)):
+        group = where_to_put_grouped[j] # get the blocks that have the same dimension
+        # get the subset in group
+        subsets = [uncompressedIndicesNumpy[start + k : end : step] for k in group]
+        subset = np.vstack(subsets)
+        left_mask = subset[:, 0] <= subset[:, 1]
+        left_subset = subset[left_mask]
+        right_subset = subset[~left_mask]
+        if len(right_subset) > 0:
+          right_subset = right_subset[:, [1, 0]]
+        uncompressedIndicesByDimensions[where_to_put_unique[j]] = np.vstack([uncompressedIndicesByDimensions[where_to_put_unique[j]], left_subset, right_subset])
+
 
     end_time = time.time()
     print(f"Compressed indices set: {1000.0 * (end_time - start_time)} ms")
@@ -205,7 +209,7 @@ class minimizer:
     # we can remove the duplicates
     start = time.time()
     compressedIndices: List[List[Tuple[int, int]]] = [
-      sorted(set(item))  # deduplicate (set) and then sort
+      sorted(set(map(tuple, item)))  # deduplicate (set) and then sort
       for item in uncompressedIndicesByDimensions
     ]
     end = time.time()
