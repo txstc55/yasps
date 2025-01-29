@@ -217,47 +217,55 @@ class minimizer:
     start = time.time()
     uncompressedIndicesByDimensions = [item.astype(np.uint64) for item in uncompressedIndicesByDimensions]
     encoded = [((arr_64[:, 0] << np.uint64(32)) | arr_64[:, 1]) for arr_64 in uncompressedIndicesByDimensions]
+    end = time.time()
+    print(f"Encoding: {1000.0 * (end - start)} ms")
+    start = time.time()
     compressedIndices = [
-      list(set(item))
+      np.unique(item)
       for item in encoded
+    ]
+    # decode compressedIndices to uint32
+    compressedIndices = [
+      np.vstack((item >> np.uint64(32), item & np.uint64(0xFFFFFFFF))).T.astype(np.uint32)
+      for item in compressedIndices
     ]
     end = time.time()
     print(f"Unique blocks set: {1000.0 * (end - start)} ms")
     print(f"There are {sum([len(x) for x in compressedIndices])} unique blocks")
-    ###################################################
-    ## remove this code, this is for analysis
-    ###################################################
-    start = time.time()
-    sorted_block_sizes = []
-    sorted_positions = []
+    # ###################################################
+    # ## remove this code, this is for analysis
+    # ###################################################
+    # start = time.time()
+    # sorted_block_sizes = []
+    # sorted_positions = []
 
-    for i in range(len(compressedIndices)):
-      dimension = self.__blockDimensions[i]
-      dimension = sorted(dimension)
-      index = i
-      if dimension in sorted_block_sizes:
-        index = sorted_block_sizes.index(dimension)
-      else:
-        sorted_block_sizes.append(dimension)
-        sorted_positions.append([])
-        index = len(sorted_block_sizes) - 1
-      sorted_positions[index] += compressedIndices[i]
+    # for i in range(len(compressedIndices)):
+    #   dimension = self.__blockDimensions[i]
+    #   dimension = sorted(dimension)
+    #   index = i
+    #   if dimension in sorted_block_sizes:
+    #     index = sorted_block_sizes.index(dimension)
+    #   else:
+    #     sorted_block_sizes.append(dimension)
+    #     sorted_positions.append([])
+    #     index = len(sorted_block_sizes) - 1
+    #   sorted_positions[index] += compressedIndices[i]
 
-    totalNNZ = 0
-    for i in range(len(sorted_positions)):
-      uniquePairs = {tuple(sorted((x, y))) for x, y in sorted_positions[i]}
-      diagonalPairs = sum(x == y for x, y in uniquePairs)
-      uniquePairsCount = len(uniquePairs)
-      diagonalBlockCount = diagonalPairs
-      dimension = sorted_block_sizes[i]
-      nnz = dimension[0] * dimension[1] * uniquePairsCount * 2 - dimension[0] * dimension[1] * diagonalBlockCount
-      totalNNZ += nnz
-    print(f"Total NNZ is: {totalNNZ}")
-    end = time.time()
-    print(f"Analysis: {1000.0 * (end - start)} ms")
-    ###################################################
-    ## End of analysis
-    ###################################################
+    # totalNNZ = 0
+    # for i in range(len(sorted_positions)):
+    #   uniquePairs = {tuple(sorted((x, y))) for x, y in sorted_positions[i]}
+    #   diagonalPairs = sum(x == y for x, y in uniquePairs)
+    #   uniquePairsCount = len(uniquePairs)
+    #   diagonalBlockCount = diagonalPairs
+    #   dimension = sorted_block_sizes[i]
+    #   nnz = dimension[0] * dimension[1] * uniquePairsCount * 2 - dimension[0] * dimension[1] * diagonalBlockCount
+    #   totalNNZ += nnz
+    # print(f"Total NNZ is: {totalNNZ}")
+    # end = time.time()
+    # print(f"Analysis: {1000.0 * (end - start)} ms")
+    # ###################################################
+    # ## End of analysis
+    # ###################################################
 
 
     start = time.time()
