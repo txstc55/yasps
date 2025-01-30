@@ -119,17 +119,13 @@ class minimizer:
 
   def __getSparseIndices(self):
     for local_energy in self.energies:
-      start = time.time()
       local_energy.getSparseIndices(self.wrt, self.__wrtStartIndices)
-      end = time.time()
-      print(f"Sparse indices generation for {local_energy}: {1000.0 * (end - start)} ms")
     # ok now we have the indices for blocks in their uncompressed order
     # what we need to do is to find the compressed sparse indices
     uncompressedIndicesNumpy: np.ndarray = np.empty((0, 2), dtype = np.uint32)
     index_start: List[int] = [0] # for each energy, where does the index start
     energy_gradient_sizes: List[List[int]] = []
     for local_energy in self.energies:
-      start = time.time()
       # for now let's say i don't really care if we only store the upper triangular parts
       # here we expand the indices to store the location of upper triangular blocks of the local hessian
       # but the stored global matrix doesn't have to be upper triangular
@@ -137,28 +133,17 @@ class minimizer:
       local_energy.clearIndices() # we don't need the indices anymore
       gradient_sizes_local = local_energy.gradient_sizes_cpu # we need to know how many blocks there are, and what are the block sizes
       energy_gradient_sizes.append(gradient_sizes_local) # know how large each block is
-      end = time.time()
-      print(f"Energy {local_energy} indices accessing and appending: {1000.0 * (end - start)} ms")
 
-      start = time.time()
       # here we get the coordinate for each block in the hessian
       arr = indices.reshape(-1, len(gradient_sizes_local))
       N, L = arr.shape
       row_indices, col_indices = np.triu_indices(L, k=0)
       first_values = arr[:, row_indices].ravel()
       second_values = arr[:, col_indices].ravel()
-      start_time1 = time.time()
       uncompressedIndicesNumpy = np.vstack((uncompressedIndicesNumpy, np.vstack((first_values, second_values)).T))
-      end_time1 = time.time()
-      print(f"Energy {local_energy} indices appending using numpy: {1000.0 * (end_time1 - start_time1)} ms")
-      end = time.time()
       # know for each local_energy, where does the first coordinate starts
       index_start.append(uncompressedIndicesNumpy.shape[0])
-      end = time.time()
-      print(f"Energy {local_energy} indices reshaping and appending: {1000.0 * (end - start)} ms")
     print("Uncompressed indices set")
-
-    start = time.time()
     # we now need to know for each energy, what are the dimension of the blocks
     energy_hessian_block_dimensions: List[List[Tuple[int, int]]] = []
     for sizes in energy_gradient_sizes:
@@ -166,19 +151,10 @@ class minimizer:
       for i in range(len(sizes)):
         for j in range(i, len(sizes)):
           energy_hessian_block_dimensions[-1].append((sizes[i], sizes[j]))
-    end = time.time()
-    print(f"Energy hessian block dimensions set: {1000.0 * (end - start)} ms")
-
-    start = time.time()
     # get the unique block sizes and sort them based on the block sizes
     self.__blockDimensions = list(set([item for sublist in energy_hessian_block_dimensions for item in sublist] + [(item[1], item[0]) for sublist in energy_hessian_block_dimensions for item in sublist])) # add the block dimensions and the transposed block dimension to be safe
     self.__blockDimensions.sort()
-    # print('Dimensions of the blocks are: ')
-    # print(self.__blockDimensions)
-    end = time.time()
-    print(f"Unique block dimensions set: {1000.0 * (end - start)} ms")
 
-    start_time = time.time()
     # we now need to know, for each energy, for each block, where does it reside in the compressed coordinates in different block sizes
     uncompressedIndicesByDimensions: List[np.ndarray] = [np.zeros((0, 2), dtype = np.uint32) for _ in range(len(self.__blockDimensions))]
     for i in range(len(index_start) - 1):
@@ -207,18 +183,10 @@ class minimizer:
         if len(right_subset) > 0:
           right_subset = right_subset[:, [1, 0]]
         uncompressedIndicesByDimensions[where_to_put_unique[j]] = np.vstack([uncompressedIndicesByDimensions[where_to_put_unique[j]], left_subset, right_subset])
-
-
-    end_time = time.time()
-    print(f"Compressed indices set: {1000.0 * (end_time - start_time)} ms")
     print("Compressed indices set")
     # ok now we have the indices put to their corresponding place
     # we can remove the duplicates
-    start = time.time()
     encoded = [((arr_64[:, 0].astype(np.uint64) << np.uint64(32)) | arr_64[:, 1].astype(np.uint64)) for arr_64 in uncompressedIndicesByDimensions]
-    end = time.time()
-    print(f"Encoding: {1000.0 * (end - start)} ms")
-    start = time.time()
     compressedIndices = [
       np.unique(item)
       for item in encoded
@@ -230,8 +198,6 @@ class minimizer:
       np.vstack((item >> np.uint64(32), item & np.uint64(0xFFFFFFFF))).T.astype(np.uint32)
       for item in compressedIndices
     ]
-    end = time.time()
-    print(f"Unique blocks set: {1000.0 * (end - start)} ms")
     print(f"There are {sum([len(x) for x in compressedIndices])} unique blocks")
 
     # ###################################################
@@ -271,7 +237,6 @@ class minimizer:
     # ###################################################
 
 
-    start = time.time()
     self.__blockCounts = [len(item) for item in compressedIndices]
     self.__blockPositions = gpuarray.to_gpu(np.concatenate([x.flatten() for x in compressedIndicesDecoded]))
     # now we segment the list to the positions list
@@ -293,10 +258,6 @@ class minimizer:
     for i in range(len(self.__blockDimensions)):
       self.__blocks.append(self.__blocksFlattened[blocksStartIndices_cpu[i]: blocksStartIndices_cpu[i + 1]])
 
-    end = time.time()
-    print(f"Block positions set: {1000.0 * (end - start)} ms")
-
-    start_time = time.time()
     # Preprocess compressed indices into searchable structures
     compressed_values = []
     for indices in compressedIndices:
@@ -306,7 +267,6 @@ class minimizer:
         continue
       compressed_values.append(np.arange(len(indices), dtype=np.uint32))
 
-    start_time = time.time()
     for i in range(len(index_start) - 1):
       start = index_start[i]
       end = index_start[i + 1]
@@ -347,8 +307,6 @@ class minimizer:
         hessian_block_indices[block_mask] = np.where(valid, block_values[idx], 0)  # Handle missing as needed
       # GPU transfer remains the same
       self.energies[i].block_indices_gpu = gpuarray.to_gpu(hessian_block_indices.astype(np.uint32))
-    end_time = time.time()
-    print(f"Sparse indices set {1000.0 * (end_time - start_time)} ms")
     print("Sparse indices set")
 
   def generateHessianAndGradient(self):

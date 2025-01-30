@@ -92,6 +92,7 @@ class attribute:
     self.__hash: int = 0
     self.__deviceKernel: Optional[deviceKernel] = None
     self.__globalKernel: Optional[globalKernel] = None
+    self.__isFloatMat = None
 
 
   ################################################
@@ -245,28 +246,26 @@ class attribute:
 
   @property
   def isFloatMat(self) -> bool:
+    if self.__isFloatMat:
+      return self.__isFloatMat
     # check if this is just a constant value array
     # because it doesnt need correspondance
     if self.operator == ARRAY:
       for i in range(self.size):
         if not (self.children[i].operator == FLOAT):
+          self.__isFloatMat =  False
           return False
+      self.__isFloatMat = True
       return True
     # # SPECIAL CASES FOR CHECKING IF A MAT IS FLOAT
     # if self.operator == FLOAT:
     #   return True
     # if self.operator == ARRAY_ACCESS:
     #   return self.children[0].isFloatMat
-    if self.operator == NEG:
+    if self.operator == NEG or self.operator == ABS or self.operator == ROW or self.operator == COL or self.operator == RESIZE or self.operator == TRANSPOSE or self.operator == RESIZE:
+      self.__isFloatMat = self.children[0].isFloatMat
       return self.children[0].isFloatMat
-    if self.operator == ROW:
-      return self.children[0].isFloatMat
-    if self.operator == COL:
-      return self.children[0].isFloatMat
-    if self.operator == RESIZE:
-      return self.children[0].isFloatMat
-    if self.operator == TRANSPOSE:
-      return self.children[0].isFloatMat
+    self.__isFloatMat = False
     return False
 
   ################################################

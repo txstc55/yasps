@@ -119,12 +119,10 @@ class energy:
 
 
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
-    import time
-    start = time.time()
     self.__wrt = wrt
     # the wrt_start_indices, size and if type is primitive
     wrtStartIndicesAndSize: Dict[int, Tuple[int, int, bool]] = {x.hash: (wrt_start_indices[i], x.size, x.correspondance.type == "primitive") for i, x in enumerate(wrt)}
-    from yasps.attribute import ROW, DATA, GATHER
+    from yasps.attribute import GATHER
     # we have the path, now determine which path to use since we have the wrt
     usedPaths: List[List[attribute]] = []
     # for i in range(len(self.roots)):
@@ -142,19 +140,14 @@ class energy:
             indicesCPU[att.hash] = att.through.value.get().reshape(att.through.fromPrimitive.numInstances, att.through.dimension) # reshape to a 2D array with num instances, and dimension
     # now we recursively go over each path
     # we first recursively duplicate the path with rows
-    currentIndex = 0
     allIndices: List[np.uint32] = []
     duplicatedPaths = []
     for path in usedPaths:
       duplicatedPaths += self.__duplicatePathForOperation(path)
-    end = time.time()
-    print("Time to duplicate path: ", end - start)
-    start = time.time()
     # here we use multiprocessing to compute the indices
     with ProcessPoolExecutor() as executor:
       futures = []
       NUM_THREADS = os.cpu_count() or 1  # Default to 1 if CPU count is None
-      print("Number of threads: ", NUM_THREADS)
       work_per_thread = (self.__energy.correspondance.numInstances // NUM_THREADS) + 1  # Example workload
       for i in range(NUM_THREADS):
         start_index = i * work_per_thread
@@ -164,22 +157,17 @@ class energy:
       for future in futures:
         current_process_all_indices = future.result()
         allIndices += current_process_all_indices
-    end = time.time()
-    print("Time to compute indices: ", end - start)
-    start = time.time()
     # print("All indices are: ", allIndices)
     self.__indices_cpu = np.array(allIndices, dtype = np.uint32)
     self.__indices_gpu = gpuarray.to_gpu(self.__indices_cpu)
     self.__gradient_sizes_cpu = [wrtStartIndicesAndSize[x[-1][0]][1] for x in duplicatedPaths]
-    end = time.time()
-    print("Time to transfer indices to GPU: ", end - start)
     return allIndices
 
 
   def __duplicatePathForOperation(self, path: List[attribute]) -> List[List[Tuple[int, int]]]:
     # we duplicate the paths so that join operations are expanded
     # and we can later on use ot to get the indices
-    from yasps.attribute import DATA, GATHER, ROW
+    from yasps.attribute import DATA, GATHER
     # if it is just data, we return the hash and -1
     # if it is a row operator
     # instead we return the node hash and row index
@@ -665,7 +653,6 @@ class energy:
       mul1 = hessian.mul_explicit(j_g_x)
       mul2 = j_g_x.transpose().mul_explicit(mul1)
       multiplication_result.append(mul2)
-
     for i in range(child_att.size):
       h_g_full_mats[i] = h_g_full_mats[i].add_explicit(multiplication_result[i])
       if (lead_node.operator != GATHER) and (not second_term_is_zero) and (self.__projection_method != 0):
