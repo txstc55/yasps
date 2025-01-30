@@ -215,8 +215,7 @@ class minimizer:
     # ok now we have the indices put to their corresponding place
     # we can remove the duplicates
     start = time.time()
-    uncompressedIndicesByDimensions = [item.astype(np.uint64) for item in uncompressedIndicesByDimensions]
-    encoded = [((arr_64[:, 0] << np.uint64(32)) | arr_64[:, 1]) for arr_64 in uncompressedIndicesByDimensions]
+    encoded = [((arr_64[:, 0].astype(np.uint64) << np.uint64(32)) | arr_64[:, 1].astype(np.uint64)) for arr_64 in uncompressedIndicesByDimensions]
     end = time.time()
     print(f"Encoding: {1000.0 * (end - start)} ms")
     start = time.time()
@@ -224,22 +223,26 @@ class minimizer:
       np.unique(item)
       for item in encoded
     ]
+    # clear up memory
+    del uncompressedIndicesByDimensions
     # decode compressedIndices to uint32
-    compressedIndices = [
+    compressedIndicesDecoded = [
       np.vstack((item >> np.uint64(32), item & np.uint64(0xFFFFFFFF))).T.astype(np.uint32)
       for item in compressedIndices
     ]
     end = time.time()
     print(f"Unique blocks set: {1000.0 * (end - start)} ms")
     print(f"There are {sum([len(x) for x in compressedIndices])} unique blocks")
+
     # ###################################################
     # ## remove this code, this is for analysis
     # ###################################################
+
     # start = time.time()
     # sorted_block_sizes = []
     # sorted_positions = []
 
-    # for i in range(len(compressedIndices)):
+    # for i in range(len(compressedIndicesDecoded)):
     #   dimension = self.__blockDimensions[i]
     #   dimension = sorted(dimension)
     #   index = i
@@ -249,7 +252,7 @@ class minimizer:
     #     sorted_block_sizes.append(dimension)
     #     sorted_positions.append([])
     #     index = len(sorted_block_sizes) - 1
-    #   sorted_positions[index] += compressedIndices[i]
+    #   sorted_positions[index] += compressedIndicesDecoded[i]
 
     # totalNNZ = 0
     # for i in range(len(sorted_positions)):
@@ -270,7 +273,7 @@ class minimizer:
 
     start = time.time()
     self.__blockCounts = [len(item) for item in compressedIndices]
-    self.__blockPositions = gpuarray.to_gpu(np.array([item for sublist in compressedIndices for tup in sublist for item in tup]))
+    self.__blockPositions = gpuarray.to_gpu(np.concatenate([x.flatten() for x in compressedIndicesDecoded]))
     # now we segment the list to the positions list
     total_count: int = 0
     for i in range(len(self.__blockCounts)):
@@ -290,51 +293,60 @@ class minimizer:
     for i in range(len(self.__blockDimensions)):
       self.__blocks.append(self.__blocksFlattened[blocksStartIndices_cpu[i]: blocksStartIndices_cpu[i + 1]])
 
-    # now we sotre all the unique coordinates for each dimension
-    self.__blockIndices = [gpuarray.to_gpu(np.array(item, dtype = np.uint32)) for item in compressedIndices]
-
-    # now for each of the energy, they need to know where to put the blocks
-    compressedIndicesMap: List[Dict[Tuple[int, int], int]] = []
-    for indices in compressedIndices:
-      compressedIndicesMap.append({(pos_x, pos_y): i for i, (pos_x, pos_y) in enumerate(indices)})
     end = time.time()
-    print(f"Where to put set: {1000.0 * (end - start)} ms")
+    print(f"Block positions set: {1000.0 * (end - start)} ms")
+
+    start_time = time.time()
+    # Preprocess compressed indices into searchable structures
+    compressed_values = []
+    for indices in compressedIndices:
+      if len(indices) == 0:
+        # Handle empty case
+        compressed_values.append(np.array([], dtype=np.uint32))
+        continue
+      compressed_values.append(np.arange(len(indices), dtype=np.uint32))
 
     start_time = time.time()
     for i in range(len(index_start) - 1):
-      start_time_local = time.time()
       start = index_start[i]
       end = index_start[i + 1]
-      uncompressedIndicesLocal = uncompressedIndicesNumpy[start:end, :] # get the coordinates in the uncompressed order
-      hessian_block_dimensions = energy_hessian_block_dimensions[i] # get the dimensions of the blocks
-      where_to_check = [self.__blockDimensions.index(item) for item in hessian_block_dimensions] # we need to know where to check (the index of that dimension)
-      where_to_check += [self.__blockDimensions.index((item[1], item[0])) for item in hessian_block_dimensions] # we also need to check the transposed block
-      self.__energies[i].hessian_blocks_where_to_check = gpuarray.to_gpu(np.array(where_to_check, dtype = np.uint32)) # we store where to check for each block
-      # ok now we know for each coordinate, which block to check
-      # we need to get the index of the block
-      end_time_local = time.time()
-      print(f"Energy {i} where to check set: {1000.0 * (end_time_local - start_time_local)} ms")
-      start_time_local = time.time()
-      hessian_block_indices: List[int] = [
-        compressedIndicesMap[
-          where_to_check[j % (len(where_to_check) // 2)]
-        ][
-          uncompressedIndicesLocal[j, 0],
-          uncompressedIndicesLocal[j, 1]
-        ] if (uncompressedIndicesLocal[j, 0] <= uncompressedIndicesLocal[j, 1]) else
-        compressedIndicesMap[
-          where_to_check[((j % (len(where_to_check) // 2)) + (len(where_to_check) // 2))]
-        ][
-          uncompressedIndicesLocal[j, 1],
-          uncompressedIndicesLocal[j, 0]
-        ]
-        for j in range(len(uncompressedIndicesLocal))]
-      end_time_local = time.time()
-      print(f"Energy {i} hessian block indices set: {1000.0 * (end_time_local - start_time_local)} ms")
-      start_time_local = time.time()
-      self.energies[i].block_indices_gpu = gpuarray.to_gpu(np.array(hessian_block_indices, dtype = np.uint32)) # we now store for each smaller block, what is the index in the data array
-      end_time_local = time.time()
-      print(f"Energy {i} hessian block indices set to gpu: {1000.0 * (end_time_local - start_time_local)} ms")
+      uncompressedIndicesLocal = uncompressedIndicesNumpy[start:end, :]
+      # Original logic for where_to_check
+      hessian_block_dimensions = energy_hessian_block_dimensions[i]
+      where_to_check = [self.__blockDimensions.index(item) for item in hessian_block_dimensions]
+      where_to_check += [self.__blockDimensions.index((item[1], item[0])) for item in hessian_block_dimensions]
+      self.__energies[i].hessian_blocks_where_to_check = gpuarray.to_gpu(np.array(where_to_check, dtype=np.uint32))
+      # Vectorized coordinate processing
+      x = uncompressedIndicesLocal[:, 0].astype(np.int64)
+      y = uncompressedIndicesLocal[:, 1].astype(np.int64)
+      mask = x <= y
+      x_flipped = np.where(mask, x, y)
+      y_flipped = np.where(mask, y, x)
+      # Calculate block indices
+      m = len(hessian_block_dimensions)
+      j_indices = np.arange(len(x)) % m
+      where_to_check_np = np.array(where_to_check, dtype=np.uint32)
+      where_to_check_indices = j_indices + (m * (~mask)).astype(int)
+      block_indices = where_to_check_np[where_to_check_indices]
+      # Create combined keys
+      current_keys = (x_flipped << 32) | y_flipped
+      # Prepare result array
+      hessian_block_indices = np.empty(len(x), dtype=np.uint32)
+      # Process unique blocks in bulk
+      unique_blocks, inverse = np.unique(block_indices, return_inverse=True)
+      for block in unique_blocks:
+        block_mask = (block_indices == block)
+        bk = current_keys[block_mask]
+        # Get precomputed search structures
+        block_keys = compressedIndices[block]
+        block_values = compressed_values[block]
+        # Binary search
+        idx = np.searchsorted(block_keys, bk)
+        # Verify matches
+        valid = (idx < len(block_keys)) & (block_keys[idx] == bk)
+        hessian_block_indices[block_mask] = np.where(valid, block_values[idx], 0)  # Handle missing as needed
+      # GPU transfer remains the same
+      self.energies[i].block_indices_gpu = gpuarray.to_gpu(hessian_block_indices.astype(np.uint32))
     end_time = time.time()
     print(f"Sparse indices set {1000.0 * (end_time - start_time)} ms")
     print("Sparse indices set")

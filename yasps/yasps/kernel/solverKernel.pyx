@@ -275,8 +275,8 @@ int computeSolution(CUcontext ctx,
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(&h_alpha, d_alpha, sizeof(double), cudaMemcpyDeviceToHost);
 
-    if (h_alpha <= 1e-15){
-      printf("Non SPD matrix detected at in %d iterations with residual %lf\\n", iteration, h_delta_new);
+    if (h_alpha < 0){
+      printf("Non SPD matrix detected in %d iterations with residual %lf\\n", iteration, h_delta_new);
       return -iteration;
     }
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
