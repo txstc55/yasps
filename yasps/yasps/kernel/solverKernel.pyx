@@ -275,7 +275,7 @@ int computeSolution(CUcontext ctx,
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(&h_alpha, d_alpha, sizeof(double), cudaMemcpyDeviceToHost);
 
-    if (h_alpha < 0){
+    if (h_alpha <= 0){
       printf("Non SPD matrix detected in %d iterations with residual %lf\\n", iteration, h_delta_new);
       return -iteration;
     }
@@ -346,6 +346,9 @@ int computeSolution(CUcontext ctx,
     ]
 
   def __to_void_p(self, x: gpuarray.GPUArray):
+    if x is None or x.size == 0:
+      # Return a NULL pointer if array is empty
+      return ctypes.c_void_p(None)
     return ctypes.c_void_p(int(x.gpudata))
 
   def computeSolution(self, cuda_context, maxIteration, threshold, block_values: gpuarray.GPUArray, block_positions: gpuarray.GPUArray, block_values_start: List[int], block_counts: List[int], diagonal: gpuarray.GPUArray, gradient: gpuarray.GPUArray, d_p1_b: gpuarray.GPUArray, d_r: gpuarray.GPUArray, d_c: gpuarray.GPUArray, d_q: gpuarray.GPUArray, d_s: gpuarray.GPUArray, solution: gpuarray.GPUArray):
@@ -379,6 +382,7 @@ int computeSolution(CUcontext ctx,
       # the kernel failed in the first iteration
       # we set the solution to gradient instead
       solution.set(gradient)
+      result = -result
     elif result < 0:
       is_non_spd_matrix = True
       result = -result

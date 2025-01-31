@@ -18,7 +18,7 @@ if TYPE_CHECKING:
   from yasps.hessianAndGradientKernel import hessianAndGradientKernel
 
 class energy:
-  def __init__(self, energy: attribute, projection_method = 1, save_intermediate = False):
+  def __init__(self, energy: attribute, projection_method = 1, save_intermediate = False, gradient_only = False):
     if energy.size != 1:
       raise ValueError("energy.__init__: energy must be size 1.")
     self.__energy: attribute = energy
@@ -36,10 +36,11 @@ class energy:
     self.__hessianAndGradientKernel: Optional[hessianAndGradientKernel] = None
     self.__hessian_blocks_where_to_check: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # we have a flattened array which stores the blocks. The blocks are sorted by dimensions. We need to know which block we are in for each smaller blocks in the hessian
     self.__merged_hessian_and_gradient_attribute: Optional[attribute] = None
-    self.__project_entire_hessian = False
+    self.__project_entire_hessian: bool = False
     self.__projection_method = projection_method # 0 for no projection, 1 for absolute, 2 for max(0, val)
     self.__save_intermediate = save_intermediate # save intermediate gradient and hessian result
     self.__intermediate_compute_pairs: Dict[str, Tuple[attribute, attribute]] = {} # save the intermediate compute pairs
+    self.__gradient_only: bool = gradient_only # only compute gradient
 
 
   @property
@@ -74,6 +75,10 @@ class energy:
   @hessian_blocks_where_to_check.setter
   def hessian_blocks_where_to_check(self, hessian_blocks_where_to_check: gpuarray.GPUArray):
     self.__hessian_blocks_where_to_check = hessian_blocks_where_to_check
+
+  @property
+  def gradient_only(self) -> bool:
+    return self.__gradient_only
 
 
   def getRoots(self, att: attribute, parentPath: List[attribute]) -> Tuple[List[attribute], List[List[attribute]]]:
@@ -750,7 +755,9 @@ class energy:
     differentiater = autodiff()
     # generate the symbolic code for gradient and hessian
     self.__generateGradient(wrt, differentiater)
-    self.__generateHessian(wrt, differentiater)
+    if not self.__gradient_only:
+      # dont generate hessian if we only need gradient
+      self.__generateHessian(wrt, differentiater)
 
 
 
@@ -764,19 +771,20 @@ class energy:
     if self.__gradient is None:
       # the gradient is 0, return the 0 array
       return
-    if self.__hessian is None:
+    if self.__hessian is None and not self.__gradient_only:
       raise ValueError("yasps.energy.computeHessianAndGradient: The hessian is not computed yet. Please call generateHessianAndGradient first.")
     if self.__hessianAndGradientKernel is None:
       from yasps.hessianAndGradientKernel import hessianAndGradientKernel
       # we need to put the gradient and the hessian together
       # we know the graidient sizes square is the hessian size
       merged_hessian_and_gradient = []
-      for i in range(sum(self.__gradient_sizes_cpu)):
-        for j in range(sum(self.__gradient_sizes_cpu)):
-          merged_hessian_and_gradient.append(self.__hessian[i, j])
+      if not self.__gradient_only: # we need the hessian
+        for i in range(sum(self.__gradient_sizes_cpu)):
+          for j in range(sum(self.__gradient_sizes_cpu)):
+            merged_hessian_and_gradient.append(self.__hessian[i, j])
       for i in range(sum(self.__gradient_sizes_cpu)):
         merged_hessian_and_gradient.append(self.__gradient[i])
-      self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = sum(self.__gradient_sizes_cpu) + 1, cols = sum(self.__gradient_sizes_cpu)))
+      self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = len(merged_hessian_and_gradient) // (sum(self.__gradient_sizes_cpu)), cols = sum(self.__gradient_sizes_cpu)))
       from yasps.codeGenerator import codeGenerator
       start_generator = time.time()
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
@@ -785,7 +793,7 @@ class energy:
       print(f"Code generation time: {(end_generator - start_generator) * 1000.0:.5f} ms")
       # now add the global kernel
       start_compile = time.time()
-      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__gradient_sizes_cpu, self.__project_entire_hessian, self.__projection_method)
+      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__gradient_sizes_cpu, self.__project_entire_hessian, self.__projection_method, self.__gradient_only)
       end_compile = time.time()
       print(f"Compilation time: {(end_compile - start_compile) * 1000.0:.5f} ms")
       self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))

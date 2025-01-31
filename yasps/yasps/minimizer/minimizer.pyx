@@ -71,11 +71,11 @@ class minimizer:
         raise ValueError("minimizer.addEnergies: energies has duplicate energies.")
     self.__energies.extend(energies)
 
-  def addEnergy(self, e: attribute, projection_method = 1, save_intermediate = False) -> None:
+  def addEnergy(self, e: attribute, projection_method = 1, save_intermediate = False, gradient_only = False) -> None:
     if e.name == "":
       raise ValueError("scene.addEnergy: energy attribute must have a name.")
     from yasps.energy import energy
-    newEnergy = energy(e, projection_method, save_intermediate)
+    newEnergy = energy(e, projection_method, save_intermediate, gradient_only)
     if newEnergy.hash in [energy.hash for energy in self.__energies]:
       raise ValueError("minimizer.addEnergy: energy already exists.")
     self.__energies.append(newEnergy)
@@ -126,21 +126,22 @@ class minimizer:
     index_start: List[int] = [0] # for each energy, where does the index start
     energy_gradient_sizes: List[List[int]] = []
     for local_energy in self.energies:
-      # for now let's say i don't really care if we only store the upper triangular parts
-      # here we expand the indices to store the location of upper triangular blocks of the local hessian
-      # but the stored global matrix doesn't have to be upper triangular
-      indices = local_energy.indices # get the gradient indices, by iterating over them we get the position for each small block in the hessian
-      local_energy.clearIndices() # we don't need the indices anymore
       gradient_sizes_local = local_energy.gradient_sizes_cpu # we need to know how many blocks there are, and what are the block sizes
       energy_gradient_sizes.append(gradient_sizes_local) # know how large each block is
-
-      # here we get the coordinate for each block in the hessian
-      arr = indices.reshape(-1, len(gradient_sizes_local))
-      N, L = arr.shape
-      row_indices, col_indices = np.triu_indices(L, k=0)
-      first_values = arr[:, row_indices].ravel()
-      second_values = arr[:, col_indices].ravel()
-      uncompressedIndicesNumpy = np.vstack((uncompressedIndicesNumpy, np.vstack((first_values, second_values)).T))
+      if not local_energy.gradient_only: # only do the ones that are not gradient only
+        print("energy not gradient only")
+        # for now let's say i don't really care if we only store the upper triangular parts
+        # here we expand the indices to store the location of upper triangular blocks of the local hessian
+        # but the stored global matrix doesn't have to be upper triangular
+        indices = local_energy.indices # get the gradient indices, by iterating over them we get the position for each small block in the hessian
+        local_energy.clearIndices() # we don't need the indices anymore
+        # here we get the coordinate for each block in the hessian
+        arr = indices.reshape(-1, len(gradient_sizes_local))
+        N, L = arr.shape
+        row_indices, col_indices = np.triu_indices(L, k=0)
+        first_values = arr[:, row_indices].ravel()
+        second_values = arr[:, col_indices].ravel()
+        uncompressedIndicesNumpy = np.vstack((uncompressedIndicesNumpy, np.vstack((first_values, second_values)).T))
       # know for each local_energy, where does the first coordinate starts
       index_start.append(uncompressedIndicesNumpy.shape[0])
     print("Uncompressed indices set")
@@ -244,7 +245,10 @@ class minimizer:
     for i in range(len(self.__blockCounts)):
       last_count = total_count
       total_count += self.__blockCounts[i]
-      self.__blockPositionsList.append(self.__blockPositions[last_count * 2: total_count * 2])
+      if last_count != total_count: # if there are any blocks
+        self.__blockPositionsList.append(self.__blockPositions[last_count * 2: total_count * 2])
+      else:
+        self.__blockPositionsList.append(gpuarray.empty(0, dtype = np.uint32))
     # now we need to allocate the gpu arrays, first we allocate memory for the entire chunk
     blocksStartIndices_cpu = [0]
     for i in range(len(self.__blockDimensions)):
@@ -252,11 +256,13 @@ class minimizer:
     self.__blocksStartIndices = blocksStartIndices_cpu
     self.__blocksStartIndicesGPU = gpuarray.to_gpu(np.array(blocksStartIndices_cpu, dtype = np.uint32))
     self.__blocksFlattened = gpuarray.empty(blocksStartIndices_cpu[-1], dtype = np.float64)
-    self.__blocksStartIndicesGPU = gpuarray.to_gpu(np.array(blocksStartIndices_cpu, dtype = np.uint32))
 
     # now we need to assign the correct block to each block
     for i in range(len(self.__blockDimensions)):
-      self.__blocks.append(self.__blocksFlattened[blocksStartIndices_cpu[i]: blocksStartIndices_cpu[i + 1]])
+      if blocksStartIndices_cpu[i] != blocksStartIndices_cpu[i + 1]: # block is not empty
+        self.__blocks.append(self.__blocksFlattened[blocksStartIndices_cpu[i]: blocksStartIndices_cpu[i + 1]])
+      else:
+        self.__blocks.append(gpuarray.empty(0, dtype = np.float64))
 
     # Preprocess compressed indices into searchable structures
     compressed_values = []
@@ -323,7 +329,8 @@ class minimizer:
   def computeHessianAndGradient(self, tolerance = 1e-3):
     # set gradient and hessian to 0
     self.__gradient.fill(0)
-    self.__blocksFlattened.fill(0)
+    if self.__blocksFlattened.shape[0] > 0:
+      self.__blocksFlattened.fill(0)
     self.__diagonal.fill(0)
     for e in self.energies:
       e.computeHessianAndGradient(self.__blocksStartIndicesGPU, self.__gradient, self.__blocksFlattened, self.__diagonal)

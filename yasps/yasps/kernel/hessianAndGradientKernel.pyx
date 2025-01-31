@@ -12,12 +12,13 @@ from yasps.helper import prune_duplicate_functions
 testing_kernel = ""
 
 class hessianAndGradientKernel:
-  def __init__(self, att: attribute, block_sizes: List[int], project_entire_hessian: bool, projection_method: int = 1):
+  def __init__(self, att: attribute, block_sizes: List[int], project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False):
     self.__kernelString: str = ""
     self.__kernel: Optional[pd.Function] = None
     self.__block_sizes = block_sizes
     self.__project_entire_hessian = project_entire_hessian
     self.__projection_method = projection_method
+    self.__gradient_only = gradeient_only
     self.__generateKernel(att)
 
 
@@ -151,15 +152,20 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
   if (index >= MAX_INDEX){{
     return;
   }}
+#if {int(not self.__gradient_only)} // are we computing both the hessian and gradient
   Eigen::Matrix<double, {sum(self.__block_sizes) + 1}, {sum(self.__block_sizes)}{", Eigen::RowMajor" if sum(self.__block_sizes) > 1 else ""}> hg_mat = Eigen::Matrix<double, {sum(self.__block_sizes) + 1}, {sum(self.__block_sizes)}, Eigen::RowMajor>::Zero(); // get the merged gradient and hessian
+#else // we are only computing the gradient
+  Eigen::Matrix<double, 1, {sum(self.__block_sizes)}> hg_mat = Eigen::Matrix<double, 1, {sum(self.__block_sizes)}>::Zero(); // get the gradient
+#endif
   // now we call the device function
   {attributeName}_device_function({"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}index, hg_mat.data());
+#if {int(not self.__gradient_only)} // project the hessian, and put the hessian inplace
   // now maybe we need to project the entire hessian
   // the true false value is generated at compile time
-#if {int(self.__project_entire_hessian)}
+#if {int(self.__project_entire_hessian)} // do we need to project the hessian here
   // project the hessian
   {"spd_projection_inplace" if sum(self.__block_sizes) >= 4 else "spd_projection_small"}<{sum(self.__block_sizes)}>(hg_mat.data(), {"hg_mat.data(), " if sum(self.__block_sizes) < 4 else ""}{self.__projection_method});
-#endif
+#endif // and of projection
   // now we need to place the hessian into the correct places
   unsigned int row_offset = 0;
   unsigned int off_diagonal_counts = 0;
@@ -222,12 +228,17 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
     }}
     row_offset += block_rows; // move the row offset
   }}
+#endif // end projecting and putting the hessian into the global matrix
   // now we need to place the gradient
   unsigned int count = 0;
   for (unsigned int i = 0; i < {len(self.__block_sizes)}; i++){{
     unsigned int placement_index = gradient_placements[index * {len(self.__block_sizes)} + i];
     for (unsigned int j = 0; j < block_sizes[i]; j++){{
+#if {int(not self.__gradient_only)} // did we compute the hessian
       atomicAdd(&gradient[placement_index + j], hg_mat({sum(self.__block_sizes)}, count));
+#else
+      atomicAdd(&gradient[placement_index + j], hg_mat(0, count));
+#endif
       count += 1;
     }}
   }}

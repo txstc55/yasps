@@ -134,10 +134,13 @@ class scene:
   def energies(self) -> Dict[int, attribute]:
     return self.__energies
 
-  def addEnergy(self, e: attribute, projection_method = 1, save_intermediate = False) -> None:
+  def addEnergy(self, e: attribute, projection_method = 1, save_intermediate = False, gradient_only = False) -> None:
+    # projection_method = 0 means no projection, 1 means project eigen value to absolute, 2 means project eigen value to max(e, 0)
+    # save_intermediate = True means save intermediate results for gradient and hessian computation
+    # gradient only means in the CG system we will not have the hessian
     if e.name == "":
       raise ValueError("scene.addEnergy: energy attribute must have a name.")
-    self.__minimizer.addEnergy(e, projection_method = projection_method, save_intermediate = save_intermediate)
+    self.__minimizer.addEnergy(e, projection_method = projection_method, save_intermediate = save_intermediate, gradient_only = gradient_only)
 
 
   def minimizeEnergy(self, tolerance = 1e-3):
