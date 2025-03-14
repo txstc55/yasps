@@ -49,3 +49,7 @@ yasps/yasps.egg-info/*
 .ropeproject/*
 blender_files/*
 *.log
+iafd soap
+
+examples/data/*.jpg
+examples/waves
