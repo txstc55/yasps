@@ -129,7 +129,7 @@ class minimizer:
       gradient_sizes_local = local_energy.gradient_sizes_cpu # we need to know how many blocks there are, and what are the block sizes
       energy_gradient_sizes.append(gradient_sizes_local) # know how large each block is
       if not local_energy.gradient_only: # only do the ones that are not gradient only
-        print("energy not gradient only")
+        # print("energy not gradient only")
         # for now let's say i don't really care if we only store the upper triangular parts
         # here we expand the indices to store the location of upper triangular blocks of the local hessian
         # but the stored global matrix doesn't have to be upper triangular
