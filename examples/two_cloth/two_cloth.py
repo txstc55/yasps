@@ -231,14 +231,14 @@ vv1.updateValue(np.zeros(vertices.shape))
 vlp1 = v1.addAttribute("last_position", rows = 3, cols = 1)
 vlp1.updateValue(vp0.value.get())
 
-# gather values to each triangle
+# join values to each triangle
 frp0 = f0.addAttribute("rest_position", through = face_connect_vertex0, source = vrp0)
 fp0 = f0.addAttribute("position", through = face_connect_vertex0, source = vp0)
 
 frp1 = f1.addAttribute("rest_position", through = face_connect_vertex1, source = vrp1)
 fp1 = f1.addAttribute("position", through = face_connect_vertex1, source = vp1)
 
-# gather values to each edge
+# join values to each edge
 erp0 = e0.addAttribute("rest_position", through = edge_connect_vertex0, source = vrp0)
 ep0 = e0.addAttribute("position", through = edge_connect_vertex0, source = vp0)
 

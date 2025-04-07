@@ -57,8 +57,8 @@ class autodiff:
       result = self.__diff_row(current, wrt)
     elif current.operator == ya.COL:
       result = self.__diff_col(current, wrt)
-    elif current.operator == ya.GATHER:
-      result = self.__diff_gather(current, wrt)
+    elif current.operator == ya.JOIN:
+      result = self.__diff_join(current, wrt)
     elif current.operator == ya.SELECT:
       result = self.__diff_select(current, wrt)
     elif current.operator == ya.DET:
@@ -211,10 +211,10 @@ class autodiff:
 
 
 
-  def __diff_gather(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+  def __diff_join(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     # there are only two cases
     # if we are differentiating wrt to anything other than a wrt, we return zeros
-    if wrt.operator != ya.GATHER:
+    if wrt.operator != ya.JOIN:
       return ya.attribute.zeros(current.size, wrt.size)
     if current.fullName == wrt.fullName:
       return ya.attribute.identity(current.size)

@@ -81,7 +81,7 @@ class codeGenerator:
             self.__order.append(current)
       else:
         # this is an operation on other primitive attributes probably
-        # this is only done through gather
+        # this is only done through join
         # so it must have a name at that point
         # if current.name != "":
         # we dont add it to order
@@ -165,8 +165,8 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
             return
           elif current.operator == ya.ARRAY:
             self.__generate_code_for_array(current)
-          elif current.operator == ya.GATHER:
-            self.__generate_code_for_gather(current)
+          elif current.operator == ya.JOIN:
+            self.__generate_code_for_join(current)
           elif current.operator == ya.SUM or current.operator == ya.AVERAGE:
             self.__generate_code_for_sum_and_average(current)
           elif current.operator == ya.TRANSPOSE:
@@ -271,9 +271,9 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
     allDependencies: List[deviceKernel] = [item for x in allNamedAttributeChildren for item in x.deviceKernel.dependents] # get all the dependencies as strings
     allDependencies = allDependencies + [x.deviceKernel for x in allNamedAttributeChildren] # also add the children as dependencies
 
-    # if we are a gathering operation
+    # if we are a joining operation
     # we need to set the connectivity
-    if self.__input.operator == ya.GATHER or self.__input.operator == ya.SUM or self.__input.operator == ya.AVERAGE:
+    if self.__input.operator == ya.JOIN or self.__input.operator == ya.SUM or self.__input.operator == ya.AVERAGE:
       allConnectivities.append(self.__input.through)
 
     # sort and remove duplicates
@@ -436,9 +436,9 @@ __device__ void {attributeName}_device_function({"".join([f"const double* {x.cod
 ''')
 
 
-  def __generate_code_for_gather(self, current: ya.attribute) -> None:
-    # need to generate the code for the gathering operation
-    # we know the children must be a named attribute for the gathering operator
+  def __generate_code_for_join(self, current: ya.attribute) -> None:
+    # need to generate the code for the joining operation
+    # we know the children must be a named attribute for the joining operator
     children_attribute = current.children[0] # should only have one child
     children_attribute_name: str = ""
     if children_attribute.name == "":

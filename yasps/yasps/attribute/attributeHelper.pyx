@@ -87,7 +87,7 @@ def hashAttribute(att: ya.attribute) -> int:
     hash_hex = hashlib.sha256(fullname.encode()).hexdigest()
     hash_int = int(hash_hex, 16)
     att._attribute__hash = hash_int
-  elif att.operator == ya.GATHER or att.operator == ya.SUM or att.operator == ya.AVERAGE:
+  elif att.operator == ya.JOIN or att.operator == ya.SUM or att.operator == ya.AVERAGE:
     if att.through is None:
       raise ValueError(f"attribute.hash: {att.operator.name.upper()} operator must have a through attribute.")
     operation_string:str = f"{att.operator.name}({att.children[0].hash}_through_{att.through})"
@@ -156,7 +156,7 @@ def attribute2str(att: ya.attribute):
         results.append(", ".join(row_strings))
       result_string = '\n'.join(results)
       return f"Mat(\n{result_string}\n)"
-    elif att.operator == ya.GATHER or att.operator == ya.SUM or att.operator == ya.AVERAGE:
+    elif att.operator == ya.JOIN or att.operator == ya.SUM or att.operator == ya.AVERAGE:
       if len(att.children) != 1:
         raise ValueError(f"attribute.__str__: {att.operator.name.upper()} operator must have one child.")
       if att.children[0].correspondance is None:

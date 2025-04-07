@@ -7,15 +7,15 @@ import numpy as np
 # and connectivities to other primitives
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-  from yasps.scene import scene
   from yasps.mesh import mesh
   from yasps.attribute import attribute
   from yasps.connectivity import connectivity
+  from yasps.scene import scene as yscene
 
 
 
 class primitive:
-  def __init__(self, name: str, parent_mesh: mesh, numInstances: int = 0):
+  def __init__(self, name: str, parent_mesh: mesh, numInstances: int = 0, isDynamic: bool = False):
     if name == "":
       raise ValueError("mesh.__init__: name cannot be empty.")
     if parent_mesh is None:
@@ -25,7 +25,13 @@ class primitive:
     self.__connectivities: Dict[str, primitive] = {}
     self.__attributes: Dict[str, attribute] = {}
     self.__numInstances: int = numInstances
+    self.__isDynamic: bool = isDynamic
 
+
+  # check if has dynamic instances
+  @property
+  def isDynamic(self)->bool:
+    return self.__isDynamic
 
   @property
   def name(self)->str:
@@ -38,7 +44,7 @@ class primitive:
 
   # return the scene of this primitive
   @property
-  def scene(self)->scene:
+  def scene(self)-> yscene:
     return self.mesh.scene
 
   # return the primitive of this primitive
@@ -61,6 +67,10 @@ class primitive:
   @property
   def attributes(self)->Dict[str, attribute]:
     return self.__attributes
+
+  @property
+  def attributesNames(self) -> List[str]:
+    return list(self.__attributes.keys())
 
   @property
   def numConnectivities(self)->int:
@@ -96,10 +106,16 @@ class primitive:
     setattr(self, name, newConnectivity)
     return newConnectivity
 
+  def updateConnectivity(self, name: str, data: Union[np.ndarray, List[List[int]]], dimension: int) -> None:
+    ## first check name
+    if name not in self.__connectivities:
+      raise ValueError(f"primitive.updateConnectivity: connectivity with name '{name}' does not exist in primitive.")
+
+
 
   def addAttribute(self, name: str, computed_attribute: Optional[attribute] = None, rows: int = 1, cols: int = 1, through: Optional[connectivity] = None, source: Optional[attribute] = None, operation: Optional[str] = None) -> attribute:
     from yasps.attribute import attribute
-    from yasps.attribute import GATHER, SUM, AVERAGE
+    from yasps.attribute import JOIN, SUM, AVERAGE
     if name in self.__attributes:
       raise ValueError(f"primitive.addAttribute: attribute with name '{name}' already exists in primitive.")
 
@@ -111,9 +127,9 @@ class primitive:
         computed_attribute.setName(name)
       return computed_attribute
     elif through is not None:
-      # we now check if this is a gathering operation or scattering operation
+      # we now check if this is a joining operation or scattering operation
       if through.fromPrimitive == self:
-        # we will gather the attribute from another primitive
+        # we will join the attribute from another primitive
         # we will check if the name is inside the to primitive
         toPrimitive = through.toPrimitive
         if source is not None:
@@ -131,7 +147,7 @@ class primitive:
               raise ValueError(f"primitive.addAttribute: the primitive {self.fullName} has no connection to the attribute, whose correspondance is {source.correspondance.fullName}.")
           if through.dimension == 0 and operation is None:
             raise ValueError("primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
-          op = GATHER
+          op = JOIN
           newRows: int = through.dimension
           newCols: int = source.rows * source.cols
           if operation is not None:
@@ -151,10 +167,10 @@ class primitive:
         # the source is not set up
         # we automatically try to retrieve the attribute with the same name
         if name not in toPrimitive.__attributes:
-          raise ValueError(f"primitive.addAttribute: attribute with name '{name}' does not exist in primitive '{toPrimitive.name}'. The through construction is not successful for the gathering operation.")
+          raise ValueError(f"primitive.addAttribute: attribute with name '{name}' does not exist in primitive '{toPrimitive.name}'. The through construction is not successful for the joining operation.")
         if through.dimension == 0 and operation is None:
           raise ValueError("primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
-        op = GATHER
+        op = JOIN
         newRows: int = through.dimension
         newCols: int = toPrimitive[name].rows * toPrimitive[name].cols
         if operation is not None:
@@ -184,20 +200,20 @@ class primitive:
 
   # accessing attribute by [] operator
   # user can get multiple attributes by passing a list of names
-  def __getitem__(self, key: Union[str, Tuple[str]]) -> attribute:
+  def __getitem__(self, key: str) -> attribute:
     if isinstance(key, str):
       if key in self.__attributes:
         return self.__attributes[key]
       else:
         raise KeyError(f"primitive.__getitem__: attribute with name '{key}' not found in primitive.")
-    elif isinstance(key, tuple):
-      from yasps.attribute import attribute
-      # first we check if all names are in the attributes
-      for name in key:
-        if name not in self.__attributes:
-          raise KeyError(f"primitive.__getitem__: attribute with name '{name}' not found in primitive {self.fullName}.")
-      # get the list of attributes first
-      attributes = attribute.to_array([self.__attributes[name] for name in key], 1, sum([self.__attributes[name].cols * self.__attributes[name].rows for name in key]))
-      return attributes
+    # elif isinstance(key, tuple):
+    #   from yasps.attribute import attribute
+    #   # first we check if all names are in the attributes
+    #   for name in key:
+    #     if name not in self.__attributes:
+    #       raise KeyError(f"primitive.__getitem__: attribute with name '{name}' not found in primitive {self.fullName}.")
+    #   # get the list of attributes first
+    #   attributes = attribute.to_array([self.__attributes[name] for name in key], 1, sum([self.__attributes[name].cols * self.__attributes[name].rows for name in key]))
+    #   return attributes
     else:
       raise KeyError(f"primitive.__getitem__: attribute with name '{key}' not found in primitive.")

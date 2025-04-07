@@ -46,9 +46,7 @@ FLOAT = operator("float", 3, False) # for float numbers
 ARRAY_ACCESS = operator("access", 3, False) # for accessing an element in the array
 DATA = operator("data", 3, False) # for directly accessing data
 ARRAY = operator("array", 3, False) # for constructing an array
-GATHER = operator("gather", 3, False) # for gathering data from one primitive to another
-SUM = operator("sum", 3, False) # for summation when the connectivity is unfixed
-AVERAGE = operator("average", 3, False) # for averaging when the connectivity is unfixed
+
 TRANSPOSE = operator("transpose", 3, False) # for transposing a matrix
 BROADCAST_ADD = operator("+", 3, False) # broadcast an add to all elements
 BROADCAST_SUB = operator("-", 3, False) # broadcast a sub to all elements
@@ -62,6 +60,11 @@ INV = operator("inverse", 3, False) # matrix inverse
 DOT = operator("dot", 3, False) # dot product
 SPD = operator("spd", 3, False) # spd projection
 RESIZE = operator("resize", 3, False) # resize the matrix
+
+JOIN = operator("join", 3, False) # for joining data from one primitive to another
+SUM = operator("sum", 3, False) # for summation when the connectivity is unfixed
+AVERAGE = operator("average", 3, False) # for averaging when the connectivity is unfixed
+UNION = operator("union", 3, False) # for union of multiple attributes
 
 
 
@@ -93,6 +96,7 @@ class attribute:
     self.__deviceKernel: Optional[deviceKernel] = None
     self.__globalKernel: Optional[globalKernel] = None
     self.__isFloatMat = None
+    # self.__is_dynamic = is_dynamic
 
 
   ################################################
@@ -100,6 +104,18 @@ class attribute:
   #     ATTRIBUTE PROPERTY DEFINITION
   ################################################
   ################################################
+  @property
+  def isDynamic(self)->bool:
+    # first check the correspondance
+    corr = self.correspondance
+    if corr is None:
+      return False
+    else:
+      if corr.type == "primitive":
+        return corr.isDynamic
+      else:
+        return False
+
   @property
   def name(self)->str:
     return self.__name
@@ -128,6 +144,8 @@ class attribute:
   @property
   def correspondance(self) -> Union[scene, mesh, primitive]:
     return self.__correspondance
+
+
 
   @property
   def through(self) -> connectivity:

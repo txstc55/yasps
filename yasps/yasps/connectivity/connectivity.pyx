@@ -6,8 +6,8 @@ from itertools import accumulate
 from typing import TYPE_CHECKING, List, Union
 if TYPE_CHECKING:
   from yasps.primitive import primitive
-  from yasps.mesh import mesh
-  from yasps.scene import scene
+  from yasps.mesh import mesh as ymesh
+  from yasps.scene import scene as yscene
 
 class connectivity:
   def __init__(self, name: str, from_primitive: primitive, to_primitive: primitive, value: Union[np.ndarray, List[List[int]]], dimension: int):
@@ -19,6 +19,7 @@ class connectivity:
     self.__name: str = name
     self.__fromPrimitive: primitive = from_primitive
     self.__toPrimitive: primitive = to_primitive
+    self.__value: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32)
     if dimension != 0:
       self.__value: gpuarray.GPUArray = gpuarray.to_gpu(np.array(value).flatten().astype(np.uint32))
       self.__dimension: int = dimension
@@ -66,11 +67,11 @@ class connectivity:
     return self.__dimension
 
   @property
-  def mesh(self)->mesh:
+  def mesh(self)->ymesh:
     return self.fromPrimitive.mesh
 
   @property
-  def scene(self)->scene:
+  def scene(self)->yscene:
     return self.mesh.scene
 
   @property
@@ -89,3 +90,17 @@ class connectivity:
   @property
   def code_generation_csr_name(self) -> str:
     return f'{self.fullName}_compressed_row_indices'
+
+  # for updating connectivity when the primitive has dynamic count
+  def updateConnectivity(self, value: Union[np.ndarray, List[List[int]]]):
+    ## check if we can reserve space by not reallocating
+    oldGPUArraySize: int = int(self.__value.size)
+    newCPUArray = np.array(value).flatten().astype(np.uint32)
+    newGPUArraySize: int = newCPUArray.size
+    # now we set the new value
+    if oldGPUArraySize >= newGPUArraySize:
+      self.__value.set(newCPUArray)
+    else:
+      self.__value[:newGPUArraySize] = gpuarray.to_gpu(newCPUArray)
+      self.__compressedRows = gpuarray.empty(0, dtype = np.uint32)
+      self.__dimension = len(value[0])

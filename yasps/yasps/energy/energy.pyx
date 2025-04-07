@@ -82,17 +82,19 @@ class energy:
 
 
   def getRoots(self, att: attribute, parentPath: List[attribute]) -> Tuple[List[attribute], List[List[attribute]]]:
-    from yasps.attribute import GATHER, SUM, AVERAGE, DATA
+    from yasps.attribute import JOIN, SUM, AVERAGE, DATA
     stack: List[attribute] = [att]
     seenRoots: Set[attribute] = set([])
     roots: List[attribute] = []
+    # we perform dfs to extract a path and its children
     while stack:
       current: attribute = stack.pop()
       if current.operator == DATA:
+        ## we got to the bottom of this path
         if current not in seenRoots:
           roots.append(current)
           seenRoots.add(current)
-      elif current.operator == GATHER or current.operator == SUM or current.operator == AVERAGE:
+      elif current.operator == JOIN or current.operator == SUM or current.operator == AVERAGE:
         if current.through.dimension == 0:
           raise ValueError("energy.getRoots: att.through.dimension is 0. Such operation is not supported in energy minimization.")
         if current not in seenRoots:
@@ -100,12 +102,19 @@ class energy:
           seenRoots.add(current)
       else:
         stack.extend(current.children)
-    # now we have the roots, which contains some gathering operation
-    # we need to duplicate the roots for those gathering operation
+    # now we have the roots, which contains some joining operation
+    # we need to duplicate the roots for those joining operation
     trueRoots: List[attribute] = []
     allPaths: List[List[attribute]] = []
     for root in roots:
       if root.operator != DATA:
+        # this is a joining operation
+        # ok so at join, we will need to check how the joined attribute
+        # will lead us to the final wrt attribute
+        # TODO:
+        # when the joined attribute is actually a union attribute
+        # we will need to separate the paths into different possibilities
+        # come back later for this
         childrenRoots, childrenPaths = self.getRoots(root.children[0], [])
         trueRoots += childrenRoots * root.through.dimension
         for childrenPath in childrenPaths:
@@ -114,12 +123,6 @@ class energy:
       else:
         trueRoots.append(root)
         allPaths.append(parentPath + [root])
-    # print("All paths: ")
-    # for path in allPaths:
-    #   print([p.fullName for p in path])
-    # print("All roots: ")
-    # for root in trueRoots:
-    #   print(root.fullName)
     return trueRoots, allPaths
 
 
@@ -127,12 +130,9 @@ class energy:
     self.__wrt = wrt
     # the wrt_start_indices, size and if type is primitive
     wrtStartIndicesAndSize: Dict[int, Tuple[int, int, bool]] = {x.hash: (wrt_start_indices[i], x.size, x.correspondance.type == "primitive") for i, x in enumerate(wrt)}
-    from yasps.attribute import GATHER
+    from yasps.attribute import JOIN
     # we have the path, now determine which path to use since we have the wrt
     usedPaths: List[List[attribute]] = []
-    # for i in range(len(self.roots)):
-    #   if self.roots[i] in wrt:
-    #     usedPaths.append(self.__paths[i])
     for path in self.__paths:
       if path[-1] in wrt:
         usedPaths.append(path)
@@ -140,9 +140,9 @@ class energy:
     # now we get the indices of the paths by recursively go over the indices, first we transfer the indices to CPU
     for path in usedPaths:
       for att in path:
-        if att.operator == GATHER:
+        if att.operator == JOIN:
           if att.hash not in indicesCPU:
-            indicesCPU[att.hash] = att.through.value.get().reshape(att.through.fromPrimitive.numInstances, att.through.dimension) # reshape to a 2D array with num instances, and dimension
+            indicesCPU[att.hash] = att.through.value.get().reshape(-1, att.through.dimension) # reshape to a 2D array with num instances, and dimension
     # now we recursively go over each path
     # we first recursively duplicate the path with rows
     allIndices: List[np.uint32] = []
@@ -172,14 +172,14 @@ class energy:
   def __duplicatePathForOperation(self, path: List[attribute]) -> List[List[Tuple[int, int]]]:
     # we duplicate the paths so that join operations are expanded
     # and we can later on use ot to get the indices
-    from yasps.attribute import DATA, GATHER
+    from yasps.attribute import DATA, JOIN
     # if it is just data, we return the hash and -1
     # if it is a row operator
     # instead we return the node hash and row index
     # if it is something else we return 0 and -2
     if path[0].operator == DATA:
       return [[(path[0].hash, -1)]]
-    elif path[0].operator == GATHER:
+    elif path[0].operator == JOIN:
       childrenPaths = self.__duplicatePathForOperation(path[1:])
       duplicatedPaths = []
       for i in range(path[0].through.dimension):
@@ -193,7 +193,7 @@ class energy:
       return childrenPaths
 
   def __generateGradient(self, wrt: List[attribute], differentiater: autodiff) -> None:
-    from yasps.attribute import GATHER, FLOAT
+    from yasps.attribute import JOIN, FLOAT
     # generate the symbolic code for gradient and hessian
     # first we check which path we need
     filteredPath: List[List[attribute]] = []
@@ -218,8 +218,8 @@ class energy:
           # # we will compute the jacobian for each neighboring nodes
           lead_node = path[i]
           follow_node = path[i+1]
-          if lead_node.operator == GATHER:
-            # we need to differentiate a gather's children wrt to the next node
+          if lead_node.operator == JOIN:
+            # we need to differentiate a join's children wrt to the next node
             child_att = lead_node.children[0]
             child_att_correspondance = child_att.correspondance
             child_att_full_name = child_att.fullName
@@ -232,7 +232,7 @@ class energy:
                 child_att_correspondance.addAttribute(diff_att_name, computed_attribute = child_diff)
             else:
               child_diff = child_att_correspondance.attributes[diff_att_name]
-          # now that we have the child jacobian, we need to differentiate the gather wrt to the child
+          # now that we have the child jacobian, we need to differentiate the join wrt to the child
           else:
             # it's a normal node, which is the energy
             # add the differentiation wrt to the next node
@@ -242,9 +242,9 @@ class energy:
               if diff_att_name not in lead_node.correspondance.attributes:
                 lead_node.correspondance.addAttribute(diff_att_name, computed_attribute = diff_att)
         # ok now we have done the differentiation from node to node
-        # we need to assemble the actual jacobian matrix for the gather operator
+        # we need to assemble the actual jacobian matrix for the join operator
         if len(path) == 2:
-          # there is no gather operation
+          # there is no join operation
           # the jacobian should be directly used
           derivative = path[0].correspondance[f'd_{path[0].fullName}_d_{path[1].fullName}']
           gradients.append(derivative)
@@ -252,7 +252,7 @@ class energy:
           # we go from bottom up
           # and for the first one, we will deal with it separately
           for i in range(len(path) - 2, 0, -1):
-            lead_att = path[i] # we know this has to be a gather node
+            lead_att = path[i] # we know this has to be a join node
             next_att = path[i+1]
             data_node = path[-1]
             neighboring_jacobian = lead_att.children[0].correspondance[f'd_{lead_att.children[0].fullName}_d_{next_att.fullName}']
@@ -262,15 +262,15 @@ class energy:
               multiplied_jacobian = neighboring_jacobian
             else:
               # now we get the jacobian from the next att to the data node
-              gather_path = path[i + 1: -1]
-              gather_path_str = "_d_".join([x.fullName for x in gather_path])
-              next_att_data_jacobian = next_att.correspondance[f'd_{gather_path_str}_d_{data_node.fullName}']
+              join_path = path[i + 1: -1]
+              join_path_str = "_d_".join([x.fullName for x in join_path])
+              next_att_data_jacobian = next_att.correspondance[f'd_{join_path_str}_d_{data_node.fullName}']
               multiplied_jacobian = neighboring_jacobian.mul_explicit(next_att_data_jacobian)
-            # now we determine if it is needed to actually gather the entire thing by checking if everything has a correspondance and not a float
+            # now we determine if it is needed to actually join the entire thing by checking if everything has a correspondance and not a float
             skipped_indices: List[int] = []
             # TODO: there are elements that are repeated
-            # we can reduce the amout of gather by taking out those elements
-            # and only gather once
+            # we can reduce the amout of join by taking out those elements
+            # and only join once
             for j in range(multiplied_jacobian.size):
               if multiplied_jacobian[j].correspondance is None or (multiplied_jacobian[j].correspondance.type != "primitive") or multiplied_jacobian[j].operator == FLOAT:
                 skipped_indices.append(j)
@@ -305,15 +305,15 @@ class energy:
             for j in range(multiplied_jacobian.size):
               if j in skipped_indices:
                 continue
-              # we need to create a new attribute for the ith element through gather
+              # we need to create a new attribute for the ith element through join
               if f"d_{included_path_str}_d_{data_node.fullName}_{j}" not in lead_att.correspondance.attributes:
                 if not self.__save_intermediate:
-                  lead_att.correspondance.addAttribute(f"d_{included_path_str}_d_{data_node.fullName}_{j}", through = lead_att.through, source = multiplied_jacobian[j]) # we add the new gathering attribute and use it later on
+                  lead_att.correspondance.addAttribute(f"d_{included_path_str}_d_{data_node.fullName}_{j}", through = lead_att.through, source = multiplied_jacobian[j]) # we add the new joining attribute and use it later on
                 else:
                   assert multiplied_jacobian_materialized is not None
                   lead_att.correspondance.addAttribute(f"d_{included_path_str}_d_{data_node.fullName}_{j}", through = lead_att.through, source = multiplied_jacobian_materialized[sequential_count])
                   sequential_count += 1
-            # now we have a new gather attribute which is the jacobian
+            # now we have a new join attribute which is the jacobian
             new_jacobian_children = [attribute(float_value = 0.0) for _ in range(multiplied_jacobian.size * lead_att.through.dimension * lead_att.through.dimension)]
             # ok, if the child jacobian is m by n, then the new jacobian has k by k blocks, each block is m by n
             # and only the diagonal blocks will have nonzero values
@@ -322,7 +322,7 @@ class energy:
             for j in range(multiplied_jacobian.size):
               m = multiplied_jacobian.rows # rows
               n = multiplied_jacobian.cols # cols
-              k = lead_att.through.dimension # how many times we need to repeat the jacobian through gather
+              k = lead_att.through.dimension # how many times we need to repeat the jacobian through join
               child_jacobian_row = j // n # which row of the child jacobian
               child_jacobian_col = j % n # which col of the child jacobian
               for l in range(lead_att.through.dimension):
@@ -363,7 +363,7 @@ class energy:
       self.__gradient = self.__energy.correspondance[f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}']
 
   def __generateHessianForParts(self, differentiater: autodiff, currentPaths: List[List[attribute]]) -> None:
-    from yasps.attribute import DATA, GATHER, FLOAT
+    from yasps.attribute import DATA, JOIN, FLOAT
     # we need to recursively generate the hessian for parts
     # the input currentPaths all have the same first element
     # then we just need to find the hessian for this part of the path
@@ -375,8 +375,8 @@ class energy:
     # we first check if H of f(g) is already computed
     lead_node: attribute = currentPaths[0][0]
     child_att: attribute
-    # differentiate between the gather canse and the top node, which is the energy
-    if lead_node.operator != GATHER:
+    # differentiate between the join canse and the top node, which is the energy
+    if lead_node.operator != JOIN:
       child_att = lead_node
     else:
       child_att = lead_node.children[0]
@@ -384,13 +384,14 @@ class energy:
     # we first check if the differentiation has been done before
     all_datas = [x[-1] for x in currentPaths]
     h_g_name = f'd2_{child_att.fullName}_d_{"__".join([x.fullName for x in all_datas])}'
-    if lead_node.operator != GATHER and h_g_name in child_att.correspondance.attributes:
+    if lead_node.operator != JOIN and h_g_name in child_att.correspondance.attributes:
       return
     # we need to get the hessian from child_att to data node
     # first, we construct the Hessian of f(g(x)) wrt g(x)
     # which is essentially the hessian from child_att to all of its children
     h_f_g_size: int = 0
     allChildren: List[attribute] = [] # all the following nodes
+    # we first check and join all the g(x) nodes
     for path in currentPaths:
       follow_node: attribute = path[1]
       if follow_node not in allChildren:
@@ -402,17 +403,19 @@ class energy:
     for i in range(len(allChildren)):
       follow_node: attribute = allChildren[i]
       follow_node_full_name: str = follow_node.fullName
-      diff_att_name: str = f'd_{child_att_full_name}_d_{follow_node_full_name}'
+      diff_att_name: str = f'd_{child_att_full_name}_d_{follow_node_full_name}' # ok so this is the jacobian of the first node wrt one of its children
       previous_children = allChildren[: i]
       col_offset = sum([x.size for x in previous_children]) # whenever we go to a new child, we need to reset the col_offset
       for j in range(i, len(allChildren)):
         diff_target_node: attribute = allChildren[j]
         diff_target_node_full_name: str = diff_target_node.fullName
-        d2_name: str = f'd_{diff_att_name}_d_{diff_target_node_full_name}' # we have computed this hessian for sure
+        d2_name: str = f'd_{diff_att_name}_d_{diff_target_node_full_name}' # we have computed this jacobian or hessian
         d2_attribute: attribute = child_att.correspondance.attributes[d2_name]
-        # print(f"D2 attribute: {d2_name}")
-        # print(d2_attribute.compute().value.get())
-        single_att_d2_size: int = d2_attribute.size // child_att.size # because this jacobian is computed for each
+
+        # let's say follow_node has size of K, and diff_target_node has size of M
+        # and our lead_node(or child node, whatever, it's the first node in the current path)
+        # has size of N, then this single_att_d2_size is M * N * K (might need to check the order later)
+        single_att_d2_size: int = d2_attribute.size // child_att.size #
         assert single_att_d2_size * child_att.size == d2_attribute.size # make sure the size is integer division
         for l in range(child_att.size):
           d2_attribute_partial: List[attribute] = [d2_attribute[k] for k in range(l * single_att_d2_size, (l + 1) * single_att_d2_size)]
@@ -492,7 +495,7 @@ class energy:
       all_df_dg.append(diff_att)
 
     # now, for each next node, we will need to have a permutation matrix
-    # this is because when we have gather, we cannot simply have on diagonal H0, H1, H2
+    # this is because when we have join, we cannot simply have on diagonal H0, H1, H2
     # instead, because we store the index by attribute, we need to put the same attribute at the same place
     # first, we will need to know for each of the follow node, their follow node and the size of the attribute
     attribute_sizes: List[List[int]] = [[]]
@@ -537,7 +540,7 @@ class energy:
           self.__generateHessianForParts(autodiff, relevant_paths)
         h_g: attribute = follow_node.children[0].correspondance.attributes[h_g_name] # h_g has size j_g_x_col_size * j_g_x_col_size * (number of elements for the follow node's child 0, because we have a hessian for each of the element)
         follow_node_child_size = follow_node.children[0].size # the number of blocks in h_g
-        follow_node_dimension = follow_node.through.dimension # how many children is gathered
+        follow_node_dimension = follow_node.through.dimension # how many children is joined
         h_g_true_size = h_g.size // follow_node_child_size # for each h_g, what's the size
         assert h_g_true_size * follow_node_child_size == h_g.size # make sure the division is integer
         h_g_true_row_size = sum(attribute_sizes[i]) # how many rows in this hessian
@@ -597,16 +600,16 @@ class energy:
           dfj_dg = [all_df_dg[i][k] for k in range(j * follow_node.size, (j + 1) * follow_node.size)]
           compressed_second_term_hessians: List[attribute] = [attribute(float_value = 0.0) for _ in range(h_g_true_size * follow_node_dimension)] # because for the child, let's say i have an attribute, that is accumulated 4 times, and the attribute itself has dimension 3, with the final data size of 8, then because each of the 3 elements are corresponding to the same 8 data attributes, we actually can accumulate them together for the 3 hessians, multiplied by the correct df_dg
           for k in range(follow_node_child_size * follow_node_dimension):
-            nth_gathered_element = k // follow_node_child_size # which gathered index it is
+            nth_joined_element = k // follow_node_child_size # which joined index it is
             # nth_child_element = k % follow_node_child_size # which child it is
             selected_hessian = expanded_second_term_hessians[k * h_g_true_size : (k + 1) * h_g_true_size] # extract the hessian block
             selected_hessian = [dfj_dg[k] * selected_hessian[m] for m in range(len(selected_hessian))] # multiply by the correct dfj_dg
             # now we add it back
             for m in range(h_g_true_size):
-              compressed_second_term_hessians[nth_gathered_element * h_g_true_size + m] += selected_hessian[m]
+              compressed_second_term_hessians[nth_joined_element * h_g_true_size + m] += selected_hessian[m]
           # ok now we reorient the children attributes
           # here's what we need to do
-          # we have N hessians, N is the gather dimension
+          # we have N hessians, N is the join dimension
           # and in each of the hessian, the blocks are sorted by data
           # now we need to put the same data in the same block
           # we have the mat_offset, which is the offset on both the row and col
@@ -617,7 +620,7 @@ class energy:
             for m in range(k, len(current_children_sizes)):
               block_col_size = current_children_sizes[m]
               block_col_start = sum(current_children_sizes[:m])
-              for n in range(follow_node_dimension): # for each gather
+              for n in range(follow_node_dimension): # for each join
                 # first we get the correct block
                 block = extract_block(compressed_second_term_hessians, h_g_true_row_size * follow_node_dimension, h_g_true_row_size, h_g_true_row_size * n + block_row_start, block_col_start, block_row_size, block_col_size)
                 # ok now we have the block, we need to know where to put it in the final matrix
@@ -649,7 +652,7 @@ class energy:
       hessian_children = h_f_g_children[i * h_f_g_size * h_f_g_size: (i + 1) * h_f_g_size * h_f_g_size]
       hessian = attribute.to_array(hessian_children, rows = h_f_g_size, cols = h_f_g_size)
       # ok determine if we want to do hessian projection
-      if lead_node.operator != GATHER:
+      if lead_node.operator != JOIN:
         if h_g_full_mats[i].isZero > 0: # check if the second part is just zero matrix
           second_term_is_zero = True
           # the second term is zero, we can do hessian projection
@@ -660,17 +663,17 @@ class energy:
       multiplication_result.append(mul2)
     for i in range(child_att.size):
       h_g_full_mats[i] = h_g_full_mats[i].add_explicit(multiplication_result[i])
-      if (lead_node.operator != GATHER) and (not second_term_is_zero) and (self.__projection_method != 0):
+      if (lead_node.operator != JOIN) and (not second_term_is_zero) and (self.__projection_method != 0):
         # # we need to project the whole matrix
         # h_g_full_mats[i] = h_g_full_mats[i].spd(0)
         # print("We project the entire hessian")
         self.__project_entire_hessian = True
       for j in range(h_g_full_mats[i].size):
         h_g_full_mat_children.append(h_g_full_mats[i][j])
-    if lead_node.operator == GATHER:
+    if lead_node.operator == JOIN:
       if h_g_name not in child_att.correspondance.attributes:
-        # we only add the hessian if it is a gather node
-        # because for a non gather node, we may have done projection
+        # we only add the hessian if it is a join node
+        # because for a non join node, we may have done projection
         child_att.correspondance.addAttribute(h_g_name, computed_attribute = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols))
     else:
       if f"{h_g_name}_projected" not in child_att.correspondance.attributes:
@@ -681,14 +684,14 @@ class energy:
         # print(f"Final hessian correspondance: {self.__hessian.correspondance}")
 
     # # this is our hessian now
-    # if lead_node.operator != GATHER:
+    # if lead_node.operator != JOIN:
     #   self.__hessian = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols)
 
 
 
 
   def __generateHessian(self, wrt: List[attribute], differentiater: autodiff) -> None:
-    from yasps.attribute import GATHER
+    from yasps.attribute import JOIN
     # first we check which path we need
     filteredPath: List[List[attribute]] = []
     for path in self.__paths:
@@ -722,7 +725,7 @@ class energy:
           follow_node = path[i+1]
           lead_node_hash = lead_node.hash
           lead_node_descendants = descendant_lookup[lead_node_hash]
-          if lead_node.operator == GATHER:
+          if lead_node.operator == JOIN:
             child_att = lead_node.children[0]
             child_att_correspondance = child_att.correspondance
             child_att_full_name = child_att.fullName
