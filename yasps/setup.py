@@ -11,6 +11,7 @@ extensions = [
     Extension("yasps.deviceKernel", ["yasps/kernel/deviceKernel.pyx"]),
     Extension("yasps.codeGenerator", ["yasps/codeGenerator/codeGenerator.pyx"]),
     Extension("yasps.globalKernel", ["yasps/kernel/globalKernel.pyx"]),
+    Extension("yasps.gradientIndicesKernel", ["yasps/kernel/gradientIndicesKernel.pyx"]),
     Extension("yasps.hessianAndGradientKernel", ["yasps/kernel/hessianAndGradientKernel.pyx"]),
     Extension("yasps.solverKernel", ["yasps/kernel/solverKernel.pyx"]),
     Extension("yasps.energy", ["yasps/energy/energy.pyx"]),

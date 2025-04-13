@@ -8,6 +8,7 @@ from .operator import operator
 from .deviceKernel import deviceKernel
 from .codeGenerator import codeGenerator
 from .globalKernel import globalKernel
+from .gradientIndicesKernel import gradientIndicesKernel
 from .hessianAndGradientKernel import hessianAndGradientKernel
 from .solverKernel import solverKernel
 from .energy import energy

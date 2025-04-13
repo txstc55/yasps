@@ -145,3 +145,24 @@ def energy_process_work(
   for i_local_list in all_results:
     current_process_all_indices.extend(i_local_list)
   return current_process_all_indices
+
+# create a wrapper function for timing
+import time
+DEBUG_TIME = False
+from functools import wraps
+def timed(msg="Function"):
+  def decorator(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+      if DEBUG_TIME:
+        print(f"[{msg}] Starting...")
+        start = time.time()
+        result = func(*args, **kwargs)
+        end = time.time()
+        elapsed_ms = (end - start) * 1000
+        print(f"[{msg}] Finished in {elapsed_ms:.2f} ms")
+        return result
+      else:
+        return func(*args, **kwargs)
+    return wrapper
+  return decorator

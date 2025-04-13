@@ -1,8 +1,5 @@
 # cython: language_level=3
 from __future__ import annotations
-from yasps.scene import scene
-from yasps.mesh import mesh
-from yasps.primitive import primitive
 from yasps.connectivity import connectivity
 from yasps.attribute import attribute
 from typing import List

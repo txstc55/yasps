@@ -13,9 +13,12 @@ import time
 # for multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+
 import os
 if TYPE_CHECKING:
   from yasps.hessianAndGradientKernel import hessianAndGradientKernel
+
+from yasps.gradientIndicesKernel import gradientIndicesKernel
 
 class energy:
   def __init__(self, energy: attribute, projection_method = 1, save_intermediate = False, gradient_only = False):
@@ -126,16 +129,82 @@ class energy:
     return trueRoots, allPaths
 
 
+
+
+  def getSparseIndicesGPU(self, wrt: List[attribute], wrt_start_indices: List[int]):
+    # the first step is to establish the path
+    # this we will compute this on CPU
+    self.__wrt = wrt
+    # we have the path, now determine which path to use since we have the wrt
+    usedPaths: List[List[attribute]] = []
+    for path in self.__paths:
+      if path[-1] in wrt:
+        usedPaths.append(path)
+    print("Used path: ")
+    for path in usedPaths:
+      print([x.fullName for x in path])
+
+    pathDict: Dict[attribute, List[attribute]] = {}
+    # we convert the used path as a dictionary
+    # by having the parent children relationship
+    for path in usedPaths:
+      if len(path) == 1:
+        raise ValueError("energy.getSparseIndices: minimizing a data attribute as energy is not allowed.")
+      for i in range(len(path) - 1):
+        parent: attribute = path[i]
+        child: attribute = path[i + 1]
+        if parent not in pathDict:
+          pathDict[parent] = []
+        if child not in pathDict[parent]:
+          pathDict[parent].append(child)
+    print("Now getting expanded path in dict: ")
+    for node in pathDict.keys():
+      print(f"Parent: {node.fullName}")
+      print("Children: ")
+      print([x.fullName for x in pathDict[node]])
+
+    # create a gradientIndicesKernel
+    # gradientIndicesKernel = gradientIndicesKernel.GradientIndicesKernel(pathDict, wrt, wrt_start_indices, self.__energy)
+
+    # we will now generate a kernel for fetching the indices
+
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
     self.__wrt = wrt
     # the wrt_start_indices, size and if type is primitive
-    wrtStartIndicesAndSize: Dict[int, Tuple[int, int, bool]] = {x.hash: (wrt_start_indices[i], x.size, x.correspondance.type == "primitive") for i, x in enumerate(wrt)}
+    wrtStartIndicesAndSize: Dict[int, Tuple[int, int, bool]] = {x.hash: (wrt_start_indices[i], x.size, x.correspondance.type == "primitive") for i, x in enumerate(wrt)} # this maps from all the data being used, to where it should start in the gradient, its size and if it is a primitive (we can optimize for mesh or scene primitive, which doesnt really have any number of instances)
     from yasps.attribute import JOIN
     # we have the path, now determine which path to use since we have the wrt
     usedPaths: List[List[attribute]] = []
     for path in self.__paths:
       if path[-1] in wrt:
         usedPaths.append(path)
+    print("Used path: ")
+    for path in usedPaths:
+      print([x.fullName for x in path])
+
+    pathDict: Dict[attribute, List[attribute]] = {}
+    # we convert the used path as a dictionary
+    # by having the parent children relationship
+    for path in usedPaths:
+      if len(path) == 1:
+        raise ValueError("energy.getSparseIndices: minimizing a data attribute as energy is not allowed.")
+      for i in range(len(path) - 1):
+        parent: attribute = path[i]
+        child: attribute = path[i + 1]
+        if parent not in pathDict:
+          pathDict[parent] = []
+        if child not in pathDict[parent]:
+          pathDict[parent].append(child)
+
+    print("Now getting expanded path in dict: ")
+    for node in pathDict.keys():
+      print(f"Parent: {node.fullName}")
+      print("Children: ")
+      print([x.fullName for x in pathDict[node]])
+
+    # create a gradientIndicesKernel
+    indicesKernel = gradientIndicesKernel(pathDict, wrt, wrt_start_indices, self.__energy)
+
     indicesCPU: Dict[int, np.ndarray] = {} # the indices to cpu
     # now we get the indices of the paths by recursively go over the indices, first we transfer the indices to CPU
     for path in usedPaths:
