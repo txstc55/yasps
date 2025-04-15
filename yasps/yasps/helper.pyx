@@ -148,7 +148,7 @@ def energy_process_work(
 
 # create a wrapper function for timing
 import time
-DEBUG_TIME = False
+DEBUG_TIME = True
 from functools import wraps
 def timed(msg="Function"):
   def decorator(func):

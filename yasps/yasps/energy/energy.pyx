@@ -140,9 +140,9 @@ class energy:
     for path in self.__paths:
       if path[-1] in wrt:
         usedPaths.append(path)
-    print("Used path: ")
-    for path in usedPaths:
-      print([x.fullName for x in path])
+    # print("Used path: ")
+    # for path in usedPaths:
+    #   print([x.fullName for x in path])
 
     pathDict: Dict[attribute, List[attribute]] = {}
     # we convert the used path as a dictionary
@@ -157,11 +157,11 @@ class energy:
           pathDict[parent] = []
         if child not in pathDict[parent]:
           pathDict[parent].append(child)
-    print("Now getting expanded path in dict: ")
-    for node in pathDict.keys():
-      print(f"Parent: {node.fullName}")
-      print("Children: ")
-      print([x.fullName for x in pathDict[node]])
+    # print("Now getting expanded path in dict: ")
+    # for node in pathDict.keys():
+    #   print(f"Parent: {node.fullName}")
+    #   print("Children: ")
+    #   print([x.fullName for x in pathDict[node]])
 
     # create a gradientIndicesKernel
     # gradientIndicesKernel = gradientIndicesKernel.GradientIndicesKernel(pathDict, wrt, wrt_start_indices, self.__energy)
@@ -204,6 +204,7 @@ class energy:
 
     # create a gradientIndicesKernel
     indicesKernel = gradientIndicesKernel(pathDict, wrt, wrt_start_indices, self.__energy)
+    indicesKernel.computeIndices(wrt_start_indices)
 
     indicesCPU: Dict[int, np.ndarray] = {} # the indices to cpu
     # now we get the indices of the paths by recursively go over the indices, first we transfer the indices to CPU
@@ -233,6 +234,8 @@ class energy:
         allIndices += current_process_all_indices
     # print("All indices are: ", allIndices)
     self.__indices_cpu = np.array(allIndices, dtype = np.uint32)
+    print("Original method indices: ")
+    print(self.__indices_cpu)
     self.__indices_gpu = gpuarray.to_gpu(self.__indices_cpu)
     self.__gradient_sizes_cpu = [wrtStartIndicesAndSize[x[-1][0]][1] for x in duplicatedPaths]
     return allIndices
