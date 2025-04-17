@@ -6,14 +6,10 @@ from typing import Optional, List, Tuple, Set, Dict
 from typing import TYPE_CHECKING
 from yasps.attribute import attribute
 from yasps.autodiff import autodiff
-import pycuda.driver as cuda
-from yasps.helper import extract_block, energy_process_work
-import time
+from yasps.helper import extract_block
 # for multiprocessing
-from concurrent.futures import ProcessPoolExecutor
 from yasps.helper import timed # for timing
 
-import os
 if TYPE_CHECKING:
   from yasps.hessianAndGradientKernel import hessianAndGradientKernel
 
@@ -846,7 +842,7 @@ class energy:
     # after we allocated, we invoke the kernel
     arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_kernel.outputIndices, self.__gradient_sizes_gpu, hessian_blocks_start_indices, self.__hessian_blocks_where_to_check, self.__block_indices_gpu, gradient_array, hessian_blocks, diagonal]
 
-    self.__hessianAndGradientKernel.kernel(*arguments, np.uint32(self.__merged_hessian_and_gradient_attribute.correspondance.numInstances), block=(32, 1, 1), grid=((self.__merged_hessian_and_gradient_attribute.correspondance.numInstances + 32) // 32, 1, 1))
+    self.__hessianAndGradientKernel.kernel(*arguments, np.uint32(self.__merged_hessian_and_gradient_attribute.correspondance.numInstances), block=(32, 1, 1), grid=((self.__merged_hessian_and_gradient_attribute.correspondance.numInstances + 31) // 32, 1, 1))
     # print(f"Gradient is: {gradient_array.get()}")
     return self
 

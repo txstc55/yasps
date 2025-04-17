@@ -13,6 +13,7 @@ v["size"].updateValue([1, 2, 2, 1, 4.5])
 f = m1.addPrimitive("faces", numInstances = 6)
 f2v = f.addConnectivity("face_to_vertex", v, [[0, 1, 2, 3], [0, 2, 0, 3], [2, 2, 1, 2], [4, 4, 4, 4], [2, 1, 3, 4], [2, 1, 2, 3]], 4) # 1 face connects to 4 vertices
 # 4, 3, 2, 1, 4, 3
+# 3, 2, 1, 5, 0, 4
 
 fp = f.addAttribute("position", through = f2v, source = v["position"])
 fs = f.addAttribute("size", through = f2v, source = v["size"])

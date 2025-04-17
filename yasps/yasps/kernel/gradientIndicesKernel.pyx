@@ -18,11 +18,14 @@ compression_kernel_string = '''
 #include <thrust/iterator/counting_iterator.h>
 #include <cuda_runtime.h>
 #include <vector>
-__global__ void computePermutation(const unsigned int* indices, const unsigned int* index_sizes, int* permutation, unsigned int* total_sizes, unsigned int N, unsigned int K) {
+__global__ void computePermutation(const unsigned int* indices, const unsigned int* index_sizes, int* permutation, unsigned int* total_gradient_sizes, unsigned int* compressed_index_sizes, unsigned int N, unsigned int K) {
   unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid < N) {
     int unique_count = 0;
-    unsigned int total_size = 0;
+    unsigned int total_gradient_size = 0;
+    unsigned int compressed_index_size = 0;
+    total_gradient_sizes[tid] = 0;
+    compressed_index_sizes[tid] = 0;
     for (unsigned int i = 0; i < K; ++i) {
       // first we check if the index already exists in this local array
       const unsigned int idx_i = indices[tid * K + i];
@@ -39,38 +42,41 @@ __global__ void computePermutation(const unsigned int* indices, const unsigned i
       if (!found) {
         unique_count++; // make the result we get to always exclude 0
         permutation[tid * K + i] = unique_count;
-        total_size += index_sizes[tid * K + i];
+        total_gradient_size += index_sizes[tid * K + i];
+        compressed_index_size++;
       }
     }
-    total_sizes[tid] = total_size;
+    total_gradient_sizes[tid] = total_gradient_size;
+    compressed_index_sizes[tid] = compressed_index_size;
   }
 }
 extern "C" {
 void compress_indices(
-  const unsigned int* d_indices,         // indices for each local gradient
-  const unsigned int* d_index_sizes,           // sizes of each variable for each index
-  int* d_permutations,                   // permutations for compression
-  unsigned int* d_total_sizes,           // total sizes per gradient
-  unsigned int* d_unique_sizes,          // unique gradient sizes
-  unsigned int* d_grouped_indices,       // grouped indices by gradient size
-  unsigned int* d_offsets,               // offsets for compressed indices
-  unsigned int* d_num_unique,            // number of unique sizes
+  const unsigned int* d_indices,           // indices for each local gradient
+  const unsigned int* d_index_sizes,       // sizes of each variable for each index
+  int* d_permutations,                     // permutations for compression
+  unsigned int* d_total_gradient_sizes,    // total sizes per gradient
+  unsigned int* d_compressed_index_sizes,  // the number of indices for gradient after compression
+  unsigned int* d_unique_sizes,            // unique gradient sizes
+  unsigned int* d_grouped_indices,         // grouped indices by gradient size
+  unsigned int* d_offsets,                 // offsets for compressed indices
+  unsigned int* d_num_unique,              // number of unique sizes
   unsigned int num_instances,
   unsigned int num_indices_for_each_instance
 ) {
   // Compute permutation and total sizes
   computePermutation<<<(num_instances + 256 - 1) / 256, 256>>>(
-    d_indices, d_index_sizes, d_permutations, d_total_sizes, num_instances, num_indices_for_each_instance
+    d_indices, d_index_sizes, d_permutations, d_total_gradient_sizes, d_compressed_index_sizes, num_instances, num_indices_for_each_instance
   );
   // Wrap existing memory (no extra allocation)
-  auto total_sizes_begin = thrust::device_pointer_cast(d_total_sizes);
+  auto total_sizes_begin = thrust::device_pointer_cast(d_total_gradient_sizes);
   auto total_sizes_end   = total_sizes_begin + num_instances;
   auto grouped_indices_begin = thrust::device_pointer_cast(d_grouped_indices);
 
   // Initialize d_grouped_indices as [0, 1, 2, ..., num_instances-1]
   thrust::sequence(grouped_indices_begin, grouped_indices_begin + num_instances);
 
-  // Sort total_sizes and reorder grouped_indices accordingly
+  // Sort total_gradient_sizes and reorder grouped_indices accordingly
   thrust::sort_by_key(
     total_sizes_begin, total_sizes_end, grouped_indices_begin
   );
@@ -141,17 +147,18 @@ class gradientIndicesKernel:
     ####################################################
     # Here are the uncompressed output indices
     ####################################################
-    self.__outputIndices = gpuarray.empty(0, dtype=np.uint32) # this will record the raw indices accumulated
-    self.__outputSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the sizes of the attributes
+    self.__outputIndices = gpuarray.empty(0, dtype=np.uint32) # this will record the raw indices for each energy term wrt the attributes used
+    self.__outputSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the sizes of the gradient before compression
     ####################################################
     # Here are information needed for compressed indices
     ####################################################
     self.__outputPermutations = gpuarray.empty(0, dtype=np.int32) # this will record how to compress the matrix locally
-    self.__outputTotalSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the total size of the attributes after compression
-    self.__outputUniqueSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the unique sizes of the attributes after compression
+    self.__outputTotalSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the total size of gradient after compression
+    self.__outputUniqueSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the unique sizes of the gradients after compression
     self.__outputGroupedIndices = gpuarray.empty(0, dtype=np.uint32) # this will record the grouped indices by the compressed gradient size
     self.__outputOffsets = gpuarray.empty(0, dtype=np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
-    self.__outputNumUniqueSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the number of unique sizes of the attributes after compression
+    self.__outputNumUniqueSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the number of unique sizes of the gradients after compression
+    self.__outputCompressedIndexSizes = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
     ####################################################
     # Here are the kernels
     ####################################################
@@ -190,11 +197,11 @@ class gradientIndicesKernel:
         os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
         self.__compression_kernel = ctypes.CDLL(f"{file_name}.so").compress_indices # get the compiled kernel
         self.__compression_kernel.restype = None # set the return type to None
-        self.__compression_kernel.argtypes = [ctypes.c_void_p] * 8 + [ctypes.c_uint32] * 2
+        self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2
       else:
         self.__compression_kernel = ctypes.CDLL(f"{file_name}.so").compress_indices # get the compiled kernel
         self.__compression_kernel.restype = None # set the return type to None
-        self.__compression_kernel.argtypes = [ctypes.c_void_p] * 8 + [ctypes.c_uint32] * 2
+        self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2
 
 
 
@@ -377,6 +384,7 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
       self.__outputPermutations = gpuarray.empty(self.indexSizes * newNumInstances, dtype=np.int32)
       self.__outputTotalSizes = gpuarray.empty(newNumInstances, dtype=np.uint32)
       self.__outputGroupedIndices = gpuarray.empty(self.indexSizes * newNumInstances, dtype=np.uint32)
+      self.__outputCompressedIndexSizes = gpuarray.empty(newNumInstances, dtype=np.uint32)
       self.__maxInstances = newNumInstances # update the maximum size
 
     self.__numInstances = newNumInstances # update the number of instances
@@ -388,6 +396,7 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     self.__outputGroupedIndices.fill(0)
     self.__outputUniqueSizes.fill(0)
     self.__outputOffsets.fill(0)
+    self.__outputCompressedIndexSizes.fill(0)
 
   @timed("gradientIndicesKernel.__computeIndices")
   def __computeIndices(self, wrt_start_indices: List[int]):
@@ -403,7 +412,18 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
   @timed("gradientIndicesKernel.__compressIndicesLocal")
   def __compressIndicesLocal(self):
     if self.__compression_kernel is not None:
-      self.__compression_kernel(self.__to_void_p(self.__outputIndices), self.__to_void_p(self.__outputSizes), self.__to_void_p(self.__outputPermutations), self.__to_void_p(self.__outputTotalSizes), self.__to_void_p(self.__outputUniqueSizes), self.__to_void_p(self.__outputGroupedIndices), self.__to_void_p(self.__outputOffsets), self.__to_void_p(self.__outputNumUniqueSizes), self.__numInstances, self.indexSizes)
+      self.__compression_kernel(
+        self.__to_void_p(self.__outputIndices),
+        self.__to_void_p(self.__outputSizes),
+        self.__to_void_p(self.__outputPermutations),
+        self.__to_void_p(self.__outputTotalSizes),
+        self.__to_void_p(self.__outputCompressedIndexSizes),
+        self.__to_void_p(self.__outputUniqueSizes),
+        self.__to_void_p(self.__outputGroupedIndices),
+        self.__to_void_p(self.__outputOffsets),
+        self.__to_void_p(self.__outputNumUniqueSizes),
+        self.__numInstances,
+        self.indexSizes)
       print("Indices", self.__outputIndices.get())
       print("Index sizes:", self.__outputSizes.get())
 
@@ -417,4 +437,5 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     print("The unique sizes are:", self.__outputUniqueSizes.get())
     print("Offsets:", self.__outputOffsets.get())
     print("Grouped Indices:", self.__outputGroupedIndices.get())
+    print("Compressed index sizes:", self.__outputCompressedIndexSizes.get())
     print("")
