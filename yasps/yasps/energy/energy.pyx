@@ -1,6 +1,5 @@
 # cython: language_level=3
 from __future__ import annotations
-import pycuda.autoinit
 import numpy as np
 import pycuda.gpuarray as gpuarray
 from typing import Optional, List, Tuple, Set, Dict
@@ -11,8 +10,8 @@ import pycuda.driver as cuda
 from yasps.helper import extract_block, energy_process_work
 import time
 # for multiprocessing
-from concurrent.futures import ProcessPoolExecutor, as_completed
-
+from concurrent.futures import ProcessPoolExecutor
+from yasps.helper import timed # for timing
 
 import os
 if TYPE_CHECKING:
@@ -29,7 +28,6 @@ class energy:
     self.__roots: List[attribute] = []
     self.__roots, self.__paths = self.getRoots(energy, [energy]) # get the root attributes
     self.__wrt: List[attribute] = [] # an energy can be minimized for different attributes, for safety let's save all histories
-    self.__indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the indices, this is used for gradient accumulation
     self.__indices_cpu: np.ndarray = np.array([]) # save the indices on cpu
     self.__block_indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the block indices, this is for hessian accumulation
     self.__gradient_sizes_cpu: List[int] = [] # save the sizes of the gradient, this is to determine for the gradient, how large it is for each segment
@@ -44,6 +42,7 @@ class energy:
     self.__save_intermediate = save_intermediate # save intermediate gradient and hessian result
     self.__intermediate_compute_pairs: Dict[str, Tuple[attribute, attribute]] = {} # save the intermediate compute pairs
     self.__gradient_only: bool = gradient_only # only compute gradient
+    self.__indices_kernel: Optional[gradientIndicesKernel] = None
 
 
   @property
@@ -168,6 +167,7 @@ class energy:
 
     # we will now generate a kernel for fetching the indices
 
+  @timed("energy.getSparseIndices")
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
     self.__wrt = wrt
     # the wrt_start_indices, size and if type is primitive
@@ -178,72 +178,41 @@ class energy:
     for path in self.__paths:
       if path[-1] in wrt:
         usedPaths.append(path)
-    print("Used path: ")
-    for path in usedPaths:
-      print([x.fullName for x in path])
+    if self.__indices_kernel is None:
+      # construct the path dict and generate the kernel
+      pathDict: Dict[attribute, List[attribute]] = {}
+      # we convert the used path as a dictionary
+      # by having the parent children relationship
+      for path in usedPaths:
+        if len(path) == 1:
+          raise ValueError("energy.getSparseIndices: minimizing a data attribute as energy is not allowed.")
+        for i in range(len(path) - 1):
+          parent: attribute = path[i]
+          child: attribute = path[i + 1]
+          if parent not in pathDict:
+            pathDict[parent] = []
+          if child not in pathDict[parent]:
+            pathDict[parent].append(child)
 
-    pathDict: Dict[attribute, List[attribute]] = {}
-    # we convert the used path as a dictionary
-    # by having the parent children relationship
-    for path in usedPaths:
-      if len(path) == 1:
-        raise ValueError("energy.getSparseIndices: minimizing a data attribute as energy is not allowed.")
-      for i in range(len(path) - 1):
-        parent: attribute = path[i]
-        child: attribute = path[i + 1]
-        if parent not in pathDict:
-          pathDict[parent] = []
-        if child not in pathDict[parent]:
-          pathDict[parent].append(child)
+      # create a gradientIndicesKernel
+      self.__indices_kernel = gradientIndicesKernel(pathDict, wrt, wrt_start_indices, self.__energy)
 
-    print("Now getting expanded path in dict: ")
-    for node in pathDict.keys():
-      print(f"Parent: {node.fullName}")
-      print("Children: ")
-      print([x.fullName for x in pathDict[node]])
-
-    # create a gradientIndicesKernel
-    indicesKernel = gradientIndicesKernel(pathDict, wrt, wrt_start_indices, self.__energy)
-    indicesKernel.computeIndices(wrt_start_indices)
-
-    indicesCPU: Dict[int, np.ndarray] = {} # the indices to cpu
-    # now we get the indices of the paths by recursively go over the indices, first we transfer the indices to CPU
-    for path in usedPaths:
-      for att in path:
-        if att.operator == JOIN:
-          if att.hash not in indicesCPU:
-            indicesCPU[att.hash] = att.through.value.get().reshape(-1, att.through.dimension) # reshape to a 2D array with num instances, and dimension
+    assert self.__indices_kernel is not None
+    self.__indices_kernel.computeIndices(wrt_start_indices) # actually compute the indices
     # now we recursively go over each path
     # we first recursively duplicate the path with rows
-    allIndices: List[np.uint32] = []
     duplicatedPaths = []
     for path in usedPaths:
       duplicatedPaths += self.__duplicatePathForOperation(path)
-    # here we use multiprocessing to compute the indices
-    with ProcessPoolExecutor() as executor:
-      futures = []
-      NUM_THREADS = os.cpu_count() or 1  # Default to 1 if CPU count is None
-      work_per_thread = (self.__energy.correspondance.numInstances // NUM_THREADS) + 1  # Example workload
-      for i in range(NUM_THREADS):
-        start_index = i * work_per_thread
-        end_index = (i + 1) * work_per_thread
-        futures.append(executor.submit(energy_process_work, start_index, end_index, self.__energy.correspondance.numInstances, duplicatedPaths, indicesCPU, wrtStartIndicesAndSize))
 
-      for future in futures:
-        current_process_all_indices = future.result()
-        allIndices += current_process_all_indices
-    # print("All indices are: ", allIndices)
-    self.__indices_cpu = np.array(allIndices, dtype = np.uint32)
-    print("Original method indices: ")
-    print(self.__indices_cpu)
-    self.__indices_gpu = gpuarray.to_gpu(self.__indices_cpu)
+    self.__indices_cpu = self.__indices_kernel.outputIndices.get()
     self.__gradient_sizes_cpu = [wrtStartIndicesAndSize[x[-1][0]][1] for x in duplicatedPaths]
-    return allIndices
+    return self.__indices_cpu
 
 
   def __duplicatePathForOperation(self, path: List[attribute]) -> List[List[Tuple[int, int]]]:
     # we duplicate the paths so that join operations are expanded
-    # and we can later on use ot to get the indices
+    # and we can later on use it to get the indices
     from yasps.attribute import DATA, JOIN
     # if it is just data, we return the hash and -1
     # if it is a row operator
@@ -837,12 +806,8 @@ class energy:
 
 
 
-
+  @timed("energy.computeHessianAndGradient")
   def computeHessianAndGradient(self, hessian_blocks_start_indices: gpuarray.GPUArray,  gradient_array: gpuarray.GPUArray, hessian_blocks: gpuarray.GPUArray, diagonal: gpuarray.GPUArray):
-    # print(f"Computing hessian and gradient for energy: {self.__energy.fullName}")
-    start_compute = cuda.Event()
-    end_compute = cuda.Event()
-    start_compute.record()
     if self.__gradient is None:
       # the gradient is 0, return the 0 array
       return
@@ -861,16 +826,10 @@ class energy:
         merged_hessian_and_gradient.append(self.__gradient[i])
       self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = len(merged_hessian_and_gradient) // (sum(self.__gradient_sizes_cpu)), cols = sum(self.__gradient_sizes_cpu)))
       from yasps.codeGenerator import codeGenerator
-      start_generator = time.time()
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
       codegen.generateCode()
-      end_generator = time.time()
-      print(f"Code generation time: {(end_generator - start_generator) * 1000.0:.5f} ms")
       # now add the global kernel
-      start_compile = time.time()
       self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__gradient_sizes_cpu, self.__project_entire_hessian, self.__projection_method, self.__gradient_only)
-      end_compile = time.time()
-      print(f"Compilation time: {(end_compile - start_compile) * 1000.0:.5f} ms")
       self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))
 
     print(f"There are {len(self.__intermediate_compute_pairs)} intermediate attributes")
@@ -882,30 +841,12 @@ class energy:
     # assertion here
     assert self.__hessianAndGradientKernel is not None
     assert self.__merged_hessian_and_gradient_attribute is not None
+    assert self.__indices_kernel is not None
 
-    # print("blocks start indices")
-    # print(hessian_blocks_start_indices.get())
     # after we allocated, we invoke the kernel
-    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_gpu, self.__gradient_sizes_gpu, hessian_blocks_start_indices, self.__hessian_blocks_where_to_check, self.__block_indices_gpu, gradient_array, hessian_blocks, diagonal]
+    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_kernel.outputIndices, self.__gradient_sizes_gpu, hessian_blocks_start_indices, self.__hessian_blocks_where_to_check, self.__block_indices_gpu, gradient_array, hessian_blocks, diagonal]
 
-
-
-    # finally call the kernel
-    # time the execution
-    start_call = cuda.Event()
-    end_call = cuda.Event()
-    start_call.record()
     self.__hessianAndGradientKernel.kernel(*arguments, np.uint32(self.__merged_hessian_and_gradient_attribute.correspondance.numInstances), block=(32, 1, 1), grid=((self.__merged_hessian_and_gradient_attribute.correspondance.numInstances + 32) // 32, 1, 1))
-    # Record the end event
-    end_call.record()
-    # Wait for the end event to complete
-    end_call.synchronize()
-    # Calculate the elapsed time in milliseconds
-    elapsed_time_ms = start_call.time_till(end_call)
-    end_compute.record()
-    end_compute.synchronize()
-    print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
-    print(f"Total time: {start_compute.time_till(end_compute):.5f} ms")
     # print(f"Gradient is: {gradient_array.get()}")
     return self
 

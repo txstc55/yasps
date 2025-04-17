@@ -155,7 +155,6 @@ def timed(msg="Function"):
     @wraps(func)
     def wrapper(*args, **kwargs):
       if DEBUG_TIME:
-        print(f"[{msg}] Starting...")
         start = time.time()
         result = func(*args, **kwargs)
         end = time.time()

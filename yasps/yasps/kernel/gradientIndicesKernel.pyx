@@ -6,7 +6,109 @@ import ctypes
 import numpy as np
 from yasps.attribute import JOIN, DATA, UNION
 from yasps.helper import timed
+import os
 
+compression_kernel_string = '''
+#include <thrust/device_vector.h>
+#include <thrust/sort.h>
+#include <thrust/unique.h>
+#include <thrust/copy.h>
+#include <thrust/scan.h>
+#include <thrust/transform.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <cuda_runtime.h>
+#include <vector>
+__global__ void computePermutation(const unsigned int* indices, const unsigned int* index_sizes, int* permutation, unsigned int* total_sizes, unsigned int N, unsigned int K) {
+  unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  if (tid < N) {
+    int unique_count = 0;
+    unsigned int total_size = 0;
+    for (unsigned int i = 0; i < K; ++i) {
+      // first we check if the index already exists in this local array
+      const unsigned int idx_i = indices[tid * K + i];
+      bool found = false;
+      for (unsigned int j = 0; j < i; j++){
+        const unsigned int idx_j = indices[tid * K + j];
+        if (idx_j == idx_i) {
+          // we found a duplicate
+          permutation[tid * K + i] = -permutation[tid * K + j];
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        unique_count++; // make the result we get to always exclude 0
+        permutation[tid * K + i] = unique_count;
+        total_size += index_sizes[tid * K + i];
+      }
+    }
+    total_sizes[tid] = total_size;
+  }
+}
+extern "C" {
+void compress_indices(
+  const unsigned int* d_indices,         // indices for each local gradient
+  const unsigned int* d_index_sizes,           // sizes of each variable for each index
+  int* d_permutations,                   // permutations for compression
+  unsigned int* d_total_sizes,           // total sizes per gradient
+  unsigned int* d_unique_sizes,          // unique gradient sizes
+  unsigned int* d_grouped_indices,       // grouped indices by gradient size
+  unsigned int* d_offsets,               // offsets for compressed indices
+  unsigned int* d_num_unique,            // number of unique sizes
+  unsigned int num_instances,
+  unsigned int num_indices_for_each_instance
+) {
+  // Compute permutation and total sizes
+  computePermutation<<<(num_instances + 256 - 1) / 256, 256>>>(
+    d_indices, d_index_sizes, d_permutations, d_total_sizes, num_instances, num_indices_for_each_instance
+  );
+  // Wrap existing memory (no extra allocation)
+  auto total_sizes_begin = thrust::device_pointer_cast(d_total_sizes);
+  auto total_sizes_end   = total_sizes_begin + num_instances;
+  auto grouped_indices_begin = thrust::device_pointer_cast(d_grouped_indices);
+
+  // Initialize d_grouped_indices as [0, 1, 2, ..., num_instances-1]
+  thrust::sequence(grouped_indices_begin, grouped_indices_begin + num_instances);
+
+  // Sort total_sizes and reorder grouped_indices accordingly
+  thrust::sort_by_key(
+    total_sizes_begin, total_sizes_end, grouped_indices_begin
+  );
+
+  // Compute flags marking unique starts (no extra alloc for sorted_values)
+  thrust::device_vector<unsigned int> flags(num_instances);
+  flags[0] = 1;
+  thrust::transform(
+    total_sizes_begin + 1, total_sizes_end,
+    total_sizes_begin,
+    flags.begin() + 1,
+    thrust::not_equal_to<unsigned int>()
+  );
+  // Get the unique count directly
+  unsigned int unique_count = thrust::count(flags.begin(), flags.end(), 1u);
+  cudaMemcpy(d_num_unique, &unique_count, sizeof(unsigned int), cudaMemcpyHostToDevice);
+
+  // Compute offsets directly into provided memory (no extra alloc)
+  thrust::copy_if(
+    thrust::make_counting_iterator(0),
+    thrust::make_counting_iterator((int)num_instances),
+    flags.begin(),
+    thrust::device_pointer_cast(d_offsets),
+    thrust::identity<unsigned int>()
+  );
+  // Set the last offset to num_instances explicitly
+  cudaMemcpy(d_offsets + unique_count, &num_instances, sizeof(unsigned int), cudaMemcpyHostToDevice);
+  // Copy unique sizes directly into provided memory
+  thrust::copy_if(
+    total_sizes_begin, total_sizes_end,
+    flags.begin(),
+    thrust::device_pointer_cast(d_unique_sizes),
+    thrust::identity<unsigned int>()
+  );
+  cudaDeviceSynchronize();
+}
+} // extern "C"
+'''
 
 # The gradient indices kernel needs to produce couple of things:
 # The most obvious one is globally, how to map each block to the global matrix
@@ -18,6 +120,7 @@ from yasps.helper import timed
 # so that we can pre allocate a kernel for that specific hessian size (for projection)
 # The first three things should have same dimension, as in the output array have the same size
 class gradientIndicesKernel:
+  @timed("gradientIndicesKernel.__init__")
   def __init__(self, path_dict: Dict[attribute, List[attribute]], wrt: List[attribute], wrt_start_indices: List[int], energy: attribute):
     self.__path_dict: Dict[attribute, List[attribute]] = path_dict
     self.__wrt_start_indices: List[int] = wrt_start_indices
@@ -30,15 +133,69 @@ class gradientIndicesKernel:
     self.__gradientSize, self.__indexSize = self.__getGradientSize(self.__path_dict, self.__energy)
     self.__positionInWrtStartIndices: Dict[attribute, int] = {} # we record the position in the wrt start indices
     for i in range(len(wrt)):
-      self.__positionInWrtStartIndices[wrt[i]] = wrt_start_indices[i]
+      self.__positionInWrtStartIndices[wrt[i]] = i
     self.__kernelString = ""
-    # the output data
-    self.__outputIndices = gpuarray.empty(0, dtype=np.uint32)
-    self.__outputSizes = gpuarray.empty(0, dtype=np.uint32)
-    self.__indices_kernel = None # the kernel for computing the indices
-    self.__generateKernel()
     self.__numInstances: int = 0 # for checking the number of instances
     self.__maxInstances: int = 0 # for allocating the largest gpu array
+    # the output data
+    ####################################################
+    # Here are the uncompressed output indices
+    ####################################################
+    self.__outputIndices = gpuarray.empty(0, dtype=np.uint32) # this will record the raw indices accumulated
+    self.__outputSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the sizes of the attributes
+    ####################################################
+    # Here are information needed for compressed indices
+    ####################################################
+    self.__outputPermutations = gpuarray.empty(0, dtype=np.int32) # this will record how to compress the matrix locally
+    self.__outputTotalSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the total size of the attributes after compression
+    self.__outputUniqueSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the unique sizes of the attributes after compression
+    self.__outputGroupedIndices = gpuarray.empty(0, dtype=np.uint32) # this will record the grouped indices by the compressed gradient size
+    self.__outputOffsets = gpuarray.empty(0, dtype=np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
+    self.__outputNumUniqueSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the number of unique sizes of the attributes after compression
+    ####################################################
+    # Here are the kernels
+    ####################################################
+    self.__indices_kernel = None # the kernel for computing the indices
+    self.__compression_kernel = None # the kernel for compressing the indices
+    self.__generateKernel() # generate and compile the kernel
+    self.__getCompressionKernel() # generate or just get the compression kernel
+
+    # we can pre allocate the spaces for unique sizes
+    self.__outputUniqueSizes = gpuarray.empty(self.__gradientSizeForEachPart[energy], np.uint32) # this is the largest possible size
+    self.__outputOffsets = gpuarray.empty(self.__gradientSizeForEachPart[energy] + 1, np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
+    self.__outputNumUniqueSizes = gpuarray.empty(1, np.uint32) # this will record the number of unique sizes of the attributes after compression
+
+
+  @property
+  def indexSizes(self):
+    return self.__indexSizeForEachPart[self.__energy] # return how many indices are needed for the energy, this is used for allocation
+
+  @property
+  def outputIndices(self):
+    return self.__outputIndices
+
+  @property
+  def outputSizes(self):
+    return self.__outputSizes
+
+  def __getCompressionKernel(self):
+    if self.__compression_kernel is None:
+      file_name = ".yasps_tmp/compression_kernel"
+      # check if the file exists
+      if not os.path.exists(f'{file_name}.so'):
+        # generate the kernel
+        f = open(f"{file_name}.cu", 'w')
+        f.write(compression_kernel_string)
+        f.close()
+        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
+        self.__compression_kernel = ctypes.CDLL(f"{file_name}.so").compress_indices # get the compiled kernel
+        self.__compression_kernel.restype = None # set the return type to None
+        self.__compression_kernel.argtypes = [ctypes.c_void_p] * 8 + [ctypes.c_uint32] * 2
+      else:
+        self.__compression_kernel = ctypes.CDLL(f"{file_name}.so").compress_indices # get the compiled kernel
+        self.__compression_kernel.restype = None # set the return type to None
+        self.__compression_kernel.argtypes = [ctypes.c_void_p] * 8 + [ctypes.c_uint32] * 2
+
 
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -48,6 +205,7 @@ class gradientIndicesKernel:
     assert x.gpudata is not None
     return ctypes.c_void_p(int(x.gpudata))
 
+
   def __getGradientSize(self, path_dict: Dict[attribute, List[attribute]], current_attribute: attribute) -> Tuple[int, int]:
     # we first get the list of attributes to look for
     children_attributes: List[attribute] = path_dict[current_attribute]
@@ -55,6 +213,7 @@ class gradientIndicesKernel:
     index_size = 0
     for child in children_attributes:
       if child.operator == DATA:
+        # we stop the recursion when child is a DATA attribute
         if child not in self.__gradientSizeForEachPart:
           self.__gradientSizeForEachPart[child] = child.size # the gradient size for the child is its own size
         if child not in self.__indexSizeForEachPart:
@@ -63,12 +222,15 @@ class gradientIndicesKernel:
         index_size += 1
       elif child.operator == JOIN:
         child_gradient_size, child_index_size = self.__getGradientSize(path_dict, child)
-        total_size += child.through.dimension * child_gradient_size
-        index_size += child.through.dimension * child_index_size
+        total_size += child_gradient_size
+        index_size += child_index_size
       elif child.operator == UNION:
         # do nothing for now
         total_size += 0
         index_size += 0
+    if current_attribute.operator == JOIN:
+      total_size = total_size * current_attribute.through.dimension
+      index_size = index_size * current_attribute.through.dimension
     self.__gradientSizeForEachPart[current_attribute] = total_size # also record that for each join operation, the size we need to reserve
     self.__indexSizeForEachPart[current_attribute] = index_size
     return total_size, index_size
@@ -79,7 +241,6 @@ class gradientIndicesKernel:
       if att.operator == JOIN:
         self.__used_join_attributes.append(att)
 
-  @timed("Generate Kernel for Index")
   def __generateKernel(self):
     # ok now we need to generate the kernel
     # what we basically aim to do
@@ -147,7 +308,7 @@ __device__ inline void {parent.fullName}_get_indices({", ".join([f"const unsigne
         # call the function
         if child.operator == JOIN:
           # we make sure the index size is divisible
-          assert self.__indexSizeForEachPart[child] % child.through.dimension == 0
+          assert self.__indexSizeForEachPart[child] % child.through.dimension == 0, f"Index size {self.__indexSizeForEachPart[child]} is not divisible by dimension {child.through.dimension}"
           self.__kernelString += f'''
   for (unsigned int i = 0; i < {child.through.dimension}; i++){{
     {parent.fullName}_get_indices_from_{child.fullName}({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices + {index_accumulation} + {self.__indexSizeForEachPart[child] // child.through.dimension} * i, outputSizes + {index_accumulation} + {self.__indexSizeForEachPart[child] // child.through.dimension} * i, {(child.fullName + f"_indices[index * {child.through.dimension} + i]")});
@@ -170,7 +331,7 @@ __device__ inline void {parent.fullName}_get_indices({", ".join([f"const unsigne
 __global__ void {self.__energy.fullName}_get_indices_global_function({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned int* outputSizes, unsigned int NUM_INSTANCES) {{
   unsigned int index = threadIdx.x + blockIdx.x * blockDim.x;
   if (index < NUM_INSTANCES) {{
-    {self.__energy.fullName}_get_indices({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices + index * {self.__indexSizeForEachPart[self.__energy]}, outputSizes + index * {self.__indexSizeForEachPart[self.__energy]}, index);
+    {self.__energy.fullName}_get_indices({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices + index * {self.indexSizes}, outputSizes + index * {self.indexSizes}, index);
   }}
 }}
 '''
@@ -189,51 +350,71 @@ inline void cudaAssert(cudaError_t code, const char *file, int line,
   }}
 }}
 extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned int* outputSizes, unsigned int NUM_INSTANCES) {{
-  {self.__energy.fullName}_get_indices_global_function<<<(NUM_INSTANCES + 32) / 32, 32>>>({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices, outputSizes, NUM_INSTANCES);
+  {self.__energy.fullName}_get_indices_global_function<<<(NUM_INSTANCES + 32 - 1) / 32, 32>>>({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices, outputSizes, NUM_INSTANCES);
   CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 }}
 '''
 
     # ok now we compile the kernel by saving it to a file and then calling nvcc
     file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"
-    # f = open(f"{file_name}.cu", 'w')
-    # f.write(self.__kernelString)
-    # f.close()
+    f = open(f"{file_name}.cu", 'w')
+    f.write(self.__kernelString)
+    f.close()
     # we will now compile this kernel
-    import os
     os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
     self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
     self.__indices_kernel.restype = None # set the return type to None
     self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
 
-  @property
-  def outputIndices(self):
-    return self.__outputIndices
 
-  @property
-  def outputSizes(self):
-    return self.__outputSizes
-
-  def computeIndices(self, wrt_start_indices: List[int]):
+  @timed("gradientIndicesKernel.__reallocate")
+  def __reallocate(self):
     newNumInstances: int = self.__energy.correspondance.numInstances
     if newNumInstances > self.__maxInstances:
       # resize the gpu arrays
-      self.__outputIndices = gpuarray.empty(self.__indexSizeForEachPart[self.__energy] * newNumInstances, dtype=np.uint32)
-      self.__outputSizes = gpuarray.empty(self.__indexSizeForEachPart[self.__energy] * newNumInstances, dtype=np.uint32)
+      self.__outputIndices = gpuarray.empty(self.indexSizes * newNumInstances, dtype=np.uint32)
+      self.__outputSizes = gpuarray.empty(self.indexSizes * newNumInstances, dtype=np.uint32)
+      self.__outputPermutations = gpuarray.empty(self.indexSizes * newNumInstances, dtype=np.int32)
+      self.__outputTotalSizes = gpuarray.empty(newNumInstances, dtype=np.uint32)
+      self.__outputGroupedIndices = gpuarray.empty(self.indexSizes * newNumInstances, dtype=np.uint32)
       self.__maxInstances = newNumInstances # update the maximum size
-    self.__numInstances = newNumInstances # update the number of instances
 
-    # first let's convert wrt_start_indices to a pycuda array
-    wrt_start_indices_gpu = gpuarray.to_gpu(np.array(wrt_start_indices, dtype=np.uint32))
-    # then we get all the gpu arrays for the connectivity
-    connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
+    self.__numInstances = newNumInstances # update the number of instances
     # we clear the output arrays
     self.__outputIndices.fill(0)
     self.__outputSizes.fill(0)
+    self.__outputPermutations.fill(0)
+    self.__outputTotalSizes.fill(0)
+    self.__outputGroupedIndices.fill(0)
+    self.__outputUniqueSizes.fill(0)
+    self.__outputOffsets.fill(0)
+
+  @timed("gradientIndicesKernel.__computeIndices")
+  def __computeIndices(self, wrt_start_indices: List[int]):
+    # first let's convert wrt_start_indices to a pycuda array
+    wrt_start_indices_gpu = gpuarray.to_gpu(np.array(wrt_start_indices, dtype=np.uint32))
+    print("wrt start indices:", wrt_start_indices)
+    # then we get all the gpu arrays for the connectivity
+    connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
     # now we invoke the kernel
     if self.__indices_kernel is not None:
       self.__indices_kernel(*connectivity_list_gpu, self.__to_void_p(wrt_start_indices_gpu), self.__to_void_p(self.__outputIndices), self.__to_void_p(self.__outputSizes), self.__numInstances)
 
-    # print the result
-    print("Output Indices:", self.__outputIndices.get())
-    print("Output Sizes:", self.__outputSizes.get())
+  @timed("gradientIndicesKernel.__compressIndicesLocal")
+  def __compressIndicesLocal(self):
+    if self.__compression_kernel is not None:
+      self.__compression_kernel(self.__to_void_p(self.__outputIndices), self.__to_void_p(self.__outputSizes), self.__to_void_p(self.__outputPermutations), self.__to_void_p(self.__outputTotalSizes), self.__to_void_p(self.__outputUniqueSizes), self.__to_void_p(self.__outputGroupedIndices), self.__to_void_p(self.__outputOffsets), self.__to_void_p(self.__outputNumUniqueSizes), self.__numInstances, self.indexSizes)
+      print("Indices", self.__outputIndices.get())
+      print("Index sizes:", self.__outputSizes.get())
+
+
+  @timed("gradientIndicesKernel.computeIndices")
+  def computeIndices(self, wrt_start_indices: List[int]):
+    self.__reallocate()
+    self.__computeIndices(wrt_start_indices)
+    self.__compressIndicesLocal()
+    print("There are", self.__outputNumUniqueSizes.get()[0], "unique sizes")
+    print("The unique sizes are:", self.__outputUniqueSizes.get())
+    print("Offsets:", self.__outputOffsets.get())
+    print("Grouped Indices:", self.__outputGroupedIndices.get())
+    print("")
