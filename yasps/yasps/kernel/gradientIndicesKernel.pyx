@@ -7,7 +7,26 @@ import numpy as np
 from yasps.attribute import JOIN, DATA, UNION
 from yasps.helper import timed
 import os
+import pycuda.driver as cuda
 
+########################################################################
+# The gradient indices kernel has multiple functions
+# 1. Getting all the indices of the attributes that are used for every local instance
+# 2. Compress it locally to avoid too large of the local hessian
+#    this compression will also give us couple arrays that tells us
+#    the number of unique hessian sizes
+#    for each unique hessian size, which instances has that size
+#    the outer index(just to know where to begin and end)
+# 3. We will also check the number of coordinates used for each instance
+#    since we compressed the hessian, it is possible that originally there are
+#    5 indices, and after compression there are 3 indices
+#    after expansion, it means there are 3 * 4 / 2 = 6 coordinates
+#    we will the need to know, for each instance, the number of unique coordinates locally
+#    we do this by again having an outer index, this way we not only know where the coordinate starts
+#    we also know how many there are
+# 4. finally, the coordinates, those coordinates are allowed to have duplicates
+#    the deduplication will be left to the minimizer
+# 5. additionally, the dimension of those coordinates (block width and height)
 compression_kernel_string = '''
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
@@ -18,19 +37,40 @@ compression_kernel_string = '''
 #include <thrust/iterator/counting_iterator.h>
 #include <cuda_runtime.h>
 #include <vector>
-__global__ void computePermutation(const unsigned int* indices, const unsigned int* index_sizes, int* permutation, unsigned int* total_gradient_sizes, unsigned int* compressed_index_sizes, unsigned int N, unsigned int K) {
+// for checking cuda error
+#define CUDA_CHECK_ERROR(ans)                                                  \
+  {{ cudaAssert((ans), __FILE__, __LINE__); }}
+inline void cudaAssert(cudaError_t code, const char *file, int line,
+                        bool abort = true) {{
+                        if (code != cudaSuccess) {{
+    fprintf(stderr, "CUDA Error: %s at %s:%d\\n", cudaGetErrorString(code), file,
+            line);
+    if (abort)
+      exit(code);
+  }}
+}}
+
+__global__ void computePermutation(
+    const unsigned int* indices,
+    const unsigned short int* index_sizes,
+    short int* permutation,
+    unsigned short int* total_gradient_sizes,
+    unsigned int* compressed_index_sizes,
+    unsigned int N,
+    unsigned int K
+  ) {
   unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid < N) {
     int unique_count = 0;
-    unsigned int total_gradient_size = 0;
+    unsigned short int total_gradient_size = 0;
     unsigned int compressed_index_size = 0;
     total_gradient_sizes[tid] = 0;
     compressed_index_sizes[tid] = 0;
-    for (unsigned int i = 0; i < K; ++i) {
+    for (unsigned short int i = 0; i < K; ++i) {
       // first we check if the index already exists in this local array
       const unsigned int idx_i = indices[tid * K + i];
       bool found = false;
-      for (unsigned int j = 0; j < i; j++){
+      for (unsigned short int j = 0; j < i; j++){
         const unsigned int idx_j = indices[tid * K + j];
         if (idx_j == idx_i) {
           // we found a duplicate
@@ -47,26 +87,39 @@ __global__ void computePermutation(const unsigned int* indices, const unsigned i
       }
     }
     total_gradient_sizes[tid] = total_gradient_size;
-    compressed_index_sizes[tid] = compressed_index_size;
+    compressed_index_sizes[tid] = compressed_index_size; // for now we store the number of unique indices
   }
 }
+// Functor to apply the transformation x * (x + 1) / 2
+struct triangular_transform {
+  __host__ __device__
+  unsigned int operator()(const unsigned int& x) const {
+    return x * (x + 1) / 2;
+  }
+};
 extern "C" {
 void compress_indices(
   const unsigned int* d_indices,           // indices for each local gradient
-  const unsigned int* d_index_sizes,       // sizes of each variable for each index
-  int* d_permutations,                     // permutations for compression
-  unsigned int* d_total_gradient_sizes,    // total sizes per gradient
-  unsigned int* d_compressed_index_sizes,  // the number of indices for gradient after compression
-  unsigned int* d_unique_sizes,            // unique gradient sizes
+  const unsigned short int* d_index_sizes,       // sizes of each variable for each index
+  short int* d_permutations,               // permutations for compression
+  unsigned short int* d_total_gradient_sizes,    // total sizes per gradient
+  unsigned int* d_compressed_coordinate_counts_ounter,  // the number of indices for gradient after compression
+  unsigned short int* d_unique_sizes,            // unique gradient sizes
   unsigned int* d_grouped_indices,         // grouped indices by gradient size
   unsigned int* d_offsets,                 // offsets for compressed indices
-  unsigned int* d_num_unique,              // number of unique sizes
+  unsigned short int* d_num_unique,              // number of unique sizes
   unsigned int num_instances,
   unsigned int num_indices_for_each_instance
 ) {
   // Compute permutation and total sizes
   computePermutation<<<(num_instances + 256 - 1) / 256, 256>>>(
-    d_indices, d_index_sizes, d_permutations, d_total_gradient_sizes, d_compressed_index_sizes, num_instances, num_indices_for_each_instance
+    d_indices,
+    d_index_sizes,
+    d_permutations,
+    d_total_gradient_sizes,
+    d_compressed_coordinate_counts_ounter + 1,
+    num_instances,
+    num_indices_for_each_instance
   );
   // Wrap existing memory (no extra allocation)
   auto total_sizes_begin = thrust::device_pointer_cast(d_total_gradient_sizes);
@@ -91,8 +144,8 @@ void compress_indices(
     thrust::not_equal_to<unsigned int>()
   );
   // Get the unique count directly
-  unsigned int unique_count = thrust::count(flags.begin(), flags.end(), 1u);
-  cudaMemcpy(d_num_unique, &unique_count, sizeof(unsigned int), cudaMemcpyHostToDevice);
+  unsigned short int unique_count = thrust::count(flags.begin(), flags.end(), 1u);
+  cudaMemcpy(d_num_unique, &unique_count, sizeof(unsigned short int), cudaMemcpyHostToDevice);
 
   // Compute offsets directly into provided memory (no extra alloc)
   thrust::copy_if(
@@ -111,10 +164,119 @@ void compress_indices(
     thrust::device_pointer_cast(d_unique_sizes),
     thrust::identity<unsigned int>()
   );
-  cudaDeviceSynchronize();
+  CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+  // now we count for the energy, the number of coordinates we need to allocate
+  thrust::device_ptr<unsigned int> count_ptr(d_compressed_coordinate_counts_ounter);
+  thrust::transform(
+    count_ptr + 1,                 // input start
+    count_ptr + 1 + num_instances, // input end
+    count_ptr + 1,                 // output start
+    triangular_transform()         // transformation
+  );
+  // Compute prefix sum (exclusive) on transformed values, store back
+  // this way, we know where the coordinate starts and ends
+  thrust::inclusive_scan(
+    count_ptr + 1,                 // input start
+    count_ptr + 1 + num_instances, // input end
+    count_ptr + 1                  // output: starts at index 0
+  );
+  CUDA_CHECK_ERROR(cudaDeviceSynchronize()); // wait for the kernel to finish
 }
 } // extern "C"
 '''
+
+coordinate_kernel_string = '''
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
+// for checking cuda error
+#define CUDA_CHECK_ERROR(ans)                                                  \
+  {{ cudaAssert((ans), __FILE__, __LINE__); }}
+inline void cudaAssert(cudaError_t code, const char *file, int line,
+                        bool abort = true) {{
+                        if (code != cudaSuccess) {{
+    fprintf(stderr, "CUDA Error: %s at %s:%d\\n", cudaGetErrorString(code), file,
+            line);
+    if (abort)
+      exit(code);
+  }}
+}}
+__device__ void computeCoordinatesDeviceFunction(const unsigned int* indices,
+                                   const int* permutations,
+                                   const short unsigned int* indexSizes,
+                                   unsigned int* coordinates,
+                                   unsigned short int* dimensions,
+                                   const unsigned int num_indices_for_each_instance){
+  unsigned int total_coordinates = 0;
+  for (unsigned int i = 0; i < num_indices_for_each_instance; i++) {
+    const unsigned int ind_i = indices[i];
+    const int permutation_i = permutations[i];
+    if (permutation_i > 0){
+      for (unsigned int j = i; j < num_indices_for_each_instance; j++){
+        const unsigned int ind_j = indices[j];
+        const int permutation_j = permutations[j];
+        if (permutation_j > 0){
+          // this is a valid coordinate that is not compressed
+          // we also only want the upper triangular part
+          if (ind_i < ind_j){
+            coordinates[total_coordinates] = ind_i;
+            coordinates[total_coordinates + 1] = ind_j;
+            dimensions[total_coordinates] = indexSizes[i];
+            dimensions[total_coordinates + 1] = indexSizes[j];
+          }else{
+            coordinates[total_coordinates] = ind_j;
+            coordinates[total_coordinates + 1] = ind_i;
+            dimensions[total_coordinates] = indexSizes[j];
+            dimensions[total_coordinates + 1] = indexSizes[i];
+          }
+          total_coordinates += 2;
+        }
+      }
+    }
+  }
+}
+
+__global__ void computeCoordinatesGlobalFunction(const unsigned int* indices, // the index, or coordinate
+                                                 const int* permutations,     // how we permute the indices to compress them
+                                                 const short unsigned int* indexSizes, // the size for each index (the size of the corresponding attribute)
+                                                 unsigned int* coordinates, // output the coordinates
+                                                 unsigned short int* dimensions, // output the dimensions
+                                                 const unsigned int* coordinatesCountsOuterIndices, // this will tell us, how many coordinates are we expecting for each instance, and where the begin of it should be
+                                                 const unsigned int num_indices_for_each_instance, // how many indices are we expecting for each instance
+                                                 const unsigned int num_instances // how many instances
+                                                ){
+
+  unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  if (tid < num_instances) {
+    const unsigned int coordinateStart = coordinatesCountsOuterIndices[tid];
+    const unsigned int coordinateEnd = coordinateStart + num_indices_for_each_instance;
+    computeCoordinatesDeviceFunction(indices + tid * num_indices_for_each_instance,
+                                     permutations + tid * num_indices_for_each_instance,
+                                     indexSizes + tid * num_indices_for_each_instance,
+                                     coordinates + coordinateStart,
+                                     dimensions + tid * num_indices_for_each_instance,
+                                     num_indices_for_each_instance);
+  }
+}
+
+
+extern "C"
+{
+void computeCoordinates(
+  const unsigned int* indices, // the index, or coordinate
+  const int* permutations,     // how we permute the indices to compress them
+  const short unsigned int* indexSizes, // the size for each index (the size of the corresponding attribute)
+  unsigned int* coordinates, // output the coordinates
+  unsigned short int* dimensions, // output the dimensions
+  const unsigned int* coordinatesCountsOuterIndices, // this will tell us, how many coordinates are we expecting for each instance, and where the begin of it should be
+  const unsigned int num_indices_for_each_instance, // how many indices are we expecting for each instance
+  const unsigned int num_instances // how many instances
+){
+  computeCoordinatesGlobalFunction<<<(num_instances + 255) / 256, 256>>>(indices, permutations, indexSizes, coordinates, dimensions, coordinatesCountsOuterIndices, num_indices_for_each_instance, num_instances);
+  CUDA_CHECK_ERROR(cudaDeviceSynchronize()); // wait for the kernel to finish
+}
+}'''
 
 # The gradient indices kernel needs to produce couple of things:
 # The most obvious one is globally, how to map each block to the global matrix
@@ -148,34 +310,46 @@ class gradientIndicesKernel:
     # Here are the uncompressed output indices
     ####################################################
     self.__outputIndices = gpuarray.empty(0, dtype=np.uint32) # this will record the raw indices for each energy term wrt the attributes used
-    self.__outputSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the sizes of the gradient before compression
+    self.__outputIndexSizes = gpuarray.empty(0, dtype=np.uint16) # for each index, the attribute dimension is recorded in this array
     ####################################################
     # Here are information needed for compressed indices
+    # for any array that record sizes, it can be uint16
+    # for any array related to indices, it should be uint32
     ####################################################
-    self.__outputPermutations = gpuarray.empty(0, dtype=np.int32) # this will record how to compress the matrix locally
-    self.__outputTotalSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the total size of gradient after compression
-    self.__outputUniqueSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the unique sizes of the gradients after compression
-    self.__outputGroupedIndices = gpuarray.empty(0, dtype=np.uint32) # this will record the grouped indices by the compressed gradient size
-    self.__outputOffsets = gpuarray.empty(0, dtype=np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
-    self.__outputNumUniqueSizes = gpuarray.empty(0, dtype=np.uint32) # this will record the number of unique sizes of the gradients after compression
-    self.__outputCompressedIndexSizes = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
+    self.__outputPermutations = gpuarray.empty(0, dtype=np.int16) # this will record how to compress the matrix locally
+    self.__outputGradientSizes = gpuarray.empty(0, dtype=np.uint16) # this will record the total size of gradient after compression
+    self.__outputUniqueGradientSizes = gpuarray.empty(0, dtype=np.uint16) # this will record the unique sizes of the gradients after compression
+    self.__outputGroupedIndicesInner = gpuarray.empty(0, dtype=np.uint32) # this will record the grouped indices by the compressed gradient size
+    self.__outputGroupedIndicesOuter = gpuarray.empty(0, dtype=np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
+    self.__outputNumUniqueGradientSizes = gpuarray.empty(0, dtype=np.uint16) # this will record the number of unique sizes of the gradients after compression
+    self.__outputCompressedCoordinateCountsOuter = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
+    ####################################################
+    # Here are information needed for coordinate generation
+    # we will have 1 array of uint32 which stores the uncompressed coordinates
+    # and another array of uint16 which stores the dimension of the blocks
+    self.__outputCoordinates = gpuarray.empty(0, dtype=np.uint32) # this will record the uncompressed coordinates
+    self.__outputBlockDimensions = gpuarray.empty(0, dtype=np.uint16) # this will record the dimension of the blocks
+    ####################################################
+
     ####################################################
     # Here are the kernels
     ####################################################
     self.__indices_kernel = None # the kernel for computing the indices
     self.__compression_kernel = None # the kernel for compressing the indices
+    self.__coordinate_kernel = None # the kernel for compressing the indices
     self.__generateKernel() # generate and compile the kernel
     self.__getCompressionKernel() # generate or just get the compression kernel
+    self.__getCoordinateKernel() # generate or just get the coordinate kernel
 
     # we can pre allocate the spaces for unique sizes
-    self.__outputUniqueSizes = gpuarray.empty(self.__gradientSizeForEachPart[energy], np.uint32) # this is the largest possible size
-    self.__outputOffsets = gpuarray.empty(self.__gradientSizeForEachPart[energy] + 1, np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
-    self.__outputNumUniqueSizes = gpuarray.empty(1, np.uint32) # this will record the number of unique sizes of the attributes after compression
+    self.__outputUniqueGradientSizes = gpuarray.empty(self.__gradientSizeForEachPart[energy], np.uint16) # this is the largest possible size
+    self.__outputGroupedIndicesOuter = gpuarray.empty(self.__gradientSizeForEachPart[energy] + 1, np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
+    self.__outputNumUniqueGradientSizes = gpuarray.empty(1, np.uint16) # this will record the number of unique sizes of the attributes after compression
 
 
   @property
-  def indexSizes(self):
-    return self.__indexSizeForEachPart[self.__energy] # return how many indices are needed for the energy, this is used for allocation
+  def maxNumIndicesNeeded(self):
+    return self.__indexSizeForEachPart[self.__energy] # return how many indices are needed for each instance of the energy, used for allocation
 
   @property
   def outputIndices(self):
@@ -183,7 +357,7 @@ class gradientIndicesKernel:
 
   @property
   def outputSizes(self):
-    return self.__outputSizes
+    return self.__outputIndexSizes
 
   def __getCompressionKernel(self):
     if self.__compression_kernel is None:
@@ -203,7 +377,23 @@ class gradientIndicesKernel:
         self.__compression_kernel.restype = None # set the return type to None
         self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2
 
-
+  def __getCoordinateKernel(self):
+    if self.__coordinate_kernel is None:
+      file_name = ".yasps_tmp/coordinate_kernel"
+      # check if the file exists
+      if not os.path.exists(f'{file_name}.so'):
+        # generate the kernel
+        f = open(f"{file_name}.cu", 'w')
+        f.write(coordinate_kernel_string)
+        f.close()
+        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
+        self.__coordinate_kernel = ctypes.CDLL(f"{file_name}.so").computeCoordinates # get the compiled kernel
+        self.__coordinate_kernel.restype = None # set the return type to None
+        self.__coordinate_kernel.argtypes = [ctypes.c_void_p] * 6 + [ctypes.c_uint32] * 2
+      else:
+        self.__coordinate_kernel = ctypes.CDLL(f"{file_name}.so").computeCoordinates # get the compiled kernel
+        self.__coordinate_kernel.restype = None # set the return type to None
+        self.__coordinate_kernel.argtypes = [ctypes.c_void_p] * 6 + [ctypes.c_uint32] * 2
 
   def __to_void_p(self, x: gpuarray.GPUArray):
     if x is None or x.size == 0:
@@ -262,18 +452,18 @@ class gradientIndicesKernel:
       for child in self.__path_dict[parent]:
         # now put a kernel function header
         self.__kernelString += f'''
-__device__ inline void {parent.fullName}_get_indices_from_{child.fullName}({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned int* outputSizes, unsigned int index);
+__device__ inline void {parent.fullName}_get_indices_from_{child.fullName}({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int index);
 '''
       # we also add a header function that will be used to fetch the index for the entire parent and children
       self.__kernelString += f'''
-__device__ inline void {parent.fullName}_get_indices({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned int* outputSizes, unsigned int index);
+__device__ inline void {parent.fullName}_get_indices({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int index);
 '''
     # ok we have produced the header functions, we will start the actual implementation
     for parent in self.__path_dict.keys():
       for child in self.__path_dict[parent]:
         # we will now construct the actual function
         self.__kernelString += f'''
-__device__ inline void {parent.fullName}_get_indices_from_{child.fullName}({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned int* outputSizes, unsigned int index){{'''
+__device__ inline void {parent.fullName}_get_indices_from_{child.fullName}({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int index){{'''
         if child.operator == DATA:
           # we have reached the bottom
           # we now record that index, added by offset, and the size of this attribute
@@ -304,7 +494,7 @@ __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}({", "
       # print("Children")
       # print([x.fullName for x in self.__path_dict[parent]])
       self.__kernelString += f'''
-__device__ inline void {parent.fullName}_get_indices({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned int* outputSizes, unsigned int index){{
+__device__ inline void {parent.fullName}_get_indices({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int index){{
   // const int num_children = {len(self.__path_dict[parent])};
   // const int childrenIndexSizes[num_children] = {{{", ".join([str(self.__indexSizeForEachPart[x]) for x in self.__path_dict[parent]])}}}; // here we first know how much space to save for each child
   // we expand the for loop directly
@@ -335,10 +525,10 @@ __device__ inline void {parent.fullName}_get_indices({", ".join([f"const unsigne
 
     # now we can do the global kernel
     self.__kernelString += f'''
-__global__ void {self.__energy.fullName}_get_indices_global_function({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned int* outputSizes, unsigned int NUM_INSTANCES) {{
+__global__ void {self.__energy.fullName}_get_indices_global_function({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int NUM_INSTANCES) {{
   unsigned int index = threadIdx.x + blockIdx.x * blockDim.x;
   if (index < NUM_INSTANCES) {{
-    {self.__energy.fullName}_get_indices({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices + index * {self.indexSizes}, outputSizes + index * {self.indexSizes}, index);
+    {self.__energy.fullName}_get_indices({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices + index * {self.maxNumIndicesNeeded}, outputSizes + index * {self.maxNumIndicesNeeded}, index);
   }}
 }}
 '''
@@ -356,7 +546,7 @@ inline void cudaAssert(cudaError_t code, const char *file, int line,
       exit(code);
   }}
 }}
-extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned int* outputSizes, unsigned int NUM_INSTANCES) {{
+extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int NUM_INSTANCES) {{
   {self.__energy.fullName}_get_indices_global_function<<<(NUM_INSTANCES + 32 - 1) / 32, 32>>>({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices, outputSizes, NUM_INSTANCES);
   CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 }}
@@ -379,24 +569,24 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     newNumInstances: int = self.__energy.correspondance.numInstances
     if newNumInstances > self.__maxInstances:
       # resize the gpu arrays
-      self.__outputIndices = gpuarray.empty(self.indexSizes * newNumInstances, dtype=np.uint32)
-      self.__outputSizes = gpuarray.empty(self.indexSizes * newNumInstances, dtype=np.uint32)
-      self.__outputPermutations = gpuarray.empty(self.indexSizes * newNumInstances, dtype=np.int32)
-      self.__outputTotalSizes = gpuarray.empty(newNumInstances, dtype=np.uint32)
-      self.__outputGroupedIndices = gpuarray.empty(self.indexSizes * newNumInstances, dtype=np.uint32)
-      self.__outputCompressedIndexSizes = gpuarray.empty(newNumInstances, dtype=np.uint32)
+      self.__outputIndices = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
+      self.__outputIndexSizes = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint16)
+      self.__outputPermutations = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.int16)
+      self.__outputGradientSizes = gpuarray.empty(newNumInstances, dtype=np.uint16)
+      self.__outputGroupedIndicesInner = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
+      self.__outputCompressedCoordinateCountsOuter = gpuarray.empty(newNumInstances + 1, dtype=np.uint32)
       self.__maxInstances = newNumInstances # update the maximum size
 
     self.__numInstances = newNumInstances # update the number of instances
     # we clear the output arrays
     self.__outputIndices.fill(0)
-    self.__outputSizes.fill(0)
+    self.__outputIndexSizes.fill(0)
     self.__outputPermutations.fill(0)
-    self.__outputTotalSizes.fill(0)
-    self.__outputGroupedIndices.fill(0)
-    self.__outputUniqueSizes.fill(0)
-    self.__outputOffsets.fill(0)
-    self.__outputCompressedIndexSizes.fill(0)
+    self.__outputGradientSizes.fill(0)
+    self.__outputGroupedIndicesInner.fill(0)
+    self.__outputUniqueGradientSizes.fill(0)
+    self.__outputGroupedIndicesOuter.fill(0)
+    self.__outputCompressedCoordinateCountsOuter.fill(0)
 
   @timed("gradientIndicesKernel.__computeIndices")
   def __computeIndices(self, wrt_start_indices: List[int]):
@@ -406,26 +596,64 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     # then we get all the gpu arrays for the connectivity
     connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
     # now we invoke the kernel
-    if self.__indices_kernel is not None:
-      self.__indices_kernel(*connectivity_list_gpu, self.__to_void_p(wrt_start_indices_gpu), self.__to_void_p(self.__outputIndices), self.__to_void_p(self.__outputSizes), self.__numInstances)
+    assert self.__indices_kernel is not None
+    self.__indices_kernel(
+      *connectivity_list_gpu,
+      self.__to_void_p(wrt_start_indices_gpu),
+      self.__to_void_p(self.__outputIndices),
+      self.__to_void_p(self.__outputIndexSizes),
+      self.__numInstances)
 
   @timed("gradientIndicesKernel.__compressIndicesLocal")
   def __compressIndicesLocal(self):
-    if self.__compression_kernel is not None:
-      self.__compression_kernel(
-        self.__to_void_p(self.__outputIndices),
-        self.__to_void_p(self.__outputSizes),
-        self.__to_void_p(self.__outputPermutations),
-        self.__to_void_p(self.__outputTotalSizes),
-        self.__to_void_p(self.__outputCompressedIndexSizes),
-        self.__to_void_p(self.__outputUniqueSizes),
-        self.__to_void_p(self.__outputGroupedIndices),
-        self.__to_void_p(self.__outputOffsets),
-        self.__to_void_p(self.__outputNumUniqueSizes),
-        self.__numInstances,
-        self.indexSizes)
-      print("Indices", self.__outputIndices.get())
-      print("Index sizes:", self.__outputSizes.get())
+    assert self.__compression_kernel is not None
+    self.__compression_kernel(
+      self.__to_void_p(self.__outputIndices),
+      self.__to_void_p(self.__outputIndexSizes),
+      self.__to_void_p(self.__outputPermutations),
+      self.__to_void_p(self.__outputGradientSizes),
+      self.__to_void_p(self.__outputCompressedCoordinateCountsOuter),
+      self.__to_void_p(self.__outputUniqueGradientSizes),
+      self.__to_void_p(self.__outputGroupedIndicesInner),
+      self.__to_void_p(self.__outputGroupedIndicesOuter),
+      self.__to_void_p(self.__outputNumUniqueGradientSizes),
+      self.__numInstances,
+      self.maxNumIndicesNeeded)
+    print("Used Indices", self.__outputIndices.get())
+    print("Dimensions of the indices:", self.__outputIndexSizes.get())
+
+  @property
+  def numTotalCoordinates(self) -> int:
+    result = np.empty(1, dtype=np.uint32)
+    cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
+    return int(result[0])
+
+  @timed("gradientIndicesKernel.allocateSpaceForCoordinates")
+  def __allocateSpaceForCoordinates(self):
+    # first get the size required space
+    spaceNeeded = self.numTotalCoordinates * 2
+    # now determine if it is larger than what we currently have
+    if spaceNeeded > self.__outputCoordinates.size:
+      # here we will allocate more space than needed to avoid frequent reallocations
+      self.__outputCoordinates = gpuarray.empty(int(spaceNeeded * 1.5), dtype=np.uint32)
+      self.__outputBlockDimensions = gpuarray.empty(int(spaceNeeded * 1.5), dtype=np.uint16)
+    # fill in 0
+    self.__outputCoordinates.fill(0)
+    self.__outputBlockDimensions.fill(0)
+
+  @timed("gradientIndicesKernel.generateCoordinates")
+  def __generateCoordinates(self):
+    assert self.__coordinate_kernel is not None
+    self.__coordinate_kernel(
+      self.__to_void_p(self.__outputIndices),
+      self.__to_void_p(self.__outputPermutations),
+      self.__to_void_p(self.__outputIndexSizes),
+      self.__to_void_p(self.__outputCoordinates),
+      self.__to_void_p(self.__outputBlockDimensions),
+      self.__to_void_p(self.__outputCompressedCoordinateCountsOuter),
+      self.maxNumIndicesNeeded,
+      self.__numInstances
+    )
 
 
   @timed("gradientIndicesKernel.computeIndices")
@@ -433,9 +661,14 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     self.__reallocate()
     self.__computeIndices(wrt_start_indices)
     self.__compressIndicesLocal()
-    print("There are", self.__outputNumUniqueSizes.get()[0], "unique sizes")
-    print("The unique sizes are:", self.__outputUniqueSizes.get())
-    print("Offsets:", self.__outputOffsets.get())
-    print("Grouped Indices:", self.__outputGroupedIndices.get())
-    print("Compressed index sizes:", self.__outputCompressedIndexSizes.get())
-    print("")
+    self.__allocateSpaceForCoordinates()
+    self.__generateCoordinates()
+    print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
+    print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
+    print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
+    print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get())
+    print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
+    print("Number of total coordinates:", self.numTotalCoordinates)
+    print("Permutations:", self.__outputPermutations.get())
+    print("Coordinates:", self.__outputCoordinates.get())
+    print("Dimensions:", self.__outputBlockDimensions.get())

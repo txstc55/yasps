@@ -123,6 +123,9 @@ class minimizer:
   def __getblockSizes(self):
     pass
 
+  def __getSparseIndicesGPU(self):
+    pass
+
   def __getSparseIndices(self):
     for local_energy in self.energies:
       local_energy.getSparseIndices(self.wrt, self.__wrtStartIndices)
