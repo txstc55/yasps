@@ -203,7 +203,7 @@ inline void cudaAssert(cudaError_t code, const char *file, int line,
   }}
 }}
 __device__ void computeCoordinatesDeviceFunction(const unsigned int* indices,
-                                   const int* permutations,
+                                   const short int* permutations,
                                    const short unsigned int* indexSizes,
                                    unsigned int* coordinates,
                                    unsigned short int* dimensions,
@@ -238,7 +238,7 @@ __device__ void computeCoordinatesDeviceFunction(const unsigned int* indices,
 }
 
 __global__ void computeCoordinatesGlobalFunction(const unsigned int* indices, // the index, or coordinate
-                                                 const int* permutations,     // how we permute the indices to compress them
+                                                 const short int* permutations,     // how we permute the indices to compress them
                                                  const short unsigned int* indexSizes, // the size for each index (the size of the corresponding attribute)
                                                  unsigned int* coordinates, // output the coordinates
                                                  unsigned short int* dimensions, // output the dimensions
@@ -249,13 +249,12 @@ __global__ void computeCoordinatesGlobalFunction(const unsigned int* indices, //
 
   unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid < num_instances) {
-    const unsigned int coordinateStart = coordinatesCountsOuterIndices[tid];
-    const unsigned int coordinateEnd = coordinateStart + num_indices_for_each_instance;
+    const unsigned int coordinateStart = coordinatesCountsOuterIndices[tid] * 2;
     computeCoordinatesDeviceFunction(indices + tid * num_indices_for_each_instance,
                                      permutations + tid * num_indices_for_each_instance,
                                      indexSizes + tid * num_indices_for_each_instance,
                                      coordinates + coordinateStart,
-                                     dimensions + tid * num_indices_for_each_instance,
+                                     dimensions + coordinateStart,
                                      num_indices_for_each_instance);
   }
 }
@@ -265,7 +264,7 @@ extern "C"
 {
 void computeCoordinates(
   const unsigned int* indices, // the index, or coordinate
-  const int* permutations,     // how we permute the indices to compress them
+  const short int* permutations,     // how we permute the indices to compress them
   const short unsigned int* indexSizes, // the size for each index (the size of the corresponding attribute)
   unsigned int* coordinates, // output the coordinates
   unsigned short int* dimensions, // output the dimensions
@@ -619,8 +618,7 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
       self.__to_void_p(self.__outputNumUniqueGradientSizes),
       self.__numInstances,
       self.maxNumIndicesNeeded)
-    print("Used Indices", self.__outputIndices.get())
-    print("Dimensions of the indices:", self.__outputIndexSizes.get())
+
 
   @property
   def numTotalCoordinates(self) -> int:
@@ -635,8 +633,8 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     # now determine if it is larger than what we currently have
     if spaceNeeded > self.__outputCoordinates.size:
       # here we will allocate more space than needed to avoid frequent reallocations
-      self.__outputCoordinates = gpuarray.empty(int(spaceNeeded * 1.5), dtype=np.uint32)
-      self.__outputBlockDimensions = gpuarray.empty(int(spaceNeeded * 1.5), dtype=np.uint16)
+      self.__outputCoordinates = gpuarray.empty(int(spaceNeeded * 1), dtype=np.uint32)
+      self.__outputBlockDimensions = gpuarray.empty(int(spaceNeeded * 1), dtype=np.uint16)
     # fill in 0
     self.__outputCoordinates.fill(0)
     self.__outputBlockDimensions.fill(0)
@@ -663,6 +661,8 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     self.__compressIndicesLocal()
     self.__allocateSpaceForCoordinates()
     self.__generateCoordinates()
+    print("Used Indices", self.__outputIndices.get())
+    print("Dimensions of the indices:", self.__outputIndexSizes.get())
     print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
     print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
     print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
