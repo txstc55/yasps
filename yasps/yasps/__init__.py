@@ -10,6 +10,7 @@ from .codeGenerator import codeGenerator
 from .globalKernel import globalKernel
 from .gradientIndicesKernel import gradientIndicesKernel
 from .hessianAndGradientKernel import hessianAndGradientKernel
+from .coordinateCompressionKernel import coordinateCompressionKernel
 from .solverKernel import solverKernel
 from .energy import energy
 from .minimizer import minimizer

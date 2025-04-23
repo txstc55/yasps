@@ -90,62 +90,6 @@ def prune_duplicate_functions(code_string):
   output_code += code_string[pos:]
   return output_code
 
-def energy_process_one_path_vector(
-    path,
-    start_i,
-    end_i,
-    indicesCPU,
-    wrtStartIndicesAndSize
-):
-  N = end_i - start_i
-  currentIndices = np.arange(start_i, end_i, dtype=np.uint32)
-  data_steps = [(h, op) for (h, op) in path if op < 0]  # operation == -1 => data
-  D = len(data_steps)
-  appended = np.empty((D, N), dtype=np.uint32)
-  data_step_idx = 0
-  for (hashValue, operation) in path:
-    if operation >= 0:
-      rowIndex = operation
-      currentIndices = indicesCPU[hashValue][currentIndices, rowIndex]
-    else:
-      (start_pos, size, is_primitive) = wrtStartIndicesAndSize[hashValue]
-      if is_primitive:
-        updated = start_pos + currentIndices * size
-        appended[data_step_idx] = updated
-        currentIndices = updated
-      else:
-        appended[data_step_idx].fill(start_pos)
-        currentIndices.fill(start_pos)
-      data_step_idx += 1
-  path_results = [[] for _ in range(N)]
-  for i_local in range(N):
-    for d in range(D):
-      path_results[i_local].append(appended[d, i_local])
-  return path_results
-
-
-def energy_process_work(
-  start_index: int,
-  end_index: int,
-  max_index: int,
-  duplicatedPaths,
-  indicesCPU,
-  wrtStartIndicesAndSize
-):
-  end_index = min(end_index, max_index)
-  N = end_index - start_index
-  if N <= 0:
-    return []
-  all_results = [[] for _ in range(N)]
-  for path in duplicatedPaths:
-    path_results = energy_process_one_path_vector(path, start_index, end_index, indicesCPU, wrtStartIndicesAndSize)
-    for i_local in range(N):
-      all_results[i_local].extend(path_results[i_local])
-  current_process_all_indices = []
-  for i_local_list in all_results:
-    current_process_all_indices.extend(i_local_list)
-  return current_process_all_indices
-
 # create a wrapper function for timing
 import time
 DEBUG_TIME = True
@@ -155,6 +99,7 @@ def timed(msg="Function"):
     @wraps(func)
     def wrapper(*args, **kwargs):
       if DEBUG_TIME:
+        print(f"[{msg}] Starting...")
         start = time.time()
         result = func(*args, **kwargs)
         end = time.time()

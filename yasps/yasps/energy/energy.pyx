@@ -78,6 +78,21 @@ class energy:
   def gradient_only(self) -> bool:
     return self.__gradient_only
 
+  @property
+  def outputCoordinates(self):
+    assert self.__indices_kernel is not None, "Indices kernel not initialized"
+    return self.__indices_kernel.outputCoordinates
+
+  @property
+  def outputBlockDimensions(self):
+    assert self.__indices_kernel is not None, "Indices kernel not initialized"
+    return self.__indices_kernel.outputBlockDimensions
+
+  @property
+  def numTotalCoordinates(self):
+    assert self.__indices_kernel is not None, "Indices kernel not initialized"
+    return self.__indices_kernel.numTotalCoordinates
+
 
   def getRoots(self, att: attribute, parentPath: List[attribute]) -> Tuple[List[attribute], List[List[attribute]]]:
     from yasps.attribute import JOIN, SUM, AVERAGE, DATA
@@ -149,7 +164,10 @@ class energy:
             pathDict[parent] = []
           if child not in pathDict[parent]:
             pathDict[parent].append(child)
-
+      print("Path dict check")
+      for key in pathDict.keys():
+        print("Parent:", key.fullName)
+        print("Children:", [child.fullName for child in pathDict[key]])
       # create a gradientIndicesKernel
       self.__indices_kernel = gradientIndicesKernel(pathDict, wrt, wrt_start_indices, self.__energy)
 

@@ -7,6 +7,7 @@ from typing import List, Tuple, Set, Optional, Dict
 from yasps.energy import energy
 from yasps.attribute import attribute
 from yasps.solverKernel import solverKernel
+from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 import time
 import ctypes
 
@@ -129,6 +130,11 @@ class minimizer:
   def __getSparseIndices(self):
     for local_energy in self.energies:
       local_energy.getSparseIndices(self.wrt, self.__wrtStartIndices)
+    compressionKernel = coordinateCompressionKernel([x.outputCoordinates for x in self.energies], [x.outputBlockDimensions for x in self.energies], [x.numTotalCoordinates for x in self.energies], self.wrt)
+    compressionKernel.compressCoordinatesAndDimensions()
+    # we will now get the compressed coordinates
+    uniqueCoordinates = compressionKernel.uniqueCoordinates.get()
+
     # ok now we have the indices for blocks in their uncompressed order
     # what we need to do is to find the compressed sparse indices
     uncompressedIndicesNumpy: np.ndarray = np.empty((0, 2), dtype = np.uint32)
@@ -210,45 +216,30 @@ class minimizer:
     ]
     print(f"There are {sum([len(x) for x in compressedIndices])} unique blocks")
 
-    # ###################################################
-    # ## remove this code, this is for analysis
-    # ###################################################
-
-    # start = time.time()
-    # sorted_block_sizes = []
-    # sorted_positions = []
-
-    # for i in range(len(compressedIndicesDecoded)):
-    #   dimension = self.__blockDimensions[i]
-    #   dimension = sorted(dimension)
-    #   index = i
-    #   if dimension in sorted_block_sizes:
-    #     index = sorted_block_sizes.index(dimension)
-    #   else:
-    #     sorted_block_sizes.append(dimension)
-    #     sorted_positions.append([])
-    #     index = len(sorted_block_sizes) - 1
-    #   sorted_positions[index] += compressedIndicesDecoded[i]
-
-    # totalNNZ = 0
-    # for i in range(len(sorted_positions)):
-    #   uniquePairs = {tuple(sorted((x, y))) for x, y in sorted_positions[i]}
-    #   diagonalPairs = sum(x == y for x, y in uniquePairs)
-    #   uniquePairsCount = len(uniquePairs)
-    #   diagonalBlockCount = diagonalPairs
-    #   dimension = sorted_block_sizes[i]
-    #   nnz = dimension[0] * dimension[1] * uniquePairsCount * 2 - dimension[0] * dimension[1] * diagonalBlockCount
-    #   totalNNZ += nnz
-    # print(f"Total NNZ is: {totalNNZ}")
-    # end = time.time()
-    # print(f"Analysis: {1000.0 * (end - start)} ms")
-    # ###################################################
-    # ## End of analysis
-    # ###################################################
-
 
     self.__blockCounts = [len(item) for item in compressedIndices]
     self.__blockPositions = gpuarray.to_gpu(np.concatenate([x.flatten() for x in compressedIndicesDecoded]))
+
+    blockPositionsCPU = self.__blockPositions.get().flatten()
+    positionsSet = set([])
+    for i in range(len(blockPositionsCPU // 2)):
+      positionsSet.add(tuple([blockPositionsCPU[i * 2], blockPositionsCPU[i * 2 + 1]]))
+      positionsSet.add(tuple([blockPositionsCPU[i * 2 + 1], blockPositionsCPU[i * 2]]))
+    # now we check if uniqueCoordinates has coordinate tuples
+    positionSet2 = set([])
+    for i in range(len(positionsSet) // 2):
+      coord = tuple([uniqueCoordinates[i * 2], uniqueCoordinates[i * 2 + 1]])
+      coordRev = tuple([uniqueCoordinates[i * 2 + 1], uniqueCoordinates[i * 2]])
+      positionSet2.add(coord)
+      positionSet2.add(coordRev)
+
+    # check if two sets are equal
+    if positionSet2 != positionsSet:
+      print(f"Coordinate sets are not equal")
+      exit()
+
+
+
     # now we segment the list to the positions list
     total_count: int = 0
     for i in range(len(self.__blockCounts)):

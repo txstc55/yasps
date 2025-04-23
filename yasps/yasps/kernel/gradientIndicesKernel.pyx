@@ -308,26 +308,26 @@ class gradientIndicesKernel:
     ####################################################
     # Here are the uncompressed output indices
     ####################################################
-    self.__outputIndices = gpuarray.empty(0, dtype=np.uint32) # this will record the raw indices for each energy term wrt the attributes used
-    self.__outputIndexSizes = gpuarray.empty(0, dtype=np.uint16) # for each index, the attribute dimension is recorded in this array
+    self.__outputIndices: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # this will record the raw indices for each energy term wrt the attributes used
+    self.__outputIndexSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # for each index, the attribute dimension is recorded in this array
     ####################################################
     # Here are information needed for compressed indices
     # for any array that record sizes, it can be uint16
     # for any array related to indices, it should be uint32
     ####################################################
-    self.__outputPermutations = gpuarray.empty(0, dtype=np.int16) # this will record how to compress the matrix locally
-    self.__outputGradientSizes = gpuarray.empty(0, dtype=np.uint16) # this will record the total size of gradient after compression
-    self.__outputUniqueGradientSizes = gpuarray.empty(0, dtype=np.uint16) # this will record the unique sizes of the gradients after compression
-    self.__outputGroupedIndicesInner = gpuarray.empty(0, dtype=np.uint32) # this will record the grouped indices by the compressed gradient size
-    self.__outputGroupedIndicesOuter = gpuarray.empty(0, dtype=np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
-    self.__outputNumUniqueGradientSizes = gpuarray.empty(0, dtype=np.uint16) # this will record the number of unique sizes of the gradients after compression
-    self.__outputCompressedCoordinateCountsOuter = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
+    self.__outputPermutations: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.int16) # this will record how to compress the matrix locally
+    self.__outputGradientSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the total size of gradient after compression
+    self.__outputUniqueGradientSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the unique sizes of the gradients after compression
+    self.__outputGroupedIndicesInner: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # this will record the grouped indices by the compressed gradient size
+    self.__outputGroupedIndicesOuter: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
+    self.__outputNumUniqueGradientSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the number of unique sizes of the gradients after compression
+    self.__outputCompressedCoordinateCountsOuter: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
     ####################################################
     # Here are information needed for coordinate generation
     # we will have 1 array of uint32 which stores the uncompressed coordinates
     # and another array of uint16 which stores the dimension of the blocks
-    self.__outputCoordinates = gpuarray.empty(0, dtype=np.uint32) # this will record the uncompressed coordinates
-    self.__outputBlockDimensions = gpuarray.empty(0, dtype=np.uint16) # this will record the dimension of the blocks
+    self.__outputCoordinates: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # this will record the uncompressed coordinates
+    self.__outputBlockDimensions: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the dimension of the blocks
     ####################################################
 
     ####################################################
@@ -357,6 +357,15 @@ class gradientIndicesKernel:
   @property
   def outputSizes(self):
     return self.__outputIndexSizes
+
+  @property
+  def outputCoordinates(self):
+    return self.__outputCoordinates
+
+  @property
+  def outputBlockDimensions(self):
+    return self.__outputBlockDimensions
+
 
   def __getCompressionKernel(self):
     if self.__compression_kernel is None:
@@ -661,14 +670,14 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     self.__compressIndicesLocal()
     self.__allocateSpaceForCoordinates()
     self.__generateCoordinates()
-    print("Used Indices", self.__outputIndices.get())
-    print("Dimensions of the indices:", self.__outputIndexSizes.get())
-    print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
-    print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
-    print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
-    print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get())
-    print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
+    # print("Used Indices", self.__outputIndices.get())
+    # print("Dimensions of the indices:", self.__outputIndexSizes.get())
+    # print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
+    # print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
+    # print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
+    # print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get())
+    # print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
     print("Number of total coordinates:", self.numTotalCoordinates)
-    print("Permutations:", self.__outputPermutations.get())
-    print("Coordinates:", self.__outputCoordinates.get())
-    print("Dimensions:", self.__outputBlockDimensions.get())
+    # print("Permutations:", self.__outputPermutations.get())
+    print("Coordinates size:", self.__outputCoordinates.get().shape)
+    print("Dimensions size:", self.__outputBlockDimensions.get().shape)
