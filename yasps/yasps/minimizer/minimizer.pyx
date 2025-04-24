@@ -96,9 +96,11 @@ class minimizer:
       seenAttributeHashes.add(attribute.hash)
     self.__wrt.extend(wrt)
     self.__getGradientSize() # get the size of the gradient
+    start = time.time()
     self.__getSparseIndices() # get the sparse indices
     end = time.time()
     print(f"Sparse indices generation: {1000.0 * (end - start)} ms")
+    exit()
 
 
   def __getGradientSize(self) -> None:
@@ -221,21 +223,41 @@ class minimizer:
     self.__blockPositions = gpuarray.to_gpu(np.concatenate([x.flatten() for x in compressedIndicesDecoded]))
 
     blockPositionsCPU = self.__blockPositions.get().flatten()
-    positionsSet = set([])
-    for i in range(len(blockPositionsCPU // 2)):
-      positionsSet.add(tuple([blockPositionsCPU[i * 2], blockPositionsCPU[i * 2 + 1]]))
-      positionsSet.add(tuple([blockPositionsCPU[i * 2 + 1], blockPositionsCPU[i * 2]]))
+    positionsSet1 = set([])
+    for i in range(len(blockPositionsCPU) // 2):
+      positionsSet1.add(tuple([blockPositionsCPU[i * 2], blockPositionsCPU[i * 2 + 1]]))
+      positionsSet1.add(tuple([blockPositionsCPU[i * 2 + 1], blockPositionsCPU[i * 2]]))
     # now we check if uniqueCoordinates has coordinate tuples
-    positionSet2 = set([])
-    for i in range(len(positionsSet) // 2):
+    positionsSet2 = set([])
+    for i in range(len(uniqueCoordinates) // 2):
       coord = tuple([uniqueCoordinates[i * 2], uniqueCoordinates[i * 2 + 1]])
       coordRev = tuple([uniqueCoordinates[i * 2 + 1], uniqueCoordinates[i * 2]])
-      positionSet2.add(coord)
-      positionSet2.add(coordRev)
+      positionsSet2.add(coord)
+      positionsSet2.add(coordRev)
+
+    positionsSet3 = set([])
+    for local_energy in self.energies:
+      coords = local_energy.outputCoordinates.get().flatten()
+      for i in range(len(coords) // 2):
+        positionsSet3.add(tuple([coords[i * 2], coords[i * 2 + 1]]))
+        positionsSet3.add(tuple([coords[i * 2 + 1], coords[i * 2]]))
+    if positionsSet3 != positionsSet1:
+      print("Coordinate sets 1 and 3 are not equal")
+      # only_in_positionsSet1 = positionsSet1 - positionsSet2
+      # only_in_positionsSet3 = positionsSet3 - positionsSet1
+      # print(f"Only in positionsSet1: {only_in_positionsSet1}")
+      # print(f"Only in positionsSet3: {only_in_positionsSet3}")
+      exit()
+
+
 
     # check if two sets are equal
-    if positionSet2 != positionsSet:
-      print(f"Coordinate sets are not equal")
+    if positionsSet2 != positionsSet1:
+      print("Coordinate sets 1 and 2 are not equal")
+      # only_in_positionsSet1 = positionsSet1 - positionsSet2
+      # only_in_positionsSet2 = positionsSet2 - positionsSet1
+      # print(f"Only in positionsSet1: {only_in_positionsSet1}")
+      # print(f"Only in positionsSet2: {only_in_positionsSet2}")
       exit()
 
 
