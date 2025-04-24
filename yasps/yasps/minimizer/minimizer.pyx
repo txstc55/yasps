@@ -100,7 +100,7 @@ class minimizer:
     self.__getSparseIndices() # get the sparse indices
     end = time.time()
     print(f"Sparse indices generation: {1000.0 * (end - start)} ms")
-    exit()
+    # exit()
 
 
   def __getGradientSize(self) -> None:

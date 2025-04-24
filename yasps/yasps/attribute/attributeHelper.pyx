@@ -75,7 +75,7 @@ def hashAttribute(att: ya.attribute) -> int:
     array_string:str = f"[{','.join([str(child.hash) for child in att.children])}]"
     att._attribute__hash = int(hashlib.sha256(array_string.encode()).hexdigest(), 16)
   elif att.operator == ya.FLOAT:
-    float_str = str(att.float_value).encode()
+    float_str = format(att.float_value, '.17g').encode()
     # Compute the SHA-256 hash
     hash_hex = hashlib.sha256(float_str).hexdigest()
     # Convert the hexadecimal hash to an integer
@@ -90,7 +90,7 @@ def hashAttribute(att: ya.attribute) -> int:
   elif att.operator == ya.JOIN or att.operator == ya.SUM or att.operator == ya.AVERAGE:
     if att.through is None:
       raise ValueError(f"attribute.hash: {att.operator.name.upper()} operator must have a through attribute.")
-    operation_string:str = f"{att.operator.name}({att.children[0].hash}_through_{att.through})"
+    operation_string:str = f"{att.operator.name}({att.children[0].hash}_through_{att.through.fullName})"
     att._attribute__hash = int(hashlib.sha256(operation_string.encode()).hexdigest(), 16)
   elif att.operator == ya.TRANSPOSE:
     transpose_string:str = f"transpose({att.children[0].hash})"

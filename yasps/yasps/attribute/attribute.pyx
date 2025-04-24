@@ -782,7 +782,7 @@ class attribute:
       from yasps.codeGenerator import codeGenerator
       from yasps.globalKernel import globalKernel
       start_generator = time.time()
-      codegen: codeGenerator = codeGenerator(self)
+      codegen: codeGenerator = codeGenerator(self) # this will generate the string for the device kernel and all of its descendants
       codegen.generateCode()
       end_generator = time.time()
       # print time in ms
@@ -800,27 +800,11 @@ class attribute:
       assert self.__globalKernel is not None
       if self.__value is None or self.__value.size < self.__correspondance.numInstances * self.size:
         # reallocate a new pycuda array with the correct size
-        # print(f"Reallocation needed, old size: {self.__value.size}, new size: {self.__correspondance.numInstances * self.size}")
         self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
-    # after we allocated, we invoke the kernel
-    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__deviceKernel.kernelDatas] + [x.value for x in self.__deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__value]
 
-    # finally call the kernel
-    # time the execution
-    start_call = cuda.Event()
-    end_call = cuda.Event()
-    start_call.record()
-    self.__globalKernel.kernel(*arguments, np.uint32(self.__correspondance.numInstances), block=(32, 1, 1), grid=((self.__correspondance.numInstances + 32) // 32, 1, 1))
-    # Record the end event
-    end_call.record()
-    # Wait for the end event to complete
-    end_call.synchronize()
-    # Calculate the elapsed time in milliseconds
-    elapsed_time_ms = start_call.time_till(end_call)
-    end_compute.record()
-    end_compute.synchronize()
-    print(f"Kernel execution time: {elapsed_time_ms:.5f} ms")
-    # print(f"Total time: {start_compute.time_till(end_compute):.5f} ms")
+    assert self.__globalKernel is not None
+    assert self.__value is not None
+    self.__globalKernel.compute(self.__value)
     return self
     # print(self.value)
 
