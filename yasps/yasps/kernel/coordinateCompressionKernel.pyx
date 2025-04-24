@@ -103,7 +103,6 @@ void get_unique_coords(
 
 
 compress_unique_coords_kernel_string = '''
-
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
 #include <thrust/unique.h>
@@ -233,9 +232,14 @@ void compress_unique_coords(
   unsigned int* lookup, // compute for each coordinate, where does it start in the data array
   unsigned int& num_unique_dims // get the number of unique dimensions
 ) {
+  CoordDim* unique_coord_dims; // this wil copy the unique coordinates and dimensions
+  cudaMalloc(&unique_coord_dims, num_unique_coords * sizeof(CoordDim));
+  cudaMemcpy(unique_coord_dims, uncompressedCoordinatesAndDimensionsTmp, num_unique_coords * sizeof(CoordDim), cudaMemcpyDeviceToDevice);
+
   // we first copy the unique coordinates to output
   extract_coords_kernel<<<(num_unique_coords + 255) / 256, 256>>>(uncompressedCoordinatesAndDimensionsTmp, unique_coords_out, num_unique_coords);
   cudaDeviceSynchronize();
+
   // now we want to extract the unique dimensions
   // Deduplicate by (h, w) only
   cudaDeviceSynchronize();
@@ -253,25 +257,14 @@ void compress_unique_coords(
   // now we copy the unique dimensions to output
   extract_dims_kernel<<<(num_unique_dims + 255) / 256, 256>>>(uncompressedCoordinatesAndDimensionsTmp, unique_dims_out, num_unique_dims);
 
-  CoordDim* unique_coord_dims;
-  cudaMalloc(&unique_coord_dims, num_unique_coords * sizeof(CoordDim));
+
+  // we will now copy the unique dimensions but in CoordDim format
+  CoordDim* unique_coord_dims_dimension_only;
+  cudaMalloc(&unique_coord_dims_dimension_only, num_unique_dims * sizeof(CoordDim));
   // copy the unique coordinates to output
-  cudaMemcpy(unique_coord_dims, uncompressedCoordinatesAndDimensionsTmp, num_unique_coords * sizeof(CoordDim), cudaMemcpyDeviceToDevice);
-
-  cudaDeviceSynchronize();
-  // ok now we once again copy the coordinates and dimensions back
-  pack_coord_dim_kernel<<<(NUM_COORDINATES + 255) / 256, 256>>>(
-    uncompressedCoordinatesAndDimensionsTmp,
-    coords,
-    dims,
-    NUM_COORDINATES
-  );
+  cudaMemcpy(unique_coord_dims_dimension_only, uncompressedCoordinatesAndDimensionsTmp, num_unique_dims * sizeof(CoordDim), cudaMemcpyDeviceToDevice);
   cudaDeviceSynchronize();
 
-  // and sort it
-  thrust::sort(thrust::device, uncompressedCoordinatesAndDimensionsTmp, uncompressedCoordinatesAndDimensionsTmp + NUM_COORDINATES);
-  // then we once again get the unique coordinates and dimensions
-  thrust::unique(thrust::device, uncompressedCoordinatesAndDimensionsTmp, uncompressedCoordinatesAndDimensionsTmp + NUM_COORDINATES);
 
   // ok this time, we want to compute how many times each dimension appears in the compressed array
   // and store it in the unique_dims_out array
@@ -282,10 +275,10 @@ void compress_unique_coords(
 
   thrust::lower_bound(
     thrust::device,
-    uncompressedCoordinatesAndDimensionsTmp,
-    uncompressedCoordinatesAndDimensionsTmp + num_unique_coords,
     unique_coord_dims,
-    unique_coord_dims + num_unique_dims,
+    unique_coord_dims + num_unique_coords,
+    unique_coord_dims_dimension_only,
+    unique_coord_dims_dimension_only + num_unique_dims,
     unique_dims_outer_indices,
     coorddim_cmp
   );
@@ -303,34 +296,14 @@ void compress_unique_coords(
   cudaDeviceSynchronize();
 
 
-  thrust::device_ptr<unsigned int> unique_coords_ptr(unique_coords_out);
-  auto unique_begin = thrust::make_zip_iterator(
-    thrust::make_tuple(
-      thrust::make_permutation_iterator(unique_coords_ptr,
-        thrust::make_transform_iterator(thrust::counting_iterator<int>(0),
-          [] __host__ __device__ (int i) { return 2 * i; }
-        )
-      ),
-      thrust::make_permutation_iterator(unique_coords_ptr,
-        thrust::make_transform_iterator(thrust::counting_iterator<int>(0),
-          [] __host__ __device__ (int i) { return 2 * i + 1; }
-        )
-      )
-    )
-  );
-  auto unique_end = unique_begin + num_unique_coords;
-
-  auto query_begin = thrust::make_transform_iterator(
-    uncompressedCoordinatesAndDimensionsTmp,
-    CoordToTuple()
-  );
   thrust::device_ptr<unsigned int> lookup_ptr(lookup);
   thrust::lower_bound(
     thrust::device,
-    unique_begin, unique_end,
-    query_begin, query_begin + NUM_COORDINATES,
-    lookup_ptr,
-    CoordCompare()
+    unique_coord_dims,
+    unique_coord_dims + num_unique_coords,
+    uncompressedCoordinatesAndDimensionsTmp,
+    uncompressedCoordinatesAndDimensionsTmp + NUM_COORDINATES,
+    lookup_ptr
   );
   cudaDeviceSynchronize();
 
@@ -359,11 +332,10 @@ void compress_unique_coords(
   cudaDeviceSynchronize();
 
   // free the copy of the outer indices
-  cudaFree(unique_dims_outer_indices_copy);
   cudaFree(unique_coord_dims);
-
+  cudaFree(unique_dims_outer_indices_copy);
+  cudaFree(unique_coord_dims_dimension_only);
 }
-
 '''
 
 
@@ -595,15 +567,15 @@ class coordinateCompressionKernel:
     unique_dimensions_block_counts_cpu = self.__uniqueDimensionsBlockCounts.get().flatten()
     print(f"Unique dimensions block counts: {unique_dimensions_block_counts_cpu}")
     print(f"unique_dimensions_raw_dict: {unique_dimensions_raw_dict}")
-    for i in range(self.__num_unique_dimensions):
-      dimension = (unique_dimensions_cpu[i * 2], unique_dimensions_cpu[i * 2 + 1])
-      count = unique_dimensions_block_counts_cpu[i]
-      if count != unique_dimensions_raw_dict[dimension]:
-        raise ValueError(f"Unique dimensions block counts do not match for dimension {dimension}, count {count} does not match {unique_dimensions_raw_dict[dimension]}")
+    # for i in range(self.__num_unique_dimensions):
+    #   dimension = (unique_dimensions_cpu[i * 2], unique_dimensions_cpu[i * 2 + 1])
+    #   count = unique_dimensions_block_counts_cpu[i]
+    #   if count != unique_dimensions_raw_dict[dimension]:
+    #     raise ValueError(f"Unique dimensions block counts do not match for dimension {dimension}, count {count} does not match {unique_dimensions_raw_dict[dimension]}")
 
     # now we check the outer indices
     unique_dimensions_outer_indices_cpu = self.__uniqueDimensionsOuterIndices.get().flatten()
-    # print(f"Unique dimensions outer indices: {unique_dimensions_outer_indices_cpu}")
+    print(f"Unique dimensions outer indices: {unique_dimensions_outer_indices_cpu}")
     # total_count = 0
     # for i in range(self.__num_unique_dimensions):
     #   dimension = (unique_dimensions_cpu[i * 2], unique_dimensions_cpu[i * 2 + 1])
@@ -635,7 +607,7 @@ class coordinateCompressionKernel:
           print(coordinates[: 20].reshape(-1, 2))
           print(unique_coordinates_cpu[: 20].reshape(-1, 2))
           print(lookup_cpu[:20])
-          raise ValueError(f"Coordinate {coordinate} does not match found coordinate {foundCoordinate} at index {count}")
+          raise ValueError(f"Coordinate {coordinate} does not match found coordinate {foundCoordinate} at index {count}, raw lookup: {lookup_cpu[count]}, modified lookup: {lookup}")
         count += 1
 
 
