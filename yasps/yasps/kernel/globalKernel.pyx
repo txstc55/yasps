@@ -16,6 +16,7 @@ import pycuda.gpuarray as gpuarray
 testing_kernel = ""
 
 class globalKernel:
+  @timed("globalKernel.__init__")
   def __init__(self, att: attribute):
     self.__kernelString: str = ""
     self.__att = att

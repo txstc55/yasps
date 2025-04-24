@@ -788,11 +788,8 @@ class attribute:
       # print time in ms
       print(f"Code generation time: {(end_generator - start_generator) * 1000.0:.5f} ms")
 
-      start_compile = time.time()
       # now add the global kernel
       self.__globalKernel = globalKernel(self)
-      end_compile = time.time()
-      print(f"Compilation time: {(end_compile - start_compile) * 1000.0:.5f} ms")
 
       # after we generate the kernel, we first check if our data is already allocated or if the size does not match
       assert self.__correspondance is not None # cannot be none
