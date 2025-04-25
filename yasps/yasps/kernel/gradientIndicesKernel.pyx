@@ -61,7 +61,7 @@ __global__ void computePermutation(
   ) {
   unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid < N) {
-    int unique_count = 0;
+    int gradient_offset = 0;
     unsigned short int total_gradient_size = 0;
     unsigned int compressed_index_size = 0;
     total_gradient_sizes[tid] = 0;
@@ -80,8 +80,8 @@ __global__ void computePermutation(
         }
       }
       if (!found) {
-        unique_count++; // make the result we get to always exclude 0
-        permutation[tid * K + i] = unique_count;
+        permutation[tid * K + i] = gradient_offset + 1; // always exclude 0
+        gradient_offset += index_sizes[tid * K + 1]; // we offset the gradient_offset so we know exactly where to put this segment
         total_gradient_size += index_sizes[tid * K + i];
         compressed_index_size++;
       }
@@ -365,6 +365,10 @@ class gradientIndicesKernel:
   @property
   def outputBlockDimensions(self):
     return self.__outputBlockDimensions
+
+  @property
+  def numUniqueGradientSizes(self):
+    return self.__outputNumUniqueGradientSizes.get()[0]
 
 
   def __getCompressionKernel(self):

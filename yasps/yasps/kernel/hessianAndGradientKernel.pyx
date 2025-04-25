@@ -5,31 +5,37 @@ from yasps.attribute import attribute
 from yasps.connectivity import connectivity
 from pycuda.compiler import SourceModule
 import pycuda.driver as pd
-from typing import Optional, List
+from typing import Optional, List, Set
 from yasps.helper import get_mangled_name
 from yasps.helper import prune_duplicate_functions
 
 testing_kernel = ""
 
 class hessianAndGradientKernel:
-  def __init__(self, att: attribute, block_sizes: List[int], project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False):
+  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False):
     self.__kernelString: str = ""
-    self.__kernel: Optional[pd.Function] = None
-    self.__block_sizes = block_sizes
+    self.__kernel = None # the kernel for computhing the gradient and hessians
+    self.__unique_gradient_sizes: Set[int] = set([]) # this will tell us the unique gradient sizes, we will use this to generate and regenerate kernel when there are new gradient sizes
     self.__project_entire_hessian = project_entire_hessian
     self.__projection_method = projection_method
     self.__gradient_only = gradeient_only
-    self.__generateKernel(att)
+    self.__att = att
+    # self.__generateKernel(att)
 
 
 
-  def __generateKernel(self, attr: attribute) -> None:
+  def __generateKernel(self, unique_gradient_sizes: List[int]) -> None:
+    # check if our unique gradient sizes contains the input gradient sizes
+    if set(unique_gradient_sizes).issubset(self.__unique_gradient_sizes):
+      return
+    self.__unique_gradient_sizes.update(unique_gradient_sizes)
+
     ## first we get all the header functions
-    sortedDependency: List[deviceKernel] = attr.deviceKernel.dependents
-    sortedDatas: List[attribute] = attr.deviceKernel.kernelDatas
-    sortedConnectivities: List[connectivity] = attr.deviceKernel.kernelConnectivity
-    # add the includes
-    self.__kernelString += f'''
+    sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
+    sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
+    sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
+    # add the includes and the evd function
+    self.__kernelString += '''
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -121,61 +127,157 @@ __device__ void spd_projection_inplace(double *A, int choice){{
 
     for item in sortedDependency:
       self.__kernelString += f"{item.kernelHeader};"
-    self.__kernelString += f"{attr.deviceKernel.kernelHeader};"
+    self.__kernelString += f"{self.__att.deviceKernel.kernelHeader};"
 
     for item in sortedDependency:
       self.__kernelString += item.kernelString
-    self.__kernelString += attr.deviceKernel.kernelString
+    self.__kernelString += self.__att.deviceKernel.kernelString
 
     # now actually generate the global kernel
     attributeName: str = ""
-    if attr.name == "":
-      attributeName = f'attr_{attr.hash}'.replace("-", "_neg_")
+    if self.__att.name == "":
+      attributeName = f'attr_{self.__att.hash}'.replace("-", "_neg_")
     else:
-      attributeName = attr.fullName
+      attributeName = self.__att.fullName
 
     kernelRawName = f'''
-__global__ void accumulate_hessian_and_gradient_global_function({"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}const unsigned int* gradient_placements, const unsigned int* block_sizes, const unsigned int* hessian_blocks_start_indices, const unsigned int* hessian_blocks_where_to_check, const unsigned int* hessian_blocks_indices, double* gradient, double* hessian_blocks, double* diagonal, unsigned int MAX_INDEX)'''
+template <unsigned int N>
+__global__ void accumulate_hessian_and_gradient_global_function(
+  {"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}
+  {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}
+  {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+  const unsigned int* segment_placements,         // where to place the gradient for each segment of the local gradient / hessian we generated
+  const unsigned short int* segment_sizes,        // how large is each segment of the gradient
+  const short int* local_permutations,   // how do i locally compress the hessian and gradient
+  const unsigned int* lookups,                    // how to place the current block inside the hessian
+  const unsigned int* current_gradient_size_indices, // for the current gradient size, we need to know which instance will produce this gradient size
+  const unsigned int max_num_indices, // the maximum number of indices for each instance
+  const unsigned int projection_method,
+  unsigned int begin, // for this gradient size, where do i begin looking
+  unsigned int end,   // for this gradient size, where do i end looking
+  double* gradient,   // the gradient output
+  double* hessian_blocks, // the blocks that will constitute the hessian
+  double* diagonal    // the diagonal, we will use it for preconditioning
+)'''
     self.__kernelString += f'''
-{kernelRawName}{{
-  // gradient_placements: for the gradient generated for each local element, and for all the small segments inside, where to place it
-  // block_sizes: the gradient is segmented into small parts, for each parts, what's the dimension. This is also used for hessian block sizes
-  // hessian_blocks_start_indices: the hessian generated can be segmented into smaller blocks, each block may have different dimensions. This array tells us, for each dimension, where does the block start
-  // hessian_blocks_where_to_check: for each block, we have its dimension, we need to know for this dimension, where does the segment start
-  // hessian_blocks_indices: for each block, we have its dimension, we need to know for this dimension, where to put it in the corresponding segment
-  // gradient: the accumulated gradient
-  // hessian_blocks: the accumulated blocks
-  // diagonal: the accumulated diagonal
 
   // first we get the index
   unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (index >= MAX_INDEX){{
+  if (index >= end - begin){{
     return;
   }}
+  index = begin + index; // add to begin
+  unsigned int instance = current_gradient_size_indices[index];
+
+// determine if we are computing both the hessian and gradient
 #if {int(not self.__gradient_only)} // are we computing both the hessian and gradient
-  Eigen::Matrix<double, {sum(self.__block_sizes) + 1}, {sum(self.__block_sizes)}{", Eigen::RowMajor" if sum(self.__block_sizes) > 1 else ""}> hg_mat = Eigen::Matrix<double, {sum(self.__block_sizes) + 1}, {sum(self.__block_sizes)}, Eigen::RowMajor>::Zero(); // get the merged gradient and hessian
+  Eigen::Matrix<double, {self.__att.rows + 1}, {self.__att.rows}{", Eigen::RowMajor" if self.__att.rows > 1 else ""}> hg_mat = Eigen::Matrix<double, {self.__att.rows + 1}, {self.__att.rows}, Eigen::RowMajor>::Zero(); // get the merged gradient and hessian
 #else // we are only computing the gradient
-  Eigen::Matrix<double, 1, {sum(self.__block_sizes)}> hg_mat = Eigen::Matrix<double, 1, {sum(self.__block_sizes)}>::Zero(); // get the gradient
+  Eigen::Matrix<double, 1, {self.__att.rows}> hg_mat = Eigen::Matrix<double, 1, {self.__att.rows}>::Zero(); // get the gradient
 #endif
+
   // now we call the device function
-  {attributeName}_device_function({"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}index, hg_mat.data());
+  {attributeName}_device_function(
+    {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
+    {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
+    {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+    instance,
+    hg_mat.data()
+  );
+  // ok we now first put the gradient into the correct place
+  unsigned int gradient_offset = 0;
+  for (unsigned int i = 0; i < max_num_indices; i++){{
+    // we will first get the segment size
+    unsigned short int segment_size = segment_sizes[instance * max_num_indices + i];
+    // and the position for this segment
+    unsigned int segment_placement = segment_placements[instance * max_num_indices + i];
+    // now we access the gradient and put it into the correct place
+    for (unsigned int j = 0; j < segment_size; j++){{
+#if {int(not self.__gradient_only)} // did we compute the hessian
+      atomicAdd(&gradient[segment_placement + j], hg_mat({self.__att.rows}, gradient_offset + j));
+#else
+      atomicAdd(&gradient[segment_placement + j], hg_mat(0, gradient_offset + j));
+#endif
+    }}
+    gradient_offset += segment_size;
+  }}
+
+  // ok now we have the gradient, we need to compress the hessian locally
+  // we have the permutation, and we know the size of the matrix
+#if {int(not self.__gradient_only)}
+  // we will only start this part if we are not just doing gradient
+  // first of all, allocate a matrix
+  Eigen::Matrix<double, N, N> compressed_hessian = Eigen::Matrix<double, N, N>::Zero();
+  unsigned int row_offset = 0;
+  for (unsigned int i = 0; i < max_num_indices; j++){{
+    unsigned int col_offset = 0;
+    // we first determine what's the correct position to put in the compressed hessian
+    short int permutation_i = permutation[instance * max_num_indices + i];
+    if (permutation_i < 0){{
+      // this block position exists, we need to get the negative of it
+      permutation_i = -permutation_i;
+    }}
+    permutation_i -= 1; // back to 0 indexed
+    unsigned short int segment_size_i = segment_sizes[instance * max_num_indices + i];
+    for (unsigned int j = i; j < max_num_indices; j++){{
+      short int permutation_j = permutation[instance * max_num_indices + j];
+      if (permutation_j < 0){{
+        // this block position exists, we need to get the negative of it
+        permutation_j = -permutation_j;
+      }}
+      permutation_j -= 1; // back to 0 indexed
+      // ok at this point we know the correct position to put in the compressed hessian
+      unsigned short int segment_size_j = segment_sizes[instance * max_num_indices + j];
+      for (unsigned int k = 0; k < segment_size_i; k++){{
+        for (unsigned int l = 0; l < segment_size_j; l++){{
+          // we put the block into the compressed hessian
+          compressed_hessian(permutation_i + k, permutation_j + l) = hg_mat(row_offset + k, col_offset + l);
+          // put the transpose into the compressed hessian if not a diagonal block
+          if (i != j){{
+            compressed_hessian(permutation_j + l, permutation_i + k) = hg_mat(col_offset + l, row_offset + k);
+          }}
+        }}
+      }}
+      col_offset += segment_size_j;
+    }}
+    row_offset += segment_size_i;
+  }}
+  // now we have the compressed hessian
+  // we will project it if needed
+
+#if {int(self.__project_entire_hessian)} // do we need to project the hessian here
+  // project the hessian
+  if (N < 4){{
+    spd_projection_small<N>(compressed_hessian.data(), compressed_hessian.data(), projection_method);
+  }}else{{
+    spd_projection_inplace<N>(compressed_hessian.data(), projection_method);
+  }}
+#endif // end of projection
+  // now we finished the projection
+  // we will need to place the hessian back to blocks
+
+
+#endif
+
+
+
 #if {int(not self.__gradient_only)} // project the hessian, and put the hessian inplace
   // now maybe we need to project the entire hessian
   // the true false value is generated at compile time
 #if {int(self.__project_entire_hessian)} // do we need to project the hessian here
   // project the hessian
-  {"spd_projection_inplace" if sum(self.__block_sizes) >= 4 else "spd_projection_small"}<{sum(self.__block_sizes)}>(hg_mat.data(), {"hg_mat.data(), " if sum(self.__block_sizes) < 4 else ""}{self.__projection_method});
+  {"spd_projection_inplace" if self.__att.rows >= 4 else "spd_projection_small"}<{self.__att.rows}>(hg_mat.data(), {"hg_mat.data(), " if self.__att.rows < 4 else ""}{self.__projection_method});
 #endif // and of projection
   // now we need to place the hessian into the correct places
   unsigned int row_offset = 0;
   unsigned int off_diagonal_counts = 0;
   for (unsigned int i = 0; i < {len(self.__block_sizes)}; i++){{
     unsigned int col_offset = row_offset;
-    unsigned int block_rows = block_sizes[i];
-    unsigned int raw_position_i = gradient_placements[index * {len(self.__block_sizes)} + i];
+    unsigned int block_rows = segment_sizes[i];
+    unsigned int raw_position_i = segment_placements[index * {len(self.__block_sizes)} + i];
     for (unsigned int j = i; j < {len(self.__block_sizes)}; j++){{
-      unsigned int raw_position_j = gradient_placements[index * {len(self.__block_sizes)} + j];
-      unsigned int block_cols = block_sizes[j];
+      unsigned int raw_position_j = segment_placements[index * {len(self.__block_sizes)} + j];
+      unsigned int block_cols = segment_sizes[j];
       // now we know the size of the block, we need to put it to the correct block
       // we need to put it in the off diagonal blocks
       unsigned int where_to_check = (raw_position_i <= raw_position_j) ? (hessian_blocks_where_to_check[off_diagonal_counts]) : (hessian_blocks_where_to_check[off_diagonal_counts + {len(self.__block_sizes) * (len(self.__block_sizes) + 1) // 2}]); // know which off diagonal block we are in
@@ -232,10 +334,10 @@ __global__ void accumulate_hessian_and_gradient_global_function({"".join([f"cons
   // now we need to place the gradient
   unsigned int count = 0;
   for (unsigned int i = 0; i < {len(self.__block_sizes)}; i++){{
-    unsigned int placement_index = gradient_placements[index * {len(self.__block_sizes)} + i];
-    for (unsigned int j = 0; j < block_sizes[i]; j++){{
+    unsigned int placement_index = segment_placements[index * {len(self.__block_sizes)} + i];
+    for (unsigned int j = 0; j < segment_sizes[i]; j++){{
 #if {int(not self.__gradient_only)} // did we compute the hessian
-      atomicAdd(&gradient[placement_index + j], hg_mat({sum(self.__block_sizes)}, count));
+      atomicAdd(&gradient[placement_index + j], hg_mat({self.__att.rows}, count));
 #else
       atomicAdd(&gradient[placement_index + j], hg_mat(0, count));
 #endif

@@ -787,21 +787,24 @@ class energy:
       return
     if self.__hessian is None and not self.__gradient_only:
       raise ValueError("yasps.energy.computeHessianAndGradient: The hessian is not computed yet. Please call generateHessianAndGradient first.")
+    assert self.__hessian is not None
     if self.__hessianAndGradientKernel is None:
       from yasps.hessianAndGradientKernel import hessianAndGradientKernel
       # we need to put the gradient and the hessian together
       # we know the graidient sizes square is the hessian size
       merged_hessian_and_gradient = []
       if not self.__gradient_only: # we need the hessian
-        for i in range(sum(self.__gradient_sizes_cpu)):
-          for j in range(sum(self.__gradient_sizes_cpu)):
+        for i in range(self.__hessian.rows):
+          for j in range(self.__hessian.cols):
             merged_hessian_and_gradient.append(self.__hessian[i, j])
-      for i in range(sum(self.__gradient_sizes_cpu)):
+      for i in range(self.__hessian.rows):
         merged_hessian_and_gradient.append(self.__gradient[i])
-      self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = len(merged_hessian_and_gradient) // (sum(self.__gradient_sizes_cpu)), cols = sum(self.__gradient_sizes_cpu)))
+      # create the attribute for the merged hessian and gradient
+      self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = self.__hessian.rows + 1, cols = self.__hessian.cols)
+
       from yasps.codeGenerator import codeGenerator
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
-      codegen.generateCode()
+      codegen.generateCode() # this will give us the local kernel strings
       # now add the global kernel
       self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__gradient_sizes_cpu, self.__project_entire_hessian, self.__projection_method, self.__gradient_only)
       self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))
