@@ -139,7 +139,22 @@ class minimizer:
     lookupArrays = self.__compressionKernel.lookupArrays
     for i in range(len(self.energies)):
       self.__energies[i].block_indices_gpu = lookupArrays[i]
+    # we also initialize the space for blocks flattened
+    totalBlockSize = self.__compressionKernel.totalBlockSize
+    self.__blocksFlattened = gpuarray.empty(totalBlockSize, dtype=np.float64)
 
+    blockOuter = self.__compressionKernel.uniqueDimensionsOuterIndices.get()
+    for i in range(self.__compressionKernel.numUniqueDimensions):
+      self.__blocks.append(self.__blocksFlattened[blockOuter[i]:blockOuter[i+1]])
+    self.__blocksStartIndices = self.__compressionKernel.uniqueDimensionsOuterIndices.get()[: self.__compressionKernel.numUniqueDimensions]
+    self.__blocksStartIndicesGPU = gpuarray.to_gpu(np.array(self.__blocksStartIndices).astype(np.uint32))
+    self.__blockPositions = self.__compressionKernel.uniqueCoordinates
+
+    total_count = 0
+    self.__blockCounts = self.__compressionKernel.uniqueDimensionsBlockCounts.get().tolist()
+    for i in range(len(self.__blockCounts)):
+      self.__blockPositionsList.append(self.__blockPositions[total_count:total_count + self.__blockCounts[i]])
+      total_count += self.__blockCounts[i]
 
   def generateHessianAndGradient(self):
     start = time.time()
@@ -159,7 +174,7 @@ class minimizer:
       self.__blocksFlattened.fill(0)
     self.__diagonal.fill(0)
     for e in self.energies:
-      e.computeHessianAndGradient(self.__blocksStartIndicesGPU, self.__gradient, self.__blocksFlattened, self.__diagonal)
+      e.computeHessianAndGradient(self.__gradient, self.__blocksFlattened, self.__diagonal)
     # print("Gradient is before solve: ")
     # print(self.__gradient.get())
 

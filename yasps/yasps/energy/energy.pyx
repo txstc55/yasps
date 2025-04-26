@@ -781,7 +781,7 @@ class energy:
 
 
   @timed("energy.computeHessianAndGradient")
-  def computeHessianAndGradient(self, hessian_blocks_start_indices: gpuarray.GPUArray,  gradient_array: gpuarray.GPUArray, hessian_blocks: gpuarray.GPUArray, diagonal: gpuarray.GPUArray):
+  def computeHessianAndGradient(self, gradient_array: gpuarray.GPUArray, hessian_blocks: gpuarray.GPUArray, diagonal: gpuarray.GPUArray):
     if self.__gradient is None:
       # the gradient is 0, return the 0 array
       return
@@ -800,14 +800,16 @@ class energy:
       for i in range(self.__hessian.rows):
         merged_hessian_and_gradient.append(self.__gradient[i])
       # create the attribute for the merged hessian and gradient
-      self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = self.__hessian.rows + 1, cols = self.__hessian.cols)
+      self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient), rows = self.__hessian.rows + 1, cols = self.__hessian.cols)
 
       from yasps.codeGenerator import codeGenerator
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
       codegen.generateCode() # this will give us the local kernel strings
       # now add the global kernel
-      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__gradient_sizes_cpu, self.__project_entire_hessian, self.__projection_method, self.__gradient_only)
-      self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))
+      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__project_entire_hessian, self.__projection_method, self.__gradient_only)
+      assert self.__hessianAndGradientKernel is not None
+      assert self.__indices_kernel is not None
+      self.__hessianAndGradientKernel.generateKernel(self.__indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
 
     print(f"There are {len(self.__intermediate_compute_pairs)} intermediate attributes")
     # make sure that we also compute the intermediate values
@@ -821,10 +823,9 @@ class energy:
     assert self.__indices_kernel is not None
 
     # after we allocated, we invoke the kernel
-    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__indices_kernel.outputIndices, self.__gradient_sizes_gpu, hessian_blocks_start_indices, self.__hessian_blocks_where_to_check, self.__block_indices_gpu, gradient_array, hessian_blocks, diagonal]
+    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0]
 
-    self.__hessianAndGradientKernel.kernel(*arguments, np.uint32(self.__merged_hessian_and_gradient_attribute.correspondance.numInstances), block=(32, 1, 1), grid=((self.__merged_hessian_and_gradient_attribute.correspondance.numInstances + 31) // 32, 1, 1))
-    # print(f"Gradient is: {gradient_array.get()}")
+    self.__hessianAndGradientKernel.compute(arguments, self.__indices_kernel, self.__block_indices_gpu, gradient_array, hessian_blocks, diagonal)
     return self
 
   def __hash__(self) -> int:

@@ -432,6 +432,10 @@ class coordinateCompressionKernel:
     assert x.gpudata is not None
     return ctypes.c_void_p(int(x.gpudata))
 
+  @property
+  def totalBlockSize(self):
+    return self.__uniqueDimensionsOuterIndices.get()[self.__num_unique_dimensions]
+
   @timed("coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions")
   def __getUniqueCoordinatesAndDimensions(self, uncompressedCoordinates, uncompressedDimensions, total_coordinates, uncompressedCoordinatesAndDimensionsTmp):
     # in this function we will get the unqique coordinates in the uncompressedCoordinatesAndDimensionsTmp
@@ -508,6 +512,7 @@ class coordinateCompressionKernel:
     )
     self.__num_unique_dimensions = num_unique_dims.value
     print(f"Number of unique dimensions: {self.__num_unique_dimensions}")
+    print(f"Total block size: {self.__uniqueDimensionsOuterIndices.get()[self.__num_unique_dimensions]}")
 
 
 

@@ -318,9 +318,11 @@ class gradientIndicesKernel:
     self.__outputPermutations: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.int16) # this will record how to compress the matrix locally
     self.__outputGradientSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the total size of gradient after compression
     self.__outputUniqueGradientSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the unique sizes of the gradients after compression
+    self.__outputUniqueGradientSizesCPU = None
     self.__outputGroupedIndicesInner: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # this will record the grouped indices by the compressed gradient size
     self.__outputGroupedIndicesOuter: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
     self.__outputNumUniqueGradientSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the number of unique sizes of the gradients after compression
+    self.__outputNumUniqueGradientSizesCPU = None
     self.__outputCompressedCoordinateCountsOuter: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
     ####################################################
     # Here are information needed for coordinate generation
@@ -367,8 +369,40 @@ class gradientIndicesKernel:
     return self.__outputBlockDimensions
 
   @property
+  def outputUniqueGradientSizes(self):
+    return self.__outputUniqueGradientSizes
+
+  @property
+  def outputGroupedIndicesInner(self):
+    return self.__outputGroupedIndicesInner
+
+  @property
+  def outputGroupedIndicesOuter(self):
+    return self.__outputGroupedIndicesOuter
+
+  @property
+  def outputUniqueGradientSizesCPU(self):
+    if self.__outputUniqueGradientSizesCPU is None:
+      self.__outputUniqueGradientSizesCPU = np.array(self.__outputUniqueGradientSizes.get(), dtype=np.uint16).flatten()
+    return self.__outputUniqueGradientSizesCPU
+
+  @property
   def numUniqueGradientSizes(self):
     return self.__outputNumUniqueGradientSizes.get()[0]
+
+  @property
+  def numUniqueGradientSizesCPU(self):
+    if self.__outputNumUniqueGradientSizesCPU is None:
+      self.__outputNumUniqueGradientSizesCPU = self.__outputNumUniqueGradientSizes.get()[0]
+    return self.__outputNumUniqueGradientSizesCPU
+
+  @property
+  def outputPermutations(self):
+    return self.__outputPermutations
+
+  @property
+  def outputCompressedCoordinateCountsOuter(self):
+    return self.__outputCompressedCoordinateCountsOuter
 
 
   def __getCompressionKernel(self):
@@ -636,6 +670,7 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
   @property
   def numTotalCoordinates(self) -> int:
     result = np.empty(1, dtype=np.uint32)
+    assert self.__outputCompressedCoordinateCountsOuter is not None
     cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
     return int(result[0])
 
