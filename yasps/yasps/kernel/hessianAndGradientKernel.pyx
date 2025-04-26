@@ -45,7 +45,9 @@ class hessianAndGradientKernel:
     sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
-    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullName}_wrt_{["_".join([att.fullName for att in wrt])]}_with_sizes_{["_".join([str(size) for size in unique_gradient_sizes])]}"
+    wrt_names = "_".join([att.fullName for att in wrt])
+    size_names = "_".join([str(size) for size in unique_gradient_sizes])
+    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullName}_wrt_{wrt_names}_with_sizes_{size_names}"
     full_file_name_hashed = hash(full_file_name)
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}"
     print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
