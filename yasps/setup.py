@@ -33,7 +33,12 @@ setup(
     url='https://github.com/yourusername/yasps',  # The URL to the repository
     packages=find_packages(),  # Finds all packages in the directory
     package_data={'yasps': ['*.txt', '*.cuh', '*.cu']},
-    ext_modules=cythonize(extensions),
+    ext_modules=cythonize(
+      extensions,
+      compiler_directives={"language_level": "3"},
+      nthreads=16,       # optional, parallel compile
+      force=False       # important! only rebuild changed files
+    ),
     classifiers=[
         # Trove classifiers
         # Full list: https://pypi.org/classifiers/
