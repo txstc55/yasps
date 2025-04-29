@@ -195,6 +195,7 @@ class minimizer:
 
     np.savez("gradient.npz", gradient=self.__gradient.get())
     np.savez("diagonal.npz", diagonal=self.__diagonal.get())
+    print("Saved npz")
     exit(0)
 
     # now we have the hessian and gradient
