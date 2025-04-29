@@ -50,7 +50,8 @@ class hessianAndGradientKernel:
     full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullName}_wrt_{wrt_names}_with_sizes_{size_names}"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}"
-    print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
+    # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
+    print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
       # add the includes and the evd function
       self.__kernelString = '''
