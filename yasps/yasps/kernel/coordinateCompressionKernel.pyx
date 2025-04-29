@@ -613,12 +613,12 @@ class coordinateCompressionKernel:
             lookup = (lookup // (unique_dimensions_cpu[k * 2] * unique_dimensions_cpu[k * 2 + 1])) + sum(unique_dimensions_block_counts_cpu[:k])
             break
         foundCoordinate = (int(unique_coordinates_cpu[lookup * 2]), int(unique_coordinates_cpu[lookup * 2 + 1]))
-        if (lookup == 0):
-          print("At 0th lookup, with coordinate", coordinate)
-          print(f"Nth instance: {j // 10}, nth instance within: {j % 10}")
-          if foundCoordinate[0] != 0 or foundCoordinate[1] != 0:
-            print("Found coordinate not 0 0:", foundCoordinate)
-            exit(1)
+        # if (lookup == 0):
+        #   print("At 0th lookup, with coordinate", coordinate)
+        #   print(f"Nth instance: {j // 10}, nth instance within: {j % 10}")
+        #   if foundCoordinate[0] != 0 or foundCoordinate[1] != 0:
+        #     print("Found coordinate not 0 0:", foundCoordinate)
+        #     exit(1)
         if not(coordinate == foundCoordinate):
           print(coordinates[: 20].reshape(-1, 2))
           print(unique_coordinates_cpu[: 20].reshape(-1, 2))
