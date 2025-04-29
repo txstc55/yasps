@@ -191,6 +191,7 @@ class minimizer:
     print("Diagonals after: ", self.__diagonal[:20].get())
     print("Gradients after: ", self.__gradient[:20].get())
     print("Hessians after: ", self.__blocksFlattened[:20].get())
+    print("Sum of hessians: ", np.sum(self.__blocksFlattened.get()))
 
     # now we have the hessian and gradient
     # we need to solve the system
@@ -223,6 +224,11 @@ class minimizer:
     context_ptr_c = ctypes.c_void_p(context_ptr)
     # call the kernel
     self.__solver.computeSolution(context_ptr_c, 20000, tolerance, self.__blocksFlattened, self.__blockPositions, self.__blocksStartIndices, self.__blockCounts, self.__diagonal, self.__gradient, self.__d_p1_b, self.__d_r, self.__d_c, self.__d_q, self.__d_s, self.__solution)
+
+    np.savez("solution.npz", solution=self.__solution.get())
+    np.savez("diagonal.npz", diagonal=self.__diagonal.get())
+    exit(0)
+
     # print("gradient")
     # print(self.__gradient.get())
     # exit(0)

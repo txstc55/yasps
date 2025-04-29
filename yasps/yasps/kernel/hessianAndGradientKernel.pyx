@@ -241,7 +241,7 @@ __global__ void compute_hessian_and_gradient_global_function(
     }}
     permutation_i -= 1; // back to 0 indexed
     unsigned short int segment_size_i = segment_sizes[instance * max_num_indices + i];
-    for (unsigned int j = i; j < max_num_indices; j++){{
+    for (unsigned int j = 0; j < max_num_indices; j++){{
       short int permutation_j = local_permutations[instance * max_num_indices + j];
       if (permutation_j < 0){{
         // this block position exists, we need to get the negative of it
@@ -254,10 +254,6 @@ __global__ void compute_hessian_and_gradient_global_function(
         for (unsigned int l = 0; l < segment_size_j; l++){{
           // we put the block into the compressed hessian
           compressed_hessian(permutation_i + k, permutation_j + l) += hg_mat(row_offset + k, col_offset + l);
-          // put the transpose into the compressed hessian if not a diagonal block
-          if (i != j){{
-            compressed_hessian(permutation_j + l, permutation_i + k) += hg_mat(col_offset + l, row_offset + k);
-          }}
         }}
       }}
       col_offset += segment_size_j;
@@ -283,7 +279,6 @@ __global__ void compute_hessian_and_gradient_global_function(
   row_offset = 0;
   unsigned int valid_block_counts = 0;
   for (unsigned int i = 0; i < max_num_indices; i++){{
-    unsigned int col_offset = 0;
     // we first determine what's the correct position to put in the compressed hessian
     short int permutation_i = local_permutations[instance * max_num_indices + i]; // get the permuted placement
     if (permutation_i > 0){{
@@ -322,6 +317,7 @@ __global__ void compute_hessian_and_gradient_global_function(
               atomicAdd(&diagonal[segment_index + k], compressed_hessian(permutation_i + k, permutation_j + k));
             }}
           }}
+          valid_block_counts++;
         }}
       }}
     }}
