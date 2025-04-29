@@ -193,12 +193,12 @@ class minimizer:
     print("Hessians after: ", self.__blocksFlattened[:20].get())
     print("Sum of hessians: ", np.sum(self.__blocksFlattened.get()))
 
-    np.savez("gradient.npz", gradient=self.__gradient.get())
-    np.savez("diagonal.npz", diagonal=self.__diagonal.get())
-    np.savez("coordinates.npz", coordinates=self.__blockPositions.get())
-    np.savez("hessians.npz", hessians = self.__blocksFlattened.get())
-    print("Saved npz")
-    exit(0)
+    # np.savez("gradient.npz", gradient=self.__gradient.get())
+    # np.savez("diagonal.npz", diagonal=self.__diagonal.get())
+    # np.savez("coordinates.npz", coordinates=self.__blockPositions.get())
+    # np.savez("hessians.npz", hessians = self.__blocksFlattened.get())
+    # print("Saved npz")
+    # exit(0)
 
     # now we have the hessian and gradient
     # we need to solve the system

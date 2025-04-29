@@ -298,14 +298,18 @@ __global__ void compute_hessian_and_gradient_global_function(
           // we now need to get the index
           unsigned int placement_index = lookups[coordinate_start + valid_block_counts];
           // now we put the block in
-          for (unsigned int k = 0; k < segment_size_i; k++){{
-            for (unsigned int l = 0; l < segment_size_j; l++){{
-              if (segment_index_i < segment_index_j){{
+          if (segment_index_i < segment_index_j){{
+            for (unsigned int k = 0; k < segment_size_i; k++){{
+              for (unsigned int l = 0; l < segment_size_j; l++){{
                 // this is a block in the upper triangle
-                atomicAdd(&hessian_blocks[placement_index + k * segment_size_j + l], compressed_hessian(permutation_i + k, permutation_j + l));
-              }}else{{
+                atomicAdd(&hessian_blocks[placement_index + k * segment_size_j + l], hg_mat(permutation_i + k, permutation_j + l));
+              }}
+            }}
+          }}else{{
+            for (unsigned int k = 0; k < segment_size_j; k++){{
+              for (unsigned int l = 0; l < segment_size_i; l++){{
                 // put the transpose block in
-                atomicAdd(&hessian_blocks[placement_index + k * segment_size_j + l], compressed_hessian(permutation_j + l, permutation_i + k));
+                atomicAdd(&hessian_blocks[placement_index + k * segment_size_j + l], hg_mat(permutation_j + k, permutation_i + l));
               }}
             }}
           }}
