@@ -225,7 +225,7 @@ class minimizer:
     # call the kernel
     self.__solver.computeSolution(context_ptr_c, 20000, tolerance, self.__blocksFlattened, self.__blockPositions, self.__blocksStartIndices, self.__blockCounts, self.__diagonal, self.__gradient, self.__d_p1_b, self.__d_r, self.__d_c, self.__d_q, self.__d_s, self.__solution)
 
-    np.savez("solution.npz", solution=self.__solution.get())
+    np.savez("gradient.npz", gradient=self.__gradient.get())
     np.savez("diagonal.npz", diagonal=self.__diagonal.get())
     exit(0)
 
