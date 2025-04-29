@@ -181,24 +181,24 @@ class minimizer:
     if self.__blocksFlattened.shape[0] > 0:
       self.__blocksFlattened.fill(0)
     self.__diagonal.fill(0)
-    print("Here are some diagonals: ", self.__diagonal[:20].get())
-    print("Here are some gradients: ", self.__gradient[:20].get())
-    print("Here are some hessians: ", self.__blocksFlattened[:20].get())
+    # print("Here are some diagonals: ", self.__diagonal[:20].get())
+    # print("Here are some gradients: ", self.__gradient[:20].get())
+    # print("Here are some hessians: ", self.__blocksFlattened[:20].get())
     for e in self.energies:
       e.computeHessianAndGradient(self.__gradient, self.__blocksFlattened, self.__diagonal)
     # print("Gradient is before solve: ")
     # print(self.__gradient.get())
-    print("Diagonals after: ", self.__diagonal[:20].get())
-    print("Gradients after: ", self.__gradient[:20].get())
-    print("Hessians after: ", self.__blocksFlattened[:20].get())
-    print("Sum of hessians: ", np.sum(self.__blocksFlattened.get()))
+    # print("Diagonals after: ", self.__diagonal[:20].get())
+    # print("Gradients after: ", self.__gradient[:20].get())
+    # print("Hessians after: ", self.__blocksFlattened[:20].get())
+    # print("Sum of hessians: ", np.sum(self.__blocksFlattened.get()))
 
-    np.savez("gradient.npz", gradient=self.__gradient.get())
-    np.savez("diagonal.npz", diagonal=self.__diagonal.get())
-    np.savez("coordinates.npz", coordinates=self.__blockPositions.get())
-    np.savez("hessians.npz", hessians = self.__blocksFlattened.get())
-    print("Saved npz")
-    exit(0)
+    # np.savez("gradient.npz", gradient=self.__gradient.get())
+    # np.savez("diagonal.npz", diagonal=self.__diagonal.get())
+    # np.savez("coordinates.npz", coordinates=self.__blockPositions.get())
+    # np.savez("hessians.npz", hessians = self.__blocksFlattened.get())
+    # print("Saved npz")
+    # exit(0)
 
     # now we have the hessian and gradient
     # we need to solve the system

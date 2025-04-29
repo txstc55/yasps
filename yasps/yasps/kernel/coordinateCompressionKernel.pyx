@@ -472,7 +472,7 @@ class coordinateCompressionKernel:
     )
     # here we will get the unique number of coordinates
     self.__num_unique_coords = num_unique_coords.value
-    print(f"Number of unique coordinates: {self.__num_unique_coords}")
+    # print(f"Number of unique coordinates: {self.__num_unique_coords}")
 
   @timed("coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd")
   def __getUniqueCoordinatesStartAndEnd(self, uncompressedCoordinates, uncompressedDimensions, total_coordinates, uncompressedCoordinatesAndDimensionsTmp):
@@ -511,15 +511,15 @@ class coordinateCompressionKernel:
       ctypes.byref(num_unique_dims)
     )
     self.__num_unique_dimensions = num_unique_dims.value
-    print(f"Number of unique dimensions: {self.__num_unique_dimensions}")
-    print(f"Total block size: {self.__uniqueDimensionsOuterIndices.get()[self.__num_unique_dimensions]}")
+    # print(f"Number of unique dimensions: {self.__num_unique_dimensions}")
+    # print(f"Total block size: {self.__uniqueDimensionsOuterIndices.get()[self.__num_unique_dimensions]}")
 
 
 
   @timed("coordinateCompressionKernel.__compressCoordinatesAndDimensions")
   def __compressCoordinatesAndDimensions(self):
     total_coordinates = sum(self.__num_coordinates)
-    print(f"Total coordinates: {total_coordinates}")
+    # print(f"Total coordinates: {total_coordinates}")
     # create a new data type for coordinates and dimensions
     coord_dim_dtype = np.dtype([
       ('row', np.uint32),
@@ -548,83 +548,83 @@ class coordinateCompressionKernel:
     self.__getUniqueCoordinatesStartAndEnd(uncompressedCoordinates, uncompressedDimensions, total_coordinates, uncompressedCoordinatesAndDimensionsTmp)
 
 
-    ########################################################################################
-    ########################################################################################
-    ## UNCOMMENT THE CODE FOR DEBUGGING THE RESULTS
-    ########################################################################################
-    ########################################################################################
-    # we now do a cpu check
-    # first we check if the unique dimensions are the same
-    unique_dimensions_cpu = self.__uniqueDimensions.get().flatten()
-    print(f"unique_dimensions_cpu: {unique_dimensions_cpu}")
-    unique_dimensions_set = set([])
-    for i in range(self.__num_unique_dimensions):
-      unique_dimensions_set.add((unique_dimensions_cpu[i * 2], unique_dimensions_cpu[i * 2 + 1]))
-    unique_dimensions_raw_dict = {}
-    for i in range(len(self.__num_coordinates)):
-      dimensions = self.__dimensions[i].get()
-      for j in range(len(dimensions) // 2):
-        dimension = (dimensions[j * 2], dimensions[j * 2 + 1])
-        if dimension not in unique_dimensions_raw_dict:
-          unique_dimensions_raw_dict[dimension] = 0
-        unique_dimensions_raw_dict[dimension] += 1
-
-    if unique_dimensions_set != set(unique_dimensions_raw_dict.keys()):
-      raise ValueError(f"Unique dimensions do not match, {unique_dimensions_set} != {set(unique_dimensions_raw_dict.keys())}")
-
-    # now we check if the count is correct
-    unique_dimensions_block_counts_cpu = self.__uniqueDimensionsBlockCounts.get().flatten()
-    print(f"Unique dimensions block counts: {unique_dimensions_block_counts_cpu}")
-    print(f"unique_dimensions_raw_dict: {unique_dimensions_raw_dict}")
+    # ########################################################################################
+    # ########################################################################################
+    # ## UNCOMMENT THE CODE FOR DEBUGGING THE RESULTS
+    # ########################################################################################
+    # ########################################################################################
+    # # we now do a cpu check
+    # # first we check if the unique dimensions are the same
+    # unique_dimensions_cpu = self.__uniqueDimensions.get().flatten()
+    # # print(f"unique_dimensions_cpu: {unique_dimensions_cpu}")
+    # unique_dimensions_set = set([])
     # for i in range(self.__num_unique_dimensions):
-    #   dimension = (unique_dimensions_cpu[i * 2], unique_dimensions_cpu[i * 2 + 1])
-    #   count = unique_dimensions_block_counts_cpu[i]
-    #   if count != unique_dimensions_raw_dict[dimension]:
-    #     raise ValueError(f"Unique dimensions block counts do not match for dimension {dimension}, count {count} does not match {unique_dimensions_raw_dict[dimension]}")
+    #   unique_dimensions_set.add((unique_dimensions_cpu[i * 2], unique_dimensions_cpu[i * 2 + 1]))
+    # unique_dimensions_raw_dict = {}
+    # for i in range(len(self.__num_coordinates)):
+    #   dimensions = self.__dimensions[i].get()
+    #   for j in range(len(dimensions) // 2):
+    #     dimension = (dimensions[j * 2], dimensions[j * 2 + 1])
+    #     if dimension not in unique_dimensions_raw_dict:
+    #       unique_dimensions_raw_dict[dimension] = 0
+    #     unique_dimensions_raw_dict[dimension] += 1
 
-    # now we check the outer indices
-    unique_dimensions_outer_indices_cpu = self.__uniqueDimensionsOuterIndices.get().flatten()
-    print(f"Unique dimensions outer indices: {unique_dimensions_outer_indices_cpu}")
-    # total_count = 0
-    # for i in range(self.__num_unique_dimensions):
-    #   dimension = (unique_dimensions_cpu[i * 2], unique_dimensions_cpu[i * 2 + 1])
-    #   if unique_dimensions_outer_indices_cpu[i] != total_count:
-    #     raise ValueError(f"Unique dimensions outer indices do not match for dimension {dimension}, index {unique_dimensions_outer_indices_cpu[i]} does not match {total_count}")
-    #   total_count += unique_dimensions_block_counts_cpu[i] * dimension[0] * dimension[1]
-    # if not(int(unique_dimensions_outer_indices_cpu[self.__num_unique_dimensions]) == int(total_count)):
-    #   raise ValueError(f"Unique dimensions for final outer index does not match, count {unique_dimensions_outer_indices_cpu[self.__num_unique_dimensions]} does not match {total_count}")
+    # if unique_dimensions_set != set(unique_dimensions_raw_dict.keys()):
+    #   raise ValueError(f"Unique dimensions do not match, {unique_dimensions_set} != {set(unique_dimensions_raw_dict.keys())}")
 
-    # finally we check if the index is correct
-    count = 0
-    unique_coordinates_cpu = self.__uniqueCoordinates.get().flatten()
-    lookup_cpu = self.__lookupArray.get().flatten()
-    for i in range(len(self.__coordinates)):
-      coordinates = self.__coordinates[i].get().flatten()
-      for j in range(len(coordinates) // 2):
-        coordinate = (int(coordinates[j * 2]), int(coordinates[j * 2 + 1]))
-        lookup = lookup_cpu[count]
+    # # now we check if the count is correct
+    # unique_dimensions_block_counts_cpu = self.__uniqueDimensionsBlockCounts.get().flatten()
+    # # print(f"Unique dimensions block counts: {unique_dimensions_block_counts_cpu}")
+    # # print(f"unique_dimensions_raw_dict: {unique_dimensions_raw_dict}")
+    # # for i in range(self.__num_unique_dimensions):
+    # #   dimension = (unique_dimensions_cpu[i * 2], unique_dimensions_cpu[i * 2 + 1])
+    # #   count = unique_dimensions_block_counts_cpu[i]
+    # #   if count != unique_dimensions_raw_dict[dimension]:
+    # #     raise ValueError(f"Unique dimensions block counts do not match for dimension {dimension}, count {count} does not match {unique_dimensions_raw_dict[dimension]}")
 
-        for k in range(len(unique_dimensions_outer_indices_cpu) - 1):
-          start = unique_dimensions_outer_indices_cpu[k]
-          end = unique_dimensions_outer_indices_cpu[k + 1]
-          if start <= lookup < end:
-            # minus the start
-            lookup -= start
-            lookup = (lookup // (unique_dimensions_cpu[k * 2] * unique_dimensions_cpu[k * 2 + 1])) + sum(unique_dimensions_block_counts_cpu[:k])
-            break
-        foundCoordinate = (int(unique_coordinates_cpu[lookup * 2]), int(unique_coordinates_cpu[lookup * 2 + 1]))
-        # if (lookup == 0):
-        #   print("At 0th lookup, with coordinate", coordinate)
-        #   print(f"Nth instance: {j // 10}, nth instance within: {j % 10}")
-        #   if foundCoordinate[0] != 0 or foundCoordinate[1] != 0:
-        #     print("Found coordinate not 0 0:", foundCoordinate)
-        #     exit(1)
-        if not(coordinate == foundCoordinate):
-          print(coordinates[: 20].reshape(-1, 2))
-          print(unique_coordinates_cpu[: 20].reshape(-1, 2))
-          print(lookup_cpu[:20])
-          raise ValueError(f"Coordinate {coordinate} does not match found coordinate {foundCoordinate} at index {count}, raw lookup: {lookup_cpu[count]}, modified lookup: {lookup}")
-        count += 1
+    # # now we check the outer indices
+    # unique_dimensions_outer_indices_cpu = self.__uniqueDimensionsOuterIndices.get().flatten()
+    # # print(f"Unique dimensions outer indices: {unique_dimensions_outer_indices_cpu}")
+    # # total_count = 0
+    # # for i in range(self.__num_unique_dimensions):
+    # #   dimension = (unique_dimensions_cpu[i * 2], unique_dimensions_cpu[i * 2 + 1])
+    # #   if unique_dimensions_outer_indices_cpu[i] != total_count:
+    # #     raise ValueError(f"Unique dimensions outer indices do not match for dimension {dimension}, index {unique_dimensions_outer_indices_cpu[i]} does not match {total_count}")
+    # #   total_count += unique_dimensions_block_counts_cpu[i] * dimension[0] * dimension[1]
+    # # if not(int(unique_dimensions_outer_indices_cpu[self.__num_unique_dimensions]) == int(total_count)):
+    # #   raise ValueError(f"Unique dimensions for final outer index does not match, count {unique_dimensions_outer_indices_cpu[self.__num_unique_dimensions]} does not match {total_count}")
+
+    # # finally we check if the index is correct
+    # count = 0
+    # unique_coordinates_cpu = self.__uniqueCoordinates.get().flatten()
+    # lookup_cpu = self.__lookupArray.get().flatten()
+    # for i in range(len(self.__coordinates)):
+    #   coordinates = self.__coordinates[i].get().flatten()
+    #   for j in range(len(coordinates) // 2):
+    #     coordinate = (int(coordinates[j * 2]), int(coordinates[j * 2 + 1]))
+    #     lookup = lookup_cpu[count]
+
+    #     for k in range(len(unique_dimensions_outer_indices_cpu) - 1):
+    #       start = unique_dimensions_outer_indices_cpu[k]
+    #       end = unique_dimensions_outer_indices_cpu[k + 1]
+    #       if start <= lookup < end:
+    #         # minus the start
+    #         lookup -= start
+    #         lookup = (lookup // (unique_dimensions_cpu[k * 2] * unique_dimensions_cpu[k * 2 + 1])) + sum(unique_dimensions_block_counts_cpu[:k])
+    #         break
+    #     foundCoordinate = (int(unique_coordinates_cpu[lookup * 2]), int(unique_coordinates_cpu[lookup * 2 + 1]))
+    #     # if (lookup == 0):
+    #     #   print("At 0th lookup, with coordinate", coordinate)
+    #     #   print(f"Nth instance: {j // 10}, nth instance within: {j % 10}")
+    #     #   if foundCoordinate[0] != 0 or foundCoordinate[1] != 0:
+    #     #     print("Found coordinate not 0 0:", foundCoordinate)
+    #     #     exit(1)
+    #     if not(coordinate == foundCoordinate):
+    #       print(coordinates[: 20].reshape(-1, 2))
+    #       print(unique_coordinates_cpu[: 20].reshape(-1, 2))
+    #       print(lookup_cpu[:20])
+    #       raise ValueError(f"Coordinate {coordinate} does not match found coordinate {foundCoordinate} at index {count}, raw lookup: {lookup_cpu[count]}, modified lookup: {lookup}")
+    #     count += 1
 
 
 

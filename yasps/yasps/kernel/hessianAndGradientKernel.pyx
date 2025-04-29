@@ -40,7 +40,7 @@ class hessianAndGradientKernel:
     if set(unique_gradient_sizes).issubset(self.__unique_gradient_sizes):
       return
     self.__unique_gradient_sizes.update(unique_gradient_sizes)
-    print("Unique gradient sizes updated to", unique_gradient_sizes)
+    # print("Unique gradient sizes updated to", unique_gradient_sizes)
     ## first we get all the header functions
     sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
@@ -399,8 +399,7 @@ void compute_hessian_and_gradient_with_compression(
 '''
       self.__kernelString += '''
       default:
-        printf("Invalid gradient size\\n");
-        exit(1);
+        printf("Invalid gradient size, %u\\n", unique_gradient_sizes[i]);
         break;
     }
   }
@@ -485,6 +484,8 @@ void compute_hessian_and_gradient_with_compression(
     hessian_blocks: gpuarray.GPUArray,
     diagonal: gpuarray.GPUArray,
   ):
+    print("Unique gradient sizes cpu before hessian kernel:", giKernel.outputUniqueGradientSizesCPU)
+    print("Num unique gradient sizes cpu before hessian kernel:", giKernel.numUniqueGradientSizesCPU)
     assert self.__kernel is not None
     self.__kernel(
       *[self.__to_void_p(x) for x in attributeArgs],

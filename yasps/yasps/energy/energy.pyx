@@ -164,10 +164,10 @@ class energy:
             pathDict[parent] = []
           if child not in pathDict[parent]:
             pathDict[parent].append(child)
-      print("Path dict check")
-      for key in pathDict.keys():
-        print("Parent:", key.fullName)
-        print("Children:", [child.fullName for child in pathDict[key]])
+      # print("Path dict check")
+      # for key in pathDict.keys():
+      #   print("Parent:", key.fullName)
+      #   print("Children:", [child.fullName for child in pathDict[key]])
       # create a gradientIndicesKernel
       self.__indices_kernel = gradientIndicesKernel(pathDict, wrt, wrt_start_indices, self.__energy)
 
@@ -811,7 +811,7 @@ class energy:
       assert self.__indices_kernel is not None
       self.__hessianAndGradientKernel.generateKernel(self.__indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
 
-    print(f"There are {len(self.__intermediate_compute_pairs)} intermediate attributes")
+    # print(f"There are {len(self.__intermediate_compute_pairs)} intermediate attributes")
     # make sure that we also compute the intermediate values
     for _, value in self.__intermediate_compute_pairs.items():
       value[0].compute()

@@ -81,7 +81,7 @@ __global__ void computePermutation(
       }
       if (!found) {
         permutation[tid * K + i] = gradient_offset + 1; // always exclude 0
-        gradient_offset += index_sizes[tid * K + 1]; // we offset the gradient_offset so we know exactly where to put this segment
+        gradient_offset += index_sizes[tid * K + i]; // we offset the gradient_offset so we know exactly where to put this segment
         total_gradient_size += index_sizes[tid * K + i];
         compressed_index_size++;
       }
@@ -709,15 +709,15 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     self.__compressIndicesLocal()
     self.__allocateSpaceForCoordinates()
     self.__generateCoordinates()
-    # print("Used Indices", self.__outputIndices.get())
-    # print("Dimensions of the indices:", self.__outputIndexSizes.get())
+    # print("Used Indices", self.__outputIndices.get()[:20])
+    # print("Dimensions of the indices:", self.__outputIndexSizes.get()[:20])
     # print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
     # print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
     # print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
     # print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get())
     # print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
-    print("Number of total coordinates:", self.numTotalCoordinates)
+    # print("Number of total coordinates:", self.numTotalCoordinates)
     # print("Permutations:", self.__outputPermutations.get())
-    print("Coordinates size:", self.__outputCoordinates.get().shape)
-    print("Dimensions size:", self.__outputBlockDimensions.get().shape)
-    print("Permutation preview:", self.__outputPermutations.get()[:30])
+    # print("Coordinates size:", self.__outputCoordinates.get().shape)
+    # print("Dimensions size:", self.__outputBlockDimensions.get().shape)
+    # print("Permutation preview:", self.__outputPermutations.get()[:30])
