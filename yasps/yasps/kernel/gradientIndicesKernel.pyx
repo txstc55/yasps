@@ -381,12 +381,6 @@ class gradientIndicesKernel:
     return self.__outputGroupedIndicesOuter
 
   @property
-  def outputUniqueGradientSizesCPU(self):
-    if self.__outputUniqueGradientSizesCPU is None:
-      self.__outputUniqueGradientSizesCPU = np.array(self.__outputUniqueGradientSizes.get(), dtype=np.uint16).flatten()
-    return self.__outputUniqueGradientSizesCPU
-
-  @property
   def numUniqueGradientSizes(self):
     return self.__outputNumUniqueGradientSizes.get()[0]
 
@@ -395,6 +389,12 @@ class gradientIndicesKernel:
     if self.__outputNumUniqueGradientSizesCPU is None:
       self.__outputNumUniqueGradientSizesCPU = self.__outputNumUniqueGradientSizes.get()[0]
     return self.__outputNumUniqueGradientSizesCPU
+
+  @property
+  def outputUniqueGradientSizesCPU(self):
+    if self.__outputUniqueGradientSizesCPU is None:
+      self.__outputUniqueGradientSizesCPU = np.array(self.__outputUniqueGradientSizes.get(), dtype=np.uint16).flatten()[:self.numUniqueGradientSizesCPU]
+    return self.__outputUniqueGradientSizesCPU
 
   @property
   def outputPermutations(self):

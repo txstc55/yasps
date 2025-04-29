@@ -800,7 +800,7 @@ class energy:
       for i in range(self.__hessian.rows):
         merged_hessian_and_gradient.append(self.__gradient[i])
       # create the attribute for the merged hessian and gradient
-      self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient), rows = self.__hessian.rows + 1, cols = self.__hessian.cols)
+      self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = self.__hessian.rows + 1, cols = self.__hessian.cols))
 
       from yasps.codeGenerator import codeGenerator
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
