@@ -360,6 +360,8 @@ class minimizer:
     # print(self.__gradient.get())
     np.savez("gradient_original.npz", gradient=self.__gradient.get())
     np.savez("diagonal_original.npz", diagonal=self.__diagonal.get())
+    np.savez("coordinates_original.npz", coordinates=self.__blockPositions.get())
+    np.savez("hessians_original.npz", hessians = self.__blocksFlattened.get())
     print("Saved npz for original")
     exit(0)
     # now we have the hessian and gradient
