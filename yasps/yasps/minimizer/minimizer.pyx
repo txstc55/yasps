@@ -195,6 +195,8 @@ class minimizer:
 
     np.savez("gradient.npz", gradient=self.__gradient.get())
     np.savez("diagonal.npz", diagonal=self.__diagonal.get())
+    np.savez("coordinates.npz", coordinates=self.__blockPositions.get())
+    np.savez("hessians.npz", hessians = self.__blocksFlattened.get())
     print("Saved npz")
     exit(0)
 

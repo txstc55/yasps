@@ -720,3 +720,4 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     # print("Permutations:", self.__outputPermutations.get())
     print("Coordinates size:", self.__outputCoordinates.get().shape)
     print("Dimensions size:", self.__outputBlockDimensions.get().shape)
+    print("Permutation preview:", self.__outputPermutations.get()[:30])
