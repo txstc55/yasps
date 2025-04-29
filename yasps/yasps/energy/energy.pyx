@@ -807,6 +807,7 @@ class energy:
       self.__gradient_sizes_gpu = gpuarray.to_gpu(np.array(self.__gradient_sizes_cpu, dtype = np.uint32))
 
     print(f"There are {len(self.__intermediate_compute_pairs)} intermediate attributes")
+    print(f"Hessian and gradient size is: {self.__hessian.rows} * {self.__hessian.cols}")
     # make sure that we also compute the intermediate values
     for _, value in self.__intermediate_compute_pairs.items():
       value[0].compute()

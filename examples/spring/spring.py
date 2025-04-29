@@ -102,11 +102,11 @@ left_spring.addAttribute("left_spring_angle_energy", computed_attribute = (left_
 right_spring.addAttribute("right_spring_inertia", computed_attribute = inertia(right_spring["last_position"], right_spring["velocity"], DT, attribute.to_array([right_spring["end_x"], right_spring["end_y"]], rows = 2, cols = 1), BLOCK_MASS))
 left_spring.addAttribute("left_spring_inertia", computed_attribute = inertia(left_spring["last_position"], left_spring["velocity"], DT, attribute.to_array([left_spring["end_x"], left_spring["end_y"]], rows = 2, cols = 1), BLOCK_MASS))
 
-s0.addEnergy(top_spring["top_spring_angle_energy"])
-s0.addEnergy(right_spring["right_spring_angle_energy"])
-s0.addEnergy(left_spring["left_spring_angle_energy"])
-s0.addEnergy(right_spring["right_spring_inertia"])
-s0.addEnergy(left_spring["left_spring_inertia"])
+s0.addEnergy(top_spring["top_spring_angle_energy"], projection_method = 0)
+s0.addEnergy(right_spring["right_spring_angle_energy"], projection_method = 0)
+s0.addEnergy(left_spring["left_spring_angle_energy"], projection_method = 0)
+s0.addEnergy(right_spring["right_spring_inertia"], projection_method = 0)
+s0.addEnergy(left_spring["left_spring_inertia"], projection_method = 0)
 s0.addMinimizeTarget([top_spring["angle"], right_spring["angle"], left_spring["angle"], lever["angle"]])
 
 from matplotlib.colors import LinearSegmentedColormap
