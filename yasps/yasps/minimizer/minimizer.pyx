@@ -358,7 +358,10 @@ class minimizer:
       e.computeHessianAndGradient(self.__blocksStartIndicesGPU, self.__gradient, self.__blocksFlattened, self.__diagonal)
     # print("Gradient is before solve: ")
     # print(self.__gradient.get())
-
+    np.savez("gradient.npz", gradient=self.__gradient.get())
+    np.savez("diagonal.npz", diagonal=self.__diagonal.get())
+    print("Saved npz for original")
+    exit(0)
     # now we have the hessian and gradient
     # we need to solve the system
     if self.__solver is None:
