@@ -356,6 +356,10 @@ class minimizer:
     self.__diagonal.fill(0)
     for e in self.energies:
       e.computeHessianAndGradient(self.__blocksStartIndicesGPU, self.__gradient, self.__blocksFlattened, self.__diagonal)
+      print("Gradient check")
+      print(self.__gradient.get())
+      print("Diagonal check")
+      print(self.__diagonal.get())
     # print("Gradient is before solve: ")
     # print(self.__gradient.get())
     np.savez("gradient_original.npz", gradient=self.__gradient.get())
