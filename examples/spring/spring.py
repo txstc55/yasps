@@ -95,18 +95,18 @@ left_spring["last_position"].updateValue([left_spring["end_x"].compute().value.g
 # ok now we need to add energy to the system
 # the first is on the spring, spring has a rest angle, which should be followed
 top_spring.addAttribute("top_spring_angle_energy", computed_attribute = (top_spring["angle"] - TOP_SPRING_REST_ANGLE) * (top_spring["angle"] - TOP_SPRING_REST_ANGLE) / (top_spring["angle"] * (np.pi / 2 - top_spring["angle"])) * (TOP_SPRING_SEGMENT_COUNT - 1.0) * 30.0)
-right_spring.addAttribute("right_spring_angle_energy", computed_attribute = (right_spring["angle"] - RIGHT_SPRING_REST_ANGLE) * (right_spring["angle"] - RIGHT_SPRING_REST_ANGLE) / (right_spring["angle"] * (np.pi / 2 - right_spring["angle"])) * (RIGHT_SPRING_SEGMENT_COUNT - 1.0) * 2.0)
+right_spring.addAttribute("right_spring_angle_energy", computed_attribute = (right_spring["angle"] - RIGHT_SPRING_REST_ANGLE) * (right_spring["angle"] - RIGHT_SPRING_REST_ANGLE) / (right_spring["angle"] * (np.pi / 2 - right_spring["angle"])) * (RIGHT_SPRING_SEGMENT_COUNT - 1.0) * 200.0)
 left_spring.addAttribute("left_spring_angle_energy", computed_attribute = (left_spring["angle"] - LEFT_SPRING_REST_ANGLE) * (left_spring["angle"] - LEFT_SPRING_REST_ANGLE) / (left_spring["angle"] * (np.pi / 2 - left_spring["angle"])) * (LEFT_SPRING_SEGMENT_COUNT - 1.0) * 50.0)
 
 # add inertia for the mass at the end of the spring_system
 right_spring.addAttribute("right_spring_inertia", computed_attribute = inertia(right_spring["last_position"], right_spring["velocity"], DT, attribute.to_array([right_spring["end_x"], right_spring["end_y"]], rows = 2, cols = 1), BLOCK_MASS))
 left_spring.addAttribute("left_spring_inertia", computed_attribute = inertia(left_spring["last_position"], left_spring["velocity"], DT, attribute.to_array([left_spring["end_x"], left_spring["end_y"]], rows = 2, cols = 1), BLOCK_MASS))
 
-s0.addEnergy(top_spring["top_spring_angle_energy"], projection_method = 0)
-s0.addEnergy(right_spring["right_spring_angle_energy"], projection_method = 0)
-s0.addEnergy(left_spring["left_spring_angle_energy"], projection_method = 0)
-s0.addEnergy(right_spring["right_spring_inertia"], projection_method = 0)
-s0.addEnergy(left_spring["left_spring_inertia"], projection_method = 0)
+s0.addEnergy(top_spring["top_spring_angle_energy"], projection_method = 1)
+s0.addEnergy(right_spring["right_spring_angle_energy"], projection_method = 1)
+s0.addEnergy(left_spring["left_spring_angle_energy"], projection_method = 1)
+s0.addEnergy(right_spring["right_spring_inertia"], projection_method = 1)
+s0.addEnergy(left_spring["left_spring_inertia"], projection_method = 1)
 s0.addMinimizeTarget([top_spring["angle"], right_spring["angle"], left_spring["angle"], lever["angle"]])
 
 from matplotlib.colors import LinearSegmentedColormap
@@ -140,7 +140,7 @@ plt.ion()
 fig, ax = plt.subplots(figsize=(6, 8))
 ceiling = ax.plot([-100, 100], [0, 0], linestyle='-', color='black')
 ceiling_line,  = ax.plot([0, 0], [0, -0.5], linestyle='-', color='black')
-CEILING_LINES_COUNT = 300
+CEILING_LINES_COUNT = 100
 for i in range(CEILING_LINES_COUNT):
   starting_x = -100 + 200 / CEILING_LINES_COUNT * i
   ending_x = -100 + 200 / CEILING_LINES_COUNT * (i + 1)
@@ -274,7 +274,7 @@ while(iteration < 1500):
   right_spring["last_position"].updateValue([right_spring["end_x"].compute().value.get()[0], right_spring["end_y"].compute().value.get()[0]])
   left_spring["last_position"].updateValue([left_spring["end_x"].compute().value.get()[0], left_spring["end_y"].compute().value.get()[0]])
 
-  if (iteration % int(1 / DT) == 0):
+  if (True):
     # update the velocity
     right_spring_new_position = right_spring["last_position"].compute().value.get()
     left_spring_new_position = left_spring["last_position"].compute().value.get()
@@ -285,10 +285,20 @@ while(iteration < 1500):
     right_spring_mass_position_last = right_spring_new_position
     left_spring_mass_position_last = left_spring_new_position
 
+  # we do inner newton iteration to check for total energy
+  energy_before = sum(top_spring["top_spring_angle_energy"].compute().value.get()) + sum(right_spring["right_spring_angle_energy"].compute().value.get()) + sum(left_spring["left_spring_angle_energy"].compute().value.get()) + sum(right_spring["right_spring_inertia"].compute().value.get()) +  sum(left_spring["left_spring_inertia"].compute().value.get())
+
+
   top_spring["angle"].updateValue(top_spring["angle"].compute().value.get()[0] - DT * result[0].get()[0])
   right_spring["angle"].updateValue(right_spring["angle"].compute().value.get()[0] - DT * result[1].get()[0])
   left_spring["angle"].updateValue(left_spring["angle"].compute().value.get()[0] - DT * result[2].get()[0])
   lever["angle"].updateValue(lever["angle"].compute().value.get()[0] - DT * result[3].get()[0])
+  energy_after = sum(top_spring["top_spring_angle_energy"].compute().value.get()) + sum(right_spring["right_spring_angle_energy"].compute().value.get()) + sum(left_spring["left_spring_angle_energy"].compute().value.get()) + sum(right_spring["right_spring_inertia"].compute().value.get()) +  sum(left_spring["left_spring_inertia"].compute().value.get())
+
+  # if (energy_before < energy_after):
+  #   print("Energy increase detected")
+  #   exit(1)
+
   update_plot()
   iteration += 1
-  plt.savefig(f'plots/frame_{iteration:04d}.png', dpi=600) # 1829, 1895, 1026, 1693 for cropping image
+  plt.savefig(f'plots/frame_{iteration:04d}.png', dpi=100) # 1829, 1895, 1026, 1693 for cropping image

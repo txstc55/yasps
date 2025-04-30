@@ -350,7 +350,7 @@ void compute_hessian_and_gradient_with_compression(
   double* gradient,   // the gradient output
   double* hessian_blocks, // the blocks that will constitute the hessian
   double* diagonal,    // the diagonal, we will use it for preconditioning
-  const unsigned int* unique_gradient_sizes, // the unique gradient sizes, on cpu
+  const short unsigned int* unique_gradient_sizes, // the unique gradient sizes, on cpu
   const unsigned int num_unique_gradient_sizes // the number of unique gradient sizes
 ){{
   std::vector<unsigned int> unique_gradient_sizes_instance_count;
@@ -372,6 +372,7 @@ void compute_hessian_and_gradient_with_compression(
   }}
 
   for (unsigned int i = 0; i < num_unique_gradient_sizes; i++) {{
+    printf("%uth unique gradient size: %u\\n", i, unique_gradient_sizes[i]);
     switch(unique_gradient_sizes[i]){{
   '''
       # now we add the for loop to instantiate the known gradient sizes template functions
