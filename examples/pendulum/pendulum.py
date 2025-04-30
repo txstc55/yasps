@@ -70,7 +70,7 @@ vertex_positions = vertices.addAttribute("position", computed_attribute = weight
 segments[-1].addAttribute("target_position", rows = 2, cols = 1)
 segments[-1]["target_position"].updateValue(TARGET_POSITION)
 distance_vector = segments[-1]["end_point_position"] - segments[-1]["target_position"]
-segments[-1].addAttribute("position_penalty", computed_attribute = (distance_vector.norm()))
+segments[-1].addAttribute("position_penalty", computed_attribute = (distance_vector.norm() * 1000.0))
 
 
 s0.addEnergy(segments[-1]["position_penalty"], save_intermediate = True)
@@ -93,9 +93,9 @@ def repulsive_energy(p0, p1, o, alpha, beta):
   r = (energy_p0 + energy_p1)
   return r
 
-for i in range(SEGMENT_COUNT):
-  segments[i].addAttribute("repulsive", computed_attribute = repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION0_ATTRIBUTE, 3.0, 6.0) + repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION1_ATTRIBUTE, 3.0, 6.0))
-  s0.addEnergy(segments[i]["repulsive"], save_intermediate = False)
+# for i in range(SEGMENT_COUNT):
+#   segments[i].addAttribute("repulsive", computed_attribute = repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION0_ATTRIBUTE, 3.0, 6.0) + repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION1_ATTRIBUTE, 3.0, 6.0))
+#   s0.addEnergy(segments[i]["repulsive"], save_intermediate = False)
 
 
 s0.addMinimizeTarget([segment["w"] for segment in segments] + [segment["z"] for segment in segments])
@@ -121,7 +121,7 @@ plt.gca().set_aspect('equal', adjustable='box')
 plt.show()
 
 # Loop to update the plot
-t = 0.1
+t = 0.0001
 last_penalty = 50
 for iteration in range(100000):
   result = s0.minimizeEnergy()
