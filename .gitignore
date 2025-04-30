@@ -53,3 +53,5 @@ iafd soap
 
 examples/data/*.jpg
 examples/waves
+
+**/check_solution.py
