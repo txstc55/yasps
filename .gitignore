@@ -55,3 +55,6 @@ examples/data/*.jpg
 examples/waves
 
 **/check_solution.py
+
+
+yasps/fcm_token

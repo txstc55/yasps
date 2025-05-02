@@ -7,6 +7,7 @@ extensions = [
     Extension("yasps.mesh", ["yasps/mesh/mesh.pyx"]),
     Extension("yasps.connectivity", ["yasps/connectivity/connectivity.pyx"]),
     Extension("yasps.primitive", ["yasps/primitive/primitive.pyx"]),
+    Extension("yasps.primitiveUnion", ["yasps/primitive/primitiveUnion.pyx"]),
     Extension("yasps.operator", ["yasps/operator/operator.pyx"]),
     Extension("yasps.deviceKernel", ["yasps/kernel/deviceKernel.pyx"]),
     Extension("yasps.codeGenerator", ["yasps/codeGenerator/codeGenerator.pyx"]),

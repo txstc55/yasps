@@ -1,12 +1,13 @@
 # cython: language_level=3
 from __future__ import annotations
-from typing import Dict, Union, Tuple, Optional
+from typing import Dict, Union, Tuple, Optional, List
 # a mesh may have primitives
 # and its own attributes
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
   from yasps.scene import scene  # Only imported for type hints
   from yasps.primitive import primitive
+  from yasps.primitiveUnion import primitiveUnion
   from yasps.attribute import attribute
 
 
@@ -20,7 +21,7 @@ class mesh:
       raise ValueError("mesh.__init__: parent scene cannot be None.")
     self.__name: str = name
     self.__scene: scene = parent_scene
-    self.__primitives: Dict[str, primitive] = {}
+    self.__primitives: Dict[str, Union[primitive, primitiveUnion]] = {}
     self.__attributes: Dict[str, attribute] = {}
 
 
@@ -77,6 +78,22 @@ class mesh:
     # add mesh as an attribute to the scene
     setattr(self, name, newPrimitive)
     return newPrimitive
+
+  def addPrimitiveUnion(self, name: str, primitives: List[Union[primitive, primitiveUnion]]):
+    if name in self.__primitives:
+      raise ValueError(f"mesh.addPrimitive: primitive with name '{name}' already exists in mesh.")
+
+    # check name is valid
+    if not self.isValidName(name):
+      raise ValueError(f"mesh.addPrimitive: '{name}' is not a valid name for a primitive.")
+
+    from yasps.primitiveUnion import primitiveUnion
+    newPrimitiveUnion = primitiveUnion(name, self, primitives)
+
+    self.__primitives[name] = newPrimitiveUnion
+    # add mesh as an attribute to the scene
+    setattr(self, name, newPrimitiveUnion)
+    return newPrimitiveUnion
 
 
   @property
