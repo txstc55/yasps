@@ -120,7 +120,8 @@ class primitiveUnion:
       # now we are sure that the name exists in all attributes
       # we can create the new attribute
       from yasps.attribute import attribute
-      unioned_attribute = attribute(name, rows = rows_size_check.pop(), cols = cols_size_check.pop(), correspondance = self, children = self.__primitives)
+      from yasps.attribute import UNION
+      unioned_attribute = attribute(name, rows = rows_size_check.pop(), cols = cols_size_check.pop(), correspondance = self, children = [x[name] for x in self.__primitives], operator = UNION)
       self.__attributes[name] = unioned_attribute
       return unioned_attribute
     else:

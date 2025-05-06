@@ -10,7 +10,6 @@ from yasps.helper import timed
 
 class codeGenerator:
   # generate the code for attribute
-  @timed("codeGenerator.__init__")
   def __init__(self, input: ya.attribute):
     self.__input: ya.attribute = input
     self.__order: List[ya.attribute] = []
@@ -24,6 +23,8 @@ class codeGenerator:
 
 
   def __generateCodeOrderDFS(self, current):
+    print("Generating code for attribute:", current.fullName)
+    print(current)
     if self.__input.deviceKernel is not None:
       # nothing to do
       return
@@ -93,6 +94,7 @@ class codeGenerator:
           childCodeGenerator = codeGenerator(current)
           childCodeGenerator.generateCode()
           self.__childrenAttributeKernels[current.hash] = current
+    print("Finished generating code for attribute:", current.fullName)
 
 
   def generateCode(self) -> None:
