@@ -772,9 +772,6 @@ class attribute:
   ################################################
   ################################################
   def compute(self) -> attribute:
-    start_compute = cuda.Event()
-    end_compute = cuda.Event()
-    start_compute.record()
     if self.__operator == DATA:
       # do nothing, its a data attribute
       return self

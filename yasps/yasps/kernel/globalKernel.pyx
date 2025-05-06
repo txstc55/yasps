@@ -12,6 +12,7 @@ import os
 import ctypes
 from yasps.helper import timed
 import pycuda.gpuarray as gpuarray
+from yasps.primitiveUnion import primitiveUnion
 
 testing_kernel = ""
 
@@ -35,6 +36,7 @@ class globalKernel:
     sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
+    sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
     file_name = f".yasps_tmp/compute_{self.__att.fullName}"
     if not os.path.exists(f'{file_name}.so'):
       print(f"File {file_name}.so does not exist, compiling")
@@ -112,7 +114,14 @@ __device__ void spd_projection(const double *A, double* output, int choice){{
         attributeName = self.__att.fullName.replace("-", "_neg_")
 
       kernelRawName = f'''
-__global__ void {attributeName}_global_function({"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}double* result, unsigned int MAX_INDEX)'''
+__global__ void {attributeName}_global_function({
+  "".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}
+  {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}
+  {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+  {"".join([f'const unsigned int* {x.code_generation_counts_name},' for x in sortedPrimitiveUnions])}
+  double* result,
+  unsigned int MAX_INDEX
+)'''
       self.__kernelString += f'''
 {kernelRawName}{{
   // first we get the index
@@ -121,13 +130,34 @@ __global__ void {attributeName}_global_function({"".join([f"const double* {x.cod
     return;
   }}
   // now we call the device function
-  {attributeName}_device_function({"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}index, result + index * {self.__att.size});
+  {attributeName}_device_function(
+    {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
+    {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
+    {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+    {"".join([f'{x.code_generation_counts_name},' for x in sortedPrimitiveUnions])}
+    index,
+    result + index * {self.__att.size}
+  );
 }}
 '''
       self.__kernelString += f'''
 extern "C"
-void compute({"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}double* result, unsigned int MAX_INDEX){{
-  {attributeName}_global_function<<<(MAX_INDEX + 255) / 256, 256>>>({"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}{"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}{"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}result, MAX_INDEX);
+void compute(
+  {"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}
+  {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}
+  {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+  {"".join([f'const unsigned int* {x.code_generation_counts_name},' for x in sortedPrimitiveUnions])}
+  double* result,
+  unsigned int MAX_INDEX
+){{
+  {attributeName}_global_function<<<(MAX_INDEX + 255) / 256, 256>>>(
+    {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
+    {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
+    {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+    {"".join([f"{x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
+    result,
+    MAX_INDEX
+  );
   cudaDeviceSynchronize();
 }}
 '''
@@ -141,6 +171,7 @@ void compute({"".join([f"const double* {x.code_generation_data_name}, " for x in
         *[ctypes.c_void_p for _ in sortedDatas],
         *[ctypes.c_void_p for _ in sortedConnectivities],
         *[ctypes.c_void_p for x in sortedConnectivities if x.dimension == 0],
+        *[ctypes.c_void_p for x in sortedPrimitiveUnions],
         ctypes.c_void_p,  # result
         ctypes.c_uint  # MAX_INDEX
       ]
@@ -152,6 +183,7 @@ void compute({"".join([f"const double* {x.code_generation_data_name}, " for x in
         *[ctypes.c_void_p for _ in sortedDatas],
         *[ctypes.c_void_p for _ in sortedConnectivities],
         *[ctypes.c_void_p for x in sortedConnectivities if x.dimension == 0],
+        *[ctypes.c_void_p for x in sortedPrimitiveUnions],
         ctypes.c_void_p,  # result
         ctypes.c_uint  # MAX_INDEX
       ]
@@ -160,7 +192,13 @@ void compute({"".join([f"const double* {x.code_generation_data_name}, " for x in
   @timed("globalKernel.compute")
   def compute(self, output):
     assert self.__kernel is not None
-    args = [self.__to_void_p(x.value) for x in self.__att.deviceKernel.kernelDatas] + [self.__to_void_p(x.value) for x in self.__att.deviceKernel.kernelConnectivity] + [self.__to_void_p(x.compressedRows) for x in self.__att.deviceKernel.kernelConnectivity if x.dimension == 0] + [self.__to_void_p(output)] + [ctypes.c_uint32(self.__att.correspondance.numInstances)]
+    args = [self.__to_void_p(x.value) for x in self.__att.deviceKernel.kernelDatas]
+    args += [self.__to_void_p(x.value) for x in self.__att.deviceKernel.kernelConnectivity]
+    args += [self.__to_void_p(x.compressedRows) for x in self.__att.deviceKernel.kernelConnectivity if x.dimension == 0]
+    args += [self.__to_void_p(x.children_primitive_counts_gpu) for x in self.__att.deviceKernel.kernelPrimitiveUnions]
+    args += [self.__to_void_p(output)]
+    args += [ctypes.c_uint32(self.__att.correspondance.numInstances)]
+
     self.__kernel(*args)
 
 

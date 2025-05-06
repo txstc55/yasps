@@ -2,15 +2,18 @@
 from __future__ import annotations
 from yasps.connectivity import connectivity
 from yasps.attribute import attribute
+from yasps.primitiveUnion import primitiveUnion
 from typing import List
 
 class deviceKernel:
-  def __init__(self, kernel_string: str, kernel_header: str, kernel_datas: List[attribute], kernel_connectivity: List[connectivity], dependents: List[deviceKernel]):
+  def __init__(self, kernel_string: str, kernel_header: str, kernel_datas: List[attribute], kernel_connectivity: List[connectivity], kernel_union_primitives: List[primitiveUnion], dependents: List[deviceKernel]):
     self.__kernelString: str = kernel_string
     self.__kernelHeader: str = kernel_header
-    self.__kernelDatas: List[attribute] = sorted(set(kernel_datas), key = lambda x: x.fullName)
-    self.__kernelConnectivity: List[connectivity] = sorted(set(kernel_connectivity), key = lambda x: x.fullName)
+    self.__kernelDatas: List[attribute] = sorted(set(kernel_datas), key = lambda x: x.fullName) # all the data needed for the kernel
+    self.__kernelConnectivity: List[connectivity] = sorted(set(kernel_connectivity), key = lambda x: x.fullName) # all the connectivity needed for the kernel
+    self.__kernelPrimitiveUnions: List[primitiveUnion] = sorted(set(kernel_union_primitives), key = lambda x: x.fullName) # all the union primitives needed for the kernel
     self.__dependents: List[deviceKernel] = sorted(set(dependents), key = lambda x: x.kernelHeader)
+
 
   @property
   def kernelString(self)->str:
@@ -23,6 +26,10 @@ class deviceKernel:
   @property
   def kernelConnectivity(self)->List[connectivity]:
     return self.__kernelConnectivity
+
+  @property
+  def kernelPrimitiveUnions(self)->List[primitiveUnion]:
+    return self.__kernelPrimitiveUnions
 
   @property
   def kernelHeader(self)->str:

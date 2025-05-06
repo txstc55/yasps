@@ -2,12 +2,15 @@
 from __future__ import annotations
 import yasps.attribute as ya
 from yasps.connectivity import connectivity
+from yasps.primitiveUnion import primitiveUnion
 from typing import Dict, List, Set, Tuple
 from yasps.deviceKernel import deviceKernel
 from yasps.globalKernel import globalKernel
+from yasps.helper import timed
 
 class codeGenerator:
   # generate the code for attribute
+  @timed("codeGenerator.__init__")
   def __init__(self, input: ya.attribute):
     self.__input: ya.attribute = input
     self.__order: List[ya.attribute] = []
@@ -64,7 +67,7 @@ class codeGenerator:
       # when correspondance is different
       # there are couple of scenarios
       # 1. the correspondance is a scene or mesh, which means this is an operation done on scene or mesh attributes, we will allow that
-      if current.correspondance.type != "primitive":
+      if current.correspondance.type == "mesh" or current.correspondance.type == "scene":
         if current.name != "":
           # data or named attributes
           self.__order.append(current)
@@ -81,7 +84,7 @@ class codeGenerator:
             self.__order.append(current)
       else:
         # this is an operation on other primitive attributes probably
-        # this is only done through join
+        # this is done through join or union
         # so it must have a name at that point
         # if current.name != "":
         # we dont add it to order
@@ -90,7 +93,6 @@ class codeGenerator:
           childCodeGenerator = codeGenerator(current)
           childCodeGenerator.generateCode()
           self.__childrenAttributeKernels[current.hash] = current
-
 
 
   def generateCode(self) -> None:
@@ -107,7 +109,7 @@ class codeGenerator:
   }}'''
       kernelHeader: str = f'''
 __device__ void {current.fullName}_device_function(const double* {current.code_generation_data_name}, unsigned int {current.correspondance.fullName}_index, double* result)'''
-      current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, [current], [], []) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
+      current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, [current], [], [], []) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
       return
 
     # actually generate the code
@@ -193,6 +195,8 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
             self.__generate_code_for_resize(current)
           elif current.operator == ya.SPD:
             self.__generate_code_for_spd(current)
+          elif current.operator == ya.UNION:
+            self.__generate_code_for_union(current)
       else:
         # it is not an output
         # and it has a name
@@ -220,6 +224,7 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
   {"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}
   {"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}
   {"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}
+  {"".join([f'{x.code_generation_counts_name},' for x in current.deviceKernel.kernelPrimitiveUnions])}
   {"0" if ((current.correspondance.type == "scene" or current.correspondance.type == "mesh") and (self.__input.correspondance.type != "scene" and self.__input.correspondance.type != "mesh")) else f"{current.correspondance.fullName}_index"},
   {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
   ''')
@@ -228,7 +233,13 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
           # we need to replace the kernel calls
           replacement = self.__childrenAttributeKernels[current.hash]
           self.__code_strings.append(f'''
-  {current.fullName}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in replacement.deviceKernel.kernelDatas])}{"".join([f'{x.code_generation_index_name}, ' for x in replacement.deviceKernel.kernelConnectivity])}{"".join([f'{x.code_generation_csr_name}, ' for x in replacement.deviceKernel.kernelConnectivity if x.dimension == 0])}{replacement.correspondance.fullName}_index, {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
+  {current.fullName}_device_function(
+    {"".join([f'{x.code_generation_data_name}, ' for x in replacement.deviceKernel.kernelDatas])}
+    {"".join([f'{x.code_generation_index_name}, ' for x in replacement.deviceKernel.kernelConnectivity])}
+    {"".join([f'{x.code_generation_csr_name}, ' for x in replacement.deviceKernel.kernelConnectivity if x.dimension == 0])}
+    {"".join([f'{x.code_generation_counts_name},' for x in replacement.deviceKernel.kernelPrimitiveUnions])}
+    {replacement.correspondance.fullName}_index,
+    {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
   ''')
         if current.size > 1:
           if current.rows == 1 or current.cols == 1:
@@ -268,6 +279,7 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
     # get the datas they need
     allDatas: List[ya.attribute] = [item for x in allNamedAttributeChildren for item in x.deviceKernel.kernelDatas] # get all datas
     allConnectivities: List[connectivity] = [item for x in allNamedAttributeChildren for item in x.deviceKernel.kernelConnectivity] # get all the connectivities
+    allPrimitiveUnions: List[primitiveUnion] = [item for x in allNamedAttributeChildren for item in x.deviceKernel.kernelPrimitiveUnions] # get all the primitive unions
     allDependencies: List[deviceKernel] = [item for x in allNamedAttributeChildren for item in x.deviceKernel.dependents] # get all the dependencies as strings
     allDependencies = allDependencies + [x.deviceKernel for x in allNamedAttributeChildren] # also add the children as dependencies
 
@@ -276,14 +288,25 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
     if self.__input.operator == ya.JOIN or self.__input.operator == ya.SUM or self.__input.operator == ya.AVERAGE:
       allConnectivities.append(self.__input.through)
 
+    if self.__input.operator == ya.UNION:
+      allPrimitiveUnions.append(self.__input.correspondance)
+
     # sort and remove duplicates
     allDatas = sorted(set(allDatas), key = lambda x: x.fullName)
     allConnectivities = sorted(set(allConnectivities), key = lambda x: x.fullName)
     allDependencies = sorted(set(allDependencies), key = lambda x: x.kernelHeader)
+    allPrimitiveUnions = sorted(set(allPrimitiveUnions), key = lambda x: x.fullName)
 
     # now we generate header
     headerString: str = f'''
-__device__ void {attributeName}_device_function({"".join([f"const double* {x.code_generation_data_name}, " for x in allDatas])}{"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in allConnectivities])}{"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in allConnectivities if x.dimension == 0])}unsigned int {self.__input.correspondance.fullName}_index, double* result)'''
+__device__ void {attributeName}_device_function(
+  {"".join([f"const double* {x.code_generation_data_name}, " for x in allDatas])}
+  {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in allConnectivities])}
+  {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in allConnectivities if x.dimension == 0])}
+  {"".join([f'const unsigned int* {x.code_generation_counts_name},' for x in allPrimitiveUnions])}
+  unsigned int {self.__input.correspondance.fullName}_index,
+  double* result
+)'''
 
     # remove the duplicates, some of the index initialization may be duplicated
     # seen_strings: Set[str] = set()
@@ -291,7 +314,7 @@ __device__ void {attributeName}_device_function({"".join([f"const double* {x.cod
     kernelString: str = "\n".join(self.__code_strings)
 
     # now we generate the device kernel
-    self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allDependencies)
+    self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allPrimitiveUnions, allDependencies)
     # print(f"All intermediate count: {len(self.__attribute_replacements)}")
     # print(f"num intermediates: {self.__num_intermediates}")
 
@@ -452,7 +475,14 @@ __device__ void {attributeName}_device_function({"".join([f"const double* {x.cod
     unsigned int {current.through.fullName}_index = {current.through.code_generation_index_name}[{current.through.fromPrimitive.fullName}_index * {current.through.dimension} + i];
     // now for each row, grab the data
     double {current.fullName}_local_data_row_temp[{children_attribute.size}];
-    {children_attribute_name}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_csr_name}, ' for x in children_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.through.fullName}_index, {current.fullName}_local_data_row_temp);
+    {children_attribute_name}_device_function(
+      {"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}
+      {"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}
+      {"".join([f'{x.code_generation_csr_name}, ' for x in children_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}
+      {"".join([f'{x.code_generation_counts_name},' for x in sorted(children_attribute.deviceKernel.kernelPrimitiveUnions, key = lambda y: y.fullName)])}
+      {current.through.fullName}_index,
+      {current.fullName}_local_data_row_temp
+    );
     #pragma unroll
     for (unsigned int j = 0; j < {children_attribute.size}; j++){{ // copy the data
       {current.fullName}_local_data_temp[i * {int(children_attribute.size)} + j] = {current.fullName}_local_data_row_temp[j];
@@ -506,7 +536,14 @@ __device__ void {attributeName}_device_function({"".join([f"const double* {x.cod
     unsigned int {current.through.fullName}_index = {current.through.code_generation_index_name}[i];
     // now for each row, grab the data
     double {current.fullName}_local_data_row_temp[{children_attribute.size}];
-    {children_attribute_name}_device_function({"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}{"".join([f'{x.code_generation_csr_name}, ' for x in children_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}{current.through.fullName}_index, {current.fullName}_local_data_row_temp);
+    {children_attribute_name}_device_function(
+      {"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}
+      {"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}
+      {"".join([f'{x.code_generation_csr_name}, ' for x in children_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])},
+      {"".join([f'{x.code_generation_counts_name},' for x in sorted(children_attribute.deviceKernel.kernelPrimitiveUnions, key = lambda y: y.fullName)])}
+      {current.through.fullName}_index,
+      {current.fullName}_local_data_row_temp
+    );
 
     // add the data back
     for (unsigned int j = 0; j < {children_attribute.size}; j++){{
@@ -638,3 +675,66 @@ __device__ void {attributeName}_device_function({"".join([f"const double* {x.cod
   {attribute_initialization} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
   spd_projection<{current.children[0].rows}>({self.getIntermediateName(current.children[0])}.data(), {attribute_name}.data(), {current.children[1].index_value});
 ''')
+
+  def __generate_code_for_union(self, current: ya.attribute) -> None:
+    # need to generate the code for the joining operation
+    # we know the children must be a named attribute for the joining operator
+    code_string = ""
+    code_string += f'''
+  double {current.fullName}_local_data_temp[{current.size}];
+  // we need to determine which primitive it's calling from
+  {{
+    unsigned int {current.fullName}_primitive_index = 0;
+    unsigned int {current.fullName}_primitive_total_counts_prev = 0;
+    unsigned int {current.fullName}_primitive_total_counts = {current.correspondance.code_generation_counts_name}[0]; // to help us determine which child primitive to invoke
+    for (unsigned int i = 0; i < {len(current.children)}; i++){{
+      {current.fullName}_primitive_total_counts += {current.correspondance.code_generation_counts_name};
+      if ({current.correspondance.fullName}_index < {current.fullName}_primitive_total_counts){{
+        {current.fullName}_primitive_index = i;
+        break;
+      }}else{{
+        {current.fullName}_primitive_total_counts_prev += {current.correspondance.code_generation_counts_name};
+      }}
+    }}
+    // now that we know the exact primitive index, we invoke the attribute function
+    switch({current.fullName}_primitive_index){{
+'''
+    for i in range(len(current.children)):
+      child_attribute = current.children[i]
+      code_string += f'''
+      case {i}:
+        {current.children[i].fullName}_device_function(
+          {"".join([f'{x.code_generation_data_name}, ' for x in sorted(child_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}
+          {"".join([f'{x.code_generation_index_name}, ' for x in sorted(child_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}
+          {"".join([f'{x.code_generation_csr_name}, ' for x in child_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}
+          {"".join([f'{x.code_generation_counts_name},' for x in child_attribute.deviceKernel.kernelPrimitiveUnions])}
+          {current.correspondance.fullName}_index - {current.fullName}_primitive_total_counts_prev,
+          {current.fullName}_local_data_temp
+        );
+        break;
+'''
+    code_string += '''
+      default:
+        break;
+    } // close switch
+  } // close the local construction
+'''
+    # put it back according to size
+    if current.size > 1:
+      if current.rows == 1 or current.cols == 1:
+        code_string += f'''
+  // we now need to put it into the matrix
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
+'''
+      else:
+        code_string += f'''
+  // we now need to put it into the matrix
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
+'''
+    else:
+      # it is a singular scalar data
+      code_string += f'''
+    // we put it back to just a single value
+  double {current.fullName}_local_data = {current.fullName}_local_data_temp[0];
+'''
+    self.__code_strings.append(code_string)

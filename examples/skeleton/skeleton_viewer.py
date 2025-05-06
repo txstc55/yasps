@@ -76,7 +76,7 @@ for vertex in skin_json:
     name = bone["bone"]
     # get the weight
     weight = bone["weight"]
-    bone_matrix_rest = skeleton_json[name]["matrix_global_rest"]
+    bone_matrix_rest = skeleton_json[name]["matrix_rest"]
     bone_matrix_current = skeleton_json[name]["matrix_global_current"]
     # get the global matrix
     pos += (weight * (bone_matrix_current @ np.linalg.inv(bone_matrix_rest) @ rest_position))[:3]

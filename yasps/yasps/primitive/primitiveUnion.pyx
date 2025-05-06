@@ -12,6 +12,9 @@ if TYPE_CHECKING:
   from yasps.scene import scene as yscene
   from yasps.primitive import primitive
 
+import pycuda.gpuarray as gpuarray
+import numpy as np
+
 ## the goal of primitive Union
 ## is to provide a way to access the two primitives stacked together
 ## and rename it to a new primitive
@@ -83,6 +86,14 @@ class primitiveUnion:
   def fullName(self)->str:
     return f"{self.scene.name}_{self.mesh.name}_{self.name}"
 
+  @property
+  def code_generation_counts_name(self)->str:
+    return f"{self.fullName}_children_primitive_counts"
+
+  @property
+  def children_primitive_counts_gpu(self):
+    return gpuarray.to_gpu(np.array([child.numInstances for child in self.__primitives], dtype=np.uint32))
+
   def addAttribute(self, name: str, computed_attribute: Optional[attribute] = None) -> attribute:
     # ok addint attribute for primitive union is different
     # we technically cannot add new attribute
@@ -108,6 +119,7 @@ class primitiveUnion:
 
       # now we are sure that the name exists in all attributes
       # we can create the new attribute
+      from yasps.attribute import attribute
       unioned_attribute = attribute(name, rows = rows_size_check.pop(), cols = cols_size_check.pop(), correspondance = self, children = self.__primitives)
       self.__attributes[name] = unioned_attribute
       return unioned_attribute
