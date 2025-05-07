@@ -122,6 +122,9 @@ def hashAttribute(att: ya.attribute) -> int:
   elif att.operator == ya.SPD:
     spd_string: str = f"{att.children[0].hash}.spd({att.children[1].hash})"
     att._attribute__hash = int(hashlib.sha256(spd_string.encode()).hexdigest(), 16)
+  elif att.operator == ya.UNION:
+    union_string: str = f"union({', '.join([str(x.hash) for x in att.children])})"
+    att._attribute__hash = int(hashlib.sha256(union_string.encode()).hexdigest(), 16)
   return att.hash
 
 
@@ -196,6 +199,8 @@ def attribute2str(att: ya.attribute):
       return f"{att.children[0]}.spd({att.children[1]})"
     elif att.operator == ya.NEG:
       return f"-{att.children[0]}"
+    elif att.operator == ya.UNION:
+      return f"union({', '.join([str(x.hash) for x in att.children])})"
     else:
       raise ValueError(f"attribute.__str__: unknown operator type. Name: {att.operator.name}, Type: {att.operator.type}.")
   else:

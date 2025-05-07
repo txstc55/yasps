@@ -3,6 +3,7 @@ import json
 import os
 import sys
 from mathutils import Vector
+import numpy as np
 # --- Get the FBX file path from command line ---
 fbx_path = sys.argv[sys.argv.index("--") + 1]
 bone_output_path = fbx_path + ".bones.json"
@@ -42,13 +43,21 @@ for bone in armature.bones:
 
   matrix = [list(row) for row in local_matrix]
 
+  theta = 0
+  if name == "b_l_thumb3" or name == "b_l_index1" or name == "b_l_index2" or name == "b_l_index3" or name == "b_l_middle1" or name == "b_l_middle2" or name == "b_l_middle3":
+    theta = np.pi / 3
+  if name == "b_l_thumb2":
+    theta = np.pi / 6
+
   bone_data[name] = {
+    'name': name,
     'parent': parent,
     'length': length,
     'matrix_local': matrix,
     'matrix_rest': [list(row) for row in bone.matrix_local.copy()],
     'head': head[:],
-    'tail': tail[:]
+    'tail': tail[:],
+    'theta': theta
   }
 
 # --- Save bones to JSON ---

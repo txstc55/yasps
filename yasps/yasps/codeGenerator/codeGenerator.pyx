@@ -23,8 +23,8 @@ class codeGenerator:
 
 
   def __generateCodeOrderDFS(self, current):
-    print("Generating code for attribute:", current.fullName)
-    print(current)
+    # print("Generating code for attribute:", current.fullName)
+    # print(current)
     if self.__input.deviceKernel is not None:
       # nothing to do
       return
@@ -94,7 +94,7 @@ class codeGenerator:
           childCodeGenerator = codeGenerator(current)
           childCodeGenerator.generateCode()
           self.__childrenAttributeKernels[current.hash] = current
-    print("Finished generating code for attribute:", current.fullName)
+    # print("Finished generating code for attribute:", current.fullName)
 
 
   def generateCode(self) -> None:
@@ -115,9 +115,13 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
       return
 
     # actually generate the code
+    # print(f"At {self.__input.fullName}")
+    # print("With children")
+    # print(f"Children: {[x.fullName for x in self.__input.children]}")
     for item in self.__input.children:
       self.__generateCodeOrderDFS(item)
     self.__order.append(self.__input)
+    # print(f"At order append finish for {self.__input.fullName}")
     # go from bottom to top
     # check how many items appeared more than once
     # order_counts: Dict[int, int] = {}
@@ -306,7 +310,7 @@ __device__ void {attributeName}_device_function(
   {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in allConnectivities])}
   {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in allConnectivities if x.dimension == 0])}
   {"".join([f'const unsigned int* {x.code_generation_counts_name},' for x in allPrimitiveUnions])}
-  unsigned int {self.__input.correspondance.fullName}_index,
+  const unsigned int {self.__input.correspondance.fullName}_index,
   double* result
 )'''
 
@@ -317,6 +321,7 @@ __device__ void {attributeName}_device_function(
 
     # now we generate the device kernel
     self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allPrimitiveUnions, allDependencies)
+    # print(f"Device kernel generated for {self.__input.fullName}")
     # print(f"All intermediate count: {len(self.__attribute_replacements)}")
     # print(f"num intermediates: {self.__num_intermediates}")
 
@@ -681,26 +686,28 @@ __device__ void {attributeName}_device_function(
   def __generate_code_for_union(self, current: ya.attribute) -> None:
     # need to generate the code for the joining operation
     # we know the children must be a named attribute for the joining operator
+    # print("We are now generating code for union")
     code_string = ""
     code_string += f'''
   double {current.fullName}_local_data_temp[{current.size}];
   // we need to determine which primitive it's calling from
   {{
     unsigned int {current.fullName}_primitive_index = 0;
-    unsigned int {current.fullName}_primitive_total_counts_prev = 0;
-    unsigned int {current.fullName}_primitive_total_counts = {current.correspondance.code_generation_counts_name}[0]; // to help us determine which child primitive to invoke
+    unsigned int {current.fullName}_primitive_total_counts[{len(current.children)} + 1] = {{0}}; // to help us determine which child primitive to invoke
+    // do a prefix sum
     for (unsigned int i = 0; i < {len(current.children)}; i++){{
-      {current.fullName}_primitive_total_counts += {current.correspondance.code_generation_counts_name};
-      if ({current.correspondance.fullName}_index < {current.fullName}_primitive_total_counts){{
+      {current.fullName}_primitive_total_counts[i + 1] = {current.fullName}_primitive_total_counts[i] + {current.correspondance.code_generation_counts_name}[i];
+    }}
+    for (unsigned int i = 0; i < {len(current.children)}; i++){{
+      if ({current.correspondance.fullName}_index >= {current.fullName}_primitive_total_counts[i] && {current.correspondance.fullName}_index < {current.fullName}_primitive_total_counts[i + 1]){{
         {current.fullName}_primitive_index = i;
         break;
-      }}else{{
-        {current.fullName}_primitive_total_counts_prev += {current.correspondance.code_generation_counts_name};
       }}
     }}
     // now that we know the exact primitive index, we invoke the attribute function
     switch({current.fullName}_primitive_index){{
 '''
+    # print("Before for loop")
     for i in range(len(current.children)):
       child_attribute = current.children[i]
       code_string += f'''
@@ -710,11 +717,12 @@ __device__ void {attributeName}_device_function(
           {"".join([f'{x.code_generation_index_name}, ' for x in sorted(child_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}
           {"".join([f'{x.code_generation_csr_name}, ' for x in child_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}
           {"".join([f'{x.code_generation_counts_name},' for x in child_attribute.deviceKernel.kernelPrimitiveUnions])}
-          {current.correspondance.fullName}_index - {current.fullName}_primitive_total_counts_prev,
+          {current.correspondance.fullName}_index - {current.fullName}_primitive_total_counts[{current.fullName}_primitive_index],
           {current.fullName}_local_data_temp
         );
         break;
 '''
+    # print("After for loop")
     code_string += '''
       default:
         break;

@@ -19,27 +19,15 @@ for name, bone in skeleton_json.items():
   M_rest_global  = np.array(bone["matrix_rest"])    # bone.matrix_local for the current bone, but technically this is the global position
   M_delta_local  = np.array(bone["matrix_local"])   # your parent⁻¹ · bone.matrix_local
 
-  # inject your pinky rotation into the *delta* if this is the one
-  if name == "b_l_thumb2":
-    θ = np.pi/6
-    R = np.array([
-      [ np.cos(θ), -np.sin(θ), 0, 0],
-      [ np.sin(θ),  np.cos(θ), 0, 0],
-      [         0,           0, 1, 0],
-      [         0,           0, 0, 1],
-    ])
-    # choose left- or right-multiplication based on whether you want to pre- or post-rotate:
-    M_delta_local = M_delta_local @ R
-  if name == "b_l_thumb3" or name == "b_l_index1" or name == "b_l_index2" or name == "b_l_index3" or name == "b_l_middle1" or name == "b_l_middle2" or name == "b_l_middle3":
-    θ = np.pi/3
-    R = np.array([
-      [ np.cos(θ), -np.sin(θ), 0, 0],
-      [ np.sin(θ),  np.cos(θ), 0, 0],
-      [         0,           0, 1, 0],
-      [         0,           0, 0, 1],
-    ])
-    # choose left- or right-multiplication based on whether you want to pre- or post-rotate:
-    M_delta_local = M_delta_local @ R
+  θ = bone["theta"]
+  R = np.array([
+    [ np.cos(θ), -np.sin(θ), 0, 0],
+    [ np.sin(θ),  np.cos(θ), 0, 0],
+    [         0,           0, 1, 0],
+    [         0,           0, 0, 1],
+  ])
+  # choose left- or right-multiplication based on whether you want to pre- or post-rotate:
+  M_delta_local = M_delta_local @ R
 
   # parent’s current global (or identity for root)
   if parent:
@@ -61,6 +49,12 @@ for name, bone in skeleton_json.items():
   skeleton_points.append((G_current @ t)[:3])
   skeleton_lines.append([2, len(skeleton_points)-2, len(skeleton_points)-1])
 
+  if θ != 0:
+    ## print the name and the global matrix
+    print(f"Bone Name: {name}")
+    print(f"Global Matrix:\n{G_current}")
+
+
 
 skeleton_points = np.array(skeleton_points)
 
@@ -80,10 +74,14 @@ for vertex in skin_json:
     bone_matrix_current = skeleton_json[name]["matrix_global_current"]
     # get the global matrix
     pos += (weight * (bone_matrix_current @ np.linalg.inv(bone_matrix_rest) @ rest_position))[:3]
+  if (len(weights) == 1):
+    print(vertex["rest_position"])
   surface_vertices.append(pos)
 
+exit()
+
 surface_vertices = np.array(surface_vertices)
-print(surface_vertices)
+# print(surface_vertices)
 
 
 
