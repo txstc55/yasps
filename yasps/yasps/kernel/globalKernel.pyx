@@ -3,10 +3,7 @@ from __future__ import annotations
 from yasps.deviceKernel import deviceKernel
 from yasps.attribute import attribute
 from yasps.connectivity import connectivity
-from pycuda.compiler import SourceModule
-import pycuda.driver as pd
 from typing import List
-from yasps.helper import get_mangled_name
 from yasps.helper import prune_duplicate_functions
 import os
 import ctypes

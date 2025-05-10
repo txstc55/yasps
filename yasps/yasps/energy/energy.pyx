@@ -41,9 +41,9 @@ class energy:
     self.__indices_kernel: Optional[gradientIndicesKernel] = None
 
 
-  @property
-  def roots(self) -> List[attribute]:
-    return self.__roots
+  # @property
+  # def roots(self) -> List[attribute]:
+  #   return self.__roots
 
   @property
   def gradient_sizes_cpu(self) -> List[int]:
@@ -95,7 +95,7 @@ class energy:
 
 
   def getRoots(self, att: attribute, parentPath: List[attribute]) -> Tuple[List[attribute], List[List[attribute]]]:
-    from yasps.attribute import JOIN, SUM, AVERAGE, DATA
+    from yasps.attribute import JOIN, SUM, AVERAGE, DATA, UNION
     stack: List[attribute] = [att]
     seenRoots: Set[attribute] = set([])
     roots: List[attribute] = []
@@ -113,6 +113,10 @@ class energy:
         if current not in seenRoots:
           roots.append(current)
           seenRoots.add(current)
+      elif current.opeartor == UNION:
+        # we add the union operator to roots
+        roots.append(current)
+        seenRoots.add(current)
       else:
         stack.extend(current.children)
     # now we have the roots, which contains some joining operation
@@ -120,7 +124,7 @@ class energy:
     trueRoots: List[attribute] = []
     allPaths: List[List[attribute]] = []
     for root in roots:
-      if root.operator != DATA:
+      if root.operator == JOIN:
         # this is a joining operation
         # ok so at join, we will need to check how the joined attribute
         # will lead us to the final wrt attribute
@@ -133,9 +137,18 @@ class energy:
         for childrenPath in childrenPaths:
           allPaths.append(parentPath + [root] + childrenPath)
         # allPaths += childrenPaths * root.through.dimension
-      else:
+      elif root.operator == UNION:
+        # at union operator, we will need to add all the possible children paths
+        for child in root.children:
+          childrenRoots, childrenPaths = self.getRoots(child, [])
+          trueRoots += childrenRoots
+          for childrenPath in childrenPaths:
+            allPaths.append(parentPath + [root] + childrenPath)
+      elif root.operator == DATA:
         trueRoots.append(root)
         allPaths.append(parentPath + [root])
+      else:
+        raise ValueError(f"energy.getRoots: operator {root.operator} is not supported.")
     return trueRoots, allPaths
 
 
@@ -521,7 +534,7 @@ class energy:
       grandchildren_path: List[attribute] = path[2:]
       attribute_size = 1
       for item in grandchildren_path:
-        if item.operator != DATA:
+        if item.operator == JOIN:
           attribute_size *= item.through.dimension
         else:
           attribute_size *= item.size

@@ -8,6 +8,7 @@ from yasps.attribute import JOIN, DATA, UNION
 from yasps.helper import timed
 import os
 import pycuda.driver as cuda
+from yasps.helper import prune_duplicate_functions
 
 ########################################################################
 # The gradient indices kernel has multiple functions
@@ -282,25 +283,25 @@ void computeCoordinates(
 # The not so obvious one is locally, within this local hessian, how can I compress iter
 # The compression is used so that when variables are dependent on each other
 # we can reduce the size of the hessian
-# The third thing is the dimension of each block
 # The third thing is just the size of the compressed hessian
 # so that we can pre allocate a kernel for that specific hessian size (for projection)
 # The first three things should have same dimension, as in the output array have the same size
 class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__init__")
   def __init__(self, path_dict: Dict[attribute, List[attribute]], wrt: List[attribute], wrt_start_indices: List[int], energy: attribute):
-    self.__path_dict: Dict[attribute, List[attribute]] = path_dict
+    self.__path_dict: Dict[attribute, List[attribute]] = path_dict # the path dict is basically from parent to children
     self.__wrt_start_indices: List[int] = wrt_start_indices
     self.__energy: attribute = energy
-    self.__gradient_size: int = 0
     self.__used_join_attributes: List[attribute] = [] # all the join attributes, we will use its connectivities for indexing
-    self.__gradientSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the size of the gradient being used
-    self.__indexSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the number of indices needed
+    self.__used_union_attributes: List[attribute] = [] # all the union attributes, we will them for indexing
+    self.__gradientSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the size of the gradient being used, this will always record the theoretical largest size of the gradient (the size before compression)
+    self.__indexSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the number of indices needed, again this is the theoretical largest size
     self.__getUsedJoinAttributes() # get the attributes that are join operations, so we can just grab the connectivities later on
+    self.__getUsedUnionAttributes() # get the attributes that are union operationsn
     self.__gradientSize, self.__indexSize = self.__getGradientSize(self.__path_dict, self.__energy)
     self.__positionInWrtStartIndices: Dict[attribute, int] = {} # we record the position in the wrt start indices
     for i in range(len(wrt)):
-      self.__positionInWrtStartIndices[wrt[i]] = i
+      self.__positionInWrtStartIndices[wrt[i]] = i # we honestly only care about its index, not the starting position, because the wrt should not change, but the starting positions might
     self.__kernelString = ""
     self.__numInstances: int = 0 # for checking the number of instances
     self.__maxInstances: int = 0 # for allocating the largest gpu array
@@ -454,6 +455,9 @@ class gradientIndicesKernel:
     children_attributes: List[attribute] = path_dict[current_attribute]
     total_size = 0
     index_size = 0
+    # we need to do special case for JOIN and UNION
+    # for union operator, we always know that the size is the maximum size of the children
+    # and for join operator, we simply duplicate the size
     for child in children_attributes:
       if child.operator == DATA:
         # we stop the recursion when child is a DATA attribute
@@ -461,17 +465,22 @@ class gradientIndicesKernel:
           self.__gradientSizeForEachPart[child] = child.size # the gradient size for the child is its own size
         if child not in self.__indexSizeForEachPart:
           self.__indexSizeForEachPart[child] = 1 # the index size for the child is 1
-        total_size += child.size
-        index_size += 1
-      elif child.operator == JOIN:
+        if current_attribute.operator == UNION:
+          total_size = max(child.size, total_size)
+          index_size = max(1, index_size)
+        else:
+          total_size += child.size
+          index_size += 1
+      elif child.operator == JOIN or child.operator == UNION:
         child_gradient_size, child_index_size = self.__getGradientSize(path_dict, child)
-        total_size += child_gradient_size
-        index_size += child_index_size
-      elif child.operator == UNION:
-        # do nothing for now
-        total_size += 0
-        index_size += 0
+        if current_attribute.operator == UNION:
+          total_size = max(child_gradient_size, total_size)
+          index_size = max(child_index_size, index_size)
+        else:
+          total_size += child_gradient_size
+          index_size += child_index_size
     if current_attribute.operator == JOIN:
+      # for join operator we need to duplicate the gradient and index size by the dimension number
       total_size = total_size * current_attribute.through.dimension
       index_size = index_size * current_attribute.through.dimension
     self.__gradientSizeForEachPart[current_attribute] = total_size # also record that for each join operation, the size we need to reserve
@@ -483,6 +492,12 @@ class gradientIndicesKernel:
     for att in self.__path_dict.keys():
       if att.operator == JOIN:
         self.__used_join_attributes.append(att)
+
+  def __getUsedUnionAttributes(self):
+    # we literally just go over the attributes
+    for att in self.__path_dict.keys():
+      if att.operator == UNION:
+        self.__used_union_attributes.append(att)
 
   def __generateKernel(self):
     # ok now we need to generate the kernel
@@ -498,25 +513,47 @@ class gradientIndicesKernel:
       for child in self.__path_dict[parent]:
         # now put a kernel function header
         self.__kernelString += f'''
-__device__ inline void {parent.fullName}_get_indices_from_{child.fullName}({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int index);
+__device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
+  {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  const unsigned int* wrtStartIndices,
+  unsigned int* outputIndices,
+  unsigned short int* outputSizes,
+  unsigned int index
+);
 '''
       # we also add a header function that will be used to fetch the index for the entire parent and children
       self.__kernelString += f'''
-__device__ inline void {parent.fullName}_get_indices({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int index);
+__device__ inline void {parent.fullName}_get_indices(
+  {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  const unsigned int* wrtStartIndices,
+  unsigned int* outputIndices,
+  unsigned short int* outputSizes,
+  unsigned int index
+);
 '''
     # ok we have produced the header functions, we will start the actual implementation
     for parent in self.__path_dict.keys():
-      for child in self.__path_dict[parent]:
+      for (index, child) in enumerate(self.__path_dict[parent]):
         # we will now construct the actual function
         self.__kernelString += f'''
-__device__ inline void {parent.fullName}_get_indices_from_{child.fullName}({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int index){{'''
+__device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
+  {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  const unsigned int* wrtStartIndices,
+  unsigned int* outputIndices,
+  unsigned short int* outputSizes,
+  unsigned int index
+){{'''
         if child.operator == DATA:
           # we have reached the bottom
           # we now record that index, added by offset, and the size of this attribute
           # we determine its position in wrt
           pos: int = self.__positionInWrtStartIndices[child]
           self.__kernelString += f'''
-  outputIndices[0] = wrtStartIndices[{pos}] + index * {child.size if child.correspondance.type == "primitive" else 0}; // map the index to the index in final gradient array
+  // we add 1 so that we can use 0 as a flag for empty
+  outputIndices[0] = 1 + wrtStartIndices[{pos}] + index * {child.size if child.correspondance.type == "primitive" else 0}; // map the index to the index in final gradient array
   outputSizes[0] = {child.size}; // provide the size of this attribute for a single instance
 '''
         elif child.operator == JOIN:
@@ -524,57 +561,147 @@ __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}({", "
           # we will need to get the children attributes
           self.__kernelString += f'''
   // we still need to keep going, go ahead and call the function that accumulates indices
-  {child.fullName}_get_indices({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices, outputSizes, index);
+  {child.fullName}_get_indices(
+    {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+    {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+    wrtStartIndices,
+    outputIndices,
+    outputSizes,
+    index
+  );
+'''
+        elif child.operator == UNION:
+          # at union operator, do the same thing
+          self.__kernelString += f'''
+  // we will actually check the index here? it's very cheap to do so
+  unsigned int primitive_index = 0;
+  unsigned int total_count = 0;
+  for (unsigned int i = 0; i < {len(child.children)}; i++){{
+    if ((total_count + {child.correspondance.code_generation_counts_name}[i]) > index) {{
+      primitive_index = i;
+      break;
+    }}
+  }}
+  if (primitive_index == {index}){{
+    {child.fullName}_get_indices(
+      {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+      {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+      wrtStartIndices,
+      outputIndices,
+      outputSizes,
+      index - total_count // we need to subtract the start index
+    );
+  }}
+  // otherwise we don't execute anything
 '''
         self.__kernelString += f'''
 }} // end of kernel for grabbing indices from {child.fullName} to {parent.fullName}
 '''
       # now we have done the kernel for each children
       # we will need to do a kernel for total accumulation
-      # print("path dict keys")
-      # print([x.fullName for x in self.__path_dict.keys()])
-      # print("parent: ")
-      # print(parent.fullName)
-      # print("Index sizes for each part")
-      # print(self.__indexSizeForEachPart)
-      # print("Children")
-      # print([x.fullName for x in self.__path_dict[parent]])
       self.__kernelString += f'''
-__device__ inline void {parent.fullName}_get_indices({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int index){{
+__device__ inline void {parent.fullName}_get_indices(
+  {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  const unsigned int* wrtStartIndices,
+  unsigned int* outputIndices,
+  unsigned short int* outputSizes,
+  unsigned int index
+){{
   // const int num_children = {len(self.__path_dict[parent])};
   // const int childrenIndexSizes[num_children] = {{{", ".join([str(self.__indexSizeForEachPart[x]) for x in self.__path_dict[parent]])}}}; // here we first know how much space to save for each child
   // we expand the for loop directly
 '''
       index_accumulation: int = 0
-      for ind in range(len(self.__path_dict[parent])):
-        child = self.__path_dict[parent][ind]
-        # call the function
-        if child.operator == JOIN:
-          # we make sure the index size is divisible
-          assert self.__indexSizeForEachPart[child] % child.through.dimension == 0, f"Index size {self.__indexSizeForEachPart[child]} is not divisible by dimension {child.through.dimension}"
+      if parent.operator == UNION:
+        # we need to do a special case for union operator when parent is union
+        for (ind, child) in enumerate(self.__path_dict[parent]):
+          # we can directly call the function, because if
+          # the index doesn't match, inside the children kernel
+          # it will automatically return
           self.__kernelString += f'''
+  {parent.fullName}_get_indices_from_{child.fullName}(
+    {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+    {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+    wrtStartIndices,
+    outputIndices,
+    outputSizes,
+    index
+  );
+'''
+        self.__kernelString += f'''
+}} // end of kernel for grabbing indices from of {parent.fullName}
+'''
+      else:
+        for ind in range(len(self.__path_dict[parent])):
+          child = self.__path_dict[parent][ind]
+          # call the function
+          if child.operator == JOIN:
+            # we make sure the index size is divisible
+            assert self.__indexSizeForEachPart[child] % child.through.dimension == 0, f"Index size {self.__indexSizeForEachPart[child]} is not divisible by dimension {child.through.dimension}"
+            self.__kernelString += f'''
   for (unsigned int i = 0; i < {child.through.dimension}; i++){{
-    {parent.fullName}_get_indices_from_{child.fullName}({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices + {index_accumulation} + {self.__indexSizeForEachPart[child] // child.through.dimension} * i, outputSizes + {index_accumulation} + {self.__indexSizeForEachPart[child] // child.through.dimension} * i, {(child.fullName + f"_indices[index * {child.through.dimension} + i]")});
+    {parent.fullName}_get_indices_from_{child.fullName}(
+      {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+      {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+      wrtStartIndices,
+      outputIndices + {index_accumulation} + {self.__indexSizeForEachPart[child] // child.through.dimension} * i,
+      outputSizes + {index_accumulation} + {self.__indexSizeForEachPart[child] // child.through.dimension} * i,
+      {(child.fullName + f"_indices[index * {child.through.dimension} + i]")}
+    );
   }}
 '''
-          # add the index accumulation
-          index_accumulation += self.__indexSizeForEachPart[child]
-        elif child.operator == DATA:
-          self.__kernelString += f'''
-  {parent.fullName}_get_indices_from_{child.fullName}({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices + {index_accumulation}, outputSizes + {index_accumulation}, index);
+            # add the index accumulation
+            index_accumulation += self.__indexSizeForEachPart[child]
+          elif child.operator == DATA:
+            self.__kernelString += f'''
+  {parent.fullName}_get_indices_from_{child.fullName}(
+    {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+    {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+    wrtStartIndices,
+    outputIndices + {index_accumulation},
+    outputSizes + {index_accumulation},
+    index
+  );
 '''
-          # add the index accumulation
-          index_accumulation += self.__indexSizeForEachPart[child]
-      self.__kernelString += f'''
+            # add the index accumulation
+            index_accumulation += self.__indexSizeForEachPart[child]
+          elif child.operator == UNION:
+            self.__kernelString += f'''
+  {parent.fullName}_get_indices_from_{child.fullName}(
+    {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+    {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+    wrtStartIndices,
+    outputIndices + {index_accumulation},
+    outputSizes + {index_accumulation},
+    index
+  )
+'''
+            index_accumulation += self.__indexSizeForEachPart[child]
+        self.__kernelString += f'''
 }} // end of kernel for grabbing indices from of {parent.fullName}
 '''
 
     # now we can do the global kernel
     self.__kernelString += f'''
-__global__ void {self.__energy.fullName}_get_indices_global_function({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int NUM_INSTANCES) {{
+__global__ void {self.__energy.fullName}_get_indices_global_function(
+  {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  const unsigned int* wrtStartIndices,
+  unsigned int* outputIndices,
+  unsigned short int* outputSizes,
+  unsigned int NUM_INSTANCES
+) {{
   unsigned int index = threadIdx.x + blockIdx.x * blockDim.x;
   if (index < NUM_INSTANCES) {{
-    {self.__energy.fullName}_get_indices({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices + index * {self.maxNumIndicesNeeded}, outputSizes + index * {self.maxNumIndicesNeeded}, index);
+    {self.__energy.fullName}_get_indices(
+      {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+      {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+      wrtStartIndices,
+      outputIndices + index * {self.maxNumIndicesNeeded},
+      outputSizes + index * {self.maxNumIndicesNeeded},
+      index
+    );
   }}
 }}
 '''
@@ -592,8 +719,22 @@ inline void cudaAssert(cudaError_t code, const char *file, int line,
       exit(code);
   }}
 }}
-extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}const unsigned int* wrtStartIndices, unsigned int* outputIndices, unsigned short int* outputSizes, unsigned int NUM_INSTANCES) {{
-  {self.__energy.fullName}_get_indices_global_function<<<(NUM_INSTANCES + 32 - 1) / 32, 32>>>({", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}wrtStartIndices, outputIndices, outputSizes, NUM_INSTANCES);
+extern "C" void get_indices(
+  {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  const unsigned int* wrtStartIndices,
+  unsigned int* outputIndices,
+  unsigned short int* outputSizes,
+  unsigned int NUM_INSTANCES
+) {{
+  {self.__energy.fullName}_get_indices_global_function<<<(NUM_INSTANCES + 32 - 1) / 32, 32>>>(
+    {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+    {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+    wrtStartIndices,
+    outputIndices,
+    outputSizes,
+    NUM_INSTANCES
+  );
   CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 }}
 '''
@@ -601,6 +742,7 @@ extern "C" void get_indices({", ".join([f"const unsigned int* {x.fullName}_indic
     # ok now we compile the kernel by saving it to a file and then calling nvcc
     file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"
     f = open(f"{file_name}.cu", 'w')
+    self.__kernelString = prune_duplicate_functions(self.__kernelString) # just in case we have duplicated functions
     f.write(self.__kernelString)
     f.close()
     # we will now compile this kernel
