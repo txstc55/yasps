@@ -113,7 +113,7 @@ class energy:
         if current not in seenRoots:
           roots.append(current)
           seenRoots.add(current)
-      elif current.opeartor == UNION:
+      elif current.operator == UNION:
         # we add the union operator to roots
         roots.append(current)
         seenRoots.add(current)
@@ -192,9 +192,10 @@ class energy:
     for path in usedPaths:
       duplicatedPaths += self.__duplicatePathForOperation(path)
 
-    self.__indices_cpu = self.__indices_kernel.outputIndices.get()
+    # self.__indices_cpu = self.__indices_kernel.outputIndices.get()
     self.__gradient_sizes_cpu = [wrtStartIndicesAndSize[x[-1][0]][1] for x in duplicatedPaths]
-    return self.__indices_cpu
+    # return self.__indices_cpu
+    return
 
 
   def __duplicatePathForOperation(self, path: List[attribute]) -> List[List[Tuple[int, int]]]:

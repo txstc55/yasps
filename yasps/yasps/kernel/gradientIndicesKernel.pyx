@@ -559,7 +559,7 @@ __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
           self.__kernelString += f'''
   // we add 1 so that we can use 0 as a flag for empty
   // the empty is used to indicate that we reserve space for union operator
-  outputIndices[0] = 1 + wrtStartIndices[{pos}] + index * {child.size if child.correspondance.type == "primitive" else 0}; // map the index to the index in final gradient array
+  outputIndices[0] = wrtStartIndices[{pos}] + index * {child.size if child.correspondance.type == "primitive" else 0} + 1; // map the index to the index in final gradient array
   outputSizes[0] = {child.size}; // provide the size of this attribute for a single instance
 '''
         elif child.operator == JOIN:

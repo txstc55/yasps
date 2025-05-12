@@ -213,7 +213,7 @@ __global__ void compute_hessian_and_gradient_global_function(
     // we will first get the segment size
     unsigned short int segment_size = segment_sizes[instance * max_num_indices + i];
     // and the position for this segment
-    unsigned int segment_placement = segment_indices[instance * max_num_indices + i];
+    unsigned int segment_placement = segment_indices[instance * max_num_indices + i] - 1;
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
 #if {int(not self.__gradient_only)} // did we compute the hessian
@@ -292,7 +292,7 @@ __global__ void compute_hessian_and_gradient_global_function(
       // make it 0 indexed first
       permutation_i -= 1;
       unsigned short int segment_size_i = segment_sizes[instance * max_num_indices + i];
-      unsigned int segment_index_i = segment_indices[instance * max_num_indices + i];
+      unsigned int segment_index_i = segment_indices[instance * max_num_indices + i] - 1;
       // we know exactly the row block, we now check for column block
       for (unsigned int j = i; j < max_num_indices; j++){{
         short int permutation_j = local_permutations[instance * max_num_indices + j]; // get the permuted placement
@@ -301,7 +301,7 @@ __global__ void compute_hessian_and_gradient_global_function(
           // first again we make it 0 indexed
           permutation_j -= 1;
           unsigned short int segment_size_j = segment_sizes[instance * max_num_indices + j];
-          unsigned int segment_index_j = segment_indices[instance * max_num_indices + j];
+          unsigned int segment_index_j = segment_indices[instance * max_num_indices + j] - 1;
           // we now need to get the index
           unsigned int placement_index = lookups[coordinate_start + valid_block_counts];
           // now we put the block in
@@ -323,7 +323,7 @@ __global__ void compute_hessian_and_gradient_global_function(
           // additionally, if it is a diagonal block, we also need to put the diagonal elements
           if (i == j){{
             // get the placement
-            unsigned int segment_index = segment_indices[instance * max_num_indices + i];
+            unsigned int segment_index = segment_indices[instance * max_num_indices + i] - 1;
             for (unsigned int k = 0; k < segment_size_i; k++){{
               atomicAdd(&diagonal[segment_index + k], compressed_hessian(permutation_i + k, permutation_j + k));
             }}
