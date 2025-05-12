@@ -236,6 +236,9 @@ __global__ void compute_hessian_and_gradient_global_function(
     unsigned int col_offset = 0;
     // we first determine what's the correct position to put in the compressed hessian
     short int permutation_i = local_permutations[instance * max_num_indices + i];
+    if (permutation_i == 0){{
+      break; // we are done, we encounter space reserved for union
+    }}
     if (permutation_i < 0){{
       // this block position exists, we need to get the negative of it
       permutation_i = -permutation_i;
@@ -244,6 +247,9 @@ __global__ void compute_hessian_and_gradient_global_function(
     unsigned short int segment_size_i = segment_sizes[instance * max_num_indices + i];
     for (unsigned int j = 0; j < max_num_indices; j++){{
       short int permutation_j = local_permutations[instance * max_num_indices + j];
+      if (permutation_j == 0){{
+        break; // we are done with the row, we encounter space reserved for union
+      }}
       if (permutation_j < 0){{
         // this block position exists, we need to get the negative of it
         permutation_j = -permutation_j;
