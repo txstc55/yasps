@@ -125,6 +125,7 @@ for level in range(len(bones_leveled)):
 bones_union = handMesh.addPrimitiveUnion("bones", bl_primitives)
 bones_union.addAttribute("matrix_global_current")
 bones_union.addAttribute("matrix_rest")
+print([x.fullName for x in bones_union["matrix_global_current"].children])
 
 ################################################################################################
 ## here we construct the levels of skin vertices
@@ -170,19 +171,50 @@ for i in range(len(skin_vertex_categorized)):
 vertices_union = handMesh.addPrimitiveUnion("vertices_union", vw_primitives)
 print(vertices_union.numInstances)
 vertices_union.addAttribute("current_position")
-surface_vertices = vertices_union["current_position"].compute().value.get().reshape(-1, 3)
+
+# let's create a fake energy
+energy = 1.0 / (vertices_union["current_position"].dot(vertices_union["current_position"].transpose()))
+vertices_union.addAttribute("surface_repulse_energy", computed_attribute = energy)
+s0.addEnergy(energy)
+s0.addMinimizeTarget([handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"]])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# surface_vertices = vertices_union["current_position"].compute().value.get().reshape(-1, 3)
 # print(surface_vertices)
 
-import pyvista as pv
 
-# show all the surface vertices
-# Create a PolyData object with the skeleton_points
-point_cloud = pv.PolyData(surface_vertices)
 
-# You can add spheres to make the surface_vertices more visible (optional)
-point_cloud["size"] = np.full(surface_vertices.shape[0], 10.0)  # optional scalar array
 
-# Plotting
-plotter = pv.Plotter()
-plotter.add_mesh(point_cloud, color='red', point_size=5, render_points_as_spheres=True)
-plotter.show()
+
+# import pyvista as pv
+
+# # show all the surface vertices
+# # Create a PolyData object with the skeleton_points
+# point_cloud = pv.PolyData(surface_vertices)
+
+# # You can add spheres to make the surface_vertices more visible (optional)
+# point_cloud["size"] = np.full(surface_vertices.shape[0], 10.0)  # optional scalar array
+
+# # Plotting
+# plotter = pv.Plotter()
+# plotter.add_mesh(point_cloud, color='red', point_size=5, render_points_as_spheres=True)
+# plotter.show()

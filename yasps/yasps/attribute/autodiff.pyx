@@ -59,6 +59,8 @@ class autodiff:
       result = self.__diff_col(current, wrt)
     elif current.operator == ya.JOIN:
       result = self.__diff_join(current, wrt)
+    elif current.operator == ya.UNION:
+      result = self.__diff_union(current, wrt)
     elif current.operator == ya.SELECT:
       result = self.__diff_select(current, wrt)
     elif current.operator == ya.DET:
@@ -212,9 +214,24 @@ class autodiff:
 
 
   def __diff_join(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
-    # there are only two cases
-    # if we are differentiating wrt to anything other than a wrt, we return zeros
+    # ok so we never explicitly differentiate a join operation here
+    # instead we deal it in energy.pyx
+    # so whatever we have here is just placeholder
+    # in the future we may need to move it back
+    # but this also have some use when we do join on a join
+    # because the path we generated, if we join a join, we differentiate the first join's child wrt the second join, which should lead to identity
+    # so this is fine
     if wrt.operator != ya.JOIN:
+      return ya.attribute.zeros(current.size, wrt.size)
+    if current.fullName == wrt.fullName:
+      return ya.attribute.identity(current.size)
+    else:
+      return ya.attribute.zeros(current.size, wrt.size)
+
+  def __diff_union(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    # same logic actually
+    # we will never at energy.pyx encounter a case where we need to differentiate a union wrt a join, or differentiate a join wrt a union, since we always do diff node's child wrt next node, and if node's child is a union, that means the next node has to be itself
+    if wrt.operator != ya.UNION:
       return ya.attribute.zeros(current.size, wrt.size)
     if current.fullName == wrt.fullName:
       return ya.attribute.identity(current.size)

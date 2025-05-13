@@ -21,8 +21,8 @@ class energy:
       raise ValueError("energy.__init__: energy must be size 1.")
     self.__energy: attribute = energy
     self.__paths: List[List[attribute]] = [] # how to get to the roots
-    self.__roots: List[attribute] = []
-    self.__roots, self.__paths = self.getRoots(energy, [energy]) # get the root attributes
+    # self.__roots: List[attribute] = []
+    _, self.__paths = self.getRoots(energy, [energy]) # get the root attributes
     self.__wrt: List[attribute] = [] # an energy can be minimized for different attributes, for safety let's save all histories
     self.__indices_cpu: np.ndarray = np.array([]) # save the indices on cpu
     self.__block_indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the block indices, this is for hessian accumulation
@@ -39,15 +39,17 @@ class energy:
     self.__intermediate_compute_pairs: Dict[str, Tuple[attribute, attribute]] = {} # save the intermediate compute pairs
     self.__gradient_only: bool = gradient_only # only compute gradient
     self.__indices_kernel: Optional[gradientIndicesKernel] = None
+    self.__path_dict: Dict[attribute, List[attribute]] = {}
+    self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = {} # because of the way our path is constructed, the direct unioned attribute doesnt show up in the path. So we need to record its children in the path
 
 
   # @property
   # def roots(self) -> List[attribute]:
   #   return self.__roots
 
-  @property
-  def gradient_sizes_cpu(self) -> List[int]:
-    return self.__gradient_sizes_cpu
+  # @property
+  # def gradient_sizes_cpu(self) -> List[int]:
+  #   return self.__gradient_sizes_cpu
 
   @property
   def indices(self) -> np.ndarray:
@@ -140,10 +142,14 @@ class energy:
       elif root.operator == UNION:
         # at union operator, we will need to add all the possible children paths
         for child in root.children:
+          if child not in self.__unioned_child_to_its_children:
+            self.__unioned_child_to_its_children[child] = []
           childrenRoots, childrenPaths = self.getRoots(child, [])
           trueRoots += childrenRoots
           for childrenPath in childrenPaths:
             allPaths.append(parentPath + [root] + childrenPath)
+            if childrenPath[0] not in self.__unioned_child_to_its_children[child]:
+              self.__unioned_child_to_its_children[child].append(childrenPath[0])
       elif root.operator == DATA:
         trueRoots.append(root)
         allPaths.append(parentPath + [root])
@@ -162,6 +168,10 @@ class energy:
     for path in self.__paths:
       if path[-1] in wrt:
         usedPaths.append(path)
+    # print("Used path")
+    # for path in usedPaths:
+    #   print(", ".join([x.fullName for x in path]))
+    #   print("===================================================")
     if self.__indices_kernel is None:
       # construct the path dict and generate the kernel
       pathDict: Dict[attribute, List[attribute]] = {}
@@ -177,49 +187,99 @@ class energy:
             pathDict[parent] = []
           if child not in pathDict[parent]:
             pathDict[parent].append(child)
-      # print("Path dict check")
-      # for key in pathDict.keys():
-      #   print("Parent:", key.fullName)
-      #   print("Children:", [child.fullName for child in pathDict[key]])
-      # create a gradientIndicesKernel
+      self.__path_dict = pathDict
+      print("Path dict check: ")
+      for key in pathDict.keys():
+        print("===================================================")
+        print("Key")
+        print(key.fullName)
+        print("Children")
+        for child in pathDict[key]:
+          print(child.fullName)
+        print("===================================================")
+      exit()
       self.__indices_kernel = gradientIndicesKernel(pathDict, wrt, wrt_start_indices, self.__energy)
 
     assert self.__indices_kernel is not None
     self.__indices_kernel.computeIndices(wrt_start_indices) # actually compute the indices
-    # now we recursively go over each path
-    # we first recursively duplicate the path with rows
-    duplicatedPaths = []
-    for path in usedPaths:
-      duplicatedPaths += self.__duplicatePathForOperation(path)
+    # # now we recursively go over each path
+    # # we first recursively duplicate the path with rows
+    # duplicatedPaths = []
+    # for path in usedPaths:
+    #   duplicatedPaths += self.__duplicatePathForOperation(path)
 
-    # self.__indices_cpu = self.__indices_kernel.outputIndices.get()
-    self.__gradient_sizes_cpu = [wrtStartIndicesAndSize[x[-1][0]][1] for x in duplicatedPaths]
-    # return self.__indices_cpu
+    # # self.__indices_cpu = self.__indices_kernel.outputIndices.get()
+    # self.__gradient_sizes_cpu = [wrtStartIndicesAndSize[x[-1][0]][1] for x in duplicatedPaths]
+    # # return self.__indices_cpu
     return
 
 
-  def __duplicatePathForOperation(self, path: List[attribute]) -> List[List[Tuple[int, int]]]:
-    # we duplicate the paths so that join operations are expanded
-    # and we can later on use it to get the indices
-    from yasps.attribute import DATA, JOIN
-    # if it is just data, we return the hash and -1
-    # if it is a row operator
-    # instead we return the node hash and row index
-    # if it is something else we return 0 and -2
-    if path[0].operator == DATA:
-      return [[(path[0].hash, -1)]]
-    elif path[0].operator == JOIN:
-      childrenPaths = self.__duplicatePathForOperation(path[1:])
-      duplicatedPaths = []
-      for i in range(path[0].through.dimension):
-        # duplicate each path
-        for childrenPath in childrenPaths:
-          duplicatedPaths.append([(path[0].hash, i)] + childrenPath)
-      return duplicatedPaths
+  # def __duplicatePathForOperation(self, path: List[attribute]) -> List[List[Tuple[int, int]]]:
+  #   # we duplicate the paths so that join operations are expanded
+  #   # and we can later on use it to get the indices
+  #   from yasps.attribute import DATA, JOIN
+  #   # if it is just data, we return the hash and -1
+  #   # if it is a row operator
+  #   # instead we return the node hash and row index
+  #   # if it is something else we return 0 and -2
+  #   if path[0].operator == DATA:
+  #     return [[(path[0].hash, -1)]]
+  #   elif path[0].operator == JOIN:
+  #     childrenPaths = self.__duplicatePathForOperation(path[1:])
+  #     duplicatedPaths = []
+  #     for i in range(path[0].through.dimension):
+  #       # duplicate each path
+  #       for childrenPath in childrenPaths:
+  #         duplicatedPaths.append([(path[0].hash, i)] + childrenPath)
+  #     return duplicatedPaths
+  #   else:
+  #     # we are at top level
+  #     childrenPaths = self.__duplicatePathForOperation(path[1:])
+  #     return childrenPaths
+
+  def __generateGradientThroughPathDict(self, wrt: List[attribute], differentiater: autodiff) -> None:
+    from yasps.attribute import JOIN, FLOAT, UNION
+    # we are generating the symbolic gradient through the path dict
+    # the path dict already contains only the used paths
+    gradients: List[attribute] = []
+    if len(self.__path_dict) == 0:
+      # there is nothing to do
+      gradients.append(attribute.zeros(1, sum([x.size for x in wrt])))
+      return
+    if f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}' in self.__energy.correspondance.attributes:
+      # nothing we need to do, the gradient is already computed
+      self.__gradient = self.__energy.correspondance.attributes[f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}']
     else:
-      # we are at top level
-      childrenPaths = self.__duplicatePathForOperation(path[1:])
-      return childrenPaths
+      # we start the magic
+      # we first generate the local gradient for each parent to child attribute
+      for parent in self.__path_dict.keys():
+        children = self.__path_dict[parent]
+        # we use the differentiater for the
+        # first of all, let's ignore the case where you union energy to be an energy
+        # let's say the energy is always at least some computed attribute instead of a joined or unioned attribute
+        if parent.operator != JOIN and parent.operator != UNION:
+          # we are at the top level
+          # compute the gradient at this level wrt all its children
+          diff_energy_wrt_children_list: List[attribute] = []
+          for child in children:
+            result = differentiater.diff(parent, child)
+            for i in range(result.size):
+              diff_energy_wrt_children_list.append(result[i])
+          # we now construct the local gradient within this level
+          local_gradient = attribute.to_array(diff_energy_wrt_children_list, rows = 1, cols = len(diff_energy_wrt_children_list))
+          parent.correspondance.addAttribute(f'd_{parent.fullName}_d_{"__".join([x.fullName for x in children])}', computed_attribute = local_gradient)
+        elif parent.operator == JOIN:
+          join_child = parent.children[0]
+          # we will differentiate the joined node wrt the children
+          child_diff_next_children: List[attribute] = []
+          for child in children:
+            # we get
+
+
+
+
+
+
 
   def __generateGradient(self, wrt: List[attribute], differentiater: autodiff) -> None:
     from yasps.attribute import JOIN, FLOAT
