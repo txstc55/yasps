@@ -33,10 +33,20 @@ class codeGenerator:
     if current.operator == ya.FLOAT or current.operator == ya.INDEX:
       return
     elif current.isFloatMat:
-      # special case for transpose
-      if current.operator == ya.TRANSPOSE:
-        self.__generateCodeOrderDFS(current.children[0])
-      self.__order.append(current)
+      if current.correspondance.fullName != self.__input.correspondance.fullName:
+        # special case, we have a children from another correspondance
+        # that is a float mat
+        # this is likely because it's a unioned child or a joined child
+        # so special handling is needed
+        if current.hash not in self.__childrenAttributeKernels:
+          childCodeGenerator = codeGenerator(current)
+          childCodeGenerator.generateCode()
+          self.__childrenAttributeKernels[current.hash] = current
+      else:
+        # special case for transpose
+        if current.operator == ya.TRANSPOSE:
+          self.__generateCodeOrderDFS(current.children[0])
+        self.__order.append(current)
     elif current.correspondance.fullName == self.__input.correspondance.fullName:
       if current.name != "":
         # this is a named attribute, lets use the generated kernel for it
@@ -237,6 +247,9 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
         else:
           # we found the same kernel
           # we need to replace the kernel calls
+          # if str(current.hash) == "73073881234865546943141648636381669944003170022450331731243882876784723308431":
+          #   print("Found bad hash")
+          #   print(str(current))
           replacement = self.__childrenAttributeKernels[current.hash]
           self.__code_strings.append(f'''
   {current.fullName}_device_function(
@@ -644,18 +657,19 @@ __device__ void {attributeName}_device_function(
     if current.name != "":
       attribute_name = current.fullName + "_local_data"
       self.__attribute_replacements[current.hash] = (current, -1)
+
     else:
       ind: int = self.__attribute_replacements[current.hash][1]
       attribute_name = f"INTERMEDIATE_{ind}"
 
-      if origin_mat.rows == 1 or origin_mat.cols == 1:
-        attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
-      else:
-        attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}, Eigen::RowMajor> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
-      if current.rows == 1 or current.cols == 1:
-        attribute_initialization += f'''Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}'''
-      else:
-        attribute_initialization += f'''Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}'''
+    if origin_mat.rows == 1 or origin_mat.cols == 1:
+      attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
+    else:
+      attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}, Eigen::RowMajor> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
+    if current.rows == 1 or current.cols == 1:
+      attribute_initialization += f'''Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}'''
+    else:
+      attribute_initialization += f'''Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}'''
     # copy the data and resize
     self.__code_strings.append(f'''
   {attribute_initialization}({attribute_name}_before_resize.data());''')

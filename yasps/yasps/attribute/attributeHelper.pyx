@@ -4,6 +4,9 @@ import yasps.attribute as ya
 import hashlib # for hashing
 
 def hashAttribute(att: ya.attribute) -> int:
+  base_string = ""
+  if att.correspondance is not None:
+    base_string = att.correspondance.fullName
   if att.operator == ya.ADD or att.operator == ya.BROADCAST_ADD:
     att._attribute__hash = sum([child.hash for child in att.children])
   elif att.operator == ya.MUL:
@@ -11,68 +14,68 @@ def hashAttribute(att: ya.attribute) -> int:
   elif att.operator == ya.SUB or att.operator == ya.BROADCAST_SUB:
     att._attribute__hash = att.children[0].hash - att.children[1].hash
   elif att.operator == ya.DIV:
-    division_string:str = f"{att.children[0].hash}/{att.children[1].hash}"
+    division_string:str = f"{base_string}_{att.children[0].hash}/{att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(division_string.encode()).hexdigest(), 16)
   elif att.operator == ya.POW:
-    power_string:str = f"{att.children[0].hash}**{att.children[1].hash}"
+    power_string:str = f"{base_string}_{att.children[0].hash}**{att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(power_string.encode()).hexdigest(), 16)
   elif att.operator == ya.ATAN2:
-    atan2_string:str = f"atan2({att.children[0].hash},{att.children[1].hash})"
+    atan2_string:str = f"{base_string}_atan2({att.children[0].hash},{att.children[1].hash})"
     att._attribute__hash = int(hashlib.sha256(atan2_string.encode()).hexdigest(), 16)
   elif att.operator == ya.NEG:
     att._attribute__hash = -att.children[0].hash
   elif att.operator == ya.SIN:
-    sin_string:str = f"sin({att.children[0].hash})"
+    sin_string:str = f"{base_string}_sin({att.children[0].hash})"
     att._attribute__hash = int(hashlib.sha256(sin_string.encode()).hexdigest(), 16)
   elif att.operator == ya.COS:
-    cos_string:str = f"cos({att.children[0].hash})"
+    cos_string:str = f"{base_string}_cos({att.children[0].hash})"
     att._attribute__hash = int(hashlib.sha256(cos_string.encode()).hexdigest(), 16)
   elif att.operator == ya.TAN:
-    tan_string:str = f"tan({att.children[0].hash})"
+    tan_string:str = f"{base_string}_tan({att.children[0].hash})"
     att._attribute__hash = int(hashlib.sha256(tan_string.encode()).hexdigest(), 16)
   elif att.operator == ya.COT:
-    cot_string:str = f"cot({att.children[0].hash})"
+    cot_string:str = f"{base_string}_cot({att.children[0].hash})"
     att._attribute__hash = int(hashlib.sha256(cot_string.encode()).hexdigest(), 16)
   elif att.operator == ya.ABS:
-    abs_string:str = f"abs({att.children[0].hash})"
+    abs_string:str = f"{base_string}_abs({att.children[0].hash})"
     att._attribute__hash = int(hashlib.sha256(abs_string.encode()).hexdigest(), 16)
   elif att.operator == ya.LOG:
-    log_string = f"ln({att.children[0].hash})"
+    log_string = f"{base_string}_ln({att.children[0].hash})"
     att._attribute__hash = int(hashlib.sha256(log_string.encode()).hexdigest(), 16)
   elif att.operator == ya.SELECT:
-    select_string:str = f"select({att.children[0].hash},{att.children[1].hash},{att.children[2].hash})"
+    select_string:str = f"{base_string}_select({att.children[0].hash},{att.children[1].hash},{att.children[2].hash})"
     att._attribute__hash = int(hashlib.sha256(select_string.encode()).hexdigest(), 16)
   elif att.operator == ya.SQRT:
-    sqrt_string:str = f"sqrt({att.children[0].hash})"
+    sqrt_string:str = f"{base_string}_sqrt({att.children[0].hash})"
     att._attribute__hash = int(hashlib.sha256(sqrt_string.encode()).hexdigest(), 16)
   elif att.operator == ya.EQ:
-    eq_string:str = f"{att.children[0].hash} == ya.{att.children[1].hash}"
+    eq_string:str = f"{base_string}_{att.children[0].hash} == ya.{att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(eq_string.encode()).hexdigest(), 16)
   elif att.operator == ya.NEQ:
-    ne_string:str = f"{att.children[0].hash} != {att.children[1].hash}"
+    ne_string:str = f"{base_string}_{att.children[0].hash} != {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(ne_string.encode()).hexdigest(), 16)
   elif att.operator == ya.GT:
-    gt_string:str = f"{att.children[0].hash} > {att.children[1].hash}"
+    gt_string:str = f"{base_string}_{att.children[0].hash} > {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(gt_string.encode()).hexdigest(), 16)
   elif att.operator == ya.GEQ:
-    ge_string:str = f"{att.children[0].hash} >= {att.children[1].hash}"
+    ge_string:str = f"{base_string}_{att.children[0].hash} >= {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(ge_string.encode()).hexdigest(), 16)
   elif att.operator == ya.LT:
-    lt_string:str = f"{att.children[0].hash} < {att.children[1].hash}"
+    lt_string:str = f"{base_string}_{att.children[0].hash} < {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(lt_string.encode()).hexdigest(), 16)
   elif att.operator == ya.LEQ:
-    le_string:str = f"{att.children[0].hash} <= {att.children[1].hash}"
+    le_string:str = f"{base_string}_{att.children[0].hash} <= {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(le_string.encode()).hexdigest(), 16)
   elif att.operator == ya.ASSIGN:
-    assign_string:str = f"{att.children[0].hash} = {att.children[1].hash}"
+    assign_string:str = f"{base_string}_{att.children[0].hash} = {att.children[1].hash}"
     att._attribute__hash = int(hashlib.sha256(assign_string.encode()).hexdigest(), 16)
   elif att.operator == ya.INDEX:
     return att.index_value
   elif att.operator == ya.ARRAY_ACCESS:
-    array_access_string:str = f"{att.children[0].hash}[{att.children[1].hash}]"
+    array_access_string:str = f"{base_string}_{att.children[0].hash}[{att.children[1].hash}]"
     att._attribute__hash = int(hashlib.sha256(array_access_string.encode()).hexdigest(), 16)
   elif att.operator == ya.ARRAY:
-    array_string:str = f"[{','.join([str(child.hash) for child in att.children])}]"
+    array_string:str = f"{base_string}_[{','.join([str(child.hash) for child in att.children])}]"
     att._attribute__hash = int(hashlib.sha256(array_string.encode()).hexdigest(), 16)
   elif att.operator == ya.FLOAT:
     float_str = format(att.float_value, '.17g').encode()
@@ -90,40 +93,40 @@ def hashAttribute(att: ya.attribute) -> int:
   elif att.operator == ya.JOIN or att.operator == ya.SUM or att.operator == ya.AVERAGE:
     if att.through is None:
       raise ValueError(f"attribute.hash: {att.operator.name.upper()} operator must have a through attribute.")
-    operation_string:str = f"{att.operator.name}({att.children[0].hash}_through_{att.through.fullName})"
+    operation_string:str = f"{base_string}_{att.operator.name}({att.children[0].hash}_through_{att.through.fullName})"
     att._attribute__hash = int(hashlib.sha256(operation_string.encode()).hexdigest(), 16)
   elif att.operator == ya.TRANSPOSE:
-    transpose_string:str = f"transpose({att.children[0].hash})"
+    transpose_string:str = f"{base_string}_transpose({att.children[0].hash})"
     att._attribute__hash = int(hashlib.sha256(transpose_string.encode()).hexdigest(), 16)
   elif att.operator == ya.ROW:
-    row_string:str = f"{att.children[0].hash}.row({att.children[1].hash})"
+    row_string:str = f"{base_string}_{att.children[0].hash}.row({att.children[1].hash})"
     att._attribute__hash = int(hashlib.sha256(row_string.encode()).hexdigest(), 16)
   elif att.operator == ya.COL:
-    col_string:str = f"{att.children[0].hash}.col({att.children[1].hash})"
+    col_string:str = f"{base_string}_{att.children[0].hash}.col({att.children[1].hash})"
     att._attribute__hash = int(hashlib.sha256(col_string.encode()).hexdigest(), 16)
   elif att.operator == ya.CROSS:
-    cross_string:str = f"{att.children[0].hash}.cross({att.children[1].hash})"
+    cross_string:str = f"{base_string}_{att.children[0].hash}.cross({att.children[1].hash})"
     att._attribute__hash = int(hashlib.sha256(cross_string.encode()).hexdigest(), 16)
   elif att.operator == ya.NORM:
-    norm_string:str = f"{att.children[0].hash}.norm()"
+    norm_string:str = f"{base_string}_{att.children[0].hash}.norm()"
     att._attribute__hash = int(hashlib.sha256(norm_string.encode()).hexdigest(), 16)
   elif att.operator == ya.DET:
-    det_string:str = f"{att.children[0].hash}.det()"
+    det_string:str = f"{base_string}_{att.children[0].hash}.det()"
     att._attribute__hash = int(hashlib.sha256(det_string.encode()).hexdigest(), 16)
   elif att.operator == ya.INV:
-    inv_string:str = f"{att.children[0].hash}.inv()"
+    inv_string:str = f"{base_string}_{att.children[0].hash}.inv()"
     att._attribute__hash = int(hashlib.sha256(inv_string.encode()).hexdigest(), 16)
   elif att.operator == ya.DOT:
-    dot_string:str = f"{att.children[0].hash}.dot({att.children[1].hash})"
+    dot_string:str = f"{base_string}_{att.children[0].hash}.dot({att.children[1].hash})"
     att._attribute__hash = int(hashlib.sha256(dot_string.encode()).hexdigest(), 16)
   elif att.operator == ya.RESIZE:
-    resize_string: str = f"{att.children[0].hash}.resize({att.children[1].hash}, {att.children[2].hash})"
+    resize_string: str = f"{base_string}_{att.children[0].hash}.resize({att.children[1].hash}, {att.children[2].hash})"
     att._attribute__hash = int(hashlib.sha256(resize_string.encode()).hexdigest(), 16)
   elif att.operator == ya.SPD:
-    spd_string: str = f"{att.children[0].hash}.spd({att.children[1].hash})"
+    spd_string: str = f"{base_string}_{att.children[0].hash}.spd({att.children[1].hash})"
     att._attribute__hash = int(hashlib.sha256(spd_string.encode()).hexdigest(), 16)
   elif att.operator == ya.UNION:
-    union_string: str = f"union({', '.join([str(x.hash) for x in att.children])})"
+    union_string: str = f"{base_string}_union({', '.join([str(x.hash) for x in att.children])})"
     att._attribute__hash = int(hashlib.sha256(union_string.encode()).hexdigest(), 16)
   return att.hash
 

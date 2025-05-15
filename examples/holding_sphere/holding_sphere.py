@@ -108,6 +108,8 @@ for level in range(len(bones_leveled)):
 
   if level == 0:
     bl.addAttribute("matrix_global_current", computed_attribute = local_rotation)
+    bl.addAttribute("const_matrix", computed_attribute = attribute.to_array([0.0, 0.0, 0.0, 1.0], rows = 4, cols = 1))
+    # bl.addAttribute("const_matrix_resized", computed_attribute = bl["const_matrix"].resize(2, 2))
   else:
     bl_parent = handMesh.primitives[f"bone_level_{level - 1}"]
     connectivity = [skeleton_json[x["parent"]]["index_local"] for x in bones_leveled[level]]
@@ -117,6 +119,9 @@ for level in range(len(bones_leveled)):
     bl_connectivity = bl.addConnectivity(f"bone_level_{level}_to_parent", bl_parent, connectivity, 1)
     bl_parent_matrix_global_current = bl.addAttribute("parent_matrix_global_current", through = bl_connectivity, source = bl_parent["matrix_global_current"]).resize(4, 4)
     bl.addAttribute("matrix_global_current", computed_attribute = bl_parent_matrix_global_current * local_rotation)
+    bl.addAttribute("const_matrix", computed_attribute = attribute.to_array([0.0, 0.0, 0.0, 1.0], rows = 4, cols = 1))
+    # bl.addAttribute("const_matrix_resized", computed_attribute = bl["const_matrix"].resize(2, 2))
+    print(bl["const_matrix"].compute().value.get())
   bl_primitives.append(bl)
 
 ################################################################################################
@@ -125,7 +130,13 @@ for level in range(len(bones_leveled)):
 bones_union = handMesh.addPrimitiveUnion("bones", bl_primitives)
 bones_union.addAttribute("matrix_global_current")
 bones_union.addAttribute("matrix_rest")
+# bones_union.addAttribute("const_matrix_resized")
+# print(bones_union["const_matrix_resized"].compute().value.get())
+# exit()
+
+# print(bones_union["const_matrix"].compute().value.get())
 print([x.fullName for x in bones_union["matrix_global_current"].children])
+
 
 ################################################################################################
 ## here we construct the levels of skin vertices

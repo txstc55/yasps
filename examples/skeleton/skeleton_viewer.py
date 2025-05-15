@@ -80,7 +80,11 @@ for vertex in skin_json:
 
 exit()
 
+
+surface_energy = [1.0 / (pos.dot(pos)) for pos in surface_vertices]
 surface_vertices = np.array(surface_vertices)
+
+
 # print(surface_vertices)
 
 

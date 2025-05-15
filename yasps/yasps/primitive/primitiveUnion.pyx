@@ -109,7 +109,7 @@ class primitiveUnion:
       cols_size_check: Set[int] = set()
       for child in self.__primitives:
         if name not in child.attributesNames:
-          raise ValueError(f"primitiveUnion.addAttribute: attribute {name} does not exist in {child.name}")
+          raise ValueError(f"primitiveUnion.addAttribute: attribute {name} does not exist in {child.fullName}")
         rows_size_check.add(child[name].rows)
         cols_size_check.add(child[name].cols)
       if len(rows_size_check) > 1:
@@ -127,6 +127,12 @@ class primitiveUnion:
     else:
       # we are adding a computed attribute
       # we first check if the correspondance is self
+      if computed_attribute.correspondance is None:
+        # this is very likely a constant matrix
+        # let's hack a bit to directly modify the correspondance
+        computed_attribute._attribute__correspondance = self
+        self.__attributes[name] = computed_attribute
+        return
       if computed_attribute.correspondance.fullName != self.fullName:
         raise ValueError(f"primitiveUnion.addAttribute: computed attribute {name} correspondance does not match the primitive union")
       if computed_attribute.name != "":

@@ -125,6 +125,10 @@ class primitive:
       self.__attributes[name] = computed_attribute
       if computed_attribute.name == "":
         computed_attribute.setName(name)
+      if computed_attribute.correspondance is None:
+        # this is very likely a constant matrix
+        # we need to set the correspondance to self
+        computed_attribute._attribute__correspondance = self
       return computed_attribute
     elif through is not None:
       # we now check if this is a joining operation or scattering operation

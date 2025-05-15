@@ -293,8 +293,9 @@ void computeCoordinates(
 # The first three things should have same dimension, as in the output array have the same size
 class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__init__")
-  def __init__(self, path_dict: Dict[attribute, List[attribute]], wrt: List[attribute], wrt_start_indices: List[int], energy: attribute):
+  def __init__(self, path_dict: Dict[attribute, List[attribute]], unioned_child_to_its_children: Dict[attribute, List[attribute]], wrt: List[attribute], wrt_start_indices: List[int], energy: attribute):
     self.__path_dict: Dict[attribute, List[attribute]] = path_dict # the path dict is basically from parent to children
+    self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = unioned_child_to_its_children # this is the unioned child to its children
     self.__wrt_start_indices: List[int] = wrt_start_indices
     self.__energy: attribute = energy
     self.__used_join_attributes: List[attribute] = [] # all the join attributes, we will use its connectivities for indexing
@@ -304,6 +305,11 @@ class gradientIndicesKernel:
     self.__getUsedJoinAttributes() # get the attributes that are join operations, so we can just grab the connectivities later on
     self.__getUsedUnionAttributes() # get the attributes that are union operationsn
     self.__gradientSize, self.__indexSize = self.__getGradientSize(self.__path_dict, self.__energy)
+    print("Index size and gradient size for each part check")
+    for item in self.__indexSizeForEachPart:
+      print(f"Name: {item.fullName}, index size: {self.__indexSizeForEachPart[item]}, gradient size: {self.__gradientSizeForEachPart[item]}")
+
+
     self.__positionInWrtStartIndices: Dict[attribute, int] = {} # we record the position in the wrt start indices
     for i in range(len(wrt)):
       self.__positionInWrtStartIndices[wrt[i]] = i # we honestly only care about its index, not the starting position, because the wrt should not change, but the starting positions might
@@ -579,7 +585,6 @@ __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
         elif child.operator == UNION:
           # at union operator, do the same thing
           self.__kernelString += f'''
-  // we will actually check the index here? it's very cheap to do so
   {child.fullName}_get_indices(
     {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
     {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
@@ -623,21 +628,41 @@ __device__ inline void {parent.fullName}_get_indices(
   unsigned int shifted_index = index - total_count;
   switch(primitive_index){{
 '''
-        # we need to do a special case for union operator when parent is union
-        for (ind, child) in enumerate(self.__path_dict[parent]):
-          # we can directly call the function, because if
-          # the index doesn't match, inside the children kernel
-          # it will automatically return
+
+        for (ind, child) in enumerate(parent.children):
+          # we first need to determine for each child attribute
+          # does it actually need to get some index
+          # then we will grab all the indices needed for that child
+          # we need to do a special case for union operator when parent is union
+          # this is because our path dict construction never contain the direct child
+          # of the union or join operator
+          # we instead only stored the next join/union node
+          # so we will need to manually determine which union's child needs to grab index
+          used_grandchildren = []
+          for grandchild in self.__path_dict[parent]:
+            if grandchild in self.__unioned_child_to_its_children[child]:
+              used_grandchildren.append(grandchild)
           self.__kernelString += f'''
     case {ind}:
-      {parent.fullName}_get_indices_from_{child.fullName}(
-        {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-        {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
-        wrtStartIndices,
-        outputIndices,
-        outputSizes,
-        shifted_index // use the shifted index instead of the original index since primitives are stacked in a union operation
-      );
+      {{
+        // we will add an index shift because there can be multiple indices
+        // we need to grab for the same child
+        unsigned int outputIndexShift = 0;
+'''
+          for used_grandchild in used_grandchildren:
+            self.__kernelString += f'''
+      {parent.fullName}_get_indices_from_{used_grandchild.fullName}(
+          {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
+          {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+          wrtStartIndices,
+          outputIndices + outputIndexShift,
+          outputSizes + outputIndexShift,
+          shifted_index // use the shifted index instead of the original index since primitives are stacked in a union operation
+        );
+        outputIndexShift += {self.__indexSizeForEachPart[used_grandchild]};
+'''
+          self.__kernelString += '''
+      }
       break;
 '''
         self.__kernelString += f'''
@@ -763,7 +788,7 @@ extern "C" void get_indices(
     os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
     self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
     self.__indices_kernel.restype = None # set the return type to None
-    self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
+    self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_union_attributes) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
 
 
   @timed("gradientIndicesKernel.__reallocate")
@@ -797,10 +822,12 @@ extern "C" void get_indices(
     print("wrt start indices:", wrt_start_indices)
     # then we get all the gpu arrays for the connectivity
     connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
+    union_count_list_gpu = [self.__to_void_p(x.correspondance.children_primitive_counts_gpu) for x in self.__used_union_attributes]
     # now we invoke the kernel
     assert self.__indices_kernel is not None
     self.__indices_kernel(
       *connectivity_list_gpu,
+      *union_count_list_gpu,
       self.__to_void_p(wrt_start_indices_gpu),
       self.__to_void_p(self.__outputIndices),
       self.__to_void_p(self.__outputIndexSizes),

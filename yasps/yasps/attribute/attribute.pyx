@@ -280,7 +280,7 @@ class attribute:
     #   return True
     # if self.operator == ARRAY_ACCESS:
     #   return self.children[0].isFloatMat
-    if self.operator == NEG or self.operator == ABS or self.operator == ROW or self.operator == COL or self.operator == RESIZE or self.operator == TRANSPOSE or self.operator == RESIZE:
+    if self.operator == NEG or self.operator == ABS or self.operator == ROW or self.operator == COL or self.operator == RESIZE or self.operator == TRANSPOSE:
       self.__isFloatMat = self.children[0].isFloatMat
       return self.children[0].isFloatMat
     self.__isFloatMat = False
