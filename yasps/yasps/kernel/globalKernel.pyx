@@ -147,7 +147,6 @@ void compute(
   double* result,
   unsigned int MAX_INDEX
 ){{
-  printf("MAX_INDEX: %u\\n", MAX_INDEX);
   {attributeName}_global_function<<<(MAX_INDEX + 255) / 256, 256>>>(
     {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
     {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
@@ -197,11 +196,11 @@ void compute(
     args += [self.__to_void_p(x) for x in counts_gpu]
     args += [self.__to_void_p(output)]
     args += [ctypes.c_uint32(self.__att.correspondance.numInstances)]
-    print("Counts check")
-    print([x.get() for x in counts_gpu])
-    print([x.fullName for x in self.__att.deviceKernel.kernelPrimitiveUnions])
-    print("Num instance check")
-    print(self.__att.correspondance.numInstances)
+    # print("Counts check")
+    # print([x.get() for x in counts_gpu])
+    # print([x.fullName for x in self.__att.deviceKernel.kernelPrimitiveUnions])
+    # print("Num instance check")
+    # print(self.__att.correspondance.numInstances)
     self.__kernel(*args)
 
 

@@ -398,6 +398,17 @@ class energy:
     print("Global jacobian size is: ")
     print(actual_global_jacobian.rows, actual_global_jacobian.cols)
     print("*******************************************")
+    # if "theta" in actual_global_jacobian.correspondance.attributes:
+    #   print("Global jacobian computed:")
+    #   print(actual_global_jacobian.compute().value.get().reshape((-1, actual_global_jacobian.rows, actual_global_jacobian.cols)))
+    #   print("theta: ")
+    #   print(actual_global_jacobian.correspondance.attributes["theta"].compute().value.get())
+    #   print("parent global matrix: ")
+    #   print(actual_global_jacobian.correspondance["parent_matrix_global_current"].compute().value.get().reshape((-1, 4, 4)))
+    #   print("current local rotation: ")
+    #   print(actual_global_jacobian.correspondance["matrix_local"].compute().value.get().reshape((-1, 4, 4)))
+    #   print("connectivity")
+    #   print(actual_global_jacobian.correspondance["parent_matrix_global_current"].through.value)
     return actual_global_jacobian
 
 
@@ -506,6 +517,9 @@ class energy:
     print([(x.rows, x.cols) for x in unioned_children_global_jacobians])
     print("===========================================")
     res = current.correspondance.addAttribute(gradient_attribute_name)
+    # if res.correspondance.numInstances < 30:
+    #   print("Unioned global jacobian result: ")
+    #   print(res.compute().value.get().reshape((-1, max_rows, max_cols)))
     return res
 
   def __generateNeighborJacobianForEnergy(self, parent: attribute, children: List[attribute], differentiater):
@@ -1204,7 +1218,10 @@ class energy:
     assert self.__gradient is not None
     self.__gradient.compute()
     print("Gradient result")
-    print(self.__gradient.value.get())
+    result = self.__gradient.value.get()
+    # save the result to npz
+    np.savez(f"gradient_check_{self.__energy.fullName}.npz", result)
+    # print(str(self.__gradient))
     exit()
     # print(self.__gradient.compute().value.get())
     # if not self.__gradient_only:

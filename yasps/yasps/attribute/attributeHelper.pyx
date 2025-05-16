@@ -203,7 +203,7 @@ def attribute2str(att: ya.attribute):
     elif att.operator == ya.NEG:
       return f"-{att.children[0]}"
     elif att.operator == ya.UNION:
-      return f"union({', '.join([str(x.hash) for x in att.children])})"
+      return f"union({' || '.join([str(x) for x in att.children])})"
     else:
       raise ValueError(f"attribute.__str__: unknown operator type. Name: {att.operator.name}, Type: {att.operator.type}.")
   else:

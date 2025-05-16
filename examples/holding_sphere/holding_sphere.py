@@ -103,11 +103,20 @@ for level in range(len(bones_leveled)):
              0,           0, 1, 0,
              0,           0, 0, 1,
   ]
+  rotation_matrix_derivative = [
+      -sin_theta, -cos_theta, 0, 0,
+        cos_theta, -sin_theta, 0, 0,
+              0,           0, 0, 0,
+              0,           0, 0, 0,
+  ]
   rotation_matrix = attribute.to_array(rotation_matrix, rows = 4, cols =4)
+  rotation_matrix_derivative = attribute.to_array(rotation_matrix_derivative, rows = 4, cols =4)
   local_rotation = bl["matrix_local"] * rotation_matrix
+  local_rotation_derivative = bl["matrix_local"] * rotation_matrix_derivative
 
   if level == 0:
     bl.addAttribute("matrix_global_current", computed_attribute = local_rotation)
+    bl.addAttribute("matrix_global_current_derivative", computed_attribute = local_rotation)
     bl.addAttribute("const_matrix", computed_attribute = attribute.to_array([0.0, 0.0, 0.0, 1.0], rows = 4, cols = 1))
     # bl.addAttribute("const_matrix_resized", computed_attribute = bl["const_matrix"].resize(2, 2))
   else:
@@ -118,7 +127,9 @@ for level in range(len(bones_leveled)):
     # print(names)
     bl_connectivity = bl.addConnectivity(f"bone_level_{level}_to_parent", bl_parent, connectivity, 1)
     bl_parent_matrix_global_current = bl.addAttribute("parent_matrix_global_current", through = bl_connectivity, source = bl_parent["matrix_global_current"]).resize(4, 4)
+    bl_parent_matrix_global_current_derivative = bl.addAttribute("parent_matrix_global_current_derivative", through = bl_connectivity, source = bl_parent["matrix_global_current_derivative"]).resize(4, 4)
     bl.addAttribute("matrix_global_current", computed_attribute = bl_parent_matrix_global_current * local_rotation)
+    bl.addAttribute("matrix_global_current_derivative", computed_attribute = bl_parent_matrix_global_current_derivative * local_rotation_derivative)
     bl.addAttribute("const_matrix", computed_attribute = attribute.to_array([0.0, 0.0, 0.0, 1.0], rows = 4, cols = 1))
     # bl.addAttribute("const_matrix_resized", computed_attribute = bl["const_matrix"].resize(2, 2))
     print(bl["const_matrix"].compute().value.get())
@@ -130,12 +141,22 @@ for level in range(len(bones_leveled)):
 bones_union = handMesh.addPrimitiveUnion("bones", bl_primitives)
 bones_union.addAttribute("matrix_global_current")
 bones_union.addAttribute("matrix_rest")
-# bones_union.addAttribute("const_matrix_resized")
-# print(bones_union["const_matrix_resized"].compute().value.get())
+bones_union.addAttribute("matrix_global_current_derivative")
+
+# print(bones_union["matrix_global_current"].compute().value.get().reshape((-1, 4, 4)))
+# exit()
+# energy = bones_union["matrix_global_current"][0]
+# bones_union.addAttribute("bone_energy", computed_attribute = energy)
+# s0.addEnergy(energy)
+# s0.addMinimizeTarget([handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"]])
+# exit()
+
+# bones_union.addAttribute("const_matrix")
+# print(bones_union["matrix_global_current"].compute().value.get())
 # exit()
 
 # print(bones_union["const_matrix"].compute().value.get())
-print([x.fullName for x in bones_union["matrix_global_current"].children])
+# print([x.fullName for x in bones_union["matrix_global_current"].children])
 
 
 ################################################################################################
@@ -158,17 +179,23 @@ for i in range(len(skin_vertex_categorized)):
   v2b = vw.addConnectivity("skin_to_bone", bones_union, np.array([x["connected_bones"] for x in skin_vertex_categorized[i]]).flatten(), i + 1)
   vw.addAttribute("bones_matrix_rest", through = v2b, source = bones_union["matrix_rest"])
   vw.addAttribute("bones_matrix_current", through = v2b, source = bones_union["matrix_global_current"])
+  vw.addAttribute("bones_matrix_current_derivative", through = v2b, source = bones_union["matrix_global_current_derivative"])
 
   vw_current_position = 0.0 * vw["rest_position_extended"] # this is 4 by 1
+  vw_current_position_derivative = 0.0 * vw["rest_position_extended"] # this is 4 by 1
   for j in range(i + 1):
     # get the matrix for rest
     mat_rest = vw["bones_matrix_rest"].row(j).resize(4, 4)
     mat_rest_inv = mat_rest.inverse()
     projected_global = mat_rest_inv * vw["rest_position_extended"]
     transformed = vw["bones_matrix_current"].row(j).resize(4, 4) * projected_global
+    transformed_derivative = vw["bones_matrix_current_derivative"].row(j).resize(4, 4) * projected_global
     weighted_transformed = vw["weights"][j] * transformed
+    weighted_transformed_derivative = vw["weights"][j] * transformed_derivative
     vw_current_position += weighted_transformed
+    vw_current_position_derivative += weighted_transformed_derivative
   vw.addAttribute("current_position", computed_attribute = attribute.to_array([vw_current_position.row(0), vw_current_position.row(1), vw_current_position.row(2)], rows = 3, cols = 1))
+  vw.addAttribute("current_position_derivative", computed_attribute = attribute.to_array([vw_current_position_derivative.row(0), vw_current_position_derivative.row(1), vw_current_position_derivative.row(2)], rows = 3, cols = 1))
   # vw_positions += (vw["current_position"].compute().value.get().flatten().tolist())
   # if i == 0:
   #   print(vw["current_position"].compute().value.get().reshape(-1, 3))
@@ -181,14 +208,30 @@ for i in range(len(skin_vertex_categorized)):
 # ################################################################################################
 vertices_union = handMesh.addPrimitiveUnion("vertices_union", vw_primitives)
 print(vertices_union.numInstances)
-vertices_union.addAttribute("current_position")
+vp = vertices_union.addAttribute("current_position")
+print(vp.compute().value.get().reshape(-1, 3))
+exit()
+
+
+vertices_union.addAttribute("current_position_derivative")
+
+vertices_derivative = vertices_union["current_position_derivative"].compute().value.get()
+true_derivative = (-2.0 * vp.transpose() / (vp.transpose() * vp)) * vertices_union["current_position_derivative"]
+
+vertices_union.addAttribute("true_derivative", computed_attribute = true_derivative)
+true_derivative_value = true_derivative.compute().value.get()
+
+
+# print(vertices_derivative[120:123], true_derivative_value[40])
+# print(vertices_derivative[237: 240], true_derivative_value[79])
+# # exit()
 
 # let's create a fake energy
-energy = 1.0 / (vertices_union["current_position"].dot(vertices_union["current_position"].transpose()))
+energy = vertices_union["current_position"].row(0)
 vertices_union.addAttribute("surface_repulse_energy", computed_attribute = energy)
 s0.addEnergy(energy)
 s0.addMinimizeTarget([handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"]])
-
+exit()
 
 
 
@@ -210,7 +253,9 @@ s0.addMinimizeTarget([handMesh.bone_level_1["theta"], handMesh.bone_level_2["the
 
 
 # surface_vertices = vertices_union["current_position"].compute().value.get().reshape(-1, 3)
-# print(surface_vertices)
+# print(surface_vertices[40, :])
+
+# print(surface_vertices[79, :])
 
 
 
