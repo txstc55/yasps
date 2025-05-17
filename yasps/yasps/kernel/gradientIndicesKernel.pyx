@@ -511,6 +511,16 @@ class gradientIndicesKernel:
         self.__used_union_attributes.append(att)
 
   def __generateKernel(self):
+    # ok now we compile the kernel by saving it to a file and then calling nvcc
+    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"
+    if os.path.exists(f'{file_name}.so'):
+      # we just use that file?
+      self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
+      self.__indices_kernel.restype = None # set the return type to None
+      self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_union_attributes) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
+      return
+
+
     # ok now we need to generate the kernel
     # what we basically aim to do
     # is to have an isolated kernel that calls the children kernel to fetch the data
@@ -628,7 +638,6 @@ __device__ inline void {parent.fullName}_get_indices(
   unsigned int shifted_index = index - total_count;
   switch(primitive_index){{
 '''
-
         for (ind, child) in enumerate(parent.children):
           # we first need to determine for each child attribute
           # does it actually need to get some index
@@ -651,7 +660,7 @@ __device__ inline void {parent.fullName}_get_indices(
 '''
           for used_grandchild in used_grandchildren:
             self.__kernelString += f'''
-      {parent.fullName}_get_indices_from_{used_grandchild.fullName}(
+        {parent.fullName}_get_indices_from_{used_grandchild.fullName}(
           {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
           {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
           wrtStartIndices,
@@ -671,29 +680,38 @@ __device__ inline void {parent.fullName}_get_indices(
   }} // end of switch
 }} // end of kernel for grabbing indices from of {parent.fullName}
 '''
-      else:
+      elif parent.operator == JOIN:
+        self.__kernelString += f'''
+  for (unsigned int i = 0; i < {parent.through.dimension}; i++){{
+    unsigned int outputIndexShift = 0;
+'''
+        # we need special code for join operator
+        # first we make a simple assertion, should always pass
+        assert self.__indexSizeForEachPart[parent] % parent.through.dimension == 0, f"Index size {self.__indexSizeForEachPart[parent]} is not divisible by dimension {parent.through.dimension}"
         for ind in range(len(self.__path_dict[parent])):
           child = self.__path_dict[parent][ind]
-          # call the function
-          if child.operator == JOIN:
-            # we make sure the index size is divisible
-            assert self.__indexSizeForEachPart[child] % child.through.dimension == 0, f"Index size {self.__indexSizeForEachPart[child]} is not divisible by dimension {child.through.dimension}"
-            self.__kernelString += f'''
-  for (unsigned int i = 0; i < {child.through.dimension}; i++){{
+          self.__kernelString += f'''
     {parent.fullName}_get_indices_from_{child.fullName}(
       {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
       {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
       wrtStartIndices,
-      outputIndices + {index_accumulation} + {self.__indexSizeForEachPart[child] // child.through.dimension} * i,
-      outputSizes + {index_accumulation} + {self.__indexSizeForEachPart[child] // child.through.dimension} * i,
-      {(child.fullName + f"_indices[index * {child.through.dimension} + i]")}
+      outputIndices + {index_accumulation} + {self.__indexSizeForEachPart[parent] // parent.through.dimension} * i,
+      outputSizes + {index_accumulation} + {self.__indexSizeForEachPart[parent] // parent.through.dimension} * i,
+      {(parent.fullName + f"_indices[index * {parent.through.dimension} + i]")}
     );
-  }}
 '''
-            # add the index accumulation
-            index_accumulation += self.__indexSizeForEachPart[child]
-          elif child.operator == DATA:
-            self.__kernelString += f'''
+          index_accumulation += self.__indexSizeForEachPart[child]
+        assert index_accumulation == (self.__indexSizeForEachPart[parent]  // parent.through.dimension), f"Index size {index_accumulation} is not equal to {self.__indexSizeForEachPart[parent]} // {parent.through.dimension}"
+        self.__kernelString += f'''
+  }} // end of for loop for join
+}} // end of kernel for grabbing indices from of {parent.fullName}
+'''
+      else:
+        for ind in range(len(self.__path_dict[parent])):
+          child = self.__path_dict[parent][ind]
+          # call the function
+          self.__kernelString += f'''
+  // grab indices from child {child.fullName} to parent {parent.fullName}
   {parent.fullName}_get_indices_from_{child.fullName}(
     {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
     {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
@@ -703,20 +721,6 @@ __device__ inline void {parent.fullName}_get_indices(
     index
   );
 '''
-            # add the index accumulation
-            index_accumulation += self.__indexSizeForEachPart[child]
-          elif child.operator == UNION:
-            self.__kernelString += f'''
-  {parent.fullName}_get_indices_from_{child.fullName}(
-    {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-    {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
-    wrtStartIndices,
-    outputIndices + {index_accumulation},
-    outputSizes + {index_accumulation},
-    index
-  );
-'''
-            index_accumulation += self.__indexSizeForEachPart[child]
         self.__kernelString += f'''
 }} // end of kernel for grabbing indices from of {parent.fullName}
 '''
@@ -819,10 +823,12 @@ extern "C" void get_indices(
   def __computeIndices(self, wrt_start_indices: List[int]):
     # first let's convert wrt_start_indices to a pycuda array
     wrt_start_indices_gpu = gpuarray.to_gpu(np.array(wrt_start_indices, dtype=np.uint32))
-    print("wrt start indices:", wrt_start_indices)
     # then we get all the gpu arrays for the connectivity
     connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
-    union_count_list_gpu = [self.__to_void_p(x.correspondance.children_primitive_counts_gpu) for x in self.__used_union_attributes]
+    self.__union_counts = [x.correspondance.children_primitive_counts_gpu for x in self.__used_union_attributes]
+    union_count_list_gpu = [self.__to_void_p(x) for x in self.__union_counts]
+    print("Used union attributes are")
+    print([x.fullName for x in self.__used_union_attributes])
     # now we invoke the kernel
     assert self.__indices_kernel is not None
     self.__indices_kernel(
@@ -892,7 +898,12 @@ extern "C" void get_indices(
     self.__compressIndicesLocal()
     self.__allocateSpaceForCoordinates()
     self.__generateCoordinates()
-    # print("Used Indices", self.__outputIndices.get()[:20])
+    print("Indices computed")
+    print("wrt start indices are")
+    print(wrt_start_indices)
+
+    print("Used Indices", self.__outputIndices.get()[:20])
+    print("Num instances are", self.__numInstances)
     # print("Dimensions of the indices:", self.__outputIndexSizes.get()[:20])
     # print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
     # print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
@@ -904,3 +915,18 @@ extern "C" void get_indices(
     # print("Coordinates size:", self.__outputCoordinates.get().shape)
     # print("Dimensions size:", self.__outputBlockDimensions.get().shape)
     # print("Permutation preview:", self.__outputPermutations.get()[:30])
+
+    # lets save the useful info to npz for check later
+    np.savez("output_indices.npz",
+      outputIndices = self.__outputIndices.get(),
+      outputIndexSizes = self.__outputIndexSizes.get(),
+      outputNumUniqueGradientSizes = self.__outputNumUniqueGradientSizes.get(),
+      outputGroupedIndicesOuter = self.__outputGroupedIndicesOuter.get(),
+      outputGroupedIndicesInner = self.__outputGroupedIndicesInner.get(),
+      outputCompressedCoordinateCountsOuter = self.__outputCompressedCoordinateCountsOuter.get(),
+      numTotalCoordinates = self.numTotalCoordinates,
+      outputPermutations = self.__outputPermutations.get(),
+      outputCoordinates = self.__outputCoordinates.get(),
+      outputBlockDimensions = self.__outputBlockDimensions.get(),
+    )
+    exit()

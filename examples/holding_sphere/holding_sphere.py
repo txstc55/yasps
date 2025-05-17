@@ -207,27 +207,16 @@ for i in range(len(skin_vertex_categorized)):
 # ## here we construct the union of skin vertices
 # ################################################################################################
 vertices_union = handMesh.addPrimitiveUnion("vertices_union", vw_primitives)
-print(vertices_union.numInstances)
+# print(vertices_union.numInstances)
 vp = vertices_union.addAttribute("current_position")
-print(vp.compute().value.get().reshape(-1, 3))
-exit()
+# print(vp.compute().value.get().reshape(-1, 3))
+# exit()
 
 
 vertices_union.addAttribute("current_position_derivative")
 
-vertices_derivative = vertices_union["current_position_derivative"].compute().value.get()
-true_derivative = (-2.0 * vp.transpose() / (vp.transpose() * vp)) * vertices_union["current_position_derivative"]
-
-vertices_union.addAttribute("true_derivative", computed_attribute = true_derivative)
-true_derivative_value = true_derivative.compute().value.get()
-
-
-# print(vertices_derivative[120:123], true_derivative_value[40])
-# print(vertices_derivative[237: 240], true_derivative_value[79])
-# # exit()
-
 # let's create a fake energy
-energy = vertices_union["current_position"].row(0)
+energy = 1.0 / (vertices_union["current_position"].dot(vertices_union["current_position"]))
 vertices_union.addAttribute("surface_repulse_energy", computed_attribute = energy)
 s0.addEnergy(energy)
 s0.addMinimizeTarget([handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"]])

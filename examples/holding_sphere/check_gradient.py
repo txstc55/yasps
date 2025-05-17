@@ -5,7 +5,8 @@ computed_gradient_bone = np.load("gradient_check_bone_energy.npz")
 computed_gradient_bone = computed_gradient_bone["arr_0"]
 # print(computed_gradient_bone)
 # exit()
-
+computed_indices = np.load("output_indices.npz")
+outputIndices = computed_indices["outputIndices"]
 import json
 
 ################################################################################
@@ -42,6 +43,12 @@ for i in range(max_level + 1):
       bones_leveled[i].append(bone)
       bones_flattened.append(bone)
   index_local = 0
+print("total level")
+print(len(bones_leveled))
+print("All levels")
+for level in bones_leveled:
+  print([(bone["name"], bone["index"]) for bone in level])
+
 
 for i in range(max_level + 1):
   if i == 0:
@@ -109,7 +116,7 @@ with open("../data/OculusHand_L.fbx.vertices.json", "r") as f:
   skin_vertex_json = json.load(f)
 
 max_affected_num_bones = max([len(x["weights"]) for x in skin_vertex_json])
-print(max_affected_num_bones)
+# print(max_affected_num_bones)
 for _ in range(max_affected_num_bones):
   skin_vertex_categorized.append([])
 
@@ -160,6 +167,7 @@ for vertices in skin_vertex_categorized:
       index = connected_bones[i]
       weight = bone_weights[i]
       bone = bones_flattened[index]
+      # print(bone["name"])
       bone_matrix_rest = bone["matrix_rest"]
       bone_matrix_rest_inv = np.linalg.inv(bone_matrix_rest)
       projected_pos = bone_matrix_rest_inv @ rest_pos_expanded
@@ -183,7 +191,32 @@ for vertices in skin_vertex_categorized:
     summation_squares_produced = sum([x**2 for x in computed_gradient[total_count * 14: (total_count + 1) * 14]])
     assert (summation_squares_ours - summation_squares_produced) < 1e-6, f"summation squares not equal, {summation_squares_ours} != {summation_squares_produced}"
 
+    # ok now we need to get the corresponding indices
+    indices_ours = np.zeros(14, dtype=int)
+    for i in range(len(connected_bones)):
+      index = connected_bones[i]
+      weight = bone_weights[i]
+      bone = bones_flattened[index]
+      if index == 0:
+        continue
+      elif index < 7:
+        indices_ours[i * 2] = index
+      else:
+        parent_bone = bone
+        while parent_bone["index"] > 0:
+          new_index = parent_bone["index"]
+          if new_index < 7:
+            indices_ours[i * 2 + 1] = new_index
+          elif new_index < 12:
+            indices_ours[i * 2] = new_index
+          parent_bone = skeleton_json[parent_bone["parent"]]
+
+
+    # print("--------------------------------------------------------")
+    assert (np.linalg.norm(indices_ours - outputIndices[total_count * 14 : (total_count + 1) * 14]) == 0), f"indices not equal, {indices_ours} != {outputIndices[total_count * 14 : (total_count + 1) * 14]}"
+    # print("--------------------------------------------------------")
 
     total_count += 1
+    # exit()
 
   # exit()
