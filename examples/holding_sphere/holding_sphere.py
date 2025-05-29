@@ -218,8 +218,11 @@ vertices_union.addAttribute("current_position_derivative")
 # let's create a fake energy
 energy = 1.0 / (vertices_union["current_position"].dot(vertices_union["current_position"]))
 vertices_union.addAttribute("surface_repulse_energy", computed_attribute = energy)
-s0.addEnergy(energy)
+s0.addEnergy(energy, gradient_only = True)
 s0.addMinimizeTarget([handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"]])
+result = s0.minimizeEnergy()
+print("Minimization result:", result[0].get(), result[1].get())
+print("Gradient is:", s0.minimizer.gradient.get())
 exit()
 
 

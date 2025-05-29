@@ -72,8 +72,8 @@ __global__ void computePermutation(
       const unsigned int idx_i = indices[tid * K + i];
       if (idx_i == 0){
         // we hit an empty index, this is a reserved space for the union operation
-        // we break out the loop
-        break;
+        // we continue
+        continue;
       }
       bool found = false;
       for (unsigned short int j = 0; j < i; j++){
@@ -306,8 +306,8 @@ class gradientIndicesKernel:
     self.__getUsedUnionAttributes() # get the attributes that are union operationsn
     self.__gradientSize, self.__indexSize = self.__getGradientSize(self.__path_dict, self.__energy)
     print("Index size and gradient size for each part check")
-    for item in self.__indexSizeForEachPart:
-      print(f"Name: {item.fullName}, index size: {self.__indexSizeForEachPart[item]}, gradient size: {self.__gradientSizeForEachPart[item]}")
+    # for item in self.__indexSizeForEachPart:
+    #   print(f"Name: {item.fullName}, index size: {self.__indexSizeForEachPart[item]}, gradient size: {self.__gradientSizeForEachPart[item]}")
 
 
     self.__positionInWrtStartIndices: Dict[attribute, int] = {} # we record the position in the wrt start indices
@@ -827,8 +827,8 @@ extern "C" void get_indices(
     connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
     self.__union_counts = [x.correspondance.children_primitive_counts_gpu for x in self.__used_union_attributes]
     union_count_list_gpu = [self.__to_void_p(x) for x in self.__union_counts]
-    print("Used union attributes are")
-    print([x.fullName for x in self.__used_union_attributes])
+    # print("Used union attributes are")
+    # print([x.fullName for x in self.__used_union_attributes])
     # now we invoke the kernel
     assert self.__indices_kernel is not None
     self.__indices_kernel(
@@ -898,15 +898,15 @@ extern "C" void get_indices(
     self.__compressIndicesLocal()
     self.__allocateSpaceForCoordinates()
     self.__generateCoordinates()
-    print("Indices computed")
-    print("wrt start indices are")
-    print(wrt_start_indices)
+    # print("Indices computed")
+    # print("wrt start indices are")
+    # print(wrt_start_indices)
 
-    print("Used Indices", self.__outputIndices.get()[:20])
-    print("Num instances are", self.__numInstances)
+    # print("Used Indices", self.__outputIndices.get()[:20])
+    # print("Num instances are", self.__numInstances)
     # print("Dimensions of the indices:", self.__outputIndexSizes.get()[:20])
-    # print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
-    # print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
+    print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
+    print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
     # print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
     # print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get())
     # print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
@@ -916,17 +916,17 @@ extern "C" void get_indices(
     # print("Dimensions size:", self.__outputBlockDimensions.get().shape)
     # print("Permutation preview:", self.__outputPermutations.get()[:30])
 
-    # lets save the useful info to npz for check later
-    np.savez("output_indices.npz",
-      outputIndices = self.__outputIndices.get(),
-      outputIndexSizes = self.__outputIndexSizes.get(),
-      outputNumUniqueGradientSizes = self.__outputNumUniqueGradientSizes.get(),
-      outputGroupedIndicesOuter = self.__outputGroupedIndicesOuter.get(),
-      outputGroupedIndicesInner = self.__outputGroupedIndicesInner.get(),
-      outputCompressedCoordinateCountsOuter = self.__outputCompressedCoordinateCountsOuter.get(),
-      numTotalCoordinates = self.numTotalCoordinates,
-      outputPermutations = self.__outputPermutations.get(),
-      outputCoordinates = self.__outputCoordinates.get(),
-      outputBlockDimensions = self.__outputBlockDimensions.get(),
-    )
-    exit()
+    # # lets save the useful info to npz for check later
+    # np.savez("output_indices.npz",
+    #   outputIndices = self.__outputIndices.get(),
+    #   outputIndexSizes = self.__outputIndexSizes.get(),
+    #   outputNumUniqueGradientSizes = self.__outputNumUniqueGradientSizes.get(),
+    #   outputGroupedIndicesOuter = self.__outputGroupedIndicesOuter.get(),
+    #   outputGroupedIndicesInner = self.__outputGroupedIndicesInner.get(),
+    #   outputCompressedCoordinateCountsOuter = self.__outputCompressedCoordinateCountsOuter.get(),
+    #   numTotalCoordinates = self.numTotalCoordinates,
+    #   outputPermutations = self.__outputPermutations.get(),
+    #   outputCoordinates = self.__outputCoordinates.get(),
+    #   outputBlockDimensions = self.__outputBlockDimensions.get(),
+    # )
+    # exit()

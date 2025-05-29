@@ -311,11 +311,11 @@ class energy:
     next_jacobian = attribute.to_array(next_jacobian_children, rows = next_jacobian_rows, cols = next_jacobian_cols)
     full_gradient = current_gradient.mul_explicit(next_jacobian)
     current.correspondance.addAttribute(gradient_attribute_name, computed_attribute = full_gradient)
-    print("Energy parent is: ")
-    print(current.fullName)
-    print("Global jacobian size is: ")
-    print(full_gradient.rows, full_gradient.cols)
-    print("===========================================")
+    # print("Energy parent is: ")
+    # print(current.fullName)
+    # print("Global jacobian size is: ")
+    # print(full_gradient.rows, full_gradient.cols)
+    # print("===========================================")
     return full_gradient
 
   def __generateGlobalJacobianForJoin(self, current: attribute, wrt: List[attribute]):
@@ -386,18 +386,18 @@ class energy:
 
     actual_global_jacobian = attribute.to_array(actual_global_jacobian_items, rows = actual_global_jacobian_rows, cols = actual_global_jacobian_cols)
     current.correspondance.addAttribute(gradient_attribute_name, computed_attribute = actual_global_jacobian)
-    # return the result
-    print("*******************************************")
-    print("Join parent is: ")
-    print(current.fullName)
-    print("Join dimension is")
-    print(current.through.dimension)
-    print("Next children are")
-    for child in self.__path_dict[current]:
-      print(child.fullName)
-    print("Global jacobian size is: ")
-    print(actual_global_jacobian.rows, actual_global_jacobian.cols)
-    print("*******************************************")
+    # # return the result
+    # print("*******************************************")
+    # print("Join parent is: ")
+    # print(current.fullName)
+    # print("Join dimension is")
+    # print(current.through.dimension)
+    # print("Next children are")
+    # for child in self.__path_dict[current]:
+    #   print(child.fullName)
+    # print("Global jacobian size is: ")
+    # print(actual_global_jacobian.rows, actual_global_jacobian.cols)
+    # print("*******************************************")
     # if "theta" in actual_global_jacobian.correspondance.attributes:
     #   print("Global jacobian computed:")
     #   print(actual_global_jacobian.compute().value.get().reshape((-1, actual_global_jacobian.rows, actual_global_jacobian.cols)))
@@ -459,12 +459,12 @@ class energy:
         children_global_jacobian_items = []
         children_global_jacobian_rows = sum([x.size for x in used_children])
         children_global_jacobian_cols = sum([x.cols for x in used_children_global_jacobians])
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        print(f"Unioned child {unioned_child.fullName} has {len(used_children_global_jacobians)} children global jacobian")
-        print([x.fullName for x in used_children])
-        print("Their global jacobian dimensions are")
-        print([(x.rows, x.cols) for x in used_children_global_jacobians])
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        # print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        # print(f"Unioned child {unioned_child.fullName} has {len(used_children_global_jacobians)} children global jacobian")
+        # print([x.fullName for x in used_children])
+        # print("Their global jacobian dimensions are")
+        # print([(x.rows, x.cols) for x in used_children_global_jacobians])
+        # print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         children_global_jacobian_items = [attribute(float_value = 0.0) for _ in range(children_global_jacobian_rows * children_global_jacobian_cols)]
         # now we fill the jacobian
         row_offset = 0
@@ -505,17 +505,17 @@ class energy:
       # print(f"Adding attribute with name {gradient_attribute_name} to child {current.children[index].correspondance.fullName}")
 
       # well we have expanded the jacobian for each child
-      # perform the union operation
-    print("======================================================================")
-    print("Union parent is: ")
-    print(current.fullName)
-    print("Global jacobian size is: ")
-    print(max_rows, max_cols)
-    print("Children are")
-    print([x.fullName for x in current.children])
-    print("Children global jacobian dimensions are")
-    print([(x.rows, x.cols) for x in unioned_children_global_jacobians])
-    print("===========================================")
+    #   # perform the union operation
+    # print("======================================================================")
+    # print("Union parent is: ")
+    # print(current.fullName)
+    # print("Global jacobian size is: ")
+    # print(max_rows, max_cols)
+    # print("Children are")
+    # print([x.fullName for x in current.children])
+    # print("Children global jacobian dimensions are")
+    # print([(x.rows, x.cols) for x in unioned_children_global_jacobians])
+    # print("===========================================")
     res = current.correspondance.addAttribute(gradient_attribute_name)
     # if res.correspondance.numInstances < 30:
     #   print("Unioned global jacobian result: ")
@@ -1216,17 +1216,18 @@ class energy:
     # generate the symbolic code for gradient and hessian
     self.__generateGradientThroughPathDict(wrt, differentiater)
     assert self.__gradient is not None
-    self.__gradient.compute()
-    print("Gradient result")
-    result = self.__gradient.value.get()
-    # save the result to npz
-    np.savez(f"gradient_check_{self.__energy.fullName}.npz", result)
-    # print(str(self.__gradient))
-    exit()
+    print("Symbolic gradient generated")
+    # # self.__gradient.compute()
+    # # print("Gradient result")
+    # # result = self.__gradient.value.get()
+    # # save the result to npz
+    # np.savez(f"gradient_check_{self.__energy.fullName}.npz", result)
+    # # print(str(self.__gradient))
+    # exit()
     # print(self.__gradient.compute().value.get())
-    # if not self.__gradient_only:
-    #   # dont generate hessian if we only need gradient
-    #   self.__generateHessian(wrt, differentiater)
+    if not self.__gradient_only:
+      # dont generate hessian if we only need gradient
+      self.__generateHessian(wrt, differentiater)
 
 
 
@@ -1238,20 +1239,27 @@ class energy:
       return
     if self.__hessian is None and not self.__gradient_only:
       raise ValueError("yasps.energy.computeHessianAndGradient: The hessian is not computed yet. Please call generateHessianAndGradient first.")
-    assert self.__hessian is not None
+    # assert self.__hessian is not None
     if self.__hessianAndGradientKernel is None:
       from yasps.hessianAndGradientKernel import hessianAndGradientKernel
       # we need to put the gradient and the hessian together
       # we know the graidient sizes square is the hessian size
       merged_hessian_and_gradient = []
       if not self.__gradient_only: # we need the hessian
+        assert self.__hessian is not None
         for i in range(self.__hessian.rows):
           for j in range(self.__hessian.cols):
             merged_hessian_and_gradient.append(self.__hessian[i, j])
-      for i in range(self.__hessian.rows):
+      for i in range(self.__gradient.size):
         merged_hessian_and_gradient.append(self.__gradient[i])
       # create the attribute for the merged hessian and gradient
-      self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = self.__hessian.rows + 1, cols = self.__hessian.cols))
+      merged_hessian_rows: int
+      if self.__gradient_only:
+        merged_hessian_rows = 1
+      else:
+        assert self.__hessian is not None
+        merged_hessian_rows = self.__hessian.rows + 1
+      self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = merged_hessian_rows, cols = self.__gradient.size))
 
       from yasps.codeGenerator import codeGenerator
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
@@ -1274,7 +1282,9 @@ class energy:
     assert self.__indices_kernel is not None
 
     # after we allocated, we invoke the kernel
-    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0]
+    counts_gpu = [x.children_primitive_counts_gpu for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelPrimitiveUnions] # get the children counts
+    print(f"counts gpu: {[x.get() for x in counts_gpu]}")
+    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + counts_gpu
 
     self.__hessianAndGradientKernel.compute(arguments, self.__indices_kernel, self.__block_indices_gpu, gradient_array, hessian_blocks, diagonal)
     return self

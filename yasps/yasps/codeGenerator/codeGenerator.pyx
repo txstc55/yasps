@@ -703,7 +703,7 @@ __device__ void {attributeName}_device_function(
     # print("We are now generating code for union")
     code_string = ""
     code_string += f'''
-  double {current.fullName}_local_data_temp[{current.size}];
+  double {current.fullName}_local_data_temp[{current.size}] = {{0}};
   // we need to determine which primitive it's calling from
   {{
     unsigned int {current.fullName}_primitive_index = 0;

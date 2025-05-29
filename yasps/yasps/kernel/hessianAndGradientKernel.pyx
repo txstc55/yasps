@@ -3,10 +3,9 @@ from __future__ import annotations
 from yasps.deviceKernel import deviceKernel
 from yasps.attribute import attribute
 from yasps.connectivity import connectivity
-import pycuda.driver as pd
 import pycuda.gpuarray as gpuarray
 from yasps.gradientIndicesKernel import gradientIndicesKernel
-import numpy as np
+from yasps.primitiveUnion import primitiveUnion
 from yasps.helper import prune_duplicate_functions, timed
 import os
 import ctypes
@@ -45,6 +44,7 @@ class hessianAndGradientKernel:
     sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
+    sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
     wrt_names = "_".join([att.fullName for att in wrt])
     size_names = "_".join([str(size) for size in unique_gradient_sizes])
     full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullName}_wrt_{wrt_names}_with_sizes_{size_names}"
@@ -55,95 +55,95 @@ class hessianAndGradientKernel:
     if not os.path.exists(f'{file_name}.so'):
       # add the includes and the evd function
       self.__kernelString = '''
-  #include <stdio.h>
-  #include <stdlib.h>
-  #include <math.h>
-  #include <cuda.h>
-  #define EIGEN_USE_GPU
-  #include <Eigen/Core>
-  #include <Eigen/Dense>
-  #include <vector>
-  // here we add code for spd projection
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <cuda.h>
+#define EIGEN_USE_GPU
+#include <Eigen/Core>
+#include <Eigen/Dense>
+#include <vector>
+// here we add code for spd projection
 
-  // for small matrix < 4
-  template <unsigned int N>
-  __device__ void spd_projection_small(const double *A, double* output, int choice){{
-    const int M = 4;
-    // Initialize an M x M matrix with zeros
-    Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Identity();
+// for small matrix < 4
+template <unsigned int N>
+__device__ void spd_projection_small(const double *A, double* output, int choice){{
+  const int M = 4;
+  // Initialize an M x M matrix with zeros
+  Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Identity();
 
-    // Copy the input N x N matrix into the top-left corner of the M x M matrix
-    for (int row = 0; row < N; ++row) {{
-      for (int col = 0; col < N; ++col) {{
-        symMtr(row, col) = A[row * N + col];
-      }}
+  // Copy the input N x N matrix into the top-left corner of the M x M matrix
+  for (int row = 0; row < N; ++row) {{
+    for (int col = 0; col < N; ++col) {{
+      symMtr(row, col) = A[row * N + col];
     }}
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, M, M>> eigenSolver(symMtr);
-    const Eigen::Matrix<double, M, M> B = eigenSolver.eigenvectors();
-    Eigen::Matrix<double, M, 1> eigenValues = eigenSolver.eigenvalues();
-    for (int i = 0; i < M; i++){{
-      if (eigenValues[i] < 0) {{
-        eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
-      }}
-    }}
-    Eigen::Matrix<double, M, M> A_reconstructed;
-    A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
-    // Copy the top-left N x N submatrix back to A
-    for (int row = 0; row < N; ++row) {{
-      for (int col = 0; col < N; ++col) {{
-        output[row * N + col] = A_reconstructed(row, col);
-      }}
-    }}
-    return;
   }}
-
-  template <unsigned int N>
-  __device__ void spd_projection(const double *A, double* output, int choice){{
-    // Map A to an N x N Eigen matrix without copying
-    Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
-    const Eigen::Matrix<double, N, N> B = eigenSolver.eigenvectors();
-    Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
-    for (int i = 0; i < N; i++){{
-      if (eigenValues[i] < 0) {{
-        eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
-      }}
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, M, M>> eigenSolver(symMtr);
+  const Eigen::Matrix<double, M, M> B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, M, 1> eigenValues = eigenSolver.eigenvalues();
+  for (int i = 0; i < M; i++){{
+    if (eigenValues[i] < 0) {{
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }}
-    // Compute the reconstructed matrix: A_reconstructed = C * B.transpose()
-    Eigen::Matrix<double, N, N> A_reconstructed;
-    A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
-    // A_reconstructed.noalias() = C * B.transpose();
-    // Copy the top-left N x N submatrix back to output
-    Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>> outputMap(output);
-    outputMap = A_reconstructed;
-    return;
   }}
-
-  template <unsigned int N>
-  __device__ void spd_projection_inplace(double *A, int choice){{
-    // Map A to an N x N Eigen matrix without copying
-    Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
-    const Eigen::Matrix<double, N, N> B = eigenSolver.eigenvectors();
-    Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
-    for (int i = 0; i < N; i++){{
-      if (eigenValues[i] < 0) {{
-        eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
-      }}
+  Eigen::Matrix<double, M, M> A_reconstructed;
+  A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
+  // Copy the top-left N x N submatrix back to A
+  for (int row = 0; row < N; ++row) {{
+    for (int col = 0; col < N; ++col) {{
+      output[row * N + col] = A_reconstructed(row, col);
     }}
-    // Reconstruct the matrix directly without using an intermediate matrix
-    for (int i = 0; i < N; ++i) {{
-      for (int j = 0; j < N; ++j) {{
-        double sum = 0.0;
-        for (int k = 0; k < N; ++k) {{
-          sum += B(i, k) * eigenValues[k] * B(j, k);
-        }}
-        A[i * N + j] = sum;
-      }}
-    }}
-    return;
   }}
-  '''
+  return;
+}}
+
+template <unsigned int N>
+__device__ void spd_projection(const double *A, double* output, int choice){{
+  // Map A to an N x N Eigen matrix without copying
+  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
+  const Eigen::Matrix<double, N, N> B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
+  for (int i = 0; i < N; i++){{
+    if (eigenValues[i] < 0) {{
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+    }}
+  }}
+  // Compute the reconstructed matrix: A_reconstructed = C * B.transpose()
+  Eigen::Matrix<double, N, N> A_reconstructed;
+  A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
+  // A_reconstructed.noalias() = C * B.transpose();
+  // Copy the top-left N x N submatrix back to output
+  Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>> outputMap(output);
+  outputMap = A_reconstructed;
+  return;
+}}
+
+template <unsigned int N>
+__device__ void spd_projection_inplace(double *A, int choice){{
+  // Map A to an N x N Eigen matrix without copying
+  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
+  const Eigen::Matrix<double, N, N> B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
+  for (int i = 0; i < N; i++){{
+    if (eigenValues[i] < 0) {{
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+    }}
+  }}
+  // Reconstruct the matrix directly without using an intermediate matrix
+  for (int i = 0; i < N; ++i) {{
+    for (int j = 0; j < N; ++j) {{
+      double sum = 0.0;
+      for (int k = 0; k < N; ++k) {{
+        sum += B(i, k) * eigenValues[k] * B(j, k);
+      }}
+      A[i * N + j] = sum;
+    }}
+  }}
+  return;
+}}
+'''
 
       for item in sortedDependency:
         self.__kernelString += f"{item.kernelHeader};"
@@ -166,6 +166,7 @@ __global__ void compute_hessian_and_gradient_global_function(
   {"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}
   {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}
   {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+  {"".join([f"const unsigned int* {x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
   const unsigned int* segment_indices,            // where to place the gradient for each segment of the local gradient / hessian we generated
   const unsigned short int* segment_sizes,        // how large is each segment of the gradient before compression
   const short int* local_permutations,            // how do i locally compress the hessian and gradient
@@ -204,6 +205,7 @@ __global__ void compute_hessian_and_gradient_global_function(
     {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
     {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
     {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+    {"".join([f"{x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
     instance,
     hg_mat.data()
   );
@@ -213,7 +215,13 @@ __global__ void compute_hessian_and_gradient_global_function(
     // we will first get the segment size
     unsigned short int segment_size = segment_sizes[instance * max_num_indices + i];
     // and the position for this segment
-    unsigned int segment_placement = segment_indices[instance * max_num_indices + i] - 1;
+    unsigned int segment_placement = segment_indices[instance * max_num_indices + i];
+    if (segment_placement == 0){{
+      gradient_offset += 1;
+      continue; // we encountered space reserved for union, skip
+    }}else{{
+      segment_placement -= 1; // make it 0 indexed
+    }}
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
 #if {int(not self.__gradient_only)} // did we compute the hessian
@@ -237,7 +245,8 @@ __global__ void compute_hessian_and_gradient_global_function(
     // we first determine what's the correct position to put in the compressed hessian
     short int permutation_i = local_permutations[instance * max_num_indices + i];
     if (permutation_i == 0){{
-      break; // we are done, we encounter space reserved for union
+      row_offset += 1; // done with the row since it's reserved for union empty space
+      continue; // we encountered space reserved for union, skip
     }}
     if (permutation_i < 0){{
       // this block position exists, we need to get the negative of it
@@ -248,7 +257,8 @@ __global__ void compute_hessian_and_gradient_global_function(
     for (unsigned int j = 0; j < max_num_indices; j++){{
       short int permutation_j = local_permutations[instance * max_num_indices + j];
       if (permutation_j == 0){{
-        break; // we are done with the row, we encounter space reserved for union
+        col_offset += 1; // done with the column since it's reserved for union empty space
+        continue; // we encountered space reserved for union, skip
       }}
       if (permutation_j < 0){{
         // this block position exists, we need to get the negative of it
@@ -343,6 +353,7 @@ void compute_hessian_and_gradient_with_compression(
   {"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}
   {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}
   {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+  {"".join([f"const unsigned int* {x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
   const unsigned int* segment_indices,            // where to place the gradient for each segment of the local gradient / hessian we generated
   const unsigned short int* segment_sizes,        // how large is each segment of the gradient before compression
   const short int* local_permutations,            // how do i locally compress the hessian and gradient
@@ -383,12 +394,14 @@ void compute_hessian_and_gradient_with_compression(
   '''
       # now we add the for loop to instantiate the known gradient sizes template functions
       for size in self.__unique_gradient_sizes:
-        self.__kernelString += f'''
+        if size != 0:
+          self.__kernelString += f'''
       case {size}:
         compute_hessian_and_gradient_global_function<{size}><<<(unique_gradient_sizes_instance_count[i] + 255) / 256, 256, 0, streams[i]>>>(
           {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
           {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
           {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+          {"".join([f"{x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
           segment_indices,            // where to place the gradient for each segment of the local gradient / hessian we generated
           segment_sizes,        // how large is each segment of the gradient before compression
           local_permutations,            // how do i locally compress the hessian and gradient
@@ -433,6 +446,7 @@ void compute_hessian_and_gradient_with_compression(
         *(ctypes.c_void_p for _ in sortedDatas),             # const double* for each data array
         *(ctypes.c_void_p for _ in sortedConnectivities),     # const unsigned int* for each connectivity index array
         *(ctypes.c_void_p for _ in (x for x in sortedConnectivities if x.dimension == 0)),  # const unsigned int* for CSR arrays
+        *(ctypes.c_void_p for x in sortedPrimitiveUnions),    # const unsigned int* for each primitive union counts array
         # Other inputs
         ctypes.c_void_p,    # segment_indices
         ctypes.c_void_p,    # segment_sizes
@@ -461,6 +475,7 @@ void compute_hessian_and_gradient_with_compression(
         *(ctypes.c_void_p for _ in sortedDatas),             # const double* for each data array
         *(ctypes.c_void_p for _ in sortedConnectivities),     # const unsigned int* for each connectivity index array
         *(ctypes.c_void_p for _ in (x for x in sortedConnectivities if x.dimension == 0)),  # const unsigned int* for CSR arrays
+        *(ctypes.c_void_p for x in sortedPrimitiveUnions),    # const unsigned int* for each primitive union counts array
         # Other inputs
         ctypes.c_void_p,    # segment_indices
         ctypes.c_void_p,    # segment_sizes
@@ -495,6 +510,32 @@ void compute_hessian_and_gradient_with_compression(
     print("Unique gradient sizes cpu before hessian kernel:", giKernel.outputUniqueGradientSizesCPU)
     print("Num unique gradient sizes cpu before hessian kernel:", giKernel.numUniqueGradientSizesCPU)
     assert self.__kernel is not None
+    ## let's save all the inputs
+    attributes = [x.get() for x in attributeArgs]
+    gikernel_stuffs = [x.get() for x in [
+      giKernel.outputIndices,
+      giKernel.outputSizes,
+      giKernel.outputPermutations,
+      lookups,
+      giKernel.outputCompressedCoordinateCountsOuter,
+      giKernel.outputGroupedIndicesInner,
+      giKernel.outputGroupedIndicesOuter
+    ]]
+    extra_cint_args = [0, giKernel.maxNumIndicesNeeded, self.__projection_method]
+    outputs = [x.get() for x in [gradient, hessian_blocks, diagonal]]
+    unique_gradient_sizes_cpu = giKernel.outputUniqueGradientSizesCPU
+    num_unique_gradient_sizes_cpu = giKernel.numUniqueGradientSizesCPU
+
+    # now we save everything in a numpy npz file
+    import numpy as np
+    np.savez("dumped_kernel_data.npz",
+             attributes=np.array(attributes, dtype=object),
+             gikernel_stuffs=np.array(gikernel_stuffs, dtype=object),
+             extra_cint_args=np.array(extra_cint_args),
+             outputs=np.array(outputs, dtype=object),
+             unique_gradient_sizes_cpu=np.array(unique_gradient_sizes_cpu),
+             num_unique_gradient_sizes_cpu=np.array(num_unique_gradient_sizes_cpu))
+
     self.__kernel(
       *[self.__to_void_p(x) for x in attributeArgs],
       self.__to_void_p(giKernel.outputIndices),

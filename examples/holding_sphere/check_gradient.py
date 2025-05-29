@@ -140,6 +140,7 @@ print("Gradient per skin vertex:", gradient_per_skin_vertex)
 ################################################################################
 ## manually compute gradient
 ################################################################################
+final_result = np.zeros(13)
 total_count = 0
 for vertices in skin_vertex_categorized:
   for vertex in vertices:
@@ -189,6 +190,8 @@ for vertices in skin_vertex_categorized:
 
     summation_squares_ours = np.sum(grad ** 2)
     summation_squares_produced = sum([x**2 for x in computed_gradient[total_count * 14: (total_count + 1) * 14]])
+    # print(f"ours: {grad.flatten()}")
+    # print(f"comp: {computed_gradient[total_count * 14: (total_count + 1) * 14]}")
     assert (summation_squares_ours - summation_squares_produced) < 1e-6, f"summation squares not equal, {summation_squares_ours} != {summation_squares_produced}"
 
     # ok now we need to get the corresponding indices
@@ -214,9 +217,31 @@ for vertices in skin_vertex_categorized:
 
     # print("--------------------------------------------------------")
     assert (np.linalg.norm(indices_ours - outputIndices[total_count * 14 : (total_count + 1) * 14]) == 0), f"indices not equal, {indices_ours} != {outputIndices[total_count * 14 : (total_count + 1) * 14]}"
+
+    ## check the number of unique indices
+    unique_indices_ours = np.unique(indices_ours)
+    # print(f"unique indices ours: {unique_indices_ours}, {len(unique_indices_ours)}")
+    # for item in unique_indices_ours:
+    #   if item >= 12:
+    #     raise ValueError(f"index {item} is out of bounds, should be less than 13")
     # print("--------------------------------------------------------")
-
+    # if len(unique_indices_ours) == 2 and 0 in unique_indices_ours:
+    #   # print(unique_indices_ours, total_count)
+    #   for j in range(len(grad.flatten())):
+    #     final_result[indices_ours[j]] += computed_gradient[total_count * 14: (total_count + 1) * 14][j]
+    # if len(unique_indices_ours) == 3 and 0 in unique_indices_ours:
+    #   # print(unique_indices_ours, total_count)
+    #   for j in range(len(grad.flatten())):
+    #     final_result[indices_ours[j]] += computed_gradient[total_count * 14: (total_count + 1) * 14][j]
     total_count += 1
-    # exit()
 
-  # exit()
+
+for i in range(total_count):
+  indices = outputIndices[i * 14 : (i + 1) * 14].flatten()
+  result = computed_gradient[i * 14: (i + 1) * 14]
+
+  for j in range(len(indices)):
+    final_result[indices[j]] += result[j]
+
+print("Final result")
+print(final_result)

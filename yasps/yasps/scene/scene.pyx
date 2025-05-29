@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
   from yasps.mesh import mesh  # Only imported for type hints
   from yasps.attribute import attribute
+  from yasps.minimizer import minimizer as yminimizer
 
 import keyword
 class scene:
@@ -31,7 +32,7 @@ class scene:
     self.__attributes: Dict[str, attribute] = {}
     self.__energies: Dict[int, attribute] = {}
     from yasps.minimizer import minimizer
-    self.__minimizer: minimizer = minimizer()
+    self.__minimizer: yminimizer = minimizer()
 
 
 
@@ -53,6 +54,10 @@ class scene:
   @property
   def attributes(self)->Dict[str, attribute]:
     return self.__attributes
+
+  @property
+  def minimizer(self) -> yminimizer:
+    return self.__minimizer
 
 
   def isValidName(self, name: str)->bool:
