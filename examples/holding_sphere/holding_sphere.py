@@ -221,48 +221,38 @@ vertices_union.addAttribute("surface_repulse_energy", computed_attribute = energ
 s0.addEnergy(energy, gradient_only = True)
 s0.addMinimizeTarget([handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"]])
 result = s0.minimizeEnergy()
-print("Minimization result:", result[0].get(), result[1].get())
-print("Gradient is:", s0.minimizer.gradient.get())
-exit()
+import pyvista as pv
 
+surface_vertices = vertices_union["current_position"].compute().value.get().reshape(-1, 3)
+# show all the surface vertices
+# Create a PolyData object with the skeleton_points
+point_cloud = pv.PolyData(surface_vertices)
+# You can add spheres to make the surface_vertices more visible (optional)
+point_cloud["size"] = np.full(surface_vertices.shape[0], 1.0)  # optional scalar array
+# Create central sphere
+center_sphere = pv.Sphere(radius=1.0, center=(0.0, 0.0, 0.0))
 
+# Setup plotter
+plotter = pv.Plotter()
+plotter.add_mesh(point_cloud, color='red', point_size=5, render_points_as_spheres=True)
+plotter.add_mesh(center_sphere, color='blue', opacity=0.3)  # Add semi-transparent blue sphere
+plotter.show(interactive_update=True)
+# Iterative update loop
+for i in range(10000):
+  result = s0.minimizeEnergy()
+  delta_lvl1_theta = result[0]
+  delta_lvl2_theta = result[1]
 
+  handMesh.bone_level_1["theta"].updateValue(
+      handMesh.bone_level_1["theta"].value + 0.001 * delta_lvl1_theta
+  )
+  handMesh.bone_level_2["theta"].updateValue(
+      handMesh.bone_level_2["theta"].value + 0.001 * delta_lvl2_theta
+  )
 
+  surface_vertices = vertices_union["current_position"].compute().value.get().reshape(-1, 3)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# surface_vertices = vertices_union["current_position"].compute().value.get().reshape(-1, 3)
-# print(surface_vertices[40, :])
-
-# print(surface_vertices[79, :])
-
-
-
-
-
-# import pyvista as pv
-
-# # show all the surface vertices
-# # Create a PolyData object with the skeleton_points
-# point_cloud = pv.PolyData(surface_vertices)
-
-# # You can add spheres to make the surface_vertices more visible (optional)
-# point_cloud["size"] = np.full(surface_vertices.shape[0], 10.0)  # optional scalar array
-
-# # Plotting
-# plotter = pv.Plotter()
-# plotter.add_mesh(point_cloud, color='red', point_size=5, render_points_as_spheres=True)
-# plotter.show()
+  # Update the point positions
+  point_cloud.points = surface_vertices
+  plotter.render()
+  plotter.update()

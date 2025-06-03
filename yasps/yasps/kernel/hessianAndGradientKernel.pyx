@@ -389,7 +389,6 @@ void compute_hessian_and_gradient_with_compression(
   }}
 
   for (unsigned int i = 0; i < num_unique_gradient_sizes; i++) {{
-    printf("%uth unique gradient size: %u\\n", i, unique_gradient_sizes[i]);
     switch(unique_gradient_sizes[i]){{
   '''
       # now we add the for loop to instantiate the known gradient sizes template functions
@@ -397,7 +396,7 @@ void compute_hessian_and_gradient_with_compression(
         if size != 0:
           self.__kernelString += f'''
       case {size}:
-        compute_hessian_and_gradient_global_function<{size}><<<(unique_gradient_sizes_instance_count[i] + 255) / 256, 256, 0, streams[i]>>>(
+        compute_hessian_and_gradient_global_function<{size}><<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0, streams[i]>>>(
           {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
           {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
           {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
@@ -510,31 +509,31 @@ void compute_hessian_and_gradient_with_compression(
     print("Unique gradient sizes cpu before hessian kernel:", giKernel.outputUniqueGradientSizesCPU)
     print("Num unique gradient sizes cpu before hessian kernel:", giKernel.numUniqueGradientSizesCPU)
     assert self.__kernel is not None
-    ## let's save all the inputs
-    attributes = [x.get() for x in attributeArgs]
-    gikernel_stuffs = [x.get() for x in [
-      giKernel.outputIndices,
-      giKernel.outputSizes,
-      giKernel.outputPermutations,
-      lookups,
-      giKernel.outputCompressedCoordinateCountsOuter,
-      giKernel.outputGroupedIndicesInner,
-      giKernel.outputGroupedIndicesOuter
-    ]]
-    extra_cint_args = [0, giKernel.maxNumIndicesNeeded, self.__projection_method]
-    outputs = [x.get() for x in [gradient, hessian_blocks, diagonal]]
-    unique_gradient_sizes_cpu = giKernel.outputUniqueGradientSizesCPU
-    num_unique_gradient_sizes_cpu = giKernel.numUniqueGradientSizesCPU
+    # ## let's save all the inputs
+    # attributes = [x.get() for x in attributeArgs]
+    # gikernel_stuffs = [x.get() for x in [
+    #   giKernel.outputIndices,
+    #   giKernel.outputSizes,
+    #   giKernel.outputPermutations,
+    #   lookups,
+    #   giKernel.outputCompressedCoordinateCountsOuter,
+    #   giKernel.outputGroupedIndicesInner,
+    #   giKernel.outputGroupedIndicesOuter
+    # ]]
+    # extra_cint_args = [0, giKernel.maxNumIndicesNeeded, self.__projection_method]
+    # outputs = [x.get() for x in [gradient, hessian_blocks, diagonal]]
+    # unique_gradient_sizes_cpu = giKernel.outputUniqueGradientSizesCPU
+    # num_unique_gradient_sizes_cpu = giKernel.numUniqueGradientSizesCPU
 
-    # now we save everything in a numpy npz file
-    import numpy as np
-    np.savez("dumped_kernel_data.npz",
-             attributes=np.array(attributes, dtype=object),
-             gikernel_stuffs=np.array(gikernel_stuffs, dtype=object),
-             extra_cint_args=np.array(extra_cint_args),
-             outputs=np.array(outputs, dtype=object),
-             unique_gradient_sizes_cpu=np.array(unique_gradient_sizes_cpu),
-             num_unique_gradient_sizes_cpu=np.array(num_unique_gradient_sizes_cpu))
+    # # now we save everything in a numpy npz file
+    # import numpy as np
+    # np.savez("dumped_kernel_data.npz",
+    #          attributes=np.array(attributes, dtype=object),
+    #          gikernel_stuffs=np.array(gikernel_stuffs, dtype=object),
+    #          extra_cint_args=np.array(extra_cint_args),
+    #          outputs=np.array(outputs, dtype=object),
+    #          unique_gradient_sizes_cpu=np.array(unique_gradient_sizes_cpu),
+    #          num_unique_gradient_sizes_cpu=np.array(num_unique_gradient_sizes_cpu))
 
     self.__kernel(
       *[self.__to_void_p(x) for x in attributeArgs],

@@ -147,7 +147,7 @@ void compute(
   double* result,
   unsigned int MAX_INDEX
 ){{
-  {attributeName}_global_function<<<(MAX_INDEX + 255) / 256, 256>>>(
+  {attributeName}_global_function<<<(MAX_INDEX + 31) / 32, 32>>>(
     {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
     {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
     {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}

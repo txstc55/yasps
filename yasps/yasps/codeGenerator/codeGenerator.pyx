@@ -223,7 +223,7 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
 ''')
         else:
           self.__code_strings.append(f'''
-  double {current.fullName}_local_data_temp[{current.size}];
+  double {current.fullName}_local_data_temp[{current.size}] = {{0}};
 ''')
 #         if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
 #           # we also need to check if the indexing is already a part of the input
@@ -489,12 +489,12 @@ __device__ void {attributeName}_device_function(
     else:
       children_attribute_name = children_attribute.fullName
     self.__code_strings.append(f'''
-  double {current.fullName}_local_data_temp[{current.size}];
+  double {current.fullName}_local_data_temp[{current.size}] = {{0}};
   for (unsigned int i = 0; i < {current.through.dimension}; i++){{
   // grab the index for the through attribute
     unsigned int {current.through.fullName}_index = {current.through.code_generation_index_name}[{current.through.fromPrimitive.fullName}_index * {current.through.dimension} + i];
     // now for each row, grab the data
-    double {current.fullName}_local_data_row_temp[{children_attribute.size}];
+    double {current.fullName}_local_data_row_temp[{children_attribute.size}] = {{0}};
     {children_attribute_name}_device_function(
       {"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}
       {"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}
@@ -555,7 +555,7 @@ __device__ void {attributeName}_device_function(
     // grab the index for the through attribute
     unsigned int {current.through.fullName}_index = {current.through.code_generation_index_name}[i];
     // now for each row, grab the data
-    double {current.fullName}_local_data_row_temp[{children_attribute.size}];
+    double {current.fullName}_local_data_row_temp[{children_attribute.size}] = {{0}};
     {children_attribute_name}_device_function(
       {"".join([f'{x.code_generation_data_name}, ' for x in sorted(children_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}
       {"".join([f'{x.code_generation_index_name}, ' for x in sorted(children_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}
