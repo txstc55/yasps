@@ -254,200 +254,6 @@ class energy:
     else:
       raise ValueError(f"energy.__generateGradientThroughRecursion: operator {current.operator} is not supported in path dict.")
 
-
-  def __gennerateGlobalJacobianForEnergy(self, current: attribute, wrt: List[attribute]):
-    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
-    # we are at energy
-    # we get the children
-    # and we simply assemble the final gradient by
-    # multiplying the local gradient
-    # with the global jacobian produced by all of its children
-    children = self.__path_dict[current]
-    current_gradient: attribute = current.correspondance[f'd_{current.fullName}_d_{"__".join([x.fullName for x in children])}']
-    children_jacobian: List[attribute] = []
-    for child in children:
-      children_jacobian.append(self.__generateGradientThroughRecursion(child, wrt))
-    # then we first assemble everything in order
-    next_jacobian_children = []
-    next_jacobian_rows = sum([x.size for x in children])
-    next_jacobian_cols = sum([x.cols for x in children_jacobian])
-    next_jacobian_children = [attribute(float_value = 0.0) for _ in range(next_jacobian_rows * next_jacobian_cols)]
-    # now we fill the jacobian
-    row_offset = 0
-    col_offset = 0
-    for item in children_jacobian:
-      for i in range(item.rows):
-        for j in range(item.cols):
-          next_jacobian_children[(i + row_offset) * next_jacobian_cols + j + col_offset] = item[i, j]
-      col_offset += item.cols
-      row_offset += item.rows
-    next_jacobian = attribute.to_array(next_jacobian_children, rows = next_jacobian_rows, cols = next_jacobian_cols)
-    full_gradient = current_gradient.mul_explicit(next_jacobian)
-    current.correspondance.addAttribute(gradient_attribute_name, computed_attribute = full_gradient)
-    return full_gradient
-
-  def __generateGlobalJacobianForJoin(self, current: attribute, wrt: List[attribute]):
-    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
-    if gradient_attribute_name in current.correspondance.attributes:
-      result = current.correspondance[gradient_attribute_name]
-      return result
-    # ok to evaluate the full jacobian at join
-    # we first note that the previous operation doesn't produce the local jacobian for the node with the join operation
-    # instead it produces the local jacobian for the joined child
-    # so what we need to do is get the local jacobian for the joind child
-    # then get the global jacobian of this child's children
-    # then multiply the two we get the global jacobian for the joined child
-    # we will then join that global jacobian to get the global jacobian of the joined node
-    joined_child = current.children[0]
-    child_global_jacobian_name = f'd_{joined_child.fullName}_d_{"__".join([x.fullName for x in wrt])}'
-
-
-    joined_child_global_jacobian: attribute
-    if child_global_jacobian_name in joined_child.correspondance.attributes:
-      # we already have the jacobian
-      joined_child_global_jacobian = joined_child.correspondance[child_global_jacobian_name]
-    else:
-      next_children = self.__path_dict[current]
-      joined_child_local_jacobian_name = f'd_{joined_child.fullName}_d_{"__".join([x.fullName for x in next_children])}'
-      joined_child_local_jacobian = joined_child.correspondance[joined_child_local_jacobian_name]
-      next_children_jacobians = []
-      for child in next_children:
-        # we get the global jacobian for the child
-        child_jacobian = self.__generateGradientThroughRecursion(child, wrt)
-        next_children_jacobians.append(child_jacobian)
-      # ok we now assemble the global jacobian for the children of the joined child
-      children_global_jacobian_items = []
-      children_global_jacobian_rows = sum([x.size for x in next_children])
-      children_global_jacobian_cols = sum([x.cols for x in next_children_jacobians])
-      children_global_jacobian_items = [attribute(float_value = 0.0) for _ in range(children_global_jacobian_rows * children_global_jacobian_cols)]
-      # now we fill the jacobian
-      row_offset = 0
-      col_offset = 0
-      for item in next_children_jacobians:
-        for i in range(item.rows):
-          for j in range(item.cols):
-            children_global_jacobian_items[(i + row_offset) * children_global_jacobian_cols + j + col_offset] = item[i, j]
-        col_offset += item.cols
-        row_offset += item.rows
-      children_global_jacobian = attribute.to_array(children_global_jacobian_items, rows = children_global_jacobian_rows, cols = children_global_jacobian_cols)
-      # we will now multiply the local jacobian with the global jacobian
-      child_global_jacobian = joined_child_local_jacobian.mul_explicit(children_global_jacobian)
-      # now we first add the attribute
-      if child_global_jacobian_name in joined_child.correspondance.attributes:
-        # we already have the jacobian
-        joined_child_global_jacobian = joined_child.correspondance[child_global_jacobian_name]
-      else:
-        joined_child_global_jacobian = joined_child.correspondance.addAttribute(child_global_jacobian_name, computed_attribute = child_global_jacobian)
-
-    # we then perform the join operation
-    res = current.correspondance.addAttribute(gradient_attribute_name+"_unresized", through = current.through, source = joined_child_global_jacobian)
-    # ok now we need to reorder them because the true jacobian is not stacked together
-    assert (joined_child_global_jacobian.rows * current.through.dimension) == current.size, f"energy.__generateGlobalJacobianForJoin: joined child global jacobian rows {joined_child_global_jacobian.rows} * current.through.dimension {current.through.dimension} is not equal to current size {current.size}"
-    actual_global_jacobian_rows = current.size
-    actual_global_jacobian_cols = joined_child_global_jacobian.cols * current.through.dimension
-    actual_global_jacobian_items = [attribute(float_value = 0.0) for _ in range(actual_global_jacobian_rows * actual_global_jacobian_cols)]
-    # now we put the items in the right order
-    for index in range(current.through.dimension):
-      for i in range(joined_child_global_jacobian.rows):
-        for j in range(joined_child_global_jacobian.cols):
-          actual_global_jacobian_items[(index * joined_child_global_jacobian.rows + i) * actual_global_jacobian_cols + (index * joined_child_global_jacobian.cols) + j] = res[index, i * joined_child_global_jacobian.cols + j]
-
-    actual_global_jacobian = attribute.to_array(actual_global_jacobian_items, rows = actual_global_jacobian_rows, cols = actual_global_jacobian_cols)
-    current.correspondance.addAttribute(gradient_attribute_name, computed_attribute = actual_global_jacobian)
-    return actual_global_jacobian
-
-
-  def __generateGlobalJacobianForUnion(self, current: attribute, wrt: List[attribute]):
-    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
-    # the procedure for union is similar to join
-    # except that we need to deal with each of the children separately
-    # then perform the union again
-    # and we also need to make sure the union attribute has the same dimension
-    # so we also technically need to expand the global jacobian of each child
-    # to make sure they have the same dimension
-    unioned_children_global_jacobians: List[attribute] = []
-    children_on_path: List[attribute] = self.__path_dict[current]
-    for unioned_child in current.children:
-      # print(f"We are at unioned child {unioned_child.fullName}")
-      # first we determine if this global jacobian is already computed
-      unioned_child_global_jacobian_name = gradient_attribute_name
-      unioned_child_global_jacobian: attribute
-      if unioned_child_global_jacobian_name in unioned_child.correspondance.attributes:
-        # we already have the jacobian
-        unioned_child_global_jacobian = unioned_child.correspondance[unioned_child_global_jacobian_name]
-        unioned_children_global_jacobians.append(unioned_child_global_jacobian)
-        # print(f"Unioned child already has a global jacobian, array length: {len(unioned_children_global_jacobians)}")
-      else:
-        # ok we first need to find out which children are being used
-        used_children: List[attribute] = []
-        for child in children_on_path:
-          if child in self.__unioned_child_to_its_children[unioned_child]:
-            # ok we will add this child since its on the path
-            used_children.append(child)
-        if len(used_children) == 0:
-          unioned_children_global_jacobians.append(attribute.zeros(unioned_child.size, 1))
-          # print(f"Unioned child has no need to compute jacobian, array length: {len(unioned_children_global_jacobians)}")
-          continue
-
-        # get the child neighbor jacobian
-        child_jacobian_name = f'd_{unioned_child.fullName}_d_{"__".join([x.fullName for x in used_children])}'
-        child_local_jacobian = unioned_child.correspondance[child_jacobian_name]
-
-        # ok now we get the used children's global jacobian
-        used_children_global_jacobians: List[attribute] = []
-        for child in used_children:
-          # we get the global jacobian for the child
-          used_children_global_jacobian = self.__generateGradientThroughRecursion(child, wrt)
-          used_children_global_jacobians.append(used_children_global_jacobian)
-
-        # ok now we construct the global jacobian for the used children
-        children_global_jacobian_items = []
-        children_global_jacobian_rows = sum([x.size for x in used_children])
-        children_global_jacobian_cols = sum([x.cols for x in used_children_global_jacobians])
-        children_global_jacobian_items = [attribute(float_value = 0.0) for _ in range(children_global_jacobian_rows * children_global_jacobian_cols)]
-        # now we fill the jacobian
-        row_offset = 0
-        col_offset = 0
-        for item in used_children_global_jacobians:
-          for i in range(item.rows):
-            for j in range(item.cols):
-              children_global_jacobian_items[(i + row_offset) * children_global_jacobian_cols + j + col_offset] = item[i, j]
-          col_offset += item.cols
-          row_offset += item.rows
-        children_global_jacobian = attribute.to_array(children_global_jacobian_items, rows = children_global_jacobian_rows, cols = children_global_jacobian_cols)
-        # we will now multiply the local jacobian with the global jacobian
-        unioned_child_global_jacobian = child_local_jacobian.mul_explicit(children_global_jacobian)
-        unioned_children_global_jacobians.append(unioned_child_global_jacobian)
-        # print(f"Unioned child add a jacobian now, array length: {len(unioned_children_global_jacobians)}")
-
-    # ok now that we have all of the children's jacobian
-    # what we need to do is to get the largest dimension
-    # in reality, they all should have the same rows
-    # only different columns
-    max_cols = max([x.cols for x in unioned_children_global_jacobians])
-    max_rows = max([x.rows for x in unioned_children_global_jacobians])
-    # ok now we expand each of the unioned children
-    for (index, jacobian) in enumerate(unioned_children_global_jacobians):
-      # let's do an assert to see if the rows are the same
-      assert jacobian.rows == max_rows, f"energy.__generateGlobalJacobianForUnion: jacobian rows {jacobian.rows} is not equal to max rows {max_rows}"
-      if jacobian.name == gradient_attribute_name:
-        assert jacobian.cols == max_cols, f"energy.__generateGlobalJacobianForUnion: jacobian cols {jacobian.cols} is not equal to max cols {max_cols}"
-        assert jacobian.rows == max_rows, f"energy.__generateGlobalJacobianForUnion: jacobian rows {jacobian.rows} is not equal to max rows {max_rows}"
-        continue
-      expanded_jacobian_list = [0.0 for _ in range(max_rows * max_cols)]
-      # now we fill the jacobian
-      for i in range(jacobian.rows):
-        for j in range(jacobian.cols):
-          expanded_jacobian_list[i * max_cols + j] = jacobian[i, j]
-      expanded_jacobian = attribute.to_array(expanded_jacobian_list, rows = max_rows, cols = max_cols)
-      current.children[index].correspondance.addAttribute(gradient_attribute_name, computed_attribute = expanded_jacobian)
-      # print(f"Adding attribute with name {gradient_attribute_name} to child {current.children[index].correspondance.fullName}")
-
-      # well we have expanded the jacobian for each child
-    #   # perform the union operation
-    res = current.correspondance.addAttribute(gradient_attribute_name)
-    return res
-
   def __generateNeighborJacobianForEnergy(self, parent: attribute, children: List[attribute], differentiater) -> None:
     # we are at the top level
     # compute the gradient at this level wrt all its children
@@ -483,6 +289,93 @@ class energy:
       parent.correspondance.addAttribute(local_hessian_name, computed_attribute = local_hessian)
     return
 
+  def __gennerateGlobalJacobianForEnergy(self, current: attribute, wrt: List[attribute]):
+    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+    if gradient_attribute_name in current.correspondance.attributes:
+      # we already have the gradient
+      return current.correspondance[gradient_attribute_name]
+    # we are at energy
+    # we get the children
+    # and we simply assemble the final gradient by
+    # multiplying the local gradient
+    # with the global jacobian produced by all of its children
+    children = self.__path_dict[current]
+    current_gradient: attribute = current.correspondance[f'd_{current.fullName}_d_{"__".join([x.fullName for x in children])}']
+    children_global_jacobian_name = f'd_{"__".join([x.fullName for x in children])}_d_{"__".join([x.fullName for x in wrt])}'
+    next_jacobian: attribute
+    if children_global_jacobian_name in current.correspondance.attributes:
+      next_jacobian = current.correspondance[children_global_jacobian_name]
+    else:
+      children_jacobian: List[attribute] = []
+      for child in children:
+        children_jacobian.append(self.__generateGradientThroughRecursion(child, wrt))
+      # then we first assemble everything in order
+      next_jacobian_children = []
+      next_jacobian_rows = sum([x.size for x in children])
+      next_jacobian_cols = sum([x.cols for x in children_jacobian])
+      next_jacobian_children = [attribute(float_value = 0.0) for _ in range(next_jacobian_rows * next_jacobian_cols)]
+      # now we fill the jacobian
+      row_offset = 0
+      col_offset = 0
+      for item in children_jacobian:
+        for i in range(item.rows):
+          for j in range(item.cols):
+            next_jacobian_children[(i + row_offset) * next_jacobian_cols + j + col_offset] = item[i, j]
+        col_offset += item.cols
+        row_offset += item.rows
+      next_jacobian = attribute.to_array(next_jacobian_children, rows = next_jacobian_rows, cols = next_jacobian_cols)
+      current.correspondance.addAttribute(children_global_jacobian_name, computed_attribute = next_jacobian)
+    full_gradient = current_gradient.mul_explicit(next_jacobian)
+    current.correspondance.addAttribute(gradient_attribute_name, computed_attribute = full_gradient)
+    return full_gradient
+
+  def __gennerateGlobalHessianForEnergy(self, current: attribute, wrt: List[attribute]) -> attribute:
+    # here we go, we will start computing the global hessian for the energy
+    global_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    if global_hessian_name in current.correspondance.attributes:
+      return current.correspondance[global_hessian_name]
+
+    # now we first construct the second part of the hessian
+    children = self.__path_dict[current]
+    local_gradient_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in children])}'
+    local_gradient = current.correspondance[local_gradient_name]
+
+    global_jacobian_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+    global_jacobian = current.correspondance[global_jacobian_name]
+
+    # now we first assemble everything in order
+    second_part_hessian_array = [0.0 for _ in range(global_jacobian.cols * global_jacobian.cols)]
+    # now for each child, we will fill the hessian
+    block_offset = 0
+    for child in children:
+      child_global_hessian = self.__generateHessianThroughRecursion(child, wrt)
+      # now the child global hessian is size of child.size x hessian_size x hessian_size
+      child_size = child.size # this marks the number of global hessian we have
+      hessian_size = child_global_hessian.size // child_size # this is the size of the hessian for each child
+      assert hessian_size * child_size == child_global_hessian.size, f"energy.__gennerateGlobalHessianForEnergy: hessian size {hessian_size} * child size {child_size} is not equal to child global hessian size {child_global_hessian.size}"
+      hessian_rows = int(math.sqrt(hessian_size))
+      assert hessian_rows * hessian_rows == hessian_size, f"energy.__gennerateGlobalHessianForEnergy: hessian rows {hessian_rows} * hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
+      hessian_cols = hessian_rows # since its a square matrix
+      for i in range(hessian_rows):
+        for j in range(hessian_cols):
+          for k in range(child_size):
+            second_part_hessian_array[(block_offset + i) * global_jacobian.cols + (block_offset + j)] += local_gradient[block_offset + k] * child_global_hessian[k * hessian_size + i * hessian_cols + j]
+      block_offset += child_size # we move the block offset to the next child
+    # ok now we have the second part of the hessian
+    # we will now construct the global hessian
+    second_part_hessian = attribute.to_array(second_part_hessian_array, rows = global_jacobian.cols, cols = global_jacobian.cols)
+
+    # ok then we construct the first part of the hessian
+    local_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in children])}'
+
+    local_hessian = current.correspondance[local_hessian_name]
+    if second_part_hessian.isZero > 0:
+      local_hessian = local_hessian.spd(self.__projection_method)
+      second_term_is_zero = True
+
+    final_hessian = global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(global_jacobian)).add_explicit(second_part_hessian)
+    current.correspondance.addAttribute(global_hessian_name, computed_attribute = final_hessian)
+    return final_hessian
 
   def __generateNeighborJacobianForJoin(self, parent: attribute, children: List[attribute], differentiater) -> None:
     joined_child = parent.children[0] # for join operation we first determine the child being joined
@@ -539,6 +432,167 @@ class energy:
       merged_hessian = attribute.to_array(all_hessian_results, rows = hessian_num_rows * num_hessians, cols = hessian_num_cols)
       joined_child.correspondance.addAttribute(local_hessian_name, computed_attribute = merged_hessian)
     return
+
+  def __generateGlobalJacobianForJoin(self, current: attribute, wrt: List[attribute]):
+    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+    if gradient_attribute_name in current.correspondance.attributes:
+      result = current.correspondance[gradient_attribute_name]
+      return result
+    # ok to evaluate the full jacobian at join
+    # we first note that the previous operation doesn't produce the local jacobian for the node with the join operation
+    # instead it produces the local jacobian for the joined child
+    # so what we need to do is get the local jacobian for the joind child
+    # then get the global jacobian of this child's children
+    # then multiply the two we get the global jacobian for the joined child
+    # we will then join that global jacobian to get the global jacobian of the joined node
+    joined_child = current.children[0]
+    joined_child_global_jacobian_name = f'd_{joined_child.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+    joined_child_global_jacobian: attribute
+    if joined_child_global_jacobian_name in joined_child.correspondance.attributes:
+      # we already have the jacobian
+      joined_child_global_jacobian = joined_child.correspondance[joined_child_global_jacobian_name]
+    else:
+      next_children = self.__path_dict[current]
+      joined_child_local_jacobian_name = f'd_{joined_child.fullName}_d_{"__".join([x.fullName for x in next_children])}'
+      joined_child_local_jacobian = joined_child.correspondance[joined_child_local_jacobian_name]
+
+      children_global_jacobian_name = f'd_{"__".join([x.fullName for x in next_children])}_d_{"__".join([x.fullName for x in wrt])}'
+      children_global_jacobian: attribute
+      if children_global_jacobian_name in joined_child.correspondance.attributes:
+        children_global_jacobian = joined_child.correspondance[children_global_jacobian_name]
+      else:
+        next_children_jacobians = []
+        for child in next_children:
+          # we get the global jacobian for the child
+          child_jacobian = self.__generateGradientThroughRecursion(child, wrt)
+          next_children_jacobians.append(child_jacobian)
+        # ok we now assemble the global jacobian for the children of the joined child
+        children_global_jacobian_items = []
+        children_global_jacobian_rows = sum([x.size for x in next_children])
+        children_global_jacobian_cols = sum([x.cols for x in next_children_jacobians])
+        children_global_jacobian_items = [attribute(float_value = 0.0) for _ in range(children_global_jacobian_rows * children_global_jacobian_cols)]
+        # now we fill the jacobian
+        row_offset = 0
+        col_offset = 0
+        for item in next_children_jacobians:
+          for i in range(item.rows):
+            for j in range(item.cols):
+              children_global_jacobian_items[(i + row_offset) * children_global_jacobian_cols + j + col_offset] = item[i, j]
+          col_offset += item.cols
+          row_offset += item.rows
+        children_global_jacobian = attribute.to_array(children_global_jacobian_items, rows = children_global_jacobian_rows, cols = children_global_jacobian_cols)
+        joined_child.correspondance.addAttribute(children_global_jacobian_name, computed_attribute = children_global_jacobian)
+
+      # we will now multiply the local jacobian with the global jacobian
+      child_global_jacobian = joined_child_local_jacobian.mul_explicit(children_global_jacobian)
+      # now we first add the attribute
+      if joined_child_global_jacobian_name in joined_child.correspondance.attributes:
+        # we already have the jacobian
+        joined_child_global_jacobian = joined_child.correspondance[joined_child_global_jacobian_name]
+      else:
+        joined_child_global_jacobian = joined_child.correspondance.addAttribute(joined_child_global_jacobian_name, computed_attribute = child_global_jacobian)
+
+    # we then perform the join operation
+    res = current.correspondance.addAttribute(gradient_attribute_name+"_unresized", through = current.through, source = joined_child_global_jacobian)
+    # ok now we need to reorder them because the true jacobian is not stacked together
+    assert (joined_child_global_jacobian.rows * current.through.dimension) == current.size, f"energy.__generateGlobalJacobianForJoin: joined child global jacobian rows {joined_child_global_jacobian.rows} * current.through.dimension {current.through.dimension} is not equal to current size {current.size}"
+    actual_global_jacobian_rows = current.size
+    actual_global_jacobian_cols = joined_child_global_jacobian.cols * current.through.dimension
+    actual_global_jacobian_items = [attribute(float_value = 0.0) for _ in range(actual_global_jacobian_rows * actual_global_jacobian_cols)]
+    # now we put the items in the right order
+    for index in range(current.through.dimension):
+      for i in range(joined_child_global_jacobian.rows):
+        for j in range(joined_child_global_jacobian.cols):
+          actual_global_jacobian_items[(index * joined_child_global_jacobian.rows + i) * actual_global_jacobian_cols + (index * joined_child_global_jacobian.cols) + j] = res[index, i * joined_child_global_jacobian.cols + j]
+
+    actual_global_jacobian = attribute.to_array(actual_global_jacobian_items, rows = actual_global_jacobian_rows, cols = actual_global_jacobian_cols)
+    current.correspondance.addAttribute(gradient_attribute_name, computed_attribute = actual_global_jacobian)
+    return actual_global_jacobian
+
+  def __generateGlobalHessianForJoin(self, current: attribute, wrt: List[attribute]) -> attribute:
+    # ok so remember, for join, we have done the local hessian for the joined child
+    # so what we need to do, is to compute the global hessian for the joined child
+    # then accumulate it through the join operation
+    # then rearrange it
+    global_hessian_name = f'd2_{current.children[0].fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    if global_hessian_name in current.correspondance.attributes:
+      return current.correspondance[global_hessian_name]
+
+    # first we need to get the global hessian for the joined child
+    joined_child: attribute = current.children[0]
+
+    # we now check if the joined child's global hessian has already been computed
+    joined_child_global_hessian: attribute
+    joined_child_global_hessian_name = f'd2_{joined_child.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    if joined_child_global_hessian_name in joined_child.correspondance.attributes:
+      # we already have the global hessian for the joined child
+      joined_child_global_hessian = joined_child.correspondance[joined_child_global_hessian_name]
+    else:
+      num_hessians = joined_child.size # how many hessians we have
+      next_children = self.__path_dict[current]
+      joined_child_local_jacobian_name = f'd_{joined_child.fullName}_d_{"__".join([x.fullName for x in next_children])}'
+      joined_child_local_jacobian = joined_child.correspondance[joined_child_local_jacobian_name]
+      joined_child_local_hessian_name = f'd2_{joined_child.fullName}_d2_{"__".join([x.fullName for x in next_children])}'
+      joined_child_local_hessian = joined_child.correspondance[joined_child_local_hessian_name]
+
+      next_children_global_jacobian_name = f'd_{"__".join([x.fullName for x in next_children])}_d_{"__".join([x.fullName for x in wrt])}'
+      next_children_global_jacobian = joined_child.correspondance[next_children_global_jacobian_name]
+
+      next_children_global_hessian: List[attribute] = []
+      for child in next_children:
+        # we get the global hessian for the child
+        child_global_hessian = self.__generateHessianThroughRecursion(child, wrt)
+        next_children_global_hessian.append(child_global_hessian)
+      next_children_total_size = sum([x.size for x in next_children])
+      local_hessian_size = next_children_total_size * next_children_total_size # what is the size of the local hessian (remember we have a tensor, this is the size of the first and second dimension)
+      assert local_hessian_size * num_hessians == joined_child_local_hessian.size, f"energy.__generateGlobalHessianForJoin: local hessian size {local_hessian_size} * num hessians {num_hessians} is not equal to joined child local hessian size {joined_child_local_hessian.size}"
+      joined_child_global_hessian_items = []
+      for N in range(num_hessians):
+        # we will construct the Nth hessian, because it's a tensor so we need to stack them up
+        nth_joined_child_local_hessian = attribute.to_array([joined_child_local_hessian[i] for i in range(N * local_hessian_size, (N + 1) * local_hessian_size)], rows = local_hessian_size, cols = local_hessian_size)
+        # now we construct the first part of the hessian, which is jacobian * local hessian * jacobian
+        first_part_hessian = next_children_global_jacobian.transpose().mul_explicit(nth_joined_child_local_hessian.mul_explicit(next_children_global_jacobian))
+
+        # get the gradient size
+        local_gradient_size = joined_child_local_jacobian.size // num_hessians # this is the size of the gradient for each hessian
+        assert local_gradient_size * num_hessians == joined_child_local_jacobian.size, f"energy.__generateGlobalHessianForJoin: local gradient size {local_gradient_size} * num hessians {num_hessians} is not equal to joined child local jacobian size {joined_child_local_jacobian.size}"
+
+        # now we will need to add the second part of the hessian
+        second_part_hessian_array = [0.0 for _ in range(next_children_global_jacobian.cols * next_children_global_jacobian.cols)]
+        block_offset = 0
+        index = 0
+        for child in next_children:
+          next_child_global_hessian = next_children_global_hessian[index]
+          # now the child global hessian is size of child.size x hessian_size x hessian_size
+          child_size = child.size # this marks the number of global hessian we have
+          hessian_size = next_child_global_hessian.size // child_size # this is the size of the hessian for each child
+          assert hessian_size * child_size == next_child_global_hessian.size, f"energy.__gennerateGlobalHessianForJoin: hessian size {hessian_size} * child size {child_size} is not equal to child global hessian size {next_child_global_hessian.size}"
+          hessian_rows = int(math.sqrt(hessian_size))
+          assert hessian_rows * hessian_rows == hessian_size, f"energy.__gennerateGlobalHessianForJoin: hessian rows {hessian_rows} * hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
+          hessian_cols = hessian_rows # since its a square matrix
+          for i in range(hessian_rows):
+            for j in range(hessian_cols):
+              for k in range(child_size):
+                second_part_hessian_array[(block_offset + i) * next_children_global_jacobian.cols + (block_offset + j)] += joined_child_local_jacobian[N * joined_child_local_jacobian.cols + k] * next_child_global_hessian[k * hessian_size + i * hessian_cols + j]
+          block_offset += child_size # we move the block offset to the next child
+          index += 1
+        # ok now we have the second part of the hessian
+        # we will now construct the final hessian
+        second_part_hessian = attribute.to_array(second_part_hessian_array, rows = next_children_global_jacobian.cols, cols = next_children_global_jacobian.cols)
+        final_hessian = first_part_hessian.add_explicit(second_part_hessian)
+
+        # now we add the final hessian to the items
+        for i in range(final_hessian.size):
+          joined_child_global_hessian_items.append(final_hessian[i])
+      # so now we have all the hessians stacked up
+      # we perform the join operation
+      # first we construct the joined child global hessian
+      joined_child_global_hessian = attribute.to_array(joined_child_global_hessian_items, rows = num_hessians * next_children_global_jacobian.cols, cols = next_children_global_jacobian.cols)
+      # now we add it to the correspondance
+      joined_child.correspondance.addAttribute(joined_child_global_hessian_name, computed_attribute = joined_child_global_hessian)
+      # finally we perform the join operation on the current node
+    current.correspondance.addAttribute(global_hessian_name, through = current.through, source = joined_child_global_hessian)
+    return current.correspondance[global_hessian_name]
 
   def __generateNeighborJacobianForUnion(self, parent: attribute, children: List[attribute], differentiater):
     unioned_children = parent.children
@@ -620,6 +674,165 @@ class energy:
       unioned_child.correspondance.addAttribute(child_hessian_name, computed_attribute = merged_hessian)
     return
 
+  def __generateGlobalJacobianForUnion(self, current: attribute, wrt: List[attribute]):
+    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}_filled_for_{self.__energy.fullName}'
+    if gradient_attribute_name in current.correspondance.attributes:
+      return current.correspondance[gradient_attribute_name]
+    gradient_attribute_name_unfilled = f'd2_{current.children[0].fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    # the procedure for union is similar to join
+    # except that we need to deal with each of the children separately
+    # then perform the union again
+    # and we also need to make sure the union attribute has the same dimension
+    # so we also technically need to expand the global jacobian of each child
+    # to make sure they have the same dimension
+    unioned_children_global_jacobians: List[attribute] = []
+    children_on_path: List[attribute] = self.__path_dict[current]
+    for unioned_child in current.children:
+      # print(f"We are at unioned child {unioned_child.fullName}")
+      # first we determine if this global jacobian is already computed
+      unioned_child_global_jacobian_name = gradient_attribute_name_unfilled
+      unioned_child_global_jacobian: attribute
+      if unioned_child_global_jacobian_name in unioned_child.correspondance.attributes:
+        # we already have the jacobian
+        unioned_child_global_jacobian = unioned_child.correspondance[unioned_child_global_jacobian_name]
+        unioned_children_global_jacobians.append(unioned_child_global_jacobian)
+        # print(f"Unioned child already has a global jacobian, array length: {len(unioned_children_global_jacobians)}")
+      else:
+        # ok we first need to find out which children are being used
+        used_children: List[attribute] = []
+        for child in children_on_path:
+          if child in self.__unioned_child_to_its_children[unioned_child]:
+            # ok we will add this child since its on the path
+            used_children.append(child)
+        if len(used_children) == 0:
+          unioned_children_global_jacobians.append(attribute.zeros(unioned_child.size, 1))
+          # print(f"Unioned child has no need to compute jacobian, array length: {len(unioned_children_global_jacobians)}")
+          continue
+
+        used_children_global_jacobian_name = f'd_{"__".join([x.fullName for x in used_children])}_d_{"__".join([x.fullName for x in wrt])}'
+        children_global_jacobian: attribute
+        if used_children_global_jacobian_name in unioned_child.correspondance.attributes:
+          # we already have the global jacobian for the children
+          children_global_jacobian = unioned_child.correspondance[used_children_global_jacobian_name]
+        else:
+          # ok now we get the used children's global jacobian
+          used_children_global_jacobians: List[attribute] = []
+          for child in used_children:
+            # we get the global jacobian for the child
+            used_children_global_jacobian = self.__generateGradientThroughRecursion(child, wrt)
+            used_children_global_jacobians.append(used_children_global_jacobian)
+
+          # ok now we construct the global jacobian for the used children
+          children_global_jacobian_items = []
+          children_global_jacobian_rows = sum([x.size for x in used_children])
+          children_global_jacobian_cols = sum([x.cols for x in used_children_global_jacobians])
+          children_global_jacobian_items = [attribute(float_value = 0.0) for _ in range(children_global_jacobian_rows * children_global_jacobian_cols)]
+          # now we fill the jacobian
+          row_offset = 0
+          col_offset = 0
+          for item in used_children_global_jacobians:
+            for i in range(item.rows):
+              for j in range(item.cols):
+                children_global_jacobian_items[(i + row_offset) * children_global_jacobian_cols + j + col_offset] = item[i, j]
+            col_offset += item.cols
+            row_offset += item.rows
+          children_global_jacobian = attribute.to_array(children_global_jacobian_items, rows = children_global_jacobian_rows, cols = children_global_jacobian_cols)
+          unioned_child.correspondance.addAttribute(used_children_global_jacobian_name, computed_attribute = children_global_jacobian)
+        # we will now multiply the local jacobian with the global jacobian
+        # get the child neighbor jacobian
+        child_jacobian_name = f'd_{unioned_child.fullName}_d_{"__".join([x.fullName for x in used_children])}'
+        child_local_jacobian = unioned_child.correspondance[child_jacobian_name]
+        unioned_child_global_jacobian = child_local_jacobian.mul_explicit(children_global_jacobian)
+        unioned_children_global_jacobians.append(unioned_child_global_jacobian)
+        # print(f"Unioned child add a jacobian now, array length: {len(unioned_children_global_jacobians)}")
+
+    # ok now that we have all of the children's jacobian
+    # what we need to do is to get the largest dimension
+    # in reality, they all should have the same rows
+    # only different columns
+    max_cols = max([x.cols for x in unioned_children_global_jacobians])
+    max_rows = max([x.rows for x in unioned_children_global_jacobians])
+    # ok now we expand each of the unioned children
+    for (index, jacobian) in enumerate(unioned_children_global_jacobians):
+      # let's do an assert to see if the rows are the same
+      assert jacobian.rows == max_rows, f"energy.__generateGlobalJacobianForUnion: jacobian rows {jacobian.rows} is not equal to max rows {max_rows}"
+      if jacobian.name == gradient_attribute_name:
+        assert jacobian.cols == max_cols, f"energy.__generateGlobalJacobianForUnion: jacobian cols {jacobian.cols} is not equal to max cols {max_cols}"
+        assert jacobian.rows == max_rows, f"energy.__generateGlobalJacobianForUnion: jacobian rows {jacobian.rows} is not equal to max rows {max_rows}"
+        continue
+      expanded_jacobian_list = [0.0 for _ in range(max_rows * max_cols)]
+      # now we fill the jacobian
+      for i in range(jacobian.rows):
+        for j in range(jacobian.cols):
+          expanded_jacobian_list[i * max_cols + j] = jacobian[i, j]
+      expanded_jacobian = attribute.to_array(expanded_jacobian_list, rows = max_rows, cols = max_cols)
+      current.children[index].correspondance.addAttribute(gradient_attribute_name, computed_attribute = expanded_jacobian)
+      # print(f"Adding attribute with name {gradient_attribute_name} to child {current.children[index].correspondance.fullName}")
+
+      # well we have expanded the jacobian for each child
+    #   # perform the union operation
+    res = current.correspondance.addAttribute(gradient_attribute_name)
+    return res
+
+  def __generateGlobalHessianForUnion(self, current: attribute, wrt: List[attribute]) -> attribute:
+    global_hessian_name = f'd2_{current.children[0].fullName}_d2_{"__".join([x.fullName for x in wrt])}_filled_for_{self.__energy.fullName}'
+    global_hessian_name_unfilled = f'd2_{current.children[0].fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    if global_hessian_name in current.correspondance.attributes:
+      return current.correspondance[global_hessian_name]
+    # the union operator is a bit more complicated
+    # what we need to do is to compute the global hessian for each unioned child
+    # and then fill them with 0 because we are working on gpu, and need to preallocate the space
+    unioned_children_global_hessians: List[attribute] = []
+    children_on_path: List[attribute] = self.__path_dict[current]
+    for unioned_child in current.children:
+      # print(f"We are at unioned child {unioned_child.fullName}")
+      # first we determine if this global hessian is already computed
+      unioned_child_global_hessian_name = global_hessian_name_unfilled
+      unioned_child_global_hessian: attribute
+      if unioned_child_global_hessian_name in unioned_child.correspondance.attributes:
+        # we already have the hessian
+        unioned_child_global_hessian = unioned_child.correspondance[unioned_child_global_hessian_name]
+        unioned_children_global_hessians.append(unioned_child_global_hessian)
+      else:
+        # ok we first need to find out which children are being used
+        used_children: List[attribute] = []
+        for child in children_on_path:
+          if child in self.__unioned_child_to_its_children[unioned_child]:
+            # ok we will add this child since its on the path
+            used_children.append(child)
+        if len(used_children) == 0:
+          unioned_children_global_hessians.append(attribute.zeros(current.size, 1))
+          continue
+
+        # now we construct the global hessian for the unioned child
+        num_hessians = unioned_child.size # how many hessians we have
+        next_children = used_children
+        unioned_child_local_jacobian_name = f'd_{unioned_child.fullName}_d_{"__".join([x.fullName for x in next_children])}'
+        unioned_child_local_jacobian = unioned_child.correspondance[unioned_child_local_jacobian_name]
+        unioned_child_local_hessian_name = f'd2_{unioned_child.fullName}_d2_{"__".join([x.fullName for x in next_children])}'
+        unioned_child_local_hessian = unioned_child.correspondance[unioned_child_local_hessian_name]
+
+        next_children_global_jacobian_name = f'd_{"__".join([x.fullName for x in next_children])}_d_{"__".join([x.fullName for x in wrt])}'
+        next_children_global_jacobian = unioned_child.correspondance[next_children_global_jacobian_name]
+
+        next_children_global_hessian: List[attribute] = []
+        for child in next_children:
+          child_global_hessian = self.__generateHessianThroughRecursion(child, wrt)
+          next_children_global_hessian.append(child_global_hessian)
+        next_children_total_size = sum([x.size for x in next_children])
+        local_hessian_size = next_children_total_size * next_children_total_size # what is the size of the local hessian (remember we have a tensor, this is the size of the first and second dimension)
+        assert local_hessian_size * num_hessians == unioned_child_local_hessian.size, f"energy.__generateGlobalHessianForUnion: local hessian size {local_hessian_size} * num hessians {num_hessians} is not equal to unioned child local hessian size {unioned_child_local_hessian.size}"
+
+
+
+
+
+
+
+
+
+
+
   def __generateHessianThroughPathDict(self, wrt: List[attribute], differentiater: autodiff) -> None:
     from yasps.attribute import JOIN, UNION
     # # we are generating the symbolic hessian through the path dict
@@ -650,54 +863,12 @@ class energy:
       raise ValueError(f"energy.__generateHessianThroughRecursion: operator {current.operator} is not supported in path dict.")
 
 
-  def __gennerateGlobalHessianForEnergy(self, current: attribute, wrt: List[attribute]) -> attribute:
-    # here we go, we will start computing the global hessian for the energy
-    global_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
-    if global_hessian_name in current.correspondance.attributes:
-      return current.correspondance[global_hessian_name]
-
-    # now we first construct the second part of the hessian
-    children = self.__path_dict[current]
-    local_gradient_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in children])}'
-    local_gradient = current.correspondance[local_gradient_name]
-
-    # now we first assemble everything in order
-    second_part_hessian_array = [0.0 for _ in range(local_gradient.size * local_gradient.size)]
-    # now for each child, we will fill the hessian
-    block_offset = 0
-    for child in children:
-      child_global_hessian = self.__generateHessianThroughRecursion(child, wrt)
-      # now the child global hessian is size of child.size x hessian_size x hessian_size
-      child_size = child.size # this marks the number of global hessian we have
-      hessian_size = child_global_hessian.size // child_size # this is the size of the hessian for each child
-      assert hessian_size * child_size == child_global_hessian.size, f"energy.__gennerateGlobalHessianForEnergy: hessian size {hessian_size} * child size {child_size} is not equal to child global hessian size {child_global_hessian.size}"
-      hessian_rows = int(math.sqrt(hessian_size))
-      assert hessian_rows * hessian_rows == hessian_size, f"energy.__gennerateGlobalHessianForEnergy: hessian rows {hessian_rows} * hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
-      hessian_cols = hessian_rows # since its a square matrix
-      for i in range(hessian_rows):
-        for j in range(hessian_cols):
-          for k in range(child_size):
-            second_part_hessian_array[(block_offset + i) * local_gradient.size + (block_offset + j)] += local_gradient[block_offset + k] * child_global_hessian[k * hessian_size + i * hessian_cols + j]
-      block_offset += child_size # we move the block offset to the next child
-    # ok now we have the second part of the hessian
-    # we will now construct the global hessian
 
 
 
 
-    #
-    #
-    # children = self.__path_dict[current]
-    # current_hessian = current.correspondance[f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in children])}']
-    # current_global_jacobian = current.correspondance[f'd_{current.fullName}_d_{"__".join([x.fullName for x in children])}']
 
 
-
-  def __generateGlobalHessianForJoin(self, current: attribute, wrt: List[attribute]) -> attribute:
-    return 0
-
-  def __generateGlobalHessianForUnion(self, current: attribute, wrt: List[attribute]) -> attribute:
-    return 0
 
 
   # def __generateHessianForParts(self, differentiater: autodiff, currentPaths: List[List[attribute]]) -> None:

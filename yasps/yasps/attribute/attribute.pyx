@@ -240,6 +240,15 @@ class attribute:
       if self.size == 1:
         return 1
       return 2
+    elif self.operator == ROW:
+      nth_row = self.children[1].index_value
+      for i in range(self.cols):
+        nth_row_element = self[nth_row, i]
+        if nth_row_element.isZero == 0:
+          return 0
+      if self.cols == 1:
+        return 1
+      return 2
     return 0
 
   @property
