@@ -37,7 +37,7 @@ class globalKernel:
     file_name = f".yasps_tmp/compute_{self.__att.fullName}"
     if not os.path.exists(f'{file_name}.so'):
       print(f"File {file_name}.so does not exist, compiling")
-      self.__kernelString += '''
+      self.__kernelString += f'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>

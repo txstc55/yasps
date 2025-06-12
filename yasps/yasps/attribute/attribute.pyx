@@ -3,7 +3,7 @@ from __future__ import annotations
 import pycuda.autoinit
 import numpy as np
 import pycuda.gpuarray as gpuarray
-from typing import Optional, List, Union, Tuple
+from typing import Optional, List, Union, Tuple, Dict
 from typing import TYPE_CHECKING
 import pycuda.driver as cuda
 import time
@@ -69,6 +69,8 @@ UNION = operator("union", 3, False) # for union of multiple attributes
 
 
 class attribute:
+  __isZeroAttributeChecks: Dict[int, int] = {}
+
   def __init__(self, name: str = "", rows: int = 1, cols: int = 1, correspondance: Optional[Union[scene, mesh, primitive]] = None, through: Optional[connectivity] = None, float_value: Optional[float] = None, children: List[attribute] = [], operator: operator = DATA, index_value: Optional[int] = None):
     # by default, any attribute is a data access
     # which does the following:
@@ -230,25 +232,63 @@ class attribute:
   # 2 means zero or identity and mat value
   @property
   def isZero(self) -> int:
+    if self.hash in attribute.__isZeroAttributeChecks:
+      return attribute.__isZeroAttributeChecks[self.hash]
     if self.operator == FLOAT and self.float_value == 0.0:
+      attribute.__isZeroAttributeChecks[self.hash] = 1
       return 1
     elif self.operator == ARRAY:
       # check if all are zero
       for i in range(self.size):
         if self.children[i].isZero == 0:
+          attribute.__isZeroAttributeChecks[self.hash] = 0
           return 0
       if self.size == 1:
+        attribute.__isZeroAttributeChecks[self.hash] = 1
         return 1
+      attribute.__isZeroAttributeChecks[self.hash] = 2
       return 2
     elif self.operator == ROW:
       nth_row = self.children[1].index_value
-      for i in range(self.cols):
-        nth_row_element = self[nth_row, i]
+      for i in range(self.children[0].cols):
+        nth_row_element = self.children[0][nth_row, i]
         if nth_row_element.isZero == 0:
+          attribute.__isZeroAttributeChecks[self.hash] = 0
           return 0
-      if self.cols == 1:
+      if self.children[0].cols == 1:
+        attribute.__isZeroAttributeChecks[self.hash] = 1
         return 1
+      attribute.__isZeroAttributeChecks[self.hash] = 2
       return 2
+    elif self.operator == JOIN:
+      child_is_zero = self.children[0].isZero
+      if child_is_zero == 0:
+        attribute.__isZeroAttributeChecks[self.hash] = 0
+        return 0
+      if child_is_zero == 1:
+        if self.through.dimension > 1:
+          attribute.__isZeroAttributeChecks[self.hash] = 2
+          return 2
+        else:
+          attribute.__isZeroAttributeChecks[self.hash] = 1
+          return 1
+      return 2
+    elif self.operator == ARRAY_ACCESS:
+      if self.children[0].isZero == 0:
+        attribute.__isZeroAttributeChecks[self.hash] = 0
+        return 0
+      attribute.__isZeroAttributeChecks[self.hash] = 1
+      return 1
+    elif self.operator == UNION:
+      child_result = 0
+      for child in self.children:
+        if child.isZero == 0:
+          attribute.__isZeroAttributeChecks[self.hash] = 0
+          return 0
+        child_result = child.isZero
+      attribute.__isZeroAttributeChecks[self.hash] = child_result
+      return child_result
+    attribute.__isZeroAttributeChecks[self.hash] = 0
     return 0
 
   @property

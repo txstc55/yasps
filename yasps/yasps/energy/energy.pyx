@@ -34,7 +34,7 @@ class energy:
     self.__hessianAndGradientKernel: Optional[hessianAndGradientKernel] = None
     self.__hessian_blocks_where_to_check: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # we have a flattened array which stores the blocks. The blocks are sorted by dimensions. We need to know which block we are in for each smaller blocks in the hessian
     self.__merged_hessian_and_gradient_attribute: Optional[attribute] = None
-    self.__project_entire_hessian: bool = False
+    self.__project_entire_hessian: bool = True
     self.__projection_method = projection_method # 0 for no projection, 1 for absolute, 2 for max(0, val)
     self.__save_intermediate = save_intermediate # save intermediate gradient and hessian result
     self.__intermediate_compute_pairs: Dict[str, Tuple[attribute, attribute]] = {} # save the intermediate compute pairs
@@ -161,9 +161,9 @@ class energy:
   @timed("energy.getSparseIndices")
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
     self.__wrt = wrt
-    # the wrt_start_indices, size and if type is primitive
-    wrtStartIndicesAndSize: Dict[int, Tuple[int, int, bool]] = {x.hash: (wrt_start_indices[i], x.size, x.correspondance.type == "primitive") for i, x in enumerate(wrt)} # this maps from all the data being used, to where it should start in the gradient, its size and if it is a primitive (we can optimize for mesh or scene primitive, which doesnt really have any number of instances)
-    # we have the path, now determine which path to use since we have the wrt
+    # # the wrt_start_indices, size and if type is primitive
+    # wrtStartIndicesAndSize: Dict[int, Tuple[int, int, bool]] = {x.hash: (wrt_start_indices[i], x.size, x.correspondance.type == "primitive") for i, x in enumerate(wrt)} # this maps from all the data being used, to where it should start in the gradient, its size and if it is a primitive (we can optimize for mesh or scene primitive, which doesnt really have any number of instances)
+    # # we have the path, now determine which path to use since we have the wrt
     usedPaths: List[List[attribute]] = []
     for path in self.__paths:
       if path[-1] in wrt:
@@ -188,10 +188,21 @@ class energy:
           if child not in pathDict[parent]:
             pathDict[parent].append(child)
       self.__path_dict = pathDict
+      # print("-----------------------------------------------------")
+      # print("wrt_start_indices check")
+      # print("wrt_start_indices:", wrt_start_indices)
+      # print("-----------------------------------------------------")
       self.__indices_kernel = gradientIndicesKernel(pathDict, self.__unioned_child_to_its_children, wrt, wrt_start_indices, self.__energy)
+
+
+    # print("Path dict check")
+    # for parent in self.__path_dict.keys():
+    #   print("Parent:", parent.fullName)
+    #   print("Children:", ", ".join([x.fullName for x in self.__path_dict[parent]]))
 
     assert self.__indices_kernel is not None
     self.__indices_kernel.computeIndices(wrt_start_indices) # actually compute the indices
+    # exit(0)
     return
 
   def __generateGradientThroughPathDict(self, wrt: List[attribute], differentiater: autodiff) -> None:
@@ -273,7 +284,7 @@ class energy:
     if not local_hessian_name in parent.correspondance.attributes:
       local_gradient = parent.correspondance[local_gradient_name]
       # now the local hessian is simply the autodiff of the gradient wrt the children again
-      double_diff_results = [0.0 for _ in range(local_gradient.size * local_gradient)]
+      double_diff_results = [0.0 for _ in range(local_gradient.size * local_gradient.size)]
       col_offset = 0
       for child in children:
         # we differentiate the local gradient wrt to each child in path_dict
@@ -324,7 +335,8 @@ class energy:
         col_offset += item.cols
         row_offset += item.rows
       next_jacobian = attribute.to_array(next_jacobian_children, rows = next_jacobian_rows, cols = next_jacobian_cols)
-      current.correspondance.addAttribute(children_global_jacobian_name, computed_attribute = next_jacobian)
+      if children_global_jacobian_name not in current.correspondance.attributes:
+        current.correspondance.addAttribute(children_global_jacobian_name, computed_attribute = next_jacobian)
     full_gradient = current_gradient.mul_explicit(next_jacobian)
     current.correspondance.addAttribute(gradient_attribute_name, computed_attribute = full_gradient)
     return full_gradient
@@ -371,9 +383,26 @@ class energy:
     local_hessian = current.correspondance[local_hessian_name]
     if second_part_hessian.isZero > 0:
       local_hessian = local_hessian.spd(self.__projection_method)
-      second_term_is_zero = True
+      self.__project_entire_hessian = False
+    else:
+      self.__project_entire_hessian = True
+    # print("------------------------------------------------------------------------------------")
+    # print("need to project entire hessian", self.__project_entire_hessian)
+    # print(str(second_part_hessian))
+    # print("------------------------------------------------------------------------------------")
+    # exit(0)
 
-    final_hessian = global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(global_jacobian)).add_explicit(second_part_hessian)
+    # now we assemble the children jacobian
+    children_jacobian_name = f'd_{"__".join([x.fullName for x in children])}_d_{"__".join([x.fullName for x in wrt])}'
+    # it is guaranteed that we have this since the children jacobian is computed before the global hessian
+    children_global_jacobian = current.correspondance[children_jacobian_name]
+
+    final_hessian = children_global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(children_global_jacobian)).add_explicit(second_part_hessian)
+    # final_hessian = children_global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(children_global_jacobian))
+    # print("------------------------------------------------------------------------------------")
+    # print("Checking hessian for energy only and first part")
+    # print(final_hessian.compute().value.get()[:144].reshape((12, 12)))
+    # print("------------------------------------------------------------------------------------")
     current.correspondance.addAttribute(global_hessian_name, computed_attribute = final_hessian)
     return final_hessian
 
@@ -415,19 +444,27 @@ class energy:
       joined_child_jacobian = joined_child.correspondance[child_jacobian_name]
       # ok now each row is technically a derivative
       # and what we can do is just differentiate the jacobian wrt the children again
-      all_hessian_results = [0.0 for _ in range(num_hessians * hessian_num_cols * hessian_num_rows)]
+      all_hessian_results = []
       for row in range(num_hessians):
         # each row is a derivative wrt all the children
         # we will now need to differentiate it wrt each child again
-        current_derivative = joined_child_jacobian.row(row)
-        col_offset = 0
-        for child in children:
-          diff_result = differentiater.diff(current_derivative, child)
-          for i in range(diff_result.rows):
-            for j in range(diff_result.cols):
-              all_hessian_results[row * hessian_num_cols * hessian_num_rows + i * hessian_num_cols + col_offset + j] = diff_result[i, j]
-          col_offset += child.size # add to the offset
-        assert col_offset == hessian_num_cols, f"energy.__generateNeighborJacobianForJoin: col_offset {col_offset} is not equal to hessian_num_cols {hessian_num_cols}"
+        for col in range(joined_child_jacobian.cols):
+          current_item = joined_child_jacobian[row, col]
+          for child in children:
+            # we differentiate the current item wrt the child
+            diff_result = differentiater.diff(current_item, child)
+            for i in range(diff_result.rows):
+              for j in range(diff_result.cols):
+                all_hessian_results.append(diff_result[i, j])
+        # current_derivative = joined_child_jacobian.row(row)
+        # col_offset = 0
+        # for child in children:
+        #   diff_result = differentiater.diff(current_derivative, child)
+        #   for i in range(diff_result.rows):
+        #     for j in range(diff_result.cols):
+        #       all_hessian_results[row * hessian_num_cols * hessian_num_rows + i * hessian_num_cols + col_offset + j] = diff_result[i, j]
+        #   col_offset += child.size # add to the offset
+        # assert col_offset == hessian_num_cols, f"energy.__generateNeighborJacobianForJoin: col_offset {col_offset} is not equal to hessian_num_cols {hessian_num_cols}"
       # now we construct the hessian
       merged_hessian = attribute.to_array(all_hessian_results, rows = hessian_num_rows * num_hessians, cols = hessian_num_cols)
       joined_child.correspondance.addAttribute(local_hessian_name, computed_attribute = merged_hessian)
@@ -481,16 +518,19 @@ class energy:
           col_offset += item.cols
           row_offset += item.rows
         children_global_jacobian = attribute.to_array(children_global_jacobian_items, rows = children_global_jacobian_rows, cols = children_global_jacobian_cols)
-        joined_child.correspondance.addAttribute(children_global_jacobian_name, computed_attribute = children_global_jacobian)
+        if children_global_jacobian_name not in joined_child.correspondance.attributes:
+          joined_child.correspondance.addAttribute(children_global_jacobian_name, computed_attribute = children_global_jacobian)
 
       # we will now multiply the local jacobian with the global jacobian
       child_global_jacobian = joined_child_local_jacobian.mul_explicit(children_global_jacobian)
+
       # now we first add the attribute
       if joined_child_global_jacobian_name in joined_child.correspondance.attributes:
         # we already have the jacobian
         joined_child_global_jacobian = joined_child.correspondance[joined_child_global_jacobian_name]
       else:
         joined_child_global_jacobian = joined_child.correspondance.addAttribute(joined_child_global_jacobian_name, computed_attribute = child_global_jacobian)
+
 
     # we then perform the join operation
     res = current.correspondance.addAttribute(gradient_attribute_name+"_unresized", through = current.through, source = joined_child_global_jacobian)
@@ -527,6 +567,14 @@ class energy:
     if joined_child_global_hessian_name in joined_child.correspondance.attributes:
       # we already have the global hessian for the joined child
       joined_child_global_hessian = joined_child.correspondance[joined_child_global_hessian_name]
+      # print("-------------------------------------------------------------------------------------")
+      # print("Joind child already has global hessian computed")
+      # print(joined_child.fullName)
+      # print("Global hessian zero check")
+      # print(joined_child_global_hessian.isZero)
+      # print("Joined child global hessian actual check")
+      # print(str(joined_child_global_hessian))
+      # print("-------------------------------------------------------------------------------------")
     else:
       num_hessians = joined_child.size # how many hessians we have
       next_children = self.__path_dict[current]
@@ -546,10 +594,13 @@ class energy:
       next_children_total_size = sum([x.size for x in next_children])
       local_hessian_size = next_children_total_size * next_children_total_size # what is the size of the local hessian (remember we have a tensor, this is the size of the first and second dimension)
       assert local_hessian_size * num_hessians == joined_child_local_hessian.size, f"energy.__generateGlobalHessianForJoin: local hessian size {local_hessian_size} * num hessians {num_hessians} is not equal to joined child local hessian size {joined_child_local_hessian.size}"
+      local_hessian_rows = int(math.sqrt(local_hessian_size))
+      assert local_hessian_rows * local_hessian_rows == local_hessian_size, f"energy.__generateGlobalHessianForJoin: local hessian rows {local_hessian_rows} * local hessian rows {local_hessian_rows} is not equal to local hessian size {local_hessian_size}"
+      local_hessian_cols = local_hessian_rows # since its a square matrix
       joined_child_global_hessian_items = []
       for N in range(num_hessians):
         # we will construct the Nth hessian, because it's a tensor so we need to stack them up
-        nth_joined_child_local_hessian = attribute.to_array([joined_child_local_hessian[i] for i in range(N * local_hessian_size, (N + 1) * local_hessian_size)], rows = local_hessian_size, cols = local_hessian_size)
+        nth_joined_child_local_hessian = attribute.to_array([joined_child_local_hessian[i] for i in range(N * local_hessian_size, (N + 1) * local_hessian_size)], rows = local_hessian_rows, cols = local_hessian_cols)
         # now we construct the first part of the hessian, which is jacobian * local hessian * jacobian
         first_part_hessian = next_children_global_jacobian.transpose().mul_explicit(nth_joined_child_local_hessian.mul_explicit(next_children_global_jacobian))
 
@@ -563,6 +614,16 @@ class energy:
         index = 0
         for child in next_children:
           next_child_global_hessian = next_children_global_hessian[index]
+          # print("------------------------------------------------------------------------------------")
+          # print("next child global hessian is zero check")
+          # print(next_child_global_hessian.isZero)
+          # print("next child global hessian actual check")
+          # print(str(next_child_global_hessian))
+          # print("next child joined child is zero check")
+          # print(next_child_global_hessian.children[0].isZero)
+          # print("next child joined child actual check")
+          # print(str(next_child_global_hessian.children[0]))
+          # print("-------------------------------------------------------------------------------------")
           # now the child global hessian is size of child.size x hessian_size x hessian_size
           child_size = child.size # this marks the number of global hessian we have
           hessian_size = next_child_global_hessian.size // child_size # this is the size of the hessian for each child
@@ -573,12 +634,20 @@ class energy:
           for i in range(hessian_rows):
             for j in range(hessian_cols):
               for k in range(child_size):
-                second_part_hessian_array[(block_offset + i) * next_children_global_jacobian.cols + (block_offset + j)] += joined_child_local_jacobian[N * joined_child_local_jacobian.cols + k] * next_child_global_hessian[k * hessian_size + i * hessian_cols + j]
+                second_part_hessian_array[(block_offset + i) * next_children_global_jacobian.cols + (block_offset + j)] += joined_child_local_jacobian[N * joined_child_local_jacobian.cols + k + block_offset] * next_child_global_hessian[k * hessian_size + i * hessian_cols + j]
           block_offset += child_size # we move the block offset to the next child
           index += 1
         # ok now we have the second part of the hessian
         # we will now construct the final hessian
         second_part_hessian = attribute.to_array(second_part_hessian_array, rows = next_children_global_jacobian.cols, cols = next_children_global_jacobian.cols)
+        # print("------------------------------------------------------------------------------------")
+        # print("Current joined child is: ")
+        # print(joined_child.fullName)
+        # print("Current second part hessian is zero check")
+        # print(second_part_hessian.isZero)
+        # print("Current second part hessian actual check")
+        # print(str(second_part_hessian[0]))
+        # print("------------------------------------------------------------------------------------")
         final_hessian = first_part_hessian.add_explicit(second_part_hessian)
 
         # now we add the final hessian to the items
@@ -661,6 +730,10 @@ class energy:
       hessian_num_rows = hessian_num_cols
       all_hessian_results = [0.0 for _ in range(num_hessians * hessian_num_cols * hessian_num_rows)]
       for row in range(num_hessians):
+        # current_derivative_items = []
+        # for col in range(child_jacobian.cols):
+        #   for child in children:
+        #     current_derivative_items.append(differentiater.diff(child_jacobian[row, col], child))
         current_derivative = child_jacobian.row(row)
         col_offset = 0
         for child in children:
@@ -737,12 +810,14 @@ class energy:
             col_offset += item.cols
             row_offset += item.rows
           children_global_jacobian = attribute.to_array(children_global_jacobian_items, rows = children_global_jacobian_rows, cols = children_global_jacobian_cols)
-          unioned_child.correspondance.addAttribute(used_children_global_jacobian_name, computed_attribute = children_global_jacobian)
+          if used_children_global_jacobian_name not in unioned_child.correspondance.attributes:
+            unioned_child.correspondance.addAttribute(used_children_global_jacobian_name, computed_attribute = children_global_jacobian)
         # we will now multiply the local jacobian with the global jacobian
         # get the child neighbor jacobian
         child_jacobian_name = f'd_{unioned_child.fullName}_d_{"__".join([x.fullName for x in used_children])}'
         child_local_jacobian = unioned_child.correspondance[child_jacobian_name]
         unioned_child_global_jacobian = child_local_jacobian.mul_explicit(children_global_jacobian)
+        unioned_child.correspondance.addAttribute(unioned_child_global_jacobian_name, computed_attribute = unioned_child_global_jacobian)
         unioned_children_global_jacobians.append(unioned_child_global_jacobian)
         # print(f"Unioned child add a jacobian now, array length: {len(unioned_children_global_jacobians)}")
 
@@ -822,11 +897,62 @@ class energy:
         next_children_total_size = sum([x.size for x in next_children])
         local_hessian_size = next_children_total_size * next_children_total_size # what is the size of the local hessian (remember we have a tensor, this is the size of the first and second dimension)
         assert local_hessian_size * num_hessians == unioned_child_local_hessian.size, f"energy.__generateGlobalHessianForUnion: local hessian size {local_hessian_size} * num hessians {num_hessians} is not equal to unioned child local hessian size {unioned_child_local_hessian.size}"
+        unioned_child_global_hessian_items = []
+        for N in range(num_hessians):
+          nth_joined_child_local_hessian = attribute.to_array([unioned_child_local_hessian[i] for i in range(N * local_hessian_size, (N + 1) * local_hessian_size)], rows = local_hessian_size, cols = local_hessian_size)
+          first_part_hessian = next_children_global_jacobian.transpose().mul_explicit(nth_joined_child_local_hessian.mul_explicit(next_children_global_jacobian))
 
+          # get the gradient size
+          local_gradient_size = unioned_child_local_jacobian.size // num_hessians # this is the size of the gradient for each hessian
+          assert local_gradient_size * num_hessians == unioned_child_local_jacobian.size, f"energy.__generateGlobalHessianForUnion: local gradient size {local_gradient_size} * num hessians {num_hessians} is not equal to unioned child local jacobian size {unioned_child_local_jacobian.size}"
 
+          second_part_hessian_array = [0.0 for _ in range(next_children_global_jacobian.cols * next_children_global_jacobian.cols)]
+          block_offset = 0
+          for (index, child) in enumerate(next_children):
+            next_child_global_hessian = next_children_global_hessian[index]
+            # now the child global hessian is size of child.size x hessian_size x hessian_size
+            child_size = child.size
+            hessian_size = next_child_global_hessian.size // child_size # this is the size of the hessian for each child
+            assert hessian_size * child_size == next_child_global_hessian.size, f"energy.__generateGlobalHessianForUnion: hessian size {hessian_size} * child size {child_size} is not equal to child global hessian size {next_child_global_hessian.size}"
+            hessian_rows = int(math.sqrt(hessian_size))
+            assert hessian_rows * hessian_rows == hessian_size, f"energy.__generateGlobalHessianForUnion: hessian rows {hessian_rows} * hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
+            hessian_cols = hessian_rows # since its a square matrix
+            for i in range(hessian_rows):
+              for j in range(hessian_cols):
+                for k in range(child_size):
+                  second_part_hessian_array[(block_offset + i) * next_children_global_jacobian.cols + (block_offset + j)] += unioned_child_local_jacobian[N * unioned_child_local_jacobian.cols + k + block_offset] * next_child_global_hessian[k * hessian_size + i * hessian_cols + j]
+            block_offset += child_size # we move the block offset to the next child
+          second_part_hessian = attribute.to_array(second_part_hessian_array, rows = next_children_global_jacobian.cols, cols = next_children_global_jacobian.cols)
+          final_hessian = first_part_hessian.add_explicit(second_part_hessian)
+          for i in range(final_hessian.size):
+            unioned_child_global_hessian_items.append(final_hessian[i])
+        unioned_child_global_hessian = attribute.to_array(unioned_child_global_hessian_items, rows = num_hessians * next_children_global_jacobian.cols, cols = next_children_global_jacobian.cols)
+        unioned_child.correspondance.addAttribute(unioned_child_global_hessian_name, computed_attribute = unioned_child_global_hessian)
+        unioned_children_global_hessians.append(unioned_child_global_hessian)
+    # ok now that we have all of the children's hessian
+    # what we need to do is to get the largest dimension
+    largest_cols = max([x.cols for x in unioned_children_global_hessians])
+    largest_rows = max([x.rows for x in unioned_children_global_hessians])
+    assert largest_rows % largest_cols == 0, f"energy.__generateGlobalHessianForUnion: largest rows {largest_rows} is not divisible by largest cols {largest_cols}"
 
+    # now that we have the unioned children
+    # we will need to expand each of the unioned children to the expected size
+    for (index, unioned_child) in enumerate(current.children):
+      expanded_hessian_items = [0.0 for _ in range(largest_rows * largest_cols)]
+      num_hessians = unioned_child.size
+      unexpanded_hessian = unioned_children_global_hessians[index]
+      hessian_size = unexpanded_hessian.size // num_hessians
+      assert hessian_size * num_hessians == unexpanded_hessian.size, f"energy.__generateGlobalHessianForUnion: hessian size {hessian_size} * num hessians {num_hessians} is not equal to unexpanded hessian size {unexpanded_hessian.size}"
+      for i in range(num_hessians):
+        for j in range(unexpanded_hessian.cols):
+          for k in range(unexpanded_hessian.cols):
+            expanded_hessian_items[i * largest_cols * largest_cols + j * largest_cols + k] = unexpanded_hessian[i * hessian_size + j * unexpanded_hessian.cols + k]
+      expanded_hessian = attribute.to_array(expanded_hessian_items, rows = largest_rows, cols = largest_cols)
+      unioned_child.correspondance.addAttribute(global_hessian_name, computed_attribute = expanded_hessian)
 
-
+    # now we add the expanded hessian to the correspondance
+    res = current.correspondance.addAttribute(global_hessian_name)
+    return res
 
 
 
@@ -834,15 +960,15 @@ class energy:
 
 
   def __generateHessianThroughPathDict(self, wrt: List[attribute], differentiater: autodiff) -> None:
-    from yasps.attribute import JOIN, UNION
     # # we are generating the symbolic hessian through the path dict
     # # the path dict already contains only the used paths
     if f'd2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in wrt])}' in self.__energy.correspondance.attributes:
       # nothing we need to do, the gradient is already computed
-      self.__gradient = self.__energy.correspondance.attributes[f'd2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in wrt])}']
+      self.__hessian = self.__energy.correspondance.attributes[f'd2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in wrt])}']
       return
     # otherwise, the local hessian is already generated
     # we will just call the function that computes the global hessian
+    self.__hessian = self.__generateHessianThroughRecursion(self.__energy, wrt)
     return
 
   def __generateHessianThroughRecursion(self, current: attribute, wrt: List[attribute]) -> attribute:
@@ -850,9 +976,9 @@ class energy:
     if current.operator == DATA:
       # if its data, the second derivative is just zeros
       return attribute.zeros(current.size, current.size * current.size)
-    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
-    if gradient_attribute_name in current.correspondance.attributes:
-      return current.correspondance[gradient_attribute_name]
+    hessian_attribute_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    if hessian_attribute_name in current.correspondance.attributes:
+      return current.correspondance[hessian_attribute_name]
     if current.operator != JOIN and current.operator != UNION:
       return self.__gennerateGlobalHessianForEnergy(current, wrt)
     elif current.operator == JOIN:
@@ -864,413 +990,29 @@ class energy:
 
 
 
-
-
-
-
-
-
-
-  # def __generateHessianForParts(self, differentiater: autodiff, currentPaths: List[List[attribute]]) -> None:
-  #   from yasps.attribute import DATA, JOIN, FLOAT
-  #   # we need to recursively generate the hessian for parts
-  #   # the input currentPaths all have the same first element
-  #   # then we just need to find the hessian for this part of the path
-  #   # here's something we need to know
-  #   # if i have the currentpath, the next node is guaranteed to present in batches
-  #   # which means for the next node, it's guranteed to be like [a, a, b, b, b, c]
-  #   # same node will always be batched together
-
-  #   # we first check if H of f(g) is already computed
-  #   lead_node: attribute = currentPaths[0][0]
-  #   child_att: attribute
-  #   # differentiate between the join canse and the top node, which is the energy
-  #   if lead_node.operator != JOIN:
-  #     child_att = lead_node
-  #   else:
-  #     child_att = lead_node.children[0]
-  #   child_att_full_name: str = child_att.fullName
-  #   # we first check if the differentiation has been done before
-  #   all_datas = [x[-1] for x in currentPaths]
-  #   h_g_name = f'd2_{child_att.fullName}_d_{"__".join([x.fullName for x in all_datas])}'
-  #   if lead_node.operator != JOIN and h_g_name in child_att.correspondance.attributes:
-  #     return
-  #   # we need to get the hessian from child_att to data node
-  #   # first, we construct the Hessian of f(g(x)) wrt g(x)
-  #   # which is essentially the hessian from child_att to all of its children
-  #   h_f_g_size: int = 0
-  #   allChildren: List[attribute] = [] # all the following nodes
-  #   # we first check and join all the g(x) nodes
-  #   for path in currentPaths:
-  #     follow_node: attribute = path[1]
-  #     if follow_node not in allChildren:
-  #       allChildren.append(follow_node)
-  #   for follow_node in allChildren:
-  #     h_f_g_size += follow_node.size # we just need to know for each follow node, its size and we can accumulate the hessian size
-  #   h_f_g_children: List[attribute] = [attribute(float_value = 0.0) for _ in range(h_f_g_size * h_f_g_size * child_att.size)] # a hessian for each element of the child att
-  #   row_offset: int = 0
-  #   for i in range(len(allChildren)):
-  #     follow_node: attribute = allChildren[i]
-  #     follow_node_full_name: str = follow_node.fullName
-  #     diff_att_name: str = f'd_{child_att_full_name}_d_{follow_node_full_name}' # ok so this is the jacobian of the first node wrt one of its children
-  #     previous_children = allChildren[: i]
-  #     col_offset = sum([x.size for x in previous_children]) # whenever we go to a new child, we need to reset the col_offset
-  #     for j in range(i, len(allChildren)):
-  #       diff_target_node: attribute = allChildren[j]
-  #       diff_target_node_full_name: str = diff_target_node.fullName
-  #       d2_name: str = f'd_{diff_att_name}_d_{diff_target_node_full_name}' # we have computed this jacobian or hessian
-  #       d2_attribute: attribute = child_att.correspondance.attributes[d2_name]
-
-  #       # let's say follow_node has size of K, and diff_target_node has size of M
-  #       # and our lead_node(or child node, whatever, it's the first node in the current path)
-  #       # has size of N, then this single_att_d2_size is M * N * K (might need to check the order later)
-  #       single_att_d2_size: int = d2_attribute.size // child_att.size #
-  #       assert single_att_d2_size * child_att.size == d2_attribute.size # make sure the size is integer division
-  #       for l in range(child_att.size):
-  #         d2_attribute_partial: List[attribute] = [d2_attribute[k] for k in range(l * single_att_d2_size, (l + 1) * single_att_d2_size)]
-  #         # the block has size follow_node.size * diff_target_node.size
-  #         # we need to put this block into the hessian
-  #         # the offset are row_offset and col_offset
-  #         # print(f"Row and column offset: {row_offset}, {col_offset}")
-  #         for m in range(follow_node.size):
-  #           for n in range(diff_target_node.size):
-  #             h_f_g_children[l * h_f_g_size * h_f_g_size + (row_offset + m) * h_f_g_size + col_offset + n] = d2_attribute_partial[m * diff_target_node.size + n]
-  #             # make it symmetric
-  #             h_f_g_children[l * h_f_g_size * h_f_g_size + (col_offset + n) * h_f_g_size + row_offset + m] = d2_attribute_partial[m * diff_target_node.size + n]
-  #       col_offset += diff_target_node.size
-  #     row_offset += follow_node.size
-  #   # ok now we need to assemble J of g(x)
-  #   # we have previously computed them supposedly
-  #   j_g_x_col_size: int = 0
-  #   j_g_x_col_sizes: List[int] = []
-  #   for path in currentPaths:
-  #     next_node = path[1]
-  #     if next_node.operator == DATA:
-  #       j_g_x_col_size += next_node.size
-  #       j_g_x_col_sizes.append(next_node.size)
-  #     else:
-  #       data_node = path[-1]
-  #       included_paths: List[attribute] = path[1: -1]
-  #       included_path_str: str = "_d_".join([x.fullName for x in included_paths])
-  #       next_jacobian_name: str = f"d_{included_path_str}_d_{data_node.fullName}"
-  #       next_jacobian: attribute = next_node.correspondance.attributes[next_jacobian_name]
-  #       j_g_x_col_size += next_jacobian.cols
-  #       j_g_x_col_sizes.append(next_jacobian.cols)
-  #   j_g_x_children: List[attribute] = [attribute(float_value = 0.0) for _ in range(h_f_g_size * j_g_x_col_size)] # allocate space for the jacobian
-  #   passed_next_node: List[attribute] = [currentPaths[0][1]] # check if we already passed this node
-  #   row_offset: int = 0
-  #   col_offset: int = 0
-  #   for path in currentPaths:
-  #     next_node: attribute = path[1]
-  #     if next_node not in passed_next_node:
-  #       row_offset += passed_next_node[-1].size # we moved to the next node, row_offset updates
-  #       passed_next_node.append(next_node)
-  #     if next_node.operator == DATA:
-  #       # this is easy
-  #       # we put the identity matrix inside
-  #       for i in range(next_node.size):
-  #         index = (row_offset + i) * j_g_x_col_size + col_offset + i
-  #         j_g_x_children[index] = attribute(float_value = 1.0)
-  #       col_offset += next_node.size
-  #     else:
-  #       # it's not easy
-  #       # we need to get the jacobian now
-  #       included_paths = path[1: -1]
-  #       data_node = path[-1]
-  #       included_path_str = "_d_".join([x.fullName for x in included_paths])
-  #       next_jacobian_name = f"d_{included_path_str}_d_{data_node.fullName}"
-  #       # print(next_node.correspondance.attributes.keys())
-  #       next_jacobian = next_node.correspondance.attributes[next_jacobian_name]
-  #       for i in range(next_jacobian.rows):
-  #         for j in range(next_jacobian.cols):
-  #           index = (row_offset + i) * j_g_x_col_size + col_offset + j
-  #           j_g_x_children[index] = next_jacobian[i * next_jacobian.cols + j]
-  #       col_offset += next_jacobian.cols
-  #   # now we can compute the first part of the hessian by doing the multiplication
-  #   # but we defer it to last as we may need to do pd projection with some of the hessian
-
-
-  #   # we've finished the first part of the hessian now
-  #   # now we need to compute the second part
-  #   # the second part is the sum of k
-  #   # df/dg_k of g(x) times the hessian of g_k(x)
-  #   # df/dg_k of g(x) we should have already computed
-  #   all_df_dg: List[attribute] = [] # for each next node
-  #   for follow_node in allChildren:
-  #     follow_node_full_name = follow_node.fullName
-  #     # we know this is definitely computed
-  #     diff_att_name: str = f'd_{child_att_full_name}_d_{follow_node_full_name}'
-  #     diff_att: attribute = child_att.correspondance.attributes[diff_att_name]
-  #     all_df_dg.append(diff_att)
-
-  #   # now, for each next node, we will need to have a permutation matrix
-  #   # this is because when we have join, we cannot simply have on diagonal H0, H1, H2
-  #   # instead, because we store the index by attribute, we need to put the same attribute at the same place
-  #   # first, we will need to know for each of the follow node, their follow node and the size of the attribute
-  #   attribute_sizes: List[List[int]] = [[]]
-  #   corresponding_data_attributes: List[List[attribute]] = [[]]
-  #   last_checked_attribute: attribute = currentPaths[0][1]
-  #   for i in range(len(currentPaths)):
-  #     path: List[attribute] = currentPaths[i]
-  #     grandchildren_path: List[attribute] = path[2:]
-  #     attribute_size = 1
-  #     for item in grandchildren_path:
-  #       if item.operator == JOIN:
-  #         attribute_size *= item.through.dimension
-  #       else:
-  #         attribute_size *= item.size
-  #     if path[1] != last_checked_attribute:
-  #       last_checked_attribute = path[1]
-  #       attribute_sizes.append([])
-  #       corresponding_data_attributes.append([])
-  #     attribute_sizes[-1].append(attribute_size)
-  #     corresponding_data_attributes[-1].append(path[-1])
-  #   # ok now we have for each next node, all the attributes and the sizes
-  #   # we should know how to reorient them when we get them
-  #   # now, for each of the next node, we will get the hessian
-  #   h_g_full_mat_children = [[attribute(float_value = 0.0) for _ in range(j_g_x_col_size * j_g_x_col_size)] for _ in range(child_att.size)]
-  #   mat_offset = 0 # the offset for the diagonal block
-  #   for i in range(len(allChildren)):
-  #     follow_node: attribute = allChildren[i]
-  #     if follow_node.operator == DATA:
-  #       # great, the hessian is 0, all we need to do is set the offset
-  #       mat_offset += follow_node.size
-  #     else:
-  #       # first of all, we check if the hessian exists
-  #       data_attributes: List[attribute] = corresponding_data_attributes[i]
-  #       h_g_name = f'd2_{follow_node.children[0].fullName}_d_{"__".join([x.fullName for x in data_attributes])}'
-  #       if h_g_name not in follow_node.children[0].correspondance.attributes:
-  #         # ok here we finally do the recursion part
-  #         # first we select all the paths that are relevant
-  #         relevant_paths: List[List[attribute]] = []
-  #         for path in currentPaths:
-  #           if path[1] == follow_node:
-  #             relevant_paths.append(path[1:])
-  #         self.__generateHessianForParts(autodiff, relevant_paths)
-  #       h_g: attribute = follow_node.children[0].correspondance.attributes[h_g_name] # h_g has size j_g_x_col_size * j_g_x_col_size * (number of elements for the follow node's child 0, because we have a hessian for each of the element)
-  #       follow_node_child_size = follow_node.children[0].size # the number of blocks in h_g
-  #       follow_node_dimension = follow_node.through.dimension # how many children is joined
-  #       h_g_true_size = h_g.size // follow_node_child_size # for each h_g, what's the size
-  #       assert h_g_true_size * follow_node_child_size == h_g.size # make sure the division is integer
-  #       h_g_true_row_size = sum(attribute_sizes[i]) # how many rows in this hessian
-  #       # let's do an assert here
-  #       assert h_g_true_size == sum(attribute_sizes[i]) * sum(attribute_sizes[i])
-  #       # now we check how many elements of h_g we actually need, because it's possible that many of them are constants
-  #       skipped_indices = []
-  #       for j in range(h_g.size):
-  #         if h_g[j].operator == FLOAT:
-  #           skipped_indices.append(j)
-
-  #       second_term_hessian_before_join_materialized: attribute = None
-  #       # multiplied_jacobian_materialized_name: str = ""
-  #       if self.__save_intermediate:
-  #         # ok we want to materialize the jacobian to a data variable
-  #         # and we can use it later
-  #         materialized_second_term_list = []
-  #         for j in range(h_g.size):
-  #           if j not in skipped_indices:
-  #             materialized_second_term_list.append(h_g[j])
-  #         if len(materialized_second_term_list) > 0:
-  #           materialized_second_term = attribute.to_array(materialized_second_term_list, rows = len(materialized_second_term_list), cols = 1)
-  #           # add the name
-  #           attribute_name = f"{h_g_name}_nonconstant_materialized"
-  #           # multiplied_jacobian_materialized_name = attribute_name # save the name for later
-  #           if attribute_name not in h_g.correspondance.attributes:
-  #             second_term_hessian_before_join_materialized = h_g.correspondance.addAttribute(attribute_name, rows = len(materialized_second_term_list), cols = 1)
-  #             self.__intermediate_compute_pairs[attribute_name] = (materialized_second_term, second_term_hessian_before_join_materialized)
-
-  #       sequential_count = 0 # for sequentially adding materialized attribute
-  #       for j in range(h_g.size):
-  #         if j not in skipped_indices:
-  #           # we add the attribute
-  #           if f'{h_g_name}_{j}' not in follow_node.correspondance.attributes:
-  #             if not self.__save_intermediate:
-  #               follow_node.correspondance.addAttribute(f'{h_g_name}_{j}', through = follow_node.through, source = h_g[j])
-  #             else:
-  #               assert second_term_hessian_before_join_materialized is not None
-  #               follow_node.correspondance.addAttribute(f'{h_g_name}_{j}', through = follow_node.through, source = second_term_hessian_before_join_materialized[sequential_count])
-  #               sequential_count += 1
-  #       # now we actually need to accumulate the new matrix, which is going to be the size of
-  #       # h_g_true_size * follow_node_child_size * follow_node_dimension
-  #       expanded_second_term_hessians = [attribute(float_value = 0.0) for _ in range(h_g.size * follow_node_dimension)]
-  #       for j in range(h_g.size):
-  #         if j in skipped_indices:
-  #           # we know exactly it is a float, put it in corresponding place
-  #           for k in range(follow_node_dimension):
-  #             expanded_second_term_hessians[k * h_g.size + j] = h_g[j]
-  #         else:
-  #           # we have the accumulated attribute, put it in
-  #           for k in range(follow_node_dimension):
-  #             expanded_second_term_hessians[k * h_g.size + j] = follow_node.correspondance.attributes[f'{h_g_name}_{j}'][k]
-  #       # we have assembled the expanded
-  #       # now, do the following for each of the element in child_att
-  #       for j in range(child_att.size):
-  #         # get the correct row elements of df_dg
-  #         dfj_dg = [all_df_dg[i][k] for k in range(j * follow_node.size, (j + 1) * follow_node.size)]
-  #         compressed_second_term_hessians: List[attribute] = [attribute(float_value = 0.0) for _ in range(h_g_true_size * follow_node_dimension)] # because for the child, let's say i have an attribute, that is accumulated 4 times, and the attribute itself has dimension 3, with the final data size of 8, then because each of the 3 elements are corresponding to the same 8 data attributes, we actually can accumulate them together for the 3 hessians, multiplied by the correct df_dg
-  #         for k in range(follow_node_child_size * follow_node_dimension):
-  #           nth_joined_element = k // follow_node_child_size # which joined index it is
-  #           # nth_child_element = k % follow_node_child_size # which child it is
-  #           selected_hessian = expanded_second_term_hessians[k * h_g_true_size : (k + 1) * h_g_true_size] # extract the hessian block
-  #           selected_hessian = [dfj_dg[k] * selected_hessian[m] for m in range(len(selected_hessian))] # multiply by the correct dfj_dg
-  #           # now we add it back
-  #           for m in range(h_g_true_size):
-  #             compressed_second_term_hessians[nth_joined_element * h_g_true_size + m] += selected_hessian[m]
-  #         # ok now we reorient the children attributes
-  #         # here's what we need to do
-  #         # we have N hessians, N is the join dimension
-  #         # and in each of the hessian, the blocks are sorted by data
-  #         # now we need to put the same data in the same block
-  #         # we have the mat_offset, which is the offset on both the row and col
-  #         current_children_sizes: List[int] = attribute_sizes[i]
-  #         for k in range(len(current_children_sizes)):
-  #           block_row_size = current_children_sizes[k]
-  #           block_row_start = sum(current_children_sizes[:k])
-  #           for m in range(k, len(current_children_sizes)):
-  #             block_col_size = current_children_sizes[m]
-  #             block_col_start = sum(current_children_sizes[:m])
-  #             for n in range(follow_node_dimension): # for each join
-  #               # first we get the correct block
-  #               block = extract_block(compressed_second_term_hessians, h_g_true_row_size * follow_node_dimension, h_g_true_row_size, h_g_true_row_size * n + block_row_start, block_col_start, block_row_size, block_col_size)
-  #               # ok now we have the block, we need to know where to put it in the final matrix
-  #               block_row_start_in_final_matrix = mat_offset + block_row_start * follow_node_dimension + block_row_size * n
-  #               block_col_start_in_final_matrix = mat_offset + block_col_start * follow_node_dimension + block_col_size * n
-  #               # now we put it in
-  #               for p in range(block_row_size):
-  #                 for q in range(block_col_size):
-  #                   h_g_full_mat_children[j][(block_row_start_in_final_matrix + p) * j_g_x_col_size + block_col_start_in_final_matrix + q] = block[p * block_col_size + q]
-  #       # now we set the mat offset
-  #       mat_offset += h_g_true_row_size * follow_node_dimension
-  #   # now for all h_g_full_mat, we need to make it symmetric
-  #   for i in range(len(h_g_full_mat_children)):
-  #     for j in range(j_g_x_col_size):
-  #       for k in range(j):
-  #         index = j * j_g_x_col_size + k
-  #         transpose_index = k * j_g_x_col_size + j
-  #         h_g_full_mat_children[i][index] = h_g_full_mat_children[i][transpose_index]
-  #   # ok so now h_g_full_mat is constructed, we need to flatten it and give it the attribute name
-  #   all_datas = [x[-1] for x in currentPaths]
-  #   h_g_name = f'd2_{child_att.fullName}_d_{"__".join([x.fullName for x in all_datas])}'
-  #   h_g_full_mats = [attribute.to_array(x, rows = j_g_x_col_size, cols = j_g_x_col_size) for x in h_g_full_mat_children]
-  #   h_g_full_mat_children: List[attribute] = []
-  #   # here we compute the first part of the hessian
-  #   second_term_is_zero = False
-  #   j_g_x = attribute.to_array(j_g_x_children, rows = h_f_g_size, cols = j_g_x_col_size)
-  #   multiplication_result = [] # the multiplied out first term, we do this for each element of child_att
-  #   for i in range(child_att.size):
-  #     hessian_children = h_f_g_children[i * h_f_g_size * h_f_g_size: (i + 1) * h_f_g_size * h_f_g_size]
-  #     hessian = attribute.to_array(hessian_children, rows = h_f_g_size, cols = h_f_g_size)
-  #     # ok determine if we want to do hessian projection
-  #     if lead_node.operator != JOIN:
-  #       if h_g_full_mats[i].isZero > 0: # check if the second part is just zero matrix
-  #         second_term_is_zero = True
-  #         # the second term is zero, we can do hessian projection
-  #         hessian = hessian.spd(self.__projection_method)
-  #         # print("We can project the inner hessian")
-  #     mul1 = hessian.mul_explicit(j_g_x)
-  #     mul2 = j_g_x.transpose().mul_explicit(mul1)
-  #     multiplication_result.append(mul2)
-  #   for i in range(child_att.size):
-  #     h_g_full_mats[i] = h_g_full_mats[i].add_explicit(multiplication_result[i])
-  #     if (lead_node.operator != JOIN) and (not second_term_is_zero) and (self.__projection_method != 0):
-  #       # # we need to project the whole matrix
-  #       # h_g_full_mats[i] = h_g_full_mats[i].spd(0)
-  #       # print("We project the entire hessian")
-  #       self.__project_entire_hessian = True
-  #     for j in range(h_g_full_mats[i].size):
-  #       h_g_full_mat_children.append(h_g_full_mats[i][j])
-  #   if lead_node.operator == JOIN:
-  #     if h_g_name not in child_att.correspondance.attributes:
-  #       # we only add the hessian if it is a join node
-  #       # because for a non join node, we may have done projection
-  #       child_att.correspondance.addAttribute(h_g_name, computed_attribute = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols))
-  #   else:
-  #     if f"{h_g_name}_projected" not in child_att.correspondance.attributes:
-  #       child_att.correspondance.addAttribute(f"{h_g_name}_projected", computed_attribute = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols))
-  #     # finally we assign the hessian
-  #     self.__hessian = lead_node.correspondance.attributes[f"{h_g_name}_projected"]
-  #     # if self.__hessian is not None:
-  #       # print(f"Final hessian correspondance: {self.__hessian.correspondance}")
-
-  #   # # this is our hessian now
-  #   # if lead_node.operator != JOIN:
-  #   #   self.__hessian = attribute.to_array(h_g_full_mat_children, rows = h_g_full_mats[0].rows * child_att.size, cols = h_g_full_mats[0].cols)
-
-
-
-
-  # def __generateHessian(self, wrt: List[attribute], differentiater: autodiff) -> None:
-  #   from yasps.attribute import JOIN
-  #   # first we check which path we need
-  #   filteredPath: List[List[attribute]] = []
-  #   for path in self.__paths:
-  #     if path[-1] in wrt:
-  #       filteredPath.append(path)
-  #   # check if hessian is already generated
-  #   all_datas = [x[-1] for x in filteredPath]
-  #   h_g_name = f'd2_{self.__energy.fullName}_d_{"__".join([x.fullName for x in all_datas])}'
-
-  #   if f'{h_g_name}_projected' in self.__energy.correspondance.attributes:
-  #     self.__hessian = self.__energy.correspondance.attributes[f'{h_g_name}_projected']
-  #   else:
-  #     # now we need to compute the hessian
-  #     # the first step is mapping out the attribute to descendant from the paths
-  #     descendant_lookup: Dict[int, List[attribute]] = {}
-  #     for path in filteredPath:
-  #       for i in range(len(path) - 1):
-  #         parent = path[i]
-  #         child = path[i + 1]
-  #         if parent.hash not in descendant_lookup:
-  #           descendant_lookup[parent.hash] = []
-  #         if child not in descendant_lookup[parent.hash]:
-  #           descendant_lookup[parent.hash].append(child)
-  #     # once we get the descendant lookup, we can start computing the hessian
-  #     # by iterating over the path
-  #     for path in filteredPath:
-  #       # do it in reverse order
-  #       for i in range(len(path) - 2, -1, -1):
-  #         # # we will compute the jacobian for each neighboring nodes
-  #         lead_node = path[i]
-  #         follow_node = path[i+1]
-  #         lead_node_hash = lead_node.hash
-  #         lead_node_descendants = descendant_lookup[lead_node_hash]
-  #         if lead_node.operator == JOIN:
-  #           child_att = lead_node.children[0]
-  #           child_att_correspondance = child_att.correspondance
-  #           child_att_full_name = child_att.fullName
-  #           follow_node_full_name = follow_node.fullName
-  #           # we know this is definitely computed
-  #           diff_att_name = f'd_{child_att_full_name}_d_{follow_node_full_name}'
-  #           diff_att = child_att_correspondance.attributes[diff_att_name]
-  #           # now we differentiate wrt the other descendants
-  #           for descendant in lead_node_descendants:
-  #             # perform the second derivative
-  #             double_diff_att_name = f'd_{diff_att_name}_d_{descendant.fullName}'
-  #             if double_diff_att_name not in child_att_correspondance.attributes:
-  #               # we differentiate the node wrt to the descendant
-  #               double_diff_att = differentiater.diff(diff_att, descendant)
-  #               child_att_correspondance.addAttribute(double_diff_att_name, computed_attribute = double_diff_att)
-  #         else:
-  #           # it's a normal node, which is the energy
-  #           # add the differentiation wrt to the next node
-  #           diff_att_name = f'd_{lead_node.fullName}_d_{follow_node.fullName}'
-  #           diff_att = lead_node.correspondance.attributes[diff_att_name]
-  #           for descendant in lead_node_descendants:
-  #             double_diff_att_name = f'd_{diff_att_name}_d_{descendant.fullName}'
-  #             if double_diff_att_name not in lead_node.correspondance.attributes:
-  #               double_diff_att = differentiater.diff(diff_att, descendant)
-  #               lead_node.correspondance.addAttribute(double_diff_att_name, computed_attribute = double_diff_att)
-  #   self.__generateHessianForParts(differentiater, filteredPath)
-
-
   def generateHessianAndGradient(self, wrt: List[attribute]) -> None:
     differentiater = autodiff()
     # generate the symbolic code for gradient and hessian
     self.__generateGradientThroughPathDict(wrt, differentiater)
     assert self.__gradient is not None
-    # if not self.__gradient_only:
-    #   # dont generate hessian if we only need gradient
-    #   self.__generateHessian(wrt, differentiater)
+    # print("----------------------------------------------------------------------------")
+    # print("Checking the gradient")
+    # print(self.__gradient.compute().value.get()[:12])
+    # print("Checking energy")
+    # print(self.__energy.compute().value.get()[0])
+    # print("----------------------------------------------------------------------------")
+    # exit(0)
+    if not self.__gradient_only:
+      # dont generate hessian if we only need gradient
+      self.__generateHessianThroughPathDict(wrt, differentiater)
+      print("Hessian generated")
+      assert self.__hessian is not None, "yasps.energy.generateHessianAndGradient: The hessian is not computed yet. Please call generateHessianAndGradient first."
+      # print("----------------------------------------------------------------------------")
+      # print("Computed hessian check")
+      # computed_hessian = self.__hessian.compute().value.get()
+      # print(computed_hessian[:144].reshape((12, 12)))
+      # print("----------------------------------------------------------------------------")
+      # exit()
 
 
 

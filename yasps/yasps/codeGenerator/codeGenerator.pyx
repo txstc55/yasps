@@ -33,7 +33,11 @@ class codeGenerator:
     if current.operator == ya.FLOAT or current.operator == ya.INDEX:
       return
     elif current.isFloatMat:
-      if current.correspondance.fullName != self.__input.correspondance.fullName:
+      if current.correspondance is None:
+        if current.operator == ya.TRANSPOSE:
+          self.__generateCodeOrderDFS(current.children[0])
+        self.__order.append(current)
+      elif current.correspondance.fullName != self.__input.correspondance.fullName:
         # special case, we have a children from another correspondance
         # that is a float mat
         # this is likely because it's a unioned child or a joined child
@@ -114,7 +118,15 @@ class codeGenerator:
     if len(self.__stack) == 0 and self.__input.operator == ya.DATA:
       # this attribute is a data, generate special code for it
       current: ya.attribute = self.__input
-      kernelString: str = f'''
+      kernelString: str
+      if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
+        kernelString: str = f'''
+  #pragma unroll
+  for (unsigned int i = 0; i < {current.size}; i++) {{
+    result[i] = {current.code_generation_data_name}[i];
+  }}'''
+      else:
+        kernelString: str = f'''
   #pragma unroll
   for (unsigned int i = 0; i < {current.size}; i++) {{
     result[i] = {current.code_generation_data_name}[{current.correspondance.fullName}_index * {current.size} + i];
@@ -123,30 +135,10 @@ class codeGenerator:
 __device__ void {current.fullName}_device_function(const double* {current.code_generation_data_name}, unsigned int {current.correspondance.fullName}_index, double* result)'''
       current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, [current], [], [], []) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
       return
-
-    # actually generate the code
-    # print(f"At {self.__input.fullName}")
-    # print("With children")
-    # print(f"Children: {[x.fullName for x in self.__input.children]}")
     for item in self.__input.children:
       self.__generateCodeOrderDFS(item)
     self.__order.append(self.__input)
-    # print(f"At order append finish for {self.__input.fullName}")
-    # go from bottom to top
-    # check how many items appeared more than once
-    # order_counts: Dict[int, int] = {}
-
-    # # we check if the item actually needs to be initialized
-    # # since some of the elements are only computed once
-    # for item in self.__order:
-    #   if item.hash in order_counts:
-    #     order_counts[item.hash] += 1
-    #   else:
-    #     order_counts[item.hash] = 1
     for current in self.__order:
-      # print("Generating code for")
-      # print(str(current))
-      # print(current.hash)
       if current.hash in self.__attribute_replacements:
         # we don't need to do anything about it
         pass
@@ -225,15 +217,6 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
           self.__code_strings.append(f'''
   double {current.fullName}_local_data_temp[{current.size}] = {{0}};
 ''')
-#         if current.correspondance.type == "scene" or current.correspondance.type == "mesh":
-#           # we also need to check if the indexing is already a part of the input
-#           if self.__input.correspondance.type != "scene" and self.__input.correspondance.type != "mesh":
-#             # this is one piece of data, that doesn't really need indexing
-#             # we set the index to 0
-#             self.__code_strings.append(f'''
-# // add 0 indexing since it is a scene or mesh data
-# #define {current.correspondance.fullName}_index 0
-# ''')
         if current.deviceKernel is not None:
           self.__code_strings.append(f'''
   {current.fullName}_device_function(
@@ -596,6 +579,7 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_transpose(self, current: ya.attribute) -> None:
     attribute_name, _ = self.__generate_attribute_name_and_initialization(current)
+    # if current.children[0] not in self.__attribute_replacements:
     self.__code_strings.append(f'''
   // make transpose expression rather than a copy
   auto {attribute_name} = {self.getIntermediateName(current.children[0])}.transpose();''')

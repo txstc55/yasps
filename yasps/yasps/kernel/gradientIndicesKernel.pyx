@@ -419,7 +419,7 @@ class gradientIndicesKernel:
 
   def __getCompressionKernel(self):
     if self.__compression_kernel is None:
-      file_name = ".yasps_tmp/compression_kernel"
+      file_name = ".yasps_constant/compression_kernel"
       # check if the file exists
       if not os.path.exists(f'{file_name}.so'):
         # generate the kernel
@@ -437,7 +437,7 @@ class gradientIndicesKernel:
 
   def __getCoordinateKernel(self):
     if self.__coordinate_kernel is None:
-      file_name = ".yasps_tmp/coordinate_kernel"
+      file_name = ".yasps_constant/coordinate_kernel"
       # check if the file exists
       if not os.path.exists(f'{file_name}.so'):
         # generate the kernel
@@ -721,6 +721,7 @@ __device__ inline void {parent.fullName}_get_indices(
     index
   );
 '''
+          index_accumulation += self.__indexSizeForEachPart[child]
         self.__kernelString += f'''
 }} // end of kernel for grabbing indices from of {parent.fullName}
 '''

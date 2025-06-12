@@ -52,6 +52,7 @@ y = position[:, 1]  # Shape: (N,)
 z = position[:, 2]  # Shape: (N,)
 # Convert x-coordinates to rotation angles in degrees
 theta_degrees = x  # Each x_i is the rotation angle in degrees
+# theta_degrees = 0.1
 # Convert degrees to radians
 theta_radians = np.deg2rad(theta_degrees * 1000.0)  # np.deg2rad converts degrees to radians
 cos_theta = np.cos(theta_radians)  # Shape: (N,)
@@ -176,13 +177,13 @@ snh = bunny.tet.addAttribute("stable_neo_hookean", computed_attribute = stable_n
 minimizer0 = minimizer()
 minimizer1 = minimizer()
 
-# minimizer0.addEnergy(bunny.vertex["position_penalty"])
+minimizer0.addEnergy(bunny.vertex["position_penalty"])
 minimizer1.addEnergy(snh)
 
-# minimizer0.addWrt([bunny["roll"], bunny["pitch"], bunny["yaw"], bunny["translation"]])
+minimizer0.addWrt([bunny["roll"], bunny["pitch"], bunny["yaw"], bunny["translation"]])
 minimizer1.addWrt([bunny.vertex["current_position"]])
 
-# minimizer0.generateHessianAndGradient()
+minimizer0.generateHessianAndGradient()
 minimizer1.generateHessianAndGradient()
 
 
@@ -200,31 +201,44 @@ plotter.add_mesh(mesh_rest, opacity=0.5, color='blue')
 plotter.add_mesh(mesh_moved, opacity=1.0, color='red')
 plotter.show(interactive_update=True)
 
-
+gradient_npz = np.load("gradient_original.npz")
+gradient_saved = gradient_npz["gradient"]
+diagonal_npz = np.load("diagonal_original.npz")
+diagonal_saved = diagonal_npz["diagonal"]
 
 total_frames = 0
 iteration = 0
 weight = 0.1
 def update_position():
   global total_frames
-  # result0 = minimizer0.computeSolution()
+  result0 = minimizer0.computeSolution()
   result1 = minimizer1.computeSolution()
-  # d_roll = result0[0].get()
-  # d_pitch = result0[1].get()
-  # d_yaw = result0[2].get()
-  # d_translation = result0[3].get().flatten()
+  # gradient_computed = minimizer1.gradient.get().flatten()
+  # print(gradient_computed)
+  # print(np.linalg.norm(gradient_saved - gradient_computed))
+  # diagonal_computed = minimizer1.diagonal.get().flatten()
+  # print(diagonal_computed)
+  # print(np.linalg.norm(diagonal_saved - diagonal_computed))
+  # exit(0)
+  d_roll = result0[0].get()
+  d_pitch = result0[1].get()
+  d_yaw = result0[2].get()
+  d_translation = result0[3].get().flatten()
   d_position = result1[0].get().flatten()
-  # roll_new_value = bunny["roll"].value.get() - weight * d_roll
-  # pitch_new_value = bunny["pitch"].value.get() - weight * d_pitch
-  # yaw_new_value = bunny["yaw"].value.get() - weight * d_yaw
-  # translation_new_value = bunny["translation"].value.get().flatten() - weight * d_translation
+  # d_position = minimizer1.gradient.get().flatten()
+  roll_new_value = bunny["roll"].value.get() - weight * d_roll
+  pitch_new_value = bunny["pitch"].value.get() - weight * d_pitch
+  yaw_new_value = bunny["yaw"].value.get() - weight * d_yaw
+  translation_new_value = bunny["translation"].value.get().flatten() - weight * d_translation
   position_new_value = bunny.vertex["current_position"].value.get().flatten() - 0.1 * d_position
-  # bunny["pitch"].updateValue(roll_new_value)
-  # bunny["roll"].updateValue(pitch_new_value)
-  # bunny["yaw"].updateValue(yaw_new_value)
-  # bunny["translation"].updateValue(translation_new_value)
+  bunny["pitch"].updateValue(roll_new_value)
+  bunny["roll"].updateValue(pitch_new_value)
+  bunny["yaw"].updateValue(yaw_new_value)
+  bunny["translation"].updateValue(translation_new_value)
   bunny.vertex["current_position"].updateValue(position_new_value)
   new_positions = bunny.vertex["rotated_position"].compute().value.get().flatten()
+  print("Position penalty:")
+  print(sum(bunny.vertex["position_penalty"].compute().value.get().flatten()))
   # Update the mesh points
   mesh_moved.points = new_positions.reshape(-1, 3)
   # Refresh the plotter to reflect the updated mesh
@@ -237,8 +251,9 @@ def update_position():
 # mesh_rest.save("bunny_result/bunny_rest.obj")
 while True:
   update_position()
+  # exit(0)
   total_frames += 1
   # if total_frames % 100 == 0:
   #   mesh_moved.save(f"bunny_result/bunny_untwisted_{total_frames}_unrotated.obj")
-  if total_frames == 500:
-    exit(0)
+  # if total_frames == 500:
+  #   exit(0)

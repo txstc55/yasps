@@ -54,7 +54,7 @@ class hessianAndGradientKernel:
     print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
       # add the includes and the evd function
-      self.__kernelString = '''
+      self.__kernelString = f'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -319,14 +319,14 @@ __global__ void compute_hessian_and_gradient_global_function(
             for (unsigned int k = 0; k < segment_size_i; k++){{
               for (unsigned int l = 0; l < segment_size_j; l++){{
                 // this is a block in the upper triangle
-                atomicAdd(&hessian_blocks[placement_index + k * segment_size_j + l], hg_mat(permutation_i + k, permutation_j + l));
+                atomicAdd(&hessian_blocks[placement_index + k * segment_size_j + l], compressed_hessian(permutation_i + k, permutation_j + l));
               }}
             }}
           }}else{{
             for (unsigned int k = 0; k < segment_size_j; k++){{
               for (unsigned int l = 0; l < segment_size_i; l++){{
                 // put the transpose block in
-                atomicAdd(&hessian_blocks[placement_index + k * segment_size_j + l], hg_mat(permutation_j + k, permutation_i + l));
+                atomicAdd(&hessian_blocks[placement_index + k * segment_size_i + l], compressed_hessian(permutation_i + l, permutation_j + k));
               }}
             }}
           }}

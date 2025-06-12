@@ -18,6 +18,8 @@ class scene:
     # mkdir .yasps_tmp if it does not exist
     if not os.path.exists(".yasps_tmp"):
       os.makedirs(".yasps_tmp")
+    if not os.path.exists(".yasps_constant"):
+      os.makedirs(".yasps_constant")
     # check if name exists
     if name == "":
       raise ValueError("scene.__init__: name cannot be empty.")

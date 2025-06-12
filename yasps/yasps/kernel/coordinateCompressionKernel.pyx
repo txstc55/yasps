@@ -443,7 +443,7 @@ class coordinateCompressionKernel:
     # as well as determining the number of blocks for each dimension
     # now we check if kernel exists
     if self.__get_unique_coords_kernel is None:
-      file_name = ".yasps_tmp/get_unique_coords_kernel"
+      file_name = ".yasps_constant/get_unique_coords_kernel"
       # check if the file exists
       if not os.path.exists(f'{file_name}.so'):
         # generate the kernel
@@ -479,7 +479,7 @@ class coordinateCompressionKernel:
     # now we allocate two arrays for unique dimensions and unique coordinates
     self.__uniqueCoordinates = gpuarray.GPUArray(self.__num_unique_coords * 2, dtype=np.uint32)
     if self.__compress_unique_coords_kernel is None:
-      file_name = ".yasps_tmp/compress_unique_coords_kernel"
+      file_name = ".yasps_constant/compress_unique_coords_kernel"
       if not os.path.exists(f'{file_name}.so'):
         # generate the kernel
         f = open(f"{file_name}.cu", 'w')

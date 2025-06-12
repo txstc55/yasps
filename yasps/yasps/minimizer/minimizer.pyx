@@ -67,6 +67,10 @@ class minimizer:
   def wrt(self) -> List[attribute]:
     return self.__wrt
 
+  @property
+  def diagonal(self) -> gpuarray.GPUArray:
+    return self.__diagonal
+
   def addEnergies(self, energies: List[energy]) -> None:
     for item in energies:
       if item.hash in [energy.hash for energy in self.__energies]:

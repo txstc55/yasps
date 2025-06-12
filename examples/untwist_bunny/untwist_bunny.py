@@ -76,6 +76,7 @@ bunny = s0.addMesh("bunny")
 bunny.addPrimitive("vertex", numInstances = position.shape[0])
 bunny.addPrimitive("triangle", numInstances = surface_triangle_indices.shape[0])
 bunny.addPrimitive("tet", numInstances = tet_indices.shape[0])
+# bunny.addPrimitive("tet", numInstances = 5)
 
 ##################################################
 ## define connectivity for bunny
@@ -126,7 +127,11 @@ bunny.vertex["current_position"].updateValue(moved_position)
 bunny.vertex.addAttribute("rotated_position", computed_attribute = (rot * (bunny.vertex["current_position"] + translation)))
 tet_position = bunny.tet.addAttribute("position", through = tet_to_vertex, source = bunny.vertex["rotated_position"])
 tet_position_rest = bunny.tet.addAttribute("position_rest", through = tet_to_vertex, source = bunny.vertex["rest_position"])
-
+# print("Current position")
+# print(tet_position.compute().value.get().reshape(-1, 3))
+# print("Rest position")
+# print(tet_position_rest.compute().value.get().reshape(-1, 3))
+# exit(0)
 
 ##################################################
 ## define stable neo hookean energy
@@ -251,5 +256,5 @@ while True:
   total_frames += 1
   if total_frames % 100 == 0:
     mesh_moved.save(f"bunny_result/bunny_untwisted_{total_frames}_unrotated.obj")
-  if total_frames == 500:
-    exit(0)
+  # if total_frames == 500:
+  #   exit(0)
