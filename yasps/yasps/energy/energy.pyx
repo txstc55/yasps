@@ -259,8 +259,30 @@ class energy:
     if current.operator != JOIN and current.operator != UNION:
       return self.__gennerateGlobalJacobianForEnergy(current, wrt)
     elif current.operator == JOIN:
+      result = self.__generateGlobalJacobianForJoin(current, wrt)
+      # if self.__save_intermediate:
+      #   if result.fullName not in self.__intermediate_compute_pairs:
+      #     # we save the intermediate result as an evaluated data pair
+      #     new_name = result.name + "_evaluated"
+      #     evaluated_result = current.correspondance.addAttribute(new_name, rows = result.rows, cols = result.cols)
+      #     self.__intermediate_compute_pairs[result.fullName] = (result, evaluated_result)
+      #     return evaluated_result
+      #   else:
+      #     # we already have the intermediate result, we just return the evaluated result
+      #     return self.__intermediate_compute_pairs[result.fullName][1]
       return self.__generateGlobalJacobianForJoin(current, wrt)
     elif current.operator == UNION:
+      result = self.__generateGlobalJacobianForUnion(current, wrt)
+      # if self.__save_intermediate:
+      #   if result.fullName not in self.__intermediate_compute_pairs:
+      #     # we save the intermediate result as an evaluated data pair
+      #     new_name = result.name + "_evaluated"
+      #     evaluated_result = current.correspondance.addAttribute(new_name, rows = result.rows, cols = result.cols)
+      #     self.__intermediate_compute_pairs[result.fullName] = (result, evaluated_result)
+      #     return evaluated_result
+      #   else:
+      #     # we already have the intermediate result, we just return the evaluated result
+      #     return self.__intermediate_compute_pairs[result.fullName][1]
       return self.__generateGlobalJacobianForUnion(current, wrt)
     else:
       raise ValueError(f"energy.__generateGradientThroughRecursion: operator {current.operator} is not supported in path dict.")
@@ -297,7 +319,17 @@ class energy:
         col_offset += child.size
       assert col_offset == local_gradient.size, f"energy.__generateNeighborJacobianForEnergy: col_offset {col_offset} is not equal to local_gradient size {local_gradient.size}"
       local_hessian = attribute.to_array(double_diff_results, rows = local_gradient.size, cols = local_gradient.size)
-      parent.correspondance.addAttribute(local_hessian_name, computed_attribute = local_hessian)
+      if self.__save_intermediate and local_hessian.isZero == 0:
+        if local_hessian_name not in parent.correspondance.attributes:
+          # we first create the attribute that will just be data
+          hessian_data_attribute = parent.correspondance.addAttribute(local_hessian_name, rows = local_hessian.rows, cols = local_hessian.cols)
+          if hessian_data_attribute.fullName not in self.__intermediate_compute_pairs:
+            # add the pair
+            new_name = hessian_data_attribute.name + "_pre_evaluated"
+            parent.correspondance.addAttribute(new_name, computed_attribute = local_hessian)
+            self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (local_hessian, hessian_data_attribute)
+      else:
+        parent.correspondance.addAttribute(local_hessian_name, computed_attribute = local_hessian)
     return
 
   def __gennerateGlobalJacobianForEnergy(self, current: attribute, wrt: List[attribute]):
@@ -531,6 +563,16 @@ class energy:
       else:
         joined_child_global_jacobian = joined_child.correspondance.addAttribute(joined_child_global_jacobian_name, computed_attribute = child_global_jacobian)
 
+    if self.__save_intermediate:
+      if joined_child_global_jacobian.fullName not in self.__intermediate_compute_pairs:
+        # we save the intermediate result as an evaluated data pair
+        new_name = joined_child_global_jacobian.name + "_evaluated"
+        evaluated_result = joined_child_global_jacobian.correspondance.addAttribute(new_name, rows = joined_child_global_jacobian.rows, cols = joined_child_global_jacobian.cols)
+        self.__intermediate_compute_pairs[joined_child_global_jacobian.fullName] = (joined_child_global_jacobian, evaluated_result)
+        joined_child_global_jacobian = evaluated_result
+      else:
+        # we already have the intermediate result, we just return the evaluated result
+        joined_child_global_jacobian = self.__intermediate_compute_pairs[joined_child_global_jacobian.fullName][1]
 
     # we then perform the join operation
     res = current.correspondance.addAttribute(gradient_attribute_name+"_unresized", through = current.through, source = joined_child_global_jacobian)
@@ -567,14 +609,6 @@ class energy:
     if joined_child_global_hessian_name in joined_child.correspondance.attributes:
       # we already have the global hessian for the joined child
       joined_child_global_hessian = joined_child.correspondance[joined_child_global_hessian_name]
-      # print("-------------------------------------------------------------------------------------")
-      # print("Joind child already has global hessian computed")
-      # print(joined_child.fullName)
-      # print("Global hessian zero check")
-      # print(joined_child_global_hessian.isZero)
-      # print("Joined child global hessian actual check")
-      # print(str(joined_child_global_hessian))
-      # print("-------------------------------------------------------------------------------------")
     else:
       num_hessians = joined_child.size # how many hessians we have
       next_children = self.__path_dict[current]
@@ -614,16 +648,6 @@ class energy:
         index = 0
         for child in next_children:
           next_child_global_hessian = next_children_global_hessian[index]
-          # print("------------------------------------------------------------------------------------")
-          # print("next child global hessian is zero check")
-          # print(next_child_global_hessian.isZero)
-          # print("next child global hessian actual check")
-          # print(str(next_child_global_hessian))
-          # print("next child joined child is zero check")
-          # print(next_child_global_hessian.children[0].isZero)
-          # print("next child joined child actual check")
-          # print(str(next_child_global_hessian.children[0]))
-          # print("-------------------------------------------------------------------------------------")
           # now the child global hessian is size of child.size x hessian_size x hessian_size
           child_size = child.size # this marks the number of global hessian we have
           hessian_size = next_child_global_hessian.size // child_size # this is the size of the hessian for each child
@@ -640,14 +664,6 @@ class energy:
         # ok now we have the second part of the hessian
         # we will now construct the final hessian
         second_part_hessian = attribute.to_array(second_part_hessian_array, rows = next_children_global_jacobian.cols, cols = next_children_global_jacobian.cols)
-        # print("------------------------------------------------------------------------------------")
-        # print("Current joined child is: ")
-        # print(joined_child.fullName)
-        # print("Current second part hessian is zero check")
-        # print(second_part_hessian.isZero)
-        # print("Current second part hessian actual check")
-        # print(str(second_part_hessian[0]))
-        # print("------------------------------------------------------------------------------------")
         final_hessian = first_part_hessian.add_explicit(second_part_hessian)
 
         # now we add the final hessian to the items
@@ -660,6 +676,16 @@ class energy:
       # now we add it to the correspondance
       joined_child.correspondance.addAttribute(joined_child_global_hessian_name, computed_attribute = joined_child_global_hessian)
       # finally we perform the join operation on the current node
+    if self.__save_intermediate:
+      if joined_child_global_hessian.fullName not in self.__intermediate_compute_pairs:
+        # we save the intermediate result as an evaluated data pair
+        new_name = joined_child_global_hessian.name + "_evaluated"
+        evaluated_result = joined_child_global_hessian.correspondance.addAttribute(new_name, rows = joined_child_global_hessian.rows, cols = joined_child_global_hessian.cols)
+        self.__intermediate_compute_pairs[joined_child_global_hessian.fullName] = (joined_child_global_hessian, evaluated_result)
+        joined_child_global_hessian = evaluated_result
+      else:
+        # we already have the intermediate result, we just return the evaluated result
+        joined_child_global_hessian = self.__intermediate_compute_pairs[joined_child_global_hessian.fullName][1]
     current.correspondance.addAttribute(global_hessian_name, through = current.through, source = joined_child_global_hessian)
     return current.correspondance[global_hessian_name]
 
@@ -728,30 +754,44 @@ class energy:
       num_hessians = unioned_child.size
       hessian_num_cols = sum([x.size for x in unioned_child_used_children])
       hessian_num_rows = hessian_num_cols
-      all_hessian_results = [0.0 for _ in range(num_hessians * hessian_num_cols * hessian_num_rows)]
+      all_hessian_results = []
       for row in range(num_hessians):
+        for col in range(child_jacobian.cols):
+          current_item = child_jacobian[row, col]
+          for child in unioned_child_used_children:
+            diff_result = differentiater.diff(current_item, child)
+            for i in range(diff_result.rows):
+              for j in range(diff_result.cols):
+                all_hessian_results.append(diff_result[i, j])
         # current_derivative_items = []
         # for col in range(child_jacobian.cols):
         #   for child in children:
         #     current_derivative_items.append(differentiater.diff(child_jacobian[row, col], child))
-        current_derivative = child_jacobian.row(row)
-        col_offset = 0
-        for child in children:
-          diff_result = differentiater.diff(current_derivative, child)
-          for i in range(diff_result.rows):
-            for j in range(diff_result.cols):
-              all_hessian_results[row * hessian_num_cols * hessian_num_rows + i * hessian_num_cols + col_offset + j] = diff_result[i, j]
-          col_offset += child.size
-        assert col_offset == hessian_num_cols, f"energy.__generateNeighborJacobianForUnion: col_offset {col_offset} is not equal to hessian_num_cols {hessian_num_cols}"
+        # current_derivative = child_jacobian.row(row)
+        # col_offset = 0
+        # for child in children:
+        #   diff_result = differentiater.diff(current_derivative, child)
+        #   for i in range(diff_result.rows):
+        #     for j in range(diff_result.cols):
+        #       all_hessian_results[row * hessian_num_cols * hessian_num_rows + i * hessian_num_cols + col_offset + j] = diff_result[i, j]
+        #   col_offset += child.size
+        # assert col_offset == hessian_num_cols, f"energy.__generateNeighborJacobianForUnion: col_offset {col_offset} is not equal to hessian_num_cols {hessian_num_cols}"
       merged_hessian = attribute.to_array(all_hessian_results, rows = hessian_num_rows * num_hessians, cols = hessian_num_cols)
-      unioned_child.correspondance.addAttribute(child_hessian_name, computed_attribute = merged_hessian)
+      if child_hessian_name not in unioned_child.correspondance.attributes:
+        unioned_child.correspondance.addAttribute(child_hessian_name, computed_attribute = merged_hessian)
     return
 
   def __generateGlobalJacobianForUnion(self, current: attribute, wrt: List[attribute]):
     gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}_filled_for_{self.__energy.fullName}'
+    print("-----------------------------------------------------------")
+    print(f"At union, generating for {gradient_attribute_name}")
+    print("Checking children correspondance")
+    for child in current.children:
+      print(f"Child {child.fullName} has correspondance: {child.correspondance.fullName}")
+    print("-----------------------------------------------------------")
     if gradient_attribute_name in current.correspondance.attributes:
       return current.correspondance[gradient_attribute_name]
-    gradient_attribute_name_unfilled = f'd2_{current.children[0].fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    # gradient_attribute_name_unfilled = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
     # the procedure for union is similar to join
     # except that we need to deal with each of the children separately
     # then perform the union again
@@ -763,7 +803,7 @@ class energy:
     for unioned_child in current.children:
       # print(f"We are at unioned child {unioned_child.fullName}")
       # first we determine if this global jacobian is already computed
-      unioned_child_global_jacobian_name = gradient_attribute_name_unfilled
+      unioned_child_global_jacobian_name = f'd_{unioned_child.fullName}_d_{"__".join([x.fullName for x in wrt])}'
       unioned_child_global_jacobian: attribute
       if unioned_child_global_jacobian_name in unioned_child.correspondance.attributes:
         # we already have the jacobian
@@ -817,10 +857,21 @@ class energy:
         child_jacobian_name = f'd_{unioned_child.fullName}_d_{"__".join([x.fullName for x in used_children])}'
         child_local_jacobian = unioned_child.correspondance[child_jacobian_name]
         unioned_child_global_jacobian = child_local_jacobian.mul_explicit(children_global_jacobian)
-        unioned_child.correspondance.addAttribute(unioned_child_global_jacobian_name, computed_attribute = unioned_child_global_jacobian)
-        unioned_children_global_jacobians.append(unioned_child_global_jacobian)
+        if unioned_child_global_jacobian_name not in unioned_child.correspondance.attributes:
+          unioned_child.correspondance.addAttribute(unioned_child_global_jacobian_name, computed_attribute = unioned_child_global_jacobian)
+        unioned_children_global_jacobians.append(unioned_child.correspondance[unioned_child_global_jacobian_name])
         # print(f"Unioned child add a jacobian now, array length: {len(unioned_children_global_jacobians)}")
-
+    if self.__save_intermediate:
+      for (index, item) in enumerate(unioned_children_global_jacobians):
+        if item.fullName not in self.__intermediate_compute_pairs:
+          # we save the intermediate result as an evaluated data pair
+          new_name = item.name + "_evaluated"
+          evaluated_result = item.correspondance.addAttribute(new_name, rows = item.rows, cols = item.cols)
+          self.__intermediate_compute_pairs[item.fullName] = (item, evaluated_result)
+          unioned_children_global_jacobians[index] = evaluated_result
+        else:
+          # we already have the intermediate result, we just return the evaluated result
+          unioned_children_global_jacobians[index] = self.__intermediate_compute_pairs[item.fullName][1]
     # ok now that we have all of the children's jacobian
     # what we need to do is to get the largest dimension
     # in reality, they all should have the same rows
@@ -841,8 +892,12 @@ class energy:
         for j in range(jacobian.cols):
           expanded_jacobian_list[i * max_cols + j] = jacobian[i, j]
       expanded_jacobian = attribute.to_array(expanded_jacobian_list, rows = max_rows, cols = max_cols)
-      current.children[index].correspondance.addAttribute(gradient_attribute_name, computed_attribute = expanded_jacobian)
-      # print(f"Adding attribute with name {gradient_attribute_name} to child {current.children[index].correspondance.fullName}")
+      if not gradient_attribute_name in current.children[index].correspondance.attributes:
+        print(f"Adding attribute with name {gradient_attribute_name} to child {current.children[index].correspondance.fullName}")
+        current.children[index].correspondance.addAttribute(gradient_attribute_name, computed_attribute = expanded_jacobian)
+
+      print("Checking correspondance again")
+      print(expanded_jacobian.correspondance.fullName)
 
       # well we have expanded the jacobian for each child
     #   # perform the union operation
@@ -850,8 +905,8 @@ class energy:
     return res
 
   def __generateGlobalHessianForUnion(self, current: attribute, wrt: List[attribute]) -> attribute:
-    global_hessian_name = f'd2_{current.children[0].fullName}_d2_{"__".join([x.fullName for x in wrt])}_filled_for_{self.__energy.fullName}'
-    global_hessian_name_unfilled = f'd2_{current.children[0].fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    global_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}_filled_for_{self.__energy.fullName}'
+    # global_hessian_name_unfilled = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
     if global_hessian_name in current.correspondance.attributes:
       return current.correspondance[global_hessian_name]
     # the union operator is a bit more complicated
@@ -862,12 +917,16 @@ class energy:
     for unioned_child in current.children:
       # print(f"We are at unioned child {unioned_child.fullName}")
       # first we determine if this global hessian is already computed
-      unioned_child_global_hessian_name = global_hessian_name_unfilled
+      unioned_child_global_hessian_name = f'd2_{unioned_child.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
       unioned_child_global_hessian: attribute
       if unioned_child_global_hessian_name in unioned_child.correspondance.attributes:
         # we already have the hessian
         unioned_child_global_hessian = unioned_child.correspondance[unioned_child_global_hessian_name]
         unioned_children_global_hessians.append(unioned_child_global_hessian)
+        print("=============================================================")
+        print("Unioned child already has a global hessian")
+        print(f"Dimensions are: {unioned_child_global_hessian.rows} x {unioned_child_global_hessian.cols}")
+        print("=============================================================")
       else:
         # ok we first need to find out which children are being used
         used_children: List[attribute] = []
@@ -890,16 +949,19 @@ class energy:
         next_children_global_jacobian_name = f'd_{"__".join([x.fullName for x in next_children])}_d_{"__".join([x.fullName for x in wrt])}'
         next_children_global_jacobian = unioned_child.correspondance[next_children_global_jacobian_name]
 
-        next_children_global_hessian: List[attribute] = []
+        next_children_global_hessians: List[attribute] = []
         for child in next_children:
           child_global_hessian = self.__generateHessianThroughRecursion(child, wrt)
-          next_children_global_hessian.append(child_global_hessian)
+          next_children_global_hessians.append(child_global_hessian)
         next_children_total_size = sum([x.size for x in next_children])
         local_hessian_size = next_children_total_size * next_children_total_size # what is the size of the local hessian (remember we have a tensor, this is the size of the first and second dimension)
         assert local_hessian_size * num_hessians == unioned_child_local_hessian.size, f"energy.__generateGlobalHessianForUnion: local hessian size {local_hessian_size} * num hessians {num_hessians} is not equal to unioned child local hessian size {unioned_child_local_hessian.size}"
+        local_hessian_rows = int(math.sqrt(local_hessian_size))
+        assert local_hessian_rows * local_hessian_rows == local_hessian_size, f"energy.__generateGlobalHessianForUnion: local hessian rows {local_hessian_rows} * local hessian rows {local_hessian_rows} is not equal to local hessian size {local_hessian_size}"
+        local_hessian_cols = local_hessian_rows # since its a square matrix
         unioned_child_global_hessian_items = []
         for N in range(num_hessians):
-          nth_joined_child_local_hessian = attribute.to_array([unioned_child_local_hessian[i] for i in range(N * local_hessian_size, (N + 1) * local_hessian_size)], rows = local_hessian_size, cols = local_hessian_size)
+          nth_joined_child_local_hessian = attribute.to_array([unioned_child_local_hessian[i] for i in range(N * local_hessian_size, (N + 1) * local_hessian_size)], rows = local_hessian_rows, cols = local_hessian_cols)
           first_part_hessian = next_children_global_jacobian.transpose().mul_explicit(nth_joined_child_local_hessian.mul_explicit(next_children_global_jacobian))
 
           # get the gradient size
@@ -909,7 +971,7 @@ class energy:
           second_part_hessian_array = [0.0 for _ in range(next_children_global_jacobian.cols * next_children_global_jacobian.cols)]
           block_offset = 0
           for (index, child) in enumerate(next_children):
-            next_child_global_hessian = next_children_global_hessian[index]
+            next_child_global_hessian = next_children_global_hessians[index]
             # now the child global hessian is size of child.size x hessian_size x hessian_size
             child_size = child.size
             hessian_size = next_child_global_hessian.size // child_size # this is the size of the hessian for each child
@@ -927,10 +989,36 @@ class energy:
           for i in range(final_hessian.size):
             unioned_child_global_hessian_items.append(final_hessian[i])
         unioned_child_global_hessian = attribute.to_array(unioned_child_global_hessian_items, rows = num_hessians * next_children_global_jacobian.cols, cols = next_children_global_jacobian.cols)
-        unioned_child.correspondance.addAttribute(unioned_child_global_hessian_name, computed_attribute = unioned_child_global_hessian)
-        unioned_children_global_hessians.append(unioned_child_global_hessian)
+        if unioned_child_global_hessian_name not in unioned_child.correspondance.attributes:
+          unioned_child.correspondance.addAttribute(unioned_child_global_hessian_name, computed_attribute = unioned_child_global_hessian)
+        # print("Unioned child name is")
+        # print(unioned_child.fullName)
+        assert unioned_child.correspondance[unioned_child_global_hessian_name].rows == unioned_child_global_hessian.rows, f"energy.__generateGlobalHessianForUnion: unioned child global hessian rows {unioned_child.correspondance[unioned_child_global_hessian_name].rows} is not equal to unioned child global hessian rows {unioned_child_global_hessian.rows}, name is {unioned_child_global_hessian_name}"
+        assert unioned_child.correspondance[unioned_child_global_hessian_name].cols == unioned_child_global_hessian.cols, f"energy.__generateGlobalHessianForUnion: unioned child global hessian cols {unioned_child.correspondance[unioned_child_global_hessian_name].cols} is not equal to unioned child global hessian cols {unioned_child_global_hessian.cols}"
+        unioned_children_global_hessians.append(unioned_child.correspondance[unioned_child_global_hessian_name])
+        print("-------------------------------------------------------------")
+        print("Unioned child does not have a global hessian")
+        print(f"Dimensions are: {unioned_child_global_hessian.rows} x {unioned_child_global_hessian.cols}")
+        print("-------------------------------------------------------------")
     # ok now that we have all of the children's hessian
     # what we need to do is to get the largest dimension
+    print("=========================================================")
+    print("All children global hessian dimensions")
+    for item in unioned_children_global_hessians:
+      print(f"Rows: {item.rows}, Cols: {item.cols}, Size: {item.size}")
+    print("=========================================================")
+    if self.__save_intermediate:
+      for (index, item) in enumerate(unioned_children_global_hessians):
+        if item.fullName not in self.__intermediate_compute_pairs:
+          # we save the intermediate result as an evaluated data pair
+          new_name = item.name + "_evaluated"
+          evaluated_result = item.correspondance.addAttribute(new_name, rows = item.rows, cols = item.cols)
+          self.__intermediate_compute_pairs[item.fullName] = (item, evaluated_result)
+          unioned_children_global_hessians[index] = evaluated_result
+        else:
+          # we already have the intermediate result, we just return the evaluated result
+          unioned_children_global_hessians[index] = self.__intermediate_compute_pairs[item.fullName][1]
+
     largest_cols = max([x.cols for x in unioned_children_global_hessians])
     largest_rows = max([x.rows for x in unioned_children_global_hessians])
     assert largest_rows % largest_cols == 0, f"energy.__generateGlobalHessianForUnion: largest rows {largest_rows} is not divisible by largest cols {largest_cols}"
@@ -943,12 +1031,15 @@ class energy:
       unexpanded_hessian = unioned_children_global_hessians[index]
       hessian_size = unexpanded_hessian.size // num_hessians
       assert hessian_size * num_hessians == unexpanded_hessian.size, f"energy.__generateGlobalHessianForUnion: hessian size {hessian_size} * num hessians {num_hessians} is not equal to unexpanded hessian size {unexpanded_hessian.size}"
+      assert largest_rows // largest_cols == num_hessians, f"energy.__generateGlobalHessianForUnion: largest rows {largest_rows} // largest cols {largest_cols} is not equal to num hessians {num_hessians}, unioned child is {unioned_child.fullName}"
       for i in range(num_hessians):
         for j in range(unexpanded_hessian.cols):
           for k in range(unexpanded_hessian.cols):
             expanded_hessian_items[i * largest_cols * largest_cols + j * largest_cols + k] = unexpanded_hessian[i * hessian_size + j * unexpanded_hessian.cols + k]
       expanded_hessian = attribute.to_array(expanded_hessian_items, rows = largest_rows, cols = largest_cols)
-      unioned_child.correspondance.addAttribute(global_hessian_name, computed_attribute = expanded_hessian)
+      if global_hessian_name not in unioned_child.correspondance.attributes:
+        # we add the expanded hessian to the correspondance
+        unioned_child.correspondance.addAttribute(global_hessian_name, computed_attribute = expanded_hessian)
 
     # now we add the expanded hessian to the correspondance
     res = current.correspondance.addAttribute(global_hessian_name)
@@ -982,8 +1073,30 @@ class energy:
     if current.operator != JOIN and current.operator != UNION:
       return self.__gennerateGlobalHessianForEnergy(current, wrt)
     elif current.operator == JOIN:
-      return self.__generateGlobalHessianForJoin(current, wrt)
+      result = self.__generateGlobalHessianForJoin(current, wrt)
+      if self.__save_intermediate and result.isZero == 0:
+        if result.fullName not in self.__intermediate_compute_pairs:
+          # we save the intermediate result as an evaluated data pair
+          new_name = result.name + "_evaluated"
+          evaluated_result = current.correspondance.addAttribute(new_name, rows = result.rows, cols = result.cols)
+          self.__intermediate_compute_pairs[result.fullName] = (result, evaluated_result)
+          return evaluated_result
+        else:
+          # we already have the intermediate result, we just return the evaluated result
+          return self.__intermediate_compute_pairs[result.fullName][1]
+      return result
     elif current.operator == UNION:
+      result = self.__generateGlobalHessianForUnion(current, wrt)
+      # if self.__save_intermediate:
+      #   if result.fullName not in self.__intermediate_compute_pairs:
+      #     # we save the intermediate result as an evaluated data pair
+      #     new_name = result.name + "_evaluated"
+      #     evaluated_result = current.correspondance.addAttribute(new_name, rows = result.rows, cols = result.cols)
+      #     self.__intermediate_compute_pairs[result.fullName] = (result, evaluated_result)
+      #     return evaluated_result
+      #   else:
+      #     # we already have the intermediate result, we just return the evaluated result
+      #     return self.__intermediate_compute_pairs[result.fullName][1]
       return self.__generateGlobalHessianForUnion(current, wrt)
     else:
       raise ValueError(f"energy.__generateHessianThroughRecursion: operator {current.operator} is not supported in path dict.")
@@ -996,10 +1109,12 @@ class energy:
     self.__generateGradientThroughPathDict(wrt, differentiater)
     assert self.__gradient is not None
     # print("----------------------------------------------------------------------------")
+    # print("Gradient actual")
+    # print(str(self.__gradient))
     # print("Checking the gradient")
     # print(self.__gradient.compute().value.get()[:12])
-    # print("Checking energy")
-    # print(self.__energy.compute().value.get()[0])
+    # # print("Checking energy")
+    # # print(self.__energy.compute().value.get()[0])
     # print("----------------------------------------------------------------------------")
     # exit(0)
     if not self.__gradient_only:
@@ -1045,6 +1160,12 @@ class energy:
         assert self.__hessian is not None
         merged_hessian_rows = self.__hessian.rows + 1
       self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = merged_hessian_rows, cols = self.__gradient.size))
+      # print("----------------------------------------------------------------------------")
+      # print("merged hessian and gradient attribute")
+      # print("size is ", self.__gradient.size)
+      # for item in merged_hessian_and_gradient:
+      #   print(str(item))
+      # print("----------------------------------------------------------------------------")
 
       from yasps.codeGenerator import codeGenerator
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)

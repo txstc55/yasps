@@ -93,8 +93,8 @@ for level in range(len(bones_leveled)):
   ## set the rotation of the bones
   bl.addAttribute("theta", rows = 1, cols = 1)
   bl.addAttribute("theta_target", rows = 1, cols = 1)
-  bl["theta"].updateValue([x["theta"] for x in bones_leveled[level]])
-  bl["theta_target"].updateValue(np.zeros(len(bones_leveled[level])))
+  bl["theta_target"].updateValue([x["theta"] for x in bones_leveled[level]])
+  bl["theta"].updateValue(np.zeros(len(bones_leveled[level])))
   sin_theta = bl["theta"].sin()
   cos_theta = bl["theta"].cos()
   rotation_matrix = [
@@ -142,21 +142,9 @@ bones_union = handMesh.addPrimitiveUnion("bones", bl_primitives)
 bones_union.addAttribute("matrix_global_current")
 bones_union.addAttribute("matrix_rest")
 bones_union.addAttribute("matrix_global_current_derivative")
+bones_union.addAttribute("theta")
+bones_union.addAttribute("theta_target")
 
-# print(bones_union["matrix_global_current"].compute().value.get().reshape((-1, 4, 4)))
-# exit()
-# energy = bones_union["matrix_global_current"][0]
-# bones_union.addAttribute("bone_energy", computed_attribute = energy)
-# s0.addEnergy(energy)
-# s0.addMinimizeTarget([handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"]])
-# exit()
-
-# bones_union.addAttribute("const_matrix")
-# print(bones_union["matrix_global_current"].compute().value.get())
-# exit()
-
-# print(bones_union["const_matrix"].compute().value.get())
-# print([x.fullName for x in bones_union["matrix_global_current"].children])
 
 
 ################################################################################################
@@ -216,10 +204,28 @@ vp = vertices_union.addAttribute("current_position")
 vertices_union.addAttribute("current_position_derivative")
 
 # let's create a fake energy
-energy = 1.0 / (vertices_union["current_position"].dot(vertices_union["current_position"]))
+center_x = 12.0
+center_y = 4.0
+center_z = 0.0
+sphere_radius = 1.0
+
+s0.addAttribute("center_x", rows = 1, cols = 1)
+s0.addAttribute("center_y", rows = 1, cols = 1)
+s0.addAttribute("center_z", rows = 1, cols = 1)
+s0["center_x"].updateValue([center_x])
+s0["center_y"].updateValue([center_y])
+s0["center_z"].updateValue([center_z])
+r = (vertices_union["current_position"][0] - s0["center_x"]) * (vertices_union["current_position"][0] - s0["center_x"]) + (vertices_union["current_position"][1] - s0["center_y"]) * (vertices_union["current_position"][1] - s0["center_y"]) + (vertices_union["current_position"][2] - s0["center_z"]) * (vertices_union["current_position"][2] - s0["center_z"])
+energy = 1 / ((r - sphere_radius).pow(2.0) + 1e-6)
 vertices_union.addAttribute("surface_repulse_energy", computed_attribute = energy)
-s0.addEnergy(energy, gradient_only = True)
-s0.addMinimizeTarget([handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"]])
+
+energy_theta = (bones_union["theta_target"] - bones_union["theta"]) * (bones_union["theta_target"] - bones_union["theta"])
+bones_union.addAttribute("theta_energy", computed_attribute = energy_theta)
+# s0.addEnergy(energy_theta, gradient_only = True)
+# s0.addEnergy(vertices_union["surface_repulse_energy"], gradient_only = True)
+# s0.addEnergy(energy_theta)
+s0.addEnergy(vertices_union["surface_repulse_energy"], save_intermediate = True)
+s0.addMinimizeTarget([handMesh.bone_level_0["theta"], handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"], handMesh.bone_level_3["theta"], handMesh.bone_level_4["theta"], handMesh.bone_level_5["theta"]])
 result = s0.minimizeEnergy()
 import pyvista as pv
 
@@ -230,7 +236,7 @@ point_cloud = pv.PolyData(surface_vertices)
 # You can add spheres to make the surface_vertices more visible (optional)
 point_cloud["size"] = np.full(surface_vertices.shape[0], 1.0)  # optional scalar array
 # Create central sphere
-center_sphere = pv.Sphere(radius=1.0, center=(0.0, 0.0, 0.0))
+center_sphere = pv.Sphere(radius=sphere_radius, center=(center_x, center_y, center_z))
 
 # Setup plotter
 plotter = pv.Plotter()
@@ -240,14 +246,39 @@ plotter.show(interactive_update=True)
 # Iterative update loop
 for i in range(10000):
   result = s0.minimizeEnergy()
-  delta_lvl1_theta = result[0]
-  delta_lvl2_theta = result[1]
+  # print(result[1].get())
+  delta_lvl0_theta = result[0]
+  delta_lvl1_theta = result[1]
+  delta_lvl2_theta = result[2]
+  delta_lvl3_theta = result[3]
+  delta_lvl4_theta = result[4]
+  delta_lvl5_theta = result[5]
+  # print(delta_lvl0_theta.get())
+  # print(delta_lvl1_theta.get())
+  # print(delta_lvl2_theta.get())
+  # print(delta_lvl3_theta.get())
+  # print(delta_lvl4_theta.get())
+  # print(delta_lvl5_theta.get())
 
+
+
+  handMesh.bone_level_0["theta"].updateValue(
+      handMesh.bone_level_0["theta"].value - 0.1 * delta_lvl0_theta
+  )
   handMesh.bone_level_1["theta"].updateValue(
-      handMesh.bone_level_1["theta"].value + 0.001 * delta_lvl1_theta
+      handMesh.bone_level_1["theta"].value - 0.1 * delta_lvl1_theta
   )
   handMesh.bone_level_2["theta"].updateValue(
-      handMesh.bone_level_2["theta"].value + 0.001 * delta_lvl2_theta
+      handMesh.bone_level_2["theta"].value - 0.1 * delta_lvl2_theta
+  )
+  handMesh.bone_level_3["theta"].updateValue(
+      handMesh.bone_level_3["theta"].value - 0.1 * delta_lvl3_theta
+  )
+  handMesh.bone_level_4["theta"].updateValue(
+      handMesh.bone_level_4["theta"].value - 0.1 * delta_lvl4_theta
+  )
+  handMesh.bone_level_5["theta"].updateValue(
+      handMesh.bone_level_5["theta"].value - 0.1 * delta_lvl5_theta
   )
 
   surface_vertices = vertices_union["current_position"].compute().value.get().reshape(-1, 3)

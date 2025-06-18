@@ -78,7 +78,7 @@ for vertex in skin_json:
     print(vertex["rest_position"])
   surface_vertices.append(pos)
 
-exit()
+# exit()
 
 
 surface_energy = [1.0 / (pos.dot(pos)) for pos in surface_vertices]
@@ -106,11 +106,11 @@ plotter.show()
 
 
 
-# # Create PolyData
-# line_mesh = pv.PolyData()
-# line_mesh.points = skeleton_points
-# line_mesh.lines = skeleton_lines
-# # Plot
-# plotter = pv.Plotter()
-# plotter.add_mesh(line_mesh, color="blue", line_width=2)
-# plotter.show()
+# Create PolyData
+line_mesh = pv.PolyData()
+line_mesh.points = skeleton_points
+line_mesh.lines = skeleton_lines
+# Plot
+plotter = pv.Plotter()
+plotter.add_mesh(line_mesh, color="blue", line_width=2)
+plotter.show()

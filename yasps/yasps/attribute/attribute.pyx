@@ -101,6 +101,24 @@ class attribute:
     # self.__is_dynamic = is_dynamic
 
 
+
+  def __deepcopy__(self, memo):
+    # Create a new instance of attribute with manually copied values
+    copied_attr = attribute()
+    copied_attr.__name = self.__name
+    copied_attr.__n_rows = self.__n_rows
+    copied_attr.__n_cols = self.__n_cols
+    copied_attr.__correspondance = self.__correspondance
+    copied_attr.__through = self.__through
+    copied_attr.__children = self.__children
+    copied_attr.__operator = self.__operator
+    copied_attr.__float_value = self.__float_value
+    copied_attr.__index_value = self.__index_value
+    copied_attr.__value = gpuarray.to_gpu(np.array([]))
+    copied_attr.__is_intermediate = self.__is_intermediate
+    copied_attr.__hash = self.__hash
+    return copied_attr
+
   ################################################
   ################################################
   #     ATTRIBUTE PROPERTY DEFINITION
@@ -134,6 +152,10 @@ class attribute:
         return self.correspondance.fullName + "_" + str(self.hash).replace("-", "_neg_")
       else:
         return 'attr_' + str(self.hash).replace("-", "_neg_")
+
+  @property
+  def fullNameWithHash(self) -> str:
+    return 'attr_' + str(self.hash).replace("-", "_neg_")[:12]
 
   @property
   def rows(self)->int:

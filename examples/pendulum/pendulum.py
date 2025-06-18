@@ -10,8 +10,8 @@ def quaternion_to_rotation(w, z):
 # define segments
 SEGMENT_COUNT = 5
 TARGET_POSITION = [4.0, 0.0]
-OBSTACLE_POSITION0 = [-0.8, 0.0]
-OBSTACLE_POSITION1 = [0.8, 0.0]
+OBSTACLE_POSITION0 = [-0.8, -1.0]
+OBSTACLE_POSITION1 = [2.0, -1.0]
 OBSTACLE_POSITION0_ATTRIBUTE = attribute.to_array([attribute(float_value = OBSTACLE_POSITION0[0]), attribute(float_value = OBSTACLE_POSITION0[1])], rows = 2, cols = 1)
 OBSTACLE_POSITION1_ATTRIBUTE = attribute.to_array([attribute(float_value = OBSTACLE_POSITION1[0]), attribute(float_value = OBSTACLE_POSITION1[1])], rows = 2, cols = 1)
 s0 = scene("scene0")
@@ -90,12 +90,12 @@ def repulsive_energy(p0, p1, o, alpha, beta):
   norm_v1 = norm_v1 + epsilon
   energy_p0 = (T_dot_v0.pow(alpha)) / (norm_v0.pow(beta))
   energy_p1 = (T_dot_v1.pow(alpha)) / (norm_v1.pow(beta))
-  r = (energy_p0 + energy_p1)
+  r = 1000.0 * (energy_p0 + energy_p1)
   return r
 
-# for i in range(SEGMENT_COUNT):
-#   segments[i].addAttribute("repulsive", computed_attribute = repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION0_ATTRIBUTE, 3.0, 6.0) + repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION1_ATTRIBUTE, 3.0, 6.0))
-#   s0.addEnergy(segments[i]["repulsive"], save_intermediate = False)
+for i in range(SEGMENT_COUNT):
+  segments[i].addAttribute("repulsive", computed_attribute = repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION0_ATTRIBUTE, 3.0, 6.0) + repulsive_energy(segments[i]["previous_end_position"], segments[i]["end_point_position"], OBSTACLE_POSITION1_ATTRIBUTE, 3.0, 6.0))
+  s0.addEnergy(segments[i]["repulsive"], save_intermediate = False)
 
 
 s0.addMinimizeTarget([segment["w"] for segment in segments] + [segment["z"] for segment in segments])
@@ -121,7 +121,7 @@ plt.gca().set_aspect('equal', adjustable='box')
 plt.show()
 
 # Loop to update the plot
-t = 0.0001
+t = 0.01
 last_penalty = 50
 for iteration in range(100000):
   result = s0.minimizeEnergy()

@@ -13,6 +13,10 @@ class codeGenerator:
   def __init__(self, input: ya.attribute):
     self.__input: ya.attribute = input
     self.__order: List[ya.attribute] = []
+    # print("------------------------------------------------------")
+    # print("Checking input string")
+    # print(str(input))
+    # print("------------------------------------------------------")
     self.__stack: List[ya.attribute] = list(input.children)
     self.__childrenAttributeKernels: Dict[int, ya.attribute] = {}
     self.__attribute_replacements: Dict[int, Tuple[ya.attribute, int]] = {}
@@ -705,11 +709,32 @@ __device__ void {attributeName}_device_function(
     // now that we know the exact primitive index, we invoke the attribute function
     switch({current.fullName}_primitive_index){{
 '''
-    # print("Before for loop")
+    print("Before for loop")
+    print(f"Current fullname is {current.fullName}")
+    print(f"Union has {len(current.children)} children")
+    print("Union parent correspondance checking")
+    print(current.correspondance.fullName)
     for i in range(len(current.children)):
       child_attribute = current.children[i]
+      print(f"Generating code for child attribute: {child_attribute.fullName} with size {child_attribute.size}")
+      print("Attribute correspondance checking")
+      print(f"Child attribute correspondance: {child_attribute.correspondance.fullName}")
       code_string += f'''
       case {i}:
+'''
+      if child_attribute.isFloatMat or child_attribute.operator == ya.FLOAT:
+        # this is likely a constant value
+        # we can just get the constant value I guess
+        for j in range(child_attribute.size):
+          code_string += f'''
+        {current.fullName}_local_data_temp[{j}] = {str(current.children[i][j].float_value)};'''
+        code_string += '''
+        break;
+      '''
+      else:
+
+        # print(str(child_attribute))
+        code_string += f'''
         {current.children[i].fullName}_device_function(
           {"".join([f'{x.code_generation_data_name}, ' for x in sorted(child_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}
           {"".join([f'{x.code_generation_index_name}, ' for x in sorted(child_attribute.deviceKernel.kernelConnectivity, key = lambda y: y.fullName)])}

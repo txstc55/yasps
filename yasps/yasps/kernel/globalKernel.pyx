@@ -34,7 +34,7 @@ class globalKernel:
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
-    file_name = f".yasps_tmp/compute_{self.__att.fullName}"
+    file_name = f".yasps_tmp/compute_{self.__att.fullNameWithHash}"
     if not os.path.exists(f'{file_name}.so'):
       print(f"File {file_name}.so does not exist, compiling")
       self.__kernelString += f'''

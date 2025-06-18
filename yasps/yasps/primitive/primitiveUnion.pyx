@@ -94,7 +94,7 @@ class primitiveUnion:
   def children_primitive_counts_gpu(self):
     return gpuarray.to_gpu(np.array([child.numInstances for child in self.__primitives], dtype=np.uint32))
 
-  def addAttribute(self, name: str, computed_attribute: Optional[attribute] = None) -> attribute:
+  def addAttribute(self, name: str, computed_attribute: Optional[attribute] = None, rows = 0, cols = 0) -> attribute:
     # ok addint attribute for primitive union is different
     # we technically cannot add new attribute
     # instead we only query the children to see if that attribute exists
@@ -104,6 +104,11 @@ class primitiveUnion:
     if name in self.__attributes:
       raise ValueError(f"primitiveUnion.addAttribute: attribute with name '{name}' already exists in primitive.")
     if computed_attribute is None:
+      if rows > 0 and cols > 0:
+        from yasps.attribute import attribute
+        newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols)
+        self.__attributes[name] = newAttribute
+        return newAttribute
       # we check if the name exists for all of the primitives
       rows_size_check: Set[int] = set()
       cols_size_check: Set[int] = set()
@@ -132,11 +137,13 @@ class primitiveUnion:
         # let's hack a bit to directly modify the correspondance
         computed_attribute._attribute__correspondance = self
         self.__attributes[name] = computed_attribute
-        return
+        return computed_attribute
       if computed_attribute.correspondance.fullName != self.fullName:
         raise ValueError(f"primitiveUnion.addAttribute: computed attribute {name} correspondance does not match the primitive union")
       if computed_attribute.name != "":
-        raise ValueError(f"primitiveUnion.addAttribute: computed attribute {name} name must be empty")
+        self.__attributes[name] = computed_attribute
+        # raise ValueError(f"primitiveUnion.addAttribute: computed attribute {name} name must be empty")
+        return computed_attribute
       else:
         computed_attribute.setName(name)
         self.__attributes[name] = computed_attribute
