@@ -24,6 +24,7 @@ class codeGenerator:
     self.__code_strings: List[str] = []
     self.__repeated_intermediates: Set[int] = set()
     self.__seen_elements: Set[int] = set()
+    self.__seen_evd_projection_sizes: Set[int] = set() # used to track the projection size for evd
 
 
   def __generateCodeOrderDFS(self, current):
@@ -137,7 +138,7 @@ class codeGenerator:
   }}'''
       kernelHeader: str = f'''
 __device__ void {current.fullName}_device_function(const double* {current.code_generation_data_name}, unsigned int {current.correspondance.fullName}_index, double* result)'''
-      current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, [current], [], [], []) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
+      current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, [current], [], [], [], set(), current.fullNameWithHash) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
       return
     for item in self.__input.children:
       self.__generateCodeOrderDFS(item)
@@ -274,10 +275,10 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
     else:
       self.__code_strings.append(f'''
   // put the result back
-  Eigen::Matrix<double, {self.__input.rows}, {self.__input.cols}{'' if self.__input.rows == 1 or self.__input.cols == 1 else ', Eigen::RowMajor'}> {self.getIntermediateName(self.__input)}_materialized({self.getIntermediateName(self.__input)});
-  #pragma unroll
+  // Eigen::Matrix<double, {self.__input.rows}, {self.__input.cols}{'' if self.__input.rows == 1 or self.__input.cols == 1 else ', Eigen::RowMajor'}> {self.getIntermediateName(self.__input)}_materialized({self.getIntermediateName(self.__input)});
+  auto&& result_eval = {self.getIntermediateName(self.__input)}.eval();
   for (unsigned int i = 0; i < {self.__input.size}; i++){{
-    result[i] = {self.getIntermediateName(self.__input)}_materialized.data()[i];
+    result[i] = result_eval.data()[i];
   }}
 ''')
     # now we need to get the datas for generating this kernel
@@ -302,6 +303,10 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
     allConnectivities = sorted(set(allConnectivities), key = lambda x: x.fullName)
     allDependencies = sorted(set(allDependencies), key = lambda x: x.kernelHeader)
     allPrimitiveUnions = sorted(set(allPrimitiveUnions), key = lambda x: x.fullName)
+    allEvdSizes = self.__seen_evd_projection_sizes
+    for dependency in allDependencies:
+      allEvdSizes.update(dependency.allEvdSizes)
+
 
     # now we generate header
     headerString: str = f'''
@@ -320,7 +325,7 @@ __device__ void {attributeName}_device_function(
     kernelString: str = "\n".join(self.__code_strings)
 
     # now we generate the device kernel
-    self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allPrimitiveUnions, allDependencies)
+    self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allPrimitiveUnions, allDependencies, allEvdSizes, self.__input.fullNameWithHash)
     # print(f"Device kernel generated for {self.__input.fullName}")
     # print(f"All intermediate count: {len(self.__attribute_replacements)}")
     # print(f"num intermediates: {self.__num_intermediates}")
@@ -674,12 +679,14 @@ __device__ void {attributeName}_device_function(
   {attribute_initialization} = max(0.0, {self.getIntermediateName(current.children[0])});''')
     else:
       if current.rows <= 3:
+        self.__seen_evd_projection_sizes.add(current.rows)
         self.__code_strings.append(f'''
     {attribute_initialization} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
     spd_projection_small<{current.children[0].rows}>({self.getIntermediateName(current.children[0])}.data(), {attribute_name}.data(), {current.children[1].index_value});
   ''')
       else:
         # we do the normal projection
+        self.__seen_evd_projection_sizes.add(current.rows)
         self.__code_strings.append(f'''
   {attribute_initialization} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
   spd_projection<{current.children[0].rows}>({self.getIntermediateName(current.children[0])}.data(), {attribute_name}.data(), {current.children[1].index_value});

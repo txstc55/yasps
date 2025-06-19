@@ -129,16 +129,16 @@ class primitive:
         # this is very likely a constant matrix
         # we need to set the correspondance to self
         computed_attribute._attribute__correspondance = self
-        print('Case 1')
+        # print('Case 1')
         return computed_attribute
       if computed_attribute.correspondance != self:
         import copy
         copied_attribute = copy.deepcopy(computed_attribute)
         copied_attribute._attribute__correspondance = self
         self.__attributes[name] = copied_attribute
-        print('Case 2')
+        # print('Case 2')
         return copied_attribute
-      print('Case 3')
+      # print('Case 3')
       return computed_attribute
     elif through is not None:
       # we now check if this is a joining operation or scattering operation

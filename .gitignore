@@ -58,3 +58,5 @@ examples/waves
 
 
 yasps/fcm_token
+
+**/*.o

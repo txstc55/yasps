@@ -10,13 +10,14 @@ import ctypes
 from yasps.helper import timed
 import pycuda.gpuarray as gpuarray
 from yasps.primitiveUnion import primitiveUnion
-
+import subprocess
 testing_kernel = ""
 
 class globalKernel:
   @timed("globalKernel.__init__")
   def __init__(self, att: attribute):
     self.__kernelString: str = ""
+    self.__headerFileString: str = ""
     self.__att = att
     self.__kernel = None
     self.__generateKernel()
@@ -28,6 +29,7 @@ class globalKernel:
     assert x.gpudata is not None
     return ctypes.c_void_p(int(x.gpudata))
 
+
   def __generateKernel(self) -> None:
     ## first we get all the header functions
     sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
@@ -37,7 +39,7 @@ class globalKernel:
     file_name = f".yasps_tmp/compute_{self.__att.fullNameWithHash}"
     if not os.path.exists(f'{file_name}.so'):
       print(f"File {file_name}.so does not exist, compiling")
-      self.__kernelString += f'''
+      self.__headerFileString += '''
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -46,62 +48,128 @@ class globalKernel:
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 
-// here we add code for spd projection
+// For small matrix < 4
 template <unsigned int N>
-__device__ void spd_projection(const double *A, double* output, int choice){{
-  // Define M as the maximum of N and 4, because 3 by 3 evd is wrong somehow
-  const int M = (N < 4) ? 4 : N;
-
+__device__ void spd_projection_small(const double *A, double* output, int choice) {
+  const int M = 4;
   // Initialize an M x M matrix with zeros
-  Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Zero();
+  Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Identity();
 
   // Copy the input N x N matrix into the top-left corner of the M x M matrix
-  for (int row = 0; row < N; ++row) {{
-    for (int col = 0; col < N; ++col) {{
+  for (int row = 0; row < N; ++row) {
+    for (int col = 0; col < N; ++col) {
       symMtr(row, col) = A[row * N + col];
-    }}
-  }}
+    }
+  }
+
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, M, M>> eigenSolver(symMtr);
-  const Eigen::Matrix<double, M, M> B = eigenSolver.eigenvectors();
+  const Eigen::Matrix<double, M, M>& B = eigenSolver.eigenvectors();
   Eigen::Matrix<double, M, 1> eigenValues = eigenSolver.eigenvalues();
-  if (choice == 1) {{
-    for (int i = 0; i < M; i++) {{
-      if (eigenValues.data()[i] < 0) {{
-        eigenValues.data()[i] = abs(eigenValues.data()[i]);
-      }}
-    }}
-  }}else{{
-    for (int i = 0; i < M; i++) {{
-      if (eigenValues.data()[i] < 0) {{
-        eigenValues.data()[i] = 0.0;
-      }}
-    }}
-  }}
-  // Reconstruct the matrix without using a diagonal matrix
-  // Scale columns of B by corresponding eigenvalues
-  Eigen::Matrix<double, M, M> C;
-  for (int i = 0; i < N; ++i) {{
-    C.col(i) = B.col(i) * eigenValues[i];
-  }}
-  // Compute the reconstructed matrix: A_reconstructed = C * B.transpose()
-  Eigen::Matrix<double, M, M> A_reconstructed = C * B.transpose();
+
+  for (int i = 0; i < M; i++) {
+    if (eigenValues[i] < 0) {
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+    }
+  }
+
+  Eigen::Matrix<double, M, M> A_reconstructed;
+  A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
+
   // Copy the top-left N x N submatrix back to A
-  for (int row = 0; row < N; ++row) {{
-    for (int col = 0; col < N; ++col) {{
+  for (int row = 0; row < N; ++row) {
+    for (int col = 0; col < N; ++col) {
       output[row * N + col] = A_reconstructed(row, col);
-    }}
-  }}
+    }
+  }
   return;
-}}
+}
+
+template <unsigned int N>
+__device__ void spd_projection(const double *A, double* output, int choice) {
+  // Map A to an N x N Eigen matrix without copying
+  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
+  const auto& B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
+
+  for (int i = 0; i < N; i++) {
+    if (eigenValues[i] < 0) {
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+    }
+  }
+
+  Eigen::Matrix<double, N, N> A_reconstructed;
+  A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
+
+  Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>> outputMap(output);
+  outputMap = A_reconstructed;
+  return;
+}
+
+template <unsigned int N>
+__device__ void spd_projection_inplace(double *A, int choice) {
+  // Map A to an N x N Eigen matrix without copying
+  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
+  const auto& B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
+
+  for (int i = 0; i < N; i++) {
+    if (eigenValues[i] < 0) {
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+    }
+  }
+
+  // Reconstruct the matrix directly without using an intermediate matrix
+  for (int i = 0; i < N; ++i) {
+    for (int j = 0; j < N; ++j) {
+      double sum = 0.0;
+      for (int k = 0; k < N; ++k) {
+        sum += B(i, k) * eigenValues[k] * B(j, k);
+      }
+      A[i * N + j] = sum;
+    }
+  }
+  return;
+}
 '''
+      # we first generate the header file
+      for item in (sortedDependency+ [self.__att.deviceKernel]):
+        self.__headerFileString += f'''
+extern "C" {{
+{item.kernelHeader};
+}}'''
+      with open(".yasps_tmp/allHeaders.cuh", 'w') as f:
+        f.write(self.__headerFileString)
+        f.close()
 
-      for item in sortedDependency:
-        self.__kernelString += f"{item.kernelHeader};"
-      self.__kernelString += f"{self.__att.deviceKernel.kernelHeader};"
-
-      for item in sortedDependency:
-        self.__kernelString += item.kernelString
-      self.__kernelString += self.__att.deviceKernel.kernelString
+      compile_jobs = []
+      obj_files = []
+      for item in (sortedDependency + [self.__att.deviceKernel]):
+        # we check if the .o file exists
+        cu_file = f".yasps_tmp/{item.attributeName}_obj.cu"
+        obj_file = f".yasps_tmp/{item.attributeName}_obj.o"
+        obj_files.append(obj_file)
+        if not os.path.exists(obj_file):
+          with open(cu_file, 'w') as f:
+            f.write(f'''
+#include "allHeaders.cuh"
+extern "C"{{
+{item.kernelString}
+}}
+''')
+            compile_cmd = [
+              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-O3", "-arch=sm_86",
+              "-c", cu_file, "-o", obj_file,
+              "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings"
+            ]
+            print("Command is")
+            print(" ".join(compile_cmd))
+            job = subprocess.Popen(compile_cmd)
+            compile_jobs.append(job)
+      # Wait for all compilation jobs
+      for job in compile_jobs:
+        job.wait()
 
       # now actually generate the global kernel
       attributeName: str = ""
@@ -119,7 +187,11 @@ __global__ void {attributeName}_global_function({
   double* result,
   unsigned int MAX_INDEX
 )'''
+      self.__kernelString += '''
+#include "allHeaders.cuh"
+'''
       self.__kernelString += f'''
+extern "C" {{
 {kernelRawName}{{
   // first we get the index
   unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -135,6 +207,7 @@ __global__ void {attributeName}_global_function({
     index,
     result + index * {self.__att.size}
   );
+}}
 }}
 '''
       self.__kernelString += f'''
@@ -162,7 +235,40 @@ void compute(
       f = open(f"{file_name}.cu", 'w')
       f.write(self.__kernelString)
       f.close()
-      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda '-I/usr/include/eigen3' --expt-relaxed-constexpr --disable-warnings -std=c++11")
+
+      # Generate global kernel .o file
+      kernel_cu_file = f"{file_name}.cu"
+      kernel_obj_file = f"{file_name}.o"
+      kernel_compile_cmd = [
+        "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-O3", "-arch=sm_86",
+        "-c", kernel_cu_file, "-o", kernel_obj_file,
+        "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
+      ]
+      print("Kernel compile command: ")
+      print(" ".join(kernel_compile_cmd))
+      subprocess.run(kernel_compile_cmd, check=True)
+
+      # Device link step: critical for CUDA separable compilation
+      device_link_obj = f"{file_name}_device_link.o"
+      dlink_cmd = [
+        "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_86",
+        *(obj_files + [kernel_obj_file]), "-o", device_link_obj
+      ]
+      subprocess.run(dlink_cmd, check=True)
+      print("Device link command: ")
+      print(" ".join(dlink_cmd))
+
+      # Final shared object linking
+      final_link_cmd = [
+        "nvcc", "-shared", "-Xcompiler", "-fPIC", "-arch=sm_86",
+        kernel_obj_file, device_link_obj, *obj_files,
+        "-o", f"{file_name}.so",
+        "-lcudart", "-lcuda"
+      ]
+      print("Final link command: ")
+      print(" ".join(final_link_cmd))
+      subprocess.run(final_link_cmd, check=True)
+
       self.__kernel = ctypes.CDLL(f"{file_name}.so").compute
       self.__kernel.argtypes = [
         *[ctypes.c_void_p for _ in sortedDatas],
@@ -196,11 +302,6 @@ void compute(
     args += [self.__to_void_p(x) for x in counts_gpu]
     args += [self.__to_void_p(output)]
     args += [ctypes.c_uint32(self.__att.correspondance.numInstances)]
-    # print("Counts check")
-    # print([x.get() for x in counts_gpu])
-    # print([x.fullName for x in self.__att.deviceKernel.kernelPrimitiveUnions])
-    # print("Num instance check")
-    # print(self.__att.correspondance.numInstances)
     self.__kernel(*args)
 
 

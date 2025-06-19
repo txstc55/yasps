@@ -488,18 +488,19 @@ class energy:
             for i in range(diff_result.rows):
               for j in range(diff_result.cols):
                 all_hessian_results.append(diff_result[i, j])
-        # current_derivative = joined_child_jacobian.row(row)
-        # col_offset = 0
-        # for child in children:
-        #   diff_result = differentiater.diff(current_derivative, child)
-        #   for i in range(diff_result.rows):
-        #     for j in range(diff_result.cols):
-        #       all_hessian_results[row * hessian_num_cols * hessian_num_rows + i * hessian_num_cols + col_offset + j] = diff_result[i, j]
-        #   col_offset += child.size # add to the offset
-        # assert col_offset == hessian_num_cols, f"energy.__generateNeighborJacobianForJoin: col_offset {col_offset} is not equal to hessian_num_cols {hessian_num_cols}"
-      # now we construct the hessian
+
       merged_hessian = attribute.to_array(all_hessian_results, rows = hessian_num_rows * num_hessians, cols = hessian_num_cols)
-      joined_child.correspondance.addAttribute(local_hessian_name, computed_attribute = merged_hessian)
+      if self.__save_intermediate and merged_hessian.isZero == 0:
+        if local_hessian_name not in joined_child.correspondance.attributes:
+          # we first create the attribute that will just be data
+          hessian_data_attribute = joined_child.correspondance.addAttribute(local_hessian_name, rows = merged_hessian.rows, cols = merged_hessian.cols)
+          if hessian_data_attribute.fullName not in self.__intermediate_compute_pairs:
+            # add the pair
+            new_name = hessian_data_attribute.name + "_pre_evaluated"
+            joined_child.correspondance.addAttribute(new_name, computed_attribute = merged_hessian)
+            self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (merged_hessian, hessian_data_attribute)
+      else:
+        joined_child.correspondance.addAttribute(local_hessian_name, computed_attribute = merged_hessian)
     return
 
   def __generateGlobalJacobianForJoin(self, current: attribute, wrt: List[attribute]):
@@ -763,22 +764,20 @@ class energy:
             for i in range(diff_result.rows):
               for j in range(diff_result.cols):
                 all_hessian_results.append(diff_result[i, j])
-        # current_derivative_items = []
-        # for col in range(child_jacobian.cols):
-        #   for child in children:
-        #     current_derivative_items.append(differentiater.diff(child_jacobian[row, col], child))
-        # current_derivative = child_jacobian.row(row)
-        # col_offset = 0
-        # for child in children:
-        #   diff_result = differentiater.diff(current_derivative, child)
-        #   for i in range(diff_result.rows):
-        #     for j in range(diff_result.cols):
-        #       all_hessian_results[row * hessian_num_cols * hessian_num_rows + i * hessian_num_cols + col_offset + j] = diff_result[i, j]
-        #   col_offset += child.size
-        # assert col_offset == hessian_num_cols, f"energy.__generateNeighborJacobianForUnion: col_offset {col_offset} is not equal to hessian_num_cols {hessian_num_cols}"
       merged_hessian = attribute.to_array(all_hessian_results, rows = hessian_num_rows * num_hessians, cols = hessian_num_cols)
-      if child_hessian_name not in unioned_child.correspondance.attributes:
-        unioned_child.correspondance.addAttribute(child_hessian_name, computed_attribute = merged_hessian)
+
+      if self.__save_intermediate and merged_hessian.isZero == 0:
+        if child_hessian_name not in unioned_child.correspondance.attributes:
+          # we first create the attribute that will just be data
+          hessian_data_attribute = unioned_child.correspondance.addAttribute(child_hessian_name, rows = merged_hessian.rows, cols = merged_hessian.cols)
+          if hessian_data_attribute.fullName not in self.__intermediate_compute_pairs:
+            # add the pair
+            new_name = hessian_data_attribute.name + "_pre_evaluated"
+            unioned_child.correspondance.addAttribute(new_name, computed_attribute = merged_hessian)
+            self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (merged_hessian, hessian_data_attribute)
+      else:
+        if child_hessian_name not in unioned_child.correspondance.attributes:
+          unioned_child.correspondance.addAttribute(child_hessian_name, computed_attribute = merged_hessian)
     return
 
   def __generateGlobalJacobianForUnion(self, current: attribute, wrt: List[attribute]):
@@ -1037,9 +1036,20 @@ class energy:
           for k in range(unexpanded_hessian.cols):
             expanded_hessian_items[i * largest_cols * largest_cols + j * largest_cols + k] = unexpanded_hessian[i * hessian_size + j * unexpanded_hessian.cols + k]
       expanded_hessian = attribute.to_array(expanded_hessian_items, rows = largest_rows, cols = largest_cols)
-      if global_hessian_name not in unioned_child.correspondance.attributes:
-        # we add the expanded hessian to the correspondance
-        unioned_child.correspondance.addAttribute(global_hessian_name, computed_attribute = expanded_hessian)
+      if self.__save_intermediate:
+      # we first check if the name is in the unioned child's correspondance
+        if global_hessian_name not in unioned_child.correspondance.attributes:
+        # we create a data attribute with the same dimension
+          hessian_data_attribute = unioned_child.correspondance.addAttribute(global_hessian_name, rows = expanded_hessian.rows, cols = expanded_hessian.cols)
+          if hessian_data_attribute.fullName not in self.__intermediate_compute_pairs:
+            # add the pair
+            new_name = hessian_data_attribute.name + "_pre_evaluated"
+            unioned_child.correspondance.addAttribute(new_name, computed_attribute = expanded_hessian)
+            self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (expanded_hessian, hessian_data_attribute)
+      else:
+        if global_hessian_name not in unioned_child.correspondance.attributes:
+          # we add the expanded hessian to the correspondance
+          unioned_child.correspondance.addAttribute(global_hessian_name, computed_attribute = expanded_hessian)
 
     # now we add the expanded hessian to the correspondance
     res = current.correspondance.addAttribute(global_hessian_name)
@@ -1074,16 +1084,16 @@ class energy:
       return self.__gennerateGlobalHessianForEnergy(current, wrt)
     elif current.operator == JOIN:
       result = self.__generateGlobalHessianForJoin(current, wrt)
-      if self.__save_intermediate and result.isZero == 0:
-        if result.fullName not in self.__intermediate_compute_pairs:
-          # we save the intermediate result as an evaluated data pair
-          new_name = result.name + "_evaluated"
-          evaluated_result = current.correspondance.addAttribute(new_name, rows = result.rows, cols = result.cols)
-          self.__intermediate_compute_pairs[result.fullName] = (result, evaluated_result)
-          return evaluated_result
-        else:
-          # we already have the intermediate result, we just return the evaluated result
-          return self.__intermediate_compute_pairs[result.fullName][1]
+      # if self.__save_intermediate and result.isZero == 0:
+      #   if result.fullName not in self.__intermediate_compute_pairs:
+      #     # we save the intermediate result as an evaluated data pair
+      #     new_name = result.name + "_evaluated"
+      #     evaluated_result = current.correspondance.addAttribute(new_name, rows = result.rows, cols = result.cols)
+      #     self.__intermediate_compute_pairs[result.fullName] = (result, evaluated_result)
+      #     return evaluated_result
+      #   else:
+      #     # we already have the intermediate result, we just return the evaluated result
+      #     return self.__intermediate_compute_pairs[result.fullName][1]
       return result
     elif current.operator == UNION:
       result = self.__generateGlobalHessianForUnion(current, wrt)
@@ -1178,9 +1188,10 @@ class energy:
 
     # print(f"There are {len(self.__intermediate_compute_pairs)} intermediate attributes")
     # make sure that we also compute the intermediate values
-    for _, value in self.__intermediate_compute_pairs.items():
+    for name, value in self.__intermediate_compute_pairs.items():
       value[0].compute()
       value[1].updateValue(value[0].value)
+      print(f"Computed intermediate attribute with name {name}, hash: {value[0].hash}")
 
     # assertion here
     assert self.__hessianAndGradientKernel is not None

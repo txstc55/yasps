@@ -51,7 +51,7 @@ x = position[:, 0]  # Shape: (N,)
 y = position[:, 1]  # Shape: (N,)
 z = position[:, 2]  # Shape: (N,)
 # Convert x-coordinates to rotation angles in degrees
-theta_degrees = x  # Each x_i is the rotation angle in degrees
+theta_degrees = 10.0  # Each x_i is the rotation angle in degrees
 # Convert degrees to radians
 theta_radians = np.deg2rad(theta_degrees * 1000.0)  # np.deg2rad converts degrees to radians
 cos_theta = np.cos(theta_radians)  # Shape: (N,)
@@ -253,6 +253,7 @@ mesh_moved.save(f"bunny_result/bunny_untwisted_{total_frames}_unrotated.obj")
 mesh_rest.save("bunny_result/bunny_rest.obj")
 while True:
   update_position()
+  exit()
   total_frames += 1
   if total_frames % 100 == 0:
     mesh_moved.save(f"bunny_result/bunny_untwisted_{total_frames}_unrotated.obj")

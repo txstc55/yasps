@@ -51,7 +51,7 @@ x = position[:, 0]  # Shape: (N,)
 y = position[:, 1]  # Shape: (N,)
 z = position[:, 2]  # Shape: (N,)
 # Convert x-coordinates to rotation angles in degrees
-theta_degrees = x  # Each x_i is the rotation angle in degrees
+theta_degrees = 10.0  # Each x_i is the rotation angle in degrees
 # Convert degrees to radians
 theta_radians = np.deg2rad(theta_degrees * 1000.0)  # np.deg2rad converts degrees to radians
 cos_theta = np.cos(theta_radians)  # Shape: (N,)
@@ -204,16 +204,16 @@ def stable_neo_hookean(mu, lam, vol, IB, F):
 bunny.vertex.addAttribute("position_penalty", computed_attribute = (bunny.vertex["rotated_position"] - bunny.vertex["rest_position"]).dot(bunny.vertex["rotated_position"] - bunny.vertex["rest_position"]))
 snh = tet_deform.addAttribute("stable_neo_hookean", computed_attribute = stable_neo_hookean(bunny["mu"], bunny["lam"], vol, IB, deformation))
 
-# minimizer0 = minimizer()
+minimizer0 = minimizer()
 minimizer1 = minimizer()
 
-# minimizer0.addEnergy(bunny.vertex["position_penalty"])
+minimizer0.addEnergy(bunny.vertex["position_penalty"])
 minimizer1.addEnergy(snh, save_intermediate = True)
 
-# minimizer0.addWrt([bunny["roll"], bunny["pitch"], bunny["yaw"], bunny["translation"]])
+minimizer0.addWrt([bunny["roll"], bunny["pitch"], bunny["yaw"], bunny["translation"]])
 minimizer1.addWrt([bunny.vertex_soft["current_position"], bunny.vertex_rigid["current_position"]])
 
-# minimizer0.generateHessianAndGradient()
+minimizer0.generateHessianAndGradient()
 minimizer1.generateHessianAndGradient()
 
 
@@ -238,24 +238,24 @@ iteration = 0
 weight = 0.1
 def update_position():
   global total_frames
-  # result0 = minimizer0.computeSolution()
+  result0 = minimizer0.computeSolution()
   result1 = minimizer1.computeSolution()
-  # d_roll = result0[0].get()
-  # d_pitch = result0[1].get()
-  # d_yaw = result0[2].get()
-  # d_translation = result0[3].get().flatten()
+  d_roll = result0[0].get()
+  d_pitch = result0[1].get()
+  d_yaw = result0[2].get()
+  d_translation = result0[3].get().flatten()
   d_position_soft = result1[0].get().flatten()
   d_position_rigid = result1[1].get().flatten()
-  # roll_new_value = bunny["roll"].value.get() - weight * d_roll
-  # pitch_new_value = bunny["pitch"].value.get() - weight * d_pitch
-  # yaw_new_value = bunny["yaw"].value.get() - weight * d_yaw
-  # translation_new_value = bunny["translation"].value.get().flatten() - weight * d_translation
+  roll_new_value = bunny["roll"].value.get() - weight * d_roll
+  pitch_new_value = bunny["pitch"].value.get() - weight * d_pitch
+  yaw_new_value = bunny["yaw"].value.get() - weight * d_yaw
+  translation_new_value = bunny["translation"].value.get().flatten() - weight * d_translation
   soft_position_new_value = bunny.vertex_soft["current_position"].value.get().flatten() - 0.1 * d_position_soft
   rigid_position_new_value = bunny.vertex_rigid["current_position"].value.get().flatten() - 0.1 * d_position_rigid
-  # bunny["pitch"].updateValue(roll_new_value)
-  # bunny["roll"].updateValue(pitch_new_value)
-  # bunny["yaw"].updateValue(yaw_new_value)
-  # bunny["translation"].updateValue(translation_new_value)
+  bunny["pitch"].updateValue(roll_new_value)
+  bunny["roll"].updateValue(pitch_new_value)
+  bunny["yaw"].updateValue(yaw_new_value)
+  bunny["translation"].updateValue(translation_new_value)
   bunny.vertex_soft["current_position"].updateValue(soft_position_new_value)
   bunny.vertex_rigid["current_position"].updateValue(rigid_position_new_value)
   new_positions = bunny.vertex["rotated_position"].compute().value.get().flatten()
@@ -272,6 +272,7 @@ def update_position():
 # mesh_rest.save("bunny_result/bunny_rest.obj")
 while True:
   update_position()
+  exit()
   total_frames += 1
   if total_frames % 100 == 0:
     mesh_moved.save(f"bunny_result/bunny_untwisted_{total_frames}_unrotated.obj")
