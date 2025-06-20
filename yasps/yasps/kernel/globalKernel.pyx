@@ -167,9 +167,6 @@ extern "C"{{
             print(" ".join(compile_cmd))
             job = subprocess.Popen(compile_cmd)
             compile_jobs.append(job)
-      # Wait for all compilation jobs
-      for job in compile_jobs:
-        job.wait()
 
       # now actually generate the global kernel
       attributeName: str = ""
@@ -246,7 +243,11 @@ void compute(
       ]
       print("Kernel compile command: ")
       print(" ".join(kernel_compile_cmd))
-      subprocess.run(kernel_compile_cmd, check=True)
+      job = subprocess.Popen(kernel_compile_cmd)
+      compile_jobs.append(job)
+      # Wait for all compilation jobs
+      for job in compile_jobs:
+        job.wait()
 
       # Device link step: critical for CUDA separable compilation
       device_link_obj = f"{file_name}_device_link.o"

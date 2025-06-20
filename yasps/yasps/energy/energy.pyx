@@ -36,6 +36,7 @@ class energy:
     self.__merged_hessian_and_gradient_attribute: Optional[attribute] = None
     self.__project_entire_hessian: bool = True
     self.__projection_method = projection_method # 0 for no projection, 1 for absolute, 2 for max(0, val)
+    # self.__projection_method = 0
     self.__save_intermediate = save_intermediate # save intermediate gradient and hessian result
     self.__intermediate_compute_pairs: Dict[str, Tuple[attribute, attribute]] = {} # save the intermediate compute pairs
     self.__gradient_only: bool = gradient_only # only compute gradient
@@ -329,7 +330,13 @@ class energy:
             parent.correspondance.addAttribute(new_name, computed_attribute = local_hessian)
             self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (local_hessian, hessian_data_attribute)
       else:
+        # print("------------------------------------------------------------------------------------")
+        # print("Local hessian name in local energy hessian is", local_hessian_name)
+        # print("------------------------------------------------------------------------------------")
         parent.correspondance.addAttribute(local_hessian_name, computed_attribute = local_hessian)
+        # print("Energy local hessian check")
+        # print(local_hessian.compute().value.get()[:(local_hessian.rows * local_hessian.cols)].reshape((local_hessian.rows, local_hessian.cols)))
+        # exit()
     return
 
   def __gennerateGlobalJacobianForEnergy(self, current: attribute, wrt: List[attribute]):
@@ -411,6 +418,9 @@ class energy:
 
     # ok then we construct the first part of the hessian
     local_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in children])}'
+    # print("------------------------------------------------------------------------------------")
+    # print("Local hessian name in global energy hessian is", local_hessian_name)
+    # print("------------------------------------------------------------------------------------")
 
     local_hessian = current.correspondance[local_hessian_name]
     if second_part_hessian.isZero > 0:
@@ -430,10 +440,14 @@ class energy:
     children_global_jacobian = current.correspondance[children_jacobian_name]
 
     final_hessian = children_global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(children_global_jacobian)).add_explicit(second_part_hessian)
-    # final_hessian = children_global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(children_global_jacobian))
     # print("------------------------------------------------------------------------------------")
-    # print("Checking hessian for energy only and first part")
-    # print(final_hessian.compute().value.get()[:144].reshape((12, 12)))
+    # print("Checking the local hessian")
+    # print(local_hessian.compute().value.get()[:(local_hessian.rows * local_hessian.cols)].reshape((local_hessian.rows, local_hessian.cols)))
+    # print("Checking the jacobian")
+    # print(children_global_jacobian.compute().value.get()[:(children_global_jacobian.rows * children_global_jacobian.cols)].reshape((children_global_jacobian.rows, children_global_jacobian.cols)))
+    # print("Hessian checking")
+    # print(final_hessian.compute().value.get()[:(final_hessian.rows * final_hessian.cols)].reshape((final_hessian.rows, final_hessian.cols)))
+    # # exit()
     # print("------------------------------------------------------------------------------------")
     current.correspondance.addAttribute(global_hessian_name, computed_attribute = final_hessian)
     return final_hessian
@@ -782,12 +796,12 @@ class energy:
 
   def __generateGlobalJacobianForUnion(self, current: attribute, wrt: List[attribute]):
     gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}_filled_for_{self.__energy.fullName}'
-    print("-----------------------------------------------------------")
-    print(f"At union, generating for {gradient_attribute_name}")
-    print("Checking children correspondance")
-    for child in current.children:
-      print(f"Child {child.fullName} has correspondance: {child.correspondance.fullName}")
-    print("-----------------------------------------------------------")
+    # print("-----------------------------------------------------------")
+    # print(f"At union, generating for {gradient_attribute_name}")
+    # print("Checking children correspondance")
+    # for child in current.children:
+    #   print(f"Child {child.fullName} has correspondance: {child.correspondance.fullName}")
+    # print("-----------------------------------------------------------")
     if gradient_attribute_name in current.correspondance.attributes:
       return current.correspondance[gradient_attribute_name]
     # gradient_attribute_name_unfilled = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
@@ -892,11 +906,11 @@ class energy:
           expanded_jacobian_list[i * max_cols + j] = jacobian[i, j]
       expanded_jacobian = attribute.to_array(expanded_jacobian_list, rows = max_rows, cols = max_cols)
       if not gradient_attribute_name in current.children[index].correspondance.attributes:
-        print(f"Adding attribute with name {gradient_attribute_name} to child {current.children[index].correspondance.fullName}")
+        # print(f"Adding attribute with name {gradient_attribute_name} to child {current.children[index].correspondance.fullName}")
         current.children[index].correspondance.addAttribute(gradient_attribute_name, computed_attribute = expanded_jacobian)
 
-      print("Checking correspondance again")
-      print(expanded_jacobian.correspondance.fullName)
+      # print("Checking correspondance again")
+      # print(expanded_jacobian.correspondance.fullName)
 
       # well we have expanded the jacobian for each child
     #   # perform the union operation
@@ -922,10 +936,10 @@ class energy:
         # we already have the hessian
         unioned_child_global_hessian = unioned_child.correspondance[unioned_child_global_hessian_name]
         unioned_children_global_hessians.append(unioned_child_global_hessian)
-        print("=============================================================")
-        print("Unioned child already has a global hessian")
-        print(f"Dimensions are: {unioned_child_global_hessian.rows} x {unioned_child_global_hessian.cols}")
-        print("=============================================================")
+        # print("=============================================================")
+        # print("Unioned child already has a global hessian")
+        # print(f"Dimensions are: {unioned_child_global_hessian.rows} x {unioned_child_global_hessian.cols}")
+        # print("=============================================================")
       else:
         # ok we first need to find out which children are being used
         used_children: List[attribute] = []
@@ -995,17 +1009,17 @@ class energy:
         assert unioned_child.correspondance[unioned_child_global_hessian_name].rows == unioned_child_global_hessian.rows, f"energy.__generateGlobalHessianForUnion: unioned child global hessian rows {unioned_child.correspondance[unioned_child_global_hessian_name].rows} is not equal to unioned child global hessian rows {unioned_child_global_hessian.rows}, name is {unioned_child_global_hessian_name}"
         assert unioned_child.correspondance[unioned_child_global_hessian_name].cols == unioned_child_global_hessian.cols, f"energy.__generateGlobalHessianForUnion: unioned child global hessian cols {unioned_child.correspondance[unioned_child_global_hessian_name].cols} is not equal to unioned child global hessian cols {unioned_child_global_hessian.cols}"
         unioned_children_global_hessians.append(unioned_child.correspondance[unioned_child_global_hessian_name])
-        print("-------------------------------------------------------------")
-        print("Unioned child does not have a global hessian")
-        print(f"Dimensions are: {unioned_child_global_hessian.rows} x {unioned_child_global_hessian.cols}")
-        print("-------------------------------------------------------------")
+        # print("-------------------------------------------------------------")
+        # print("Unioned child does not have a global hessian")
+        # print(f"Dimensions are: {unioned_child_global_hessian.rows} x {unioned_child_global_hessian.cols}")
+        # print("-------------------------------------------------------------")
     # ok now that we have all of the children's hessian
     # what we need to do is to get the largest dimension
-    print("=========================================================")
-    print("All children global hessian dimensions")
-    for item in unioned_children_global_hessians:
-      print(f"Rows: {item.rows}, Cols: {item.cols}, Size: {item.size}")
-    print("=========================================================")
+    # print("=========================================================")
+    # print("All children global hessian dimensions")
+    # for item in unioned_children_global_hessians:
+    #   print(f"Rows: {item.rows}, Cols: {item.cols}, Size: {item.size}")
+    # print("=========================================================")
     if self.__save_intermediate:
       for (index, item) in enumerate(unioned_children_global_hessians):
         if item.fullName not in self.__intermediate_compute_pairs:
@@ -1118,25 +1132,25 @@ class energy:
     # generate the symbolic code for gradient and hessian
     self.__generateGradientThroughPathDict(wrt, differentiater)
     assert self.__gradient is not None
-    # print("----------------------------------------------------------------------------")
-    # print("Gradient actual")
+    print("----------------------------------------------------------------------------")
+    print("Gradient actual")
     # print(str(self.__gradient))
-    # print("Checking the gradient")
-    # print(self.__gradient.compute().value.get()[:12])
-    # # print("Checking energy")
-    # # print(self.__energy.compute().value.get()[0])
-    # print("----------------------------------------------------------------------------")
+    print("Checking the gradient")
+    print(self.__gradient.compute().value.get()[:self.__gradient.size])
+    print("Checking energy")
+    print(self.__energy.compute().value.get()[0])
+    print("----------------------------------------------------------------------------")
     # exit(0)
     if not self.__gradient_only:
       # dont generate hessian if we only need gradient
       self.__generateHessianThroughPathDict(wrt, differentiater)
-      print("Hessian generated")
+      # print("Hessian generated")
       assert self.__hessian is not None, "yasps.energy.generateHessianAndGradient: The hessian is not computed yet. Please call generateHessianAndGradient first."
-      # print("----------------------------------------------------------------------------")
-      # print("Computed hessian check")
-      # computed_hessian = self.__hessian.compute().value.get()
-      # print(computed_hessian[:144].reshape((12, 12)))
-      # print("----------------------------------------------------------------------------")
+      print("----------------------------------------------------------------------------")
+      print("Computed hessian check")
+      computed_hessian = self.__hessian.compute().value.get()
+      print(computed_hessian[:(self.__hessian.rows * self.__hessian.cols)].reshape((self.__hessian.rows, self.__hessian.cols)))
+      print("----------------------------------------------------------------------------")
       # exit()
 
 

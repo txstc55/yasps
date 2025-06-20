@@ -51,7 +51,7 @@ x = position[:, 0]  # Shape: (N,)
 y = position[:, 1]  # Shape: (N,)
 z = position[:, 2]  # Shape: (N,)
 # Convert x-coordinates to rotation angles in degrees
-theta_degrees = 10.0  # Each x_i is the rotation angle in degrees
+theta_degrees = x  # Each x_i is the rotation angle in degrees
 # Convert degrees to radians
 theta_radians = np.deg2rad(theta_degrees * 1000.0)  # np.deg2rad converts degrees to radians
 cos_theta = np.cos(theta_radians)  # Shape: (N,)
@@ -208,7 +208,7 @@ minimizer0 = minimizer()
 minimizer1 = minimizer()
 
 minimizer0.addEnergy(bunny.vertex["position_penalty"])
-minimizer1.addEnergy(snh, save_intermediate = True)
+minimizer1.addEnergy(snh)
 
 minimizer0.addWrt([bunny["roll"], bunny["pitch"], bunny["yaw"], bunny["translation"]])
 minimizer1.addWrt([bunny.vertex_soft["current_position"], bunny.vertex_rigid["current_position"]])
@@ -264,17 +264,17 @@ def update_position():
   # Refresh the plotter to reflect the updated mesh
   plotter.update_coordinates(mesh_moved.points, mesh=mesh_moved)
   plotter.render()
-  print(f"Iteration {total_frames}")
-  print(f"Total energy is: {sum(bunny.vertex["position_penalty"].compute().value.get())}")
+  # print(f"Iteration {total_frames}")
+  # print(f"Total energy is: {sum(bunny.vertex["position_penalty"].compute().value.get())}")
 
 # # save the original
 # mesh_moved.save(f"bunny_result/bunny_untwisted_{total_frames}_unrotated.obj")
 # mesh_rest.save("bunny_result/bunny_rest.obj")
 while True:
   update_position()
-  exit()
+  # exit()
   total_frames += 1
-  if total_frames % 100 == 0:
-    mesh_moved.save(f"bunny_result/bunny_untwisted_{total_frames}_unrotated.obj")
+  # if total_frames % 100 == 0:
+  #   mesh_moved.save(f"bunny_result/bunny_untwisted_{total_frames}_unrotated.obj")
   # if total_frames == 500:
   #   exit(0)

@@ -716,16 +716,16 @@ __device__ void {attributeName}_device_function(
     // now that we know the exact primitive index, we invoke the attribute function
     switch({current.fullName}_primitive_index){{
 '''
-    print("Before for loop")
-    print(f"Current fullname is {current.fullName}")
-    print(f"Union has {len(current.children)} children")
-    print("Union parent correspondance checking")
-    print(current.correspondance.fullName)
+    # print("Before for loop")
+    # print(f"Current fullname is {current.fullName}")
+    # print(f"Union has {len(current.children)} children")
+    # print("Union parent correspondance checking")
+    # print(current.correspondance.fullName)
     for i in range(len(current.children)):
       child_attribute = current.children[i]
-      print(f"Generating code for child attribute: {child_attribute.fullName} with size {child_attribute.size}")
-      print("Attribute correspondance checking")
-      print(f"Child attribute correspondance: {child_attribute.correspondance.fullName}")
+      # print(f"Generating code for child attribute: {child_attribute.fullName} with size {child_attribute.size}")
+      # print("Attribute correspondance checking")
+      # print(f"Child attribute correspondance: {child_attribute.correspondance.fullName}")
       code_string += f'''
       case {i}:
 '''

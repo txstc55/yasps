@@ -92,6 +92,9 @@ __global__ void computePermutation(
         compressed_index_size++;
       }
     }
+    if (tid < 20){
+      printf("Thread %u: with total gradient size: %u\\n", tid, total_gradient_size);
+    }
     total_gradient_sizes[tid] = total_gradient_size; // record after compression, the size of the gradient
     compressed_index_sizes[tid] = compressed_index_size; // the number of unique indices in this instance
   }
@@ -296,6 +299,9 @@ class gradientIndicesKernel:
   def __init__(self, path_dict: Dict[attribute, List[attribute]], unioned_child_to_its_children: Dict[attribute, List[attribute]], wrt: List[attribute], wrt_start_indices: List[int], energy: attribute):
     self.__path_dict: Dict[attribute, List[attribute]] = path_dict # the path dict is basically from parent to children
     self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = unioned_child_to_its_children # this is the unioned child to its children
+    print("Checking unioned child to its children")
+    for key in self.__unioned_child_to_its_children:
+      print(f"Unioned child: {key.fullName}, children: {[x.fullName for x in self.__unioned_child_to_its_children[key]]}")
     self.__wrt_start_indices: List[int] = wrt_start_indices
     self.__energy: attribute = energy
     self.__used_join_attributes: List[attribute] = [] # all the join attributes, we will use its connectivities for indexing
@@ -304,11 +310,13 @@ class gradientIndicesKernel:
     self.__indexSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the number of indices needed, again this is the theoretical largest size
     self.__getUsedJoinAttributes() # get the attributes that are join operations, so we can just grab the connectivities later on
     self.__getUsedUnionAttributes() # get the attributes that are union operationsn
+    self.__wrt: List[attribute] = wrt # the wrt attributes, we will use this to determine the position in the wrt start indices
     self.__gradientSize, self.__indexSize = self.__getGradientSize(self.__path_dict, self.__energy)
     print("Index size and gradient size for each part check")
-    # for item in self.__indexSizeForEachPart:
-    #   print(f"Name: {item.fullName}, index size: {self.__indexSizeForEachPart[item]}, gradient size: {self.__gradientSizeForEachPart[item]}")
+    for item in self.__indexSizeForEachPart:
+      print(f"Name: {item.fullName}, index size: {self.__indexSizeForEachPart[item]}, gradient size: {self.__gradientSizeForEachPart[item]}")
 
+    # exit(0)
 
     self.__positionInWrtStartIndices: Dict[attribute, int] = {} # we record the position in the wrt start indices
     for i in range(len(wrt)):
@@ -463,40 +471,58 @@ class gradientIndicesKernel:
 
   def __getGradientSize(self, path_dict: Dict[attribute, List[attribute]], current_attribute: attribute) -> Tuple[int, int]:
     # we first get the list of attributes to look for
-    children_attributes: List[attribute] = path_dict[current_attribute]
+    if current_attribute in self.__gradientSizeForEachPart:
+      return self.__gradientSizeForEachPart[current_attribute], self.__indexSizeForEachPart[current_attribute] # if we already computed the size, just return it
+
     total_size = 0
     index_size = 0
     # we need to do special case for JOIN and UNION
     # for union operator, we always know that the size is the maximum size of the children
     # and for join operator, we simply duplicate the size
-    for child in children_attributes:
-      if child.operator == DATA:
-        # we stop the recursion when child is a DATA attribute
-        if child not in self.__gradientSizeForEachPart:
-          self.__gradientSizeForEachPart[child] = child.size # the gradient size for the child is its own size
-        if child not in self.__indexSizeForEachPart:
-          self.__indexSizeForEachPart[child] = 1 # the index size for the child is 1
-        if current_attribute.operator == UNION:
-          total_size = max(child.size, total_size)
-          index_size = max(1, index_size)
-        else:
-          total_size += child.size
-          index_size += 1
-      elif child.operator == JOIN or child.operator == UNION:
-        child_gradient_size, child_index_size = self.__getGradientSize(path_dict, child)
-        if current_attribute.operator == UNION:
-          total_size = max(child_gradient_size, total_size)
-          index_size = max(child_index_size, index_size)
-        else:
-          total_size += child_gradient_size
-          index_size += child_index_size
     if current_attribute.operator == JOIN:
-      # for join operator we need to duplicate the gradient and index size by the dimension number
-      total_size = total_size * current_attribute.through.dimension
-      index_size = index_size * current_attribute.through.dimension
-    self.__gradientSizeForEachPart[current_attribute] = total_size # also record that for each join operation, the size we need to reserve
-    self.__indexSizeForEachPart[current_attribute] = index_size
-    return total_size, index_size
+      # we first get the size of its children
+      for child in path_dict[current_attribute]:
+        child_gradient_size, child_index_size = self.__getGradientSize(path_dict, child)
+        total_size += child_gradient_size * current_attribute.through.dimension # we multiply by the dimension number
+        index_size += child_index_size * current_attribute.through.dimension # we multiply by the dimension number
+      self.__gradientSizeForEachPart[current_attribute] = total_size # also record that for each join operation, the size we need to reserve
+      self.__indexSizeForEachPart[current_attribute] = index_size # also record that for each join operation, the size we need to reserve
+      return total_size, index_size
+    if current_attribute.operator == UNION:
+      # we check for each child, the size
+      # and then take the max
+      for child in current_attribute.children:
+        child_gradient_size, child_index_size = self.__getGradientSize(path_dict, child)
+        total_size = max(child_gradient_size, total_size)
+        index_size = max(child_index_size, index_size)
+      self.__gradientSizeForEachPart[current_attribute] = total_size
+      self.__indexSizeForEachPart[current_attribute] = index_size
+      return total_size, index_size
+    if current_attribute.operator == DATA:
+      self.__gradientSizeForEachPart[current_attribute] = current_attribute.size # the gradient size for the data attribute is its own size
+      self.__indexSizeForEachPart[current_attribute] = 1 # the index size for the data attribute is 1
+      return current_attribute.size, 1 # the size is just the size of the data attribute and the index size is 1
+
+    children_attributes: List[attribute] = []
+    if current_attribute in path_dict:
+      children_attributes = path_dict[current_attribute] # get the children attributes from the path dict, this is a node on the path
+    elif current_attribute in self.__unioned_child_to_its_children:
+      unioned_children = self.__unioned_child_to_its_children[current_attribute]
+      for child in unioned_children:
+        if child in path_dict or child in self.__wrt:
+          # if the child is in the path dict, we can use it
+          children_attributes.append(child)
+    else:
+      raise ValueError(f"Attribute {current_attribute.fullName} is not in the path dict or unioned child to its children, cannot compute gradient size.")
+
+    # now we have all the children, we accumulate the size
+    for child in children_attributes:
+      child_gradient_size, child_index_size = self.__getGradientSize(path_dict, child) # get the gradient size and index size for each child
+      total_size += child_gradient_size # accumulate the gradient size
+      index_size += child_index_size # accumulate the index size
+    self.__gradientSizeForEachPart[current_attribute] = total_size # record the gradient size for each child
+    self.__indexSizeForEachPart[current_attribute] = index_size # record the index size for each child
+    return total_size, index_size # return the total size and index size
 
   def __getUsedJoinAttributes(self):
     # we literally just go over the attributes
@@ -839,6 +865,11 @@ extern "C" void get_indices(
       self.__to_void_p(self.__outputIndices),
       self.__to_void_p(self.__outputIndexSizes),
       self.__numInstances)
+    # print("Indices check: ")
+    # print(self.__outputIndices.get()[:40].reshape((-1, 4)))
+    # print("Index sizes check: ")
+    # print(self.__outputIndexSizes.get()[:40].reshape((-1, 4)))
+    # exit()
 
   @timed("gradientIndicesKernel.__compressIndicesLocal")
   def __compressIndicesLocal(self):
@@ -907,15 +938,17 @@ extern "C" void get_indices(
     # print("Num instances are", self.__numInstances)
     # print("Dimensions of the indices:", self.__outputIndexSizes.get()[:20])
     print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
+    print("Checking output gradient sizes", self.__outputGradientSizes.get()[:200].reshape((-1, 10)))
     print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
-    # print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
-    # print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get())
-    # print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
-    # print("Number of total coordinates:", self.numTotalCoordinates)
-    # print("Permutations:", self.__outputPermutations.get())
-    # print("Coordinates size:", self.__outputCoordinates.get().shape)
-    # print("Dimensions size:", self.__outputBlockDimensions.get().shape)
-    # print("Permutation preview:", self.__outputPermutations.get()[:30])
+    print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
+    print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get()[:1159])
+    print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
+    print("Number of total coordinates:", self.numTotalCoordinates)
+    print("Permutations:", self.__outputPermutations.get())
+    print("Coordinates size:", self.__outputCoordinates.get().shape)
+    print("Dimensions size:", self.__outputBlockDimensions.get().shape)
+    print("Permutation preview:", self.__outputPermutations.get()[:30])
+    exit()
 
     # # lets save the useful info to npz for check later
     # np.savez("output_indices.npz",

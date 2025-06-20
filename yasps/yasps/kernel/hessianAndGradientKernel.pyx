@@ -276,6 +276,10 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     instance,
     hg_mat.data()
   );
+  if (instance < 5){{
+    printf("Instance: %u, gradient: %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf\\n", instance, hg_mat({self.__att.cols + 1}, 0), hg_mat({self.__att.cols + 1}, 1), hg_mat({self.__att.cols + 1}, 2), hg_mat({self.__att.cols + 1}, 3), hg_mat({self.__att.cols + 1}, 4), hg_mat({self.__att.cols + 1}, 5), hg_mat({self.__att.cols + 1}, 6), hg_mat({self.__att.cols + 1}, 7), hg_mat({self.__att.cols + 1}, 8), hg_mat({self.__att.cols + 1}, 9), hg_mat({self.__att.cols + 1}, 10), hg_mat({self.__att.cols + 1}, 11));
+    printf("Instance: %u, indices: %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u\\n", segment_indices[instance * max_num_indices + 0], segment_indices[instance * max_num_indices + 1], segment_indices[instance * max_num_indices + 2], segment_indices[instance * max_num_indices + 3], segment_indices[instance * max_num_indices + 4], segment_indices[instance * max_num_indices + 5], segment_indices[instance * max_num_indices + 6], segment_indices[instance * max_num_indices + 7], segment_indices[instance * max_num_indices + 8], segment_indices[instance * max_num_indices + 9], segment_indices[instance * max_num_indices + 10], segment_indices[instance * max_num_indices + 11]);
+  }}
   // ok we now first put the gradient into the correct place
   unsigned int gradient_offset = 0;
   for (unsigned int i = 0; i < max_num_indices; i++){{

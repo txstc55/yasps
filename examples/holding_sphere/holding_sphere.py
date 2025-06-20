@@ -204,19 +204,22 @@ vp = vertices_union.addAttribute("current_position")
 vertices_union.addAttribute("current_position_derivative")
 
 # let's create a fake energy
-center_x = 12.0
-center_y = 4.0
+center_x = 0.0
+center_y = 0.0
 center_z = 0.0
-sphere_radius = 1.0
+sphere_radius = 4.0
 
 s0.addAttribute("center_x", rows = 1, cols = 1)
 s0.addAttribute("center_y", rows = 1, cols = 1)
 s0.addAttribute("center_z", rows = 1, cols = 1)
+s0.addAttribute("sphere_radius", rows = 1, cols = 1)
 s0["center_x"].updateValue([center_x])
 s0["center_y"].updateValue([center_y])
 s0["center_z"].updateValue([center_z])
-r = (vertices_union["current_position"][0] - s0["center_x"]) * (vertices_union["current_position"][0] - s0["center_x"]) + (vertices_union["current_position"][1] - s0["center_y"]) * (vertices_union["current_position"][1] - s0["center_y"]) + (vertices_union["current_position"][2] - s0["center_z"]) * (vertices_union["current_position"][2] - s0["center_z"])
-energy = 1 / ((r - sphere_radius).pow(2.0) + 1e-6)
+s0["sphere_radius"].updateValue([sphere_radius])
+r = ((vertices_union["current_position"][0] - s0["center_x"]) * (vertices_union["current_position"][0] - s0["center_x"]) + (vertices_union["current_position"][1] - s0["center_y"]) * (vertices_union["current_position"][1] - s0["center_y"]) + (vertices_union["current_position"][2] - s0["center_z"]) * (vertices_union["current_position"][2] - s0["center_z"]) + 1e-6).sqrt()
+# energy = 1 / ((r - s0["sphere_radius"]).pow(2.0) + 1e-6)
+energy = r * r
 vertices_union.addAttribute("surface_repulse_energy", computed_attribute = energy)
 
 energy_theta = (bones_union["theta_target"] - bones_union["theta"]) * (bones_union["theta_target"] - bones_union["theta"])
@@ -224,7 +227,7 @@ bones_union.addAttribute("theta_energy", computed_attribute = energy_theta)
 # s0.addEnergy(energy_theta, gradient_only = True)
 # s0.addEnergy(vertices_union["surface_repulse_energy"], gradient_only = True)
 # s0.addEnergy(energy_theta)
-s0.addEnergy(vertices_union["surface_repulse_energy"], save_intermediate = True)
+s0.addEnergy(vertices_union["surface_repulse_energy"])
 s0.addMinimizeTarget([handMesh.bone_level_0["theta"], handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"], handMesh.bone_level_3["theta"], handMesh.bone_level_4["theta"], handMesh.bone_level_5["theta"]])
 result = s0.minimizeEnergy()
 import pyvista as pv
