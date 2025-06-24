@@ -607,13 +607,28 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_row(self, current: ya.attribute) -> None:
     attribute_name, _ = self.__generate_attribute_name_and_initialization(current)
-    self.__code_strings.append(f'''
+    if current.children[0].cols == 1:
+      # this is a singular value
+      #
+      self.__code_strings.append(f'''
+  // getting row to a singular value
+  double {attribute_name} = {self.getIntermediateName(current.children[0])}.row({current.children[1].index_value}).value();''')
+    else:
+      self.__code_strings.append(f'''
   // getting row by expression template
   auto {attribute_name} = {self.getIntermediateName(current.children[0])}.row({current.children[1].index_value});''')
 
   def __generate_code_for_col(self, current: ya.attribute) -> None:
     attribute_name, _ = self.__generate_attribute_name_and_initialization(current)
-    self.__code_strings.append(f'''
+    if current.children[0].rows == 1:
+      # this is a singular value
+      self.__code_strings.append(f'''
+  // getting column to a singular value
+  double {attribute_name} = {self.getIntermediateName(current.children[0])}.col({current.children[1].index_value}).value();''')
+    else:
+      # this is a column vector
+      # we can use the expression template
+      self.__code_strings.append(f'''
   // getting column by expression template
   auto {attribute_name} = {self.getIntermediateName(current.children[0])}.col({current.children[1].index_value});''')
 

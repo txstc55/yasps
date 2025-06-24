@@ -1132,25 +1132,25 @@ class energy:
     # generate the symbolic code for gradient and hessian
     self.__generateGradientThroughPathDict(wrt, differentiater)
     assert self.__gradient is not None
-    print("----------------------------------------------------------------------------")
-    print("Gradient actual")
-    # print(str(self.__gradient))
-    print("Checking the gradient")
-    print(self.__gradient.compute().value.get()[:self.__gradient.size])
-    print("Checking energy")
-    print(self.__energy.compute().value.get()[0])
-    print("----------------------------------------------------------------------------")
+    # print("----------------------------------------------------------------------------")
+    # print("Gradient actual")
+    # # print(str(self.__gradient))
+    # print("Checking the gradient")
+    # print(self.__gradient.compute().value.get()[:self.__gradient.size])
+    # print("Checking energy")
+    # print(self.__energy.compute().value.get()[0])
+    # print("----------------------------------------------------------------------------")
     # exit(0)
     if not self.__gradient_only:
       # dont generate hessian if we only need gradient
       self.__generateHessianThroughPathDict(wrt, differentiater)
       # print("Hessian generated")
       assert self.__hessian is not None, "yasps.energy.generateHessianAndGradient: The hessian is not computed yet. Please call generateHessianAndGradient first."
-      print("----------------------------------------------------------------------------")
-      print("Computed hessian check")
-      computed_hessian = self.__hessian.compute().value.get()
-      print(computed_hessian[:(self.__hessian.rows * self.__hessian.cols)].reshape((self.__hessian.rows, self.__hessian.cols)))
-      print("----------------------------------------------------------------------------")
+      # print("----------------------------------------------------------------------------")
+      # print("Computed hessian check")
+      # computed_hessian = self.__hessian.compute().value.get()
+      # print(computed_hessian[:(self.__hessian.rows * self.__hessian.cols)].reshape((self.__hessian.rows, self.__hessian.cols)))
+      # print("----------------------------------------------------------------------------")
       # exit()
 
 

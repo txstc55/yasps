@@ -145,12 +145,14 @@ extern "C" {{
 
       compile_jobs = []
       obj_files = []
+      seen_obj_files = set([])
       for item in (sortedDependency + [self.__att.deviceKernel]):
         # we check if the .o file exists
-        cu_file = f".yasps_tmp/{item.attributeName}_obj.cu"
-        obj_file = f".yasps_tmp/{item.attributeName}_obj.o"
-        obj_files.append(obj_file)
-        if not os.path.exists(obj_file):
+        cu_file = f".yasps_tmp/{item.attributeName}.cu"
+        obj_file = f".yasps_tmp/{item.attributeName}.o"
+        if not obj_file in seen_obj_files:
+          obj_files.append(obj_file)
+        if (not os.path.exists(obj_file)) and (not obj_file in seen_obj_files):
           with open(cu_file, 'w') as f:
             f.write(f'''
 #include "allHeaders.cuh"
@@ -167,6 +169,7 @@ extern "C"{{
             print(" ".join(compile_cmd))
             job = subprocess.Popen(compile_cmd)
             compile_jobs.append(job)
+        seen_obj_files.add(obj_file)
 
       # now actually generate the global kernel
       attributeName: str = ""
@@ -249,6 +252,8 @@ void compute(
       for job in compile_jobs:
         job.wait()
 
+
+      obj_files = list(set(obj_files))
       # Device link step: critical for CUDA separable compilation
       device_link_obj = f"{file_name}_device_link.o"
       dlink_cmd = [

@@ -170,7 +170,7 @@ for i in range(len(skin_vertex_categorized)):
   vw.addAttribute("bones_matrix_current_derivative", through = v2b, source = bones_union["matrix_global_current_derivative"])
 
   vw_current_position = 0.0 * vw["rest_position_extended"] # this is 4 by 1
-  vw_current_position_derivative = 0.0 * vw["rest_position_extended"] # this is 4 by 1
+  # vw_current_position_derivative = 0.0 * vw["rest_position_extended"] # this is 4 by 1
   for j in range(i + 1):
     # get the matrix for rest
     mat_rest = vw["bones_matrix_rest"].row(j).resize(4, 4)
@@ -181,9 +181,8 @@ for i in range(len(skin_vertex_categorized)):
     weighted_transformed = vw["weights"][j] * transformed
     weighted_transformed_derivative = vw["weights"][j] * transformed_derivative
     vw_current_position += weighted_transformed
-    vw_current_position_derivative += weighted_transformed_derivative
+    # vw_current_position_derivative += weighted_transformed_derivative
   vw.addAttribute("current_position", computed_attribute = attribute.to_array([vw_current_position.row(0), vw_current_position.row(1), vw_current_position.row(2)], rows = 3, cols = 1))
-  vw.addAttribute("current_position_derivative", computed_attribute = attribute.to_array([vw_current_position_derivative.row(0), vw_current_position_derivative.row(1), vw_current_position_derivative.row(2)], rows = 3, cols = 1))
   # vw_positions += (vw["current_position"].compute().value.get().flatten().tolist())
   # if i == 0:
   #   print(vw["current_position"].compute().value.get().reshape(-1, 3))
@@ -201,13 +200,13 @@ vp = vertices_union.addAttribute("current_position")
 # exit()
 
 
-vertices_union.addAttribute("current_position_derivative")
+# vertices_union.addAttribute("current_position_derivative")
 
 # let's create a fake energy
-center_x = 0.0
-center_y = 0.0
+center_x = 12.0
+center_y = 4.0
 center_z = 0.0
-sphere_radius = 4.0
+sphere_radius = 1.0
 
 s0.addAttribute("center_x", rows = 1, cols = 1)
 s0.addAttribute("center_y", rows = 1, cols = 1)
@@ -217,19 +216,25 @@ s0["center_x"].updateValue([center_x])
 s0["center_y"].updateValue([center_y])
 s0["center_z"].updateValue([center_z])
 s0["sphere_radius"].updateValue([sphere_radius])
-r = ((vertices_union["current_position"][0] - s0["center_x"]) * (vertices_union["current_position"][0] - s0["center_x"]) + (vertices_union["current_position"][1] - s0["center_y"]) * (vertices_union["current_position"][1] - s0["center_y"]) + (vertices_union["current_position"][2] - s0["center_z"]) * (vertices_union["current_position"][2] - s0["center_z"]) + 1e-6).sqrt()
-# energy = 1 / ((r - s0["sphere_radius"]).pow(2.0) + 1e-6)
-energy = r * r
-vertices_union.addAttribute("surface_repulse_energy", computed_attribute = energy)
+
+
+for (index, vw) in enumerate(vw_primitives):
+  r = ((vw["current_position"][0] - s0["center_x"]) * (vw["current_position"][0] - s0["center_x"]) + (vw["current_position"][1] - s0["center_y"]) * (vw["current_position"][1] - s0["center_y"]) + (vw["current_position"][2] - s0["center_z"]) * (vw["current_position"][2] - s0["center_z"]) + 1e-6).sqrt()
+  energy = 0.001 / ((r - s0["sphere_radius"]).pow(2.0) + 1e-6)
+  vw.addAttribute(f"surface_repulse_energy_{index}", computed_attribute = energy)
+  s0.addEnergy(energy)
+# energy = vertices_union["current_position"][1] * vertices_union["current_position"][1] * vertices_union["current_position"][1]
+# vertices_union.addAttribute("surface_repulse_energy", computed_attribute = energy)
 
 energy_theta = (bones_union["theta_target"] - bones_union["theta"]) * (bones_union["theta_target"] - bones_union["theta"])
 bones_union.addAttribute("theta_energy", computed_attribute = energy_theta)
-# s0.addEnergy(energy_theta, gradient_only = True)
+s0.addEnergy(energy_theta)
 # s0.addEnergy(vertices_union["surface_repulse_energy"], gradient_only = True)
 # s0.addEnergy(energy_theta)
-s0.addEnergy(vertices_union["surface_repulse_energy"])
-s0.addMinimizeTarget([handMesh.bone_level_0["theta"], handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"], handMesh.bone_level_3["theta"], handMesh.bone_level_4["theta"], handMesh.bone_level_5["theta"]])
-result = s0.minimizeEnergy()
+# s0.addEnergy(vertices_union["surface_repulse_energy"])
+# s0.addMinimizeTarget([handMesh.bone_level_0["theta"], handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"], handMesh.bone_level_3["theta"], handMesh.bone_level_4["theta"], handMesh.bone_level_5["theta"]])
+s0.addMinimizeTarget([handMesh.bone_level_1["theta"], handMesh.bone_level_2["theta"], handMesh.bone_level_3["theta"], handMesh.bone_level_4["theta"]])
+# result = s0.minimizeEnergy()
 import pyvista as pv
 
 surface_vertices = vertices_union["current_position"].compute().value.get().reshape(-1, 3)
@@ -250,12 +255,12 @@ plotter.show(interactive_update=True)
 for i in range(10000):
   result = s0.minimizeEnergy()
   # print(result[1].get())
-  delta_lvl0_theta = result[0]
-  delta_lvl1_theta = result[1]
-  delta_lvl2_theta = result[2]
-  delta_lvl3_theta = result[3]
-  delta_lvl4_theta = result[4]
-  delta_lvl5_theta = result[5]
+  # delta_lvl0_theta = result[0]
+  delta_lvl1_theta = result[0]
+  delta_lvl2_theta = result[1]
+  delta_lvl3_theta = result[2]
+  delta_lvl4_theta = result[3]
+  # delta_lvl5_theta = result[4]
   # print(delta_lvl0_theta.get())
   # print(delta_lvl1_theta.get())
   # print(delta_lvl2_theta.get())
@@ -265,9 +270,9 @@ for i in range(10000):
 
 
 
-  handMesh.bone_level_0["theta"].updateValue(
-      handMesh.bone_level_0["theta"].value - 0.1 * delta_lvl0_theta
-  )
+  # handMesh.bone_level_0["theta"].updateValue(
+  #     handMesh.bone_level_0["theta"].value - 0.1 * delta_lvl0_theta
+  # )
   handMesh.bone_level_1["theta"].updateValue(
       handMesh.bone_level_1["theta"].value - 0.1 * delta_lvl1_theta
   )
@@ -280,9 +285,9 @@ for i in range(10000):
   handMesh.bone_level_4["theta"].updateValue(
       handMesh.bone_level_4["theta"].value - 0.1 * delta_lvl4_theta
   )
-  handMesh.bone_level_5["theta"].updateValue(
-      handMesh.bone_level_5["theta"].value - 0.1 * delta_lvl5_theta
-  )
+  # handMesh.bone_level_5["theta"].updateValue(
+  #     handMesh.bone_level_5["theta"].value - 0.1 * delta_lvl5_theta
+  # )
 
   surface_vertices = vertices_union["current_position"].compute().value.get().reshape(-1, 3)
 

@@ -7,7 +7,7 @@ from typing import Optional, List, Union, Tuple, Dict
 from typing import TYPE_CHECKING
 import pycuda.driver as cuda
 import time
-
+import hashlib
 from yasps.operator import operator
 if TYPE_CHECKING:
   from yasps.scene import scene
@@ -155,7 +155,10 @@ class attribute:
 
   @property
   def fullNameWithHash(self) -> str:
-    return 'attr_' + str(self.hash).replace("-", "_neg_")[:12]
+    fullName = self.fullName
+    # hash the fullname
+    digest = hashlib.sha256(fullName.encode('utf-8')).hexdigest()
+    return 'att_' + digest.replace("-", "_neg_")[:16]
 
   @property
   def rows(self)->int:

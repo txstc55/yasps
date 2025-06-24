@@ -363,8 +363,8 @@ class gradientIndicesKernel:
     self.__getCoordinateKernel() # generate or just get the coordinate kernel
 
     # we can pre allocate the spaces for unique sizes
-    self.__outputUniqueGradientSizes = gpuarray.empty(self.__gradientSizeForEachPart[energy], np.uint16) # this is the largest possible size
-    self.__outputGroupedIndicesOuter = gpuarray.empty(self.__gradientSizeForEachPart[energy] + 1, np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
+    self.__outputUniqueGradientSizes = gpuarray.empty(self.__gradientSizeForEachPart[energy] + 1, np.uint16) # this is the largest possible size
+    self.__outputGroupedIndicesOuter = gpuarray.empty(self.__gradientSizeForEachPart[energy] + 2, np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
     self.__outputNumUniqueGradientSizes = gpuarray.empty(1, np.uint16) # this will record the number of unique sizes of the attributes after compression
 
 
@@ -938,17 +938,17 @@ extern "C" void get_indices(
     # print("Num instances are", self.__numInstances)
     # print("Dimensions of the indices:", self.__outputIndexSizes.get()[:20])
     print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
-    print("Checking output gradient sizes", self.__outputGradientSizes.get()[:200].reshape((-1, 10)))
+    # print("Checking output gradient sizes", self.__outputGradientSizes.get()[:200].reshape((-1, 10)))
     print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
     print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
-    print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get()[:1159])
+    print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get()[890:910])
     print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
     print("Number of total coordinates:", self.numTotalCoordinates)
     print("Permutations:", self.__outputPermutations.get())
     print("Coordinates size:", self.__outputCoordinates.get().shape)
     print("Dimensions size:", self.__outputBlockDimensions.get().shape)
     print("Permutation preview:", self.__outputPermutations.get()[:30])
-    exit()
+    # exit()
 
     # # lets save the useful info to npz for check later
     # np.savez("output_indices.npz",

@@ -160,7 +160,14 @@ __device__ void spd_projection_inplace(double *A, int choice) {
 extern "C" {{
 {item.kernelHeader};
 }}'''
+        if "scene0_handMesh_bone_level_4_d_scene0_handMesh_bones_matrix_global_current_d_scene0_handMesh_bone_level_1_theta__scene0_handMesh_bone_level_2_theta__scene0_handMesh_bone_level_3_theta__scene0_handMesh_bone_level_4_theta_filled_for_scene0_handMesh_skin_with_1_weights_surface_repulse_energy_0_device_function" in item.kernelHeader:
+          print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+          print("Pay attention to this file")
+          print(f".yasps_tmp/{item.attributeName}.cu")
+          print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
       for unique_gradient_size in unique_gradient_sizes:
+        if unique_gradient_size == 0:
+          continue
         self.__headerFileString += f'''
 extern "C" {{
 __global__ void compute_hessian_and_gradient_global_function_final_gradient_size_{unique_gradient_size}(
@@ -191,12 +198,14 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 
       compile_jobs = []
       obj_files = []
+      seen_obj_files = set([])
       for item in (sortedDependency + [self.__att.deviceKernel]):
         # we check if the .o file exists
-        cu_file = f".yasps_tmp/{item.attributeName}_obj.cu"
-        obj_file = f".yasps_tmp/{item.attributeName}_obj.o"
-        obj_files.append(obj_file)
-        if not os.path.exists(obj_file):
+        cu_file = f".yasps_tmp/{item.attributeName}.cu"
+        obj_file = f".yasps_tmp/{item.attributeName}.o"
+        if not obj_file in seen_obj_files:
+          obj_files.append(obj_file)
+        if (not os.path.exists(obj_file)) and (not obj_file in seen_obj_files):
           with open(cu_file, 'w') as f:
             f.write(f'''
 #include "allHeaders.cuh"
@@ -207,12 +216,14 @@ extern "C"{{
             compile_cmd = [
               "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-O3", "-arch=sm_86",
               "-c", cu_file, "-o", obj_file,
-              "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings"
+              "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
+              "--relocatable-device-code=true"
             ]
             print("Command is")
             print(" ".join(compile_cmd))
             job = subprocess.Popen(compile_cmd)
             compile_jobs.append(job)
+        seen_obj_files.add(obj_file)
 
       # now actually generate the global kernel
       attributeName: str = ""
@@ -221,6 +232,8 @@ extern "C"{{
       else:
         attributeName = self.__att.fullName
       for unique_gradient_size in unique_gradient_sizes:
+        if unique_gradient_size == 0:
+          continue
         cu_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}.cu"
         obj_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}.o"
         obj_files.append(obj_file)
@@ -259,14 +272,12 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   }}
   index = start + index; // add to begin
   const unsigned int instance = groupedIndicesInner[index]; // this will tell us which instance of the hessian we are computing
-
 // determine if we are computing both the hessian and gradient
 #if {int(not self.__gradient_only)} // are we computing both the hessian and gradient
   Eigen::Matrix<double, {self.__att.cols + 1}, {self.__att.cols}{", Eigen::RowMajor" if self.__att.cols > 1 else ""}> hg_mat = Eigen::Matrix<double, {self.__att.cols + 1}, {self.__att.cols}, Eigen::RowMajor>::Zero(); // get the merged gradient and hessian
 #else // we are only computing the gradient
   Eigen::Matrix<double, 1, {self.__att.cols}> hg_mat = Eigen::Matrix<double, 1, {self.__att.cols}>::Zero(); // get the gradient
 #endif
-
   // now we call the device function
   {attributeName}_device_function(
     {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
@@ -276,10 +287,6 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     instance,
     hg_mat.data()
   );
-  if (instance < 5){{
-    printf("Instance: %u, gradient: %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf\\n", instance, hg_mat({self.__att.cols + 1}, 0), hg_mat({self.__att.cols + 1}, 1), hg_mat({self.__att.cols + 1}, 2), hg_mat({self.__att.cols + 1}, 3), hg_mat({self.__att.cols + 1}, 4), hg_mat({self.__att.cols + 1}, 5), hg_mat({self.__att.cols + 1}, 6), hg_mat({self.__att.cols + 1}, 7), hg_mat({self.__att.cols + 1}, 8), hg_mat({self.__att.cols + 1}, 9), hg_mat({self.__att.cols + 1}, 10), hg_mat({self.__att.cols + 1}, 11));
-    printf("Instance: %u, indices: %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u\\n", segment_indices[instance * max_num_indices + 0], segment_indices[instance * max_num_indices + 1], segment_indices[instance * max_num_indices + 2], segment_indices[instance * max_num_indices + 3], segment_indices[instance * max_num_indices + 4], segment_indices[instance * max_num_indices + 5], segment_indices[instance * max_num_indices + 6], segment_indices[instance * max_num_indices + 7], segment_indices[instance * max_num_indices + 8], segment_indices[instance * max_num_indices + 9], segment_indices[instance * max_num_indices + 10], segment_indices[instance * max_num_indices + 11]);
-  }}
   // ok we now first put the gradient into the correct place
   unsigned int gradient_offset = 0;
   for (unsigned int i = 0; i < max_num_indices; i++){{
@@ -421,29 +428,29 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             compile_cmd = [
               "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-O3", "-arch=sm_86",
               "-c", cu_file, "-o", obj_file,
-              "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings"
+              "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
+              "--relocatable-device-code=true"
             ]
             print("Command is")
             print(" ".join(compile_cmd))
             job = subprocess.Popen(compile_cmd)
             compile_jobs.append(job)
-      # Wait for all compilation jobs
-      for job in compile_jobs:
-        job.wait()
-
-      # Device link step: critical for CUDA separable compilation
-      device_link_obj = f"{file_name}_device_link.o"
-      dlink_cmd = [
-        "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_86",
-        *(obj_files), "-o", device_link_obj
-      ]
-      subprocess.run(dlink_cmd, check=True)
-      print("Device link command: ")
-      print(" ".join(dlink_cmd))
 
       # now we add the c functions that will go over all the unique gradient sizes
       self.__kernelString += f'''
 #include "allHeaders.cuh"
+#define CUDA_CHECK_ERROR(ans)                                                  \
+  {{ cudaAssert((ans), __FILE__, __LINE__); }}
+inline void cudaAssert(cudaError_t code, const char *file, int line,
+                        bool abort = true) {{
+                        if (code != cudaSuccess) {{
+    fprintf(stderr, "CUDA Error: %s at %s:%d\\n", cudaGetErrorString(code), file,
+            line);
+    if (abort)
+      exit(code);
+  }}
+}}
+
 extern "C"
 void compute_hessian_and_gradient_with_compression(
   {"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}
@@ -474,8 +481,10 @@ void compute_hessian_and_gradient_with_compression(
   cudaMemcpy(&outer_indices[0], groupedIndicesOuter, sizeof(unsigned int) * (num_unique_gradient_sizes + 1), cudaMemcpyDeviceToHost);
 
   // get the count
+  printf("Getting counts\\n");
   for (unsigned int i = 0; i < num_unique_gradient_sizes; i++) {{
     unique_gradient_sizes_instance_count[i] = outer_indices[i + 1] - outer_indices[i];
+    printf("Count is: %u\\n", unique_gradient_sizes_instance_count[i]);
   }}
 
   std::vector<cudaStream_t> streams;
@@ -492,6 +501,13 @@ void compute_hessian_and_gradient_with_compression(
         if size != 0:
           self.__kernelString += f'''
       case {size}:
+        printf("Doing kernel with size {size}\\n");
+        printf("Number of instances is %u\\n", unique_gradient_sizes_instance_count[i]);
+        {{
+        unsigned int count = unique_gradient_sizes_instance_count[i];
+        unsigned int blocks = (count + 31) / 32;
+        printf("Launching size %d with %u blocks and 32 threads\\n", unique_gradient_sizes[i], blocks);
+        }}
         compute_hessian_and_gradient_global_function_final_gradient_size_{size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0, streams[i]>>>(
           {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
           {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
@@ -511,6 +527,20 @@ void compute_hessian_and_gradient_with_compression(
           hessian_blocks, // the blocks that will constitute the hessian
           diagonal    // the diagonal, we will use it for preconditioning
         );
+        {{
+        // Step 1: Check for launch failure
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {{
+          printf("CUDA kernel launch error: %s\\n", cudaGetErrorString(err));
+        }}
+
+        // Step 2: Check for runtime errors (like illegal memory access)
+        err = cudaDeviceSynchronize();
+        if (err != cudaSuccess) {{
+          printf("CUDA runtime error after kernel: %s\\n", cudaGetErrorString(err));
+        }}
+        }}
+
         break;
 '''
       self.__kernelString += '''
@@ -540,16 +570,25 @@ void compute_hessian_and_gradient_with_compression(
         "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-O3", "-arch=sm_86",
         "-c", kernel_cu_file, "-o", kernel_obj_file,
         "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
+        "--relocatable-device-code=true"
       ]
       print("Kernel compile command: ")
       print(" ".join(kernel_compile_cmd))
       subprocess.run(kernel_compile_cmd, check=True)
+      job = subprocess.Popen(kernel_compile_cmd)
+      compile_jobs.append(job)
+      # Wait for all compilation jobs
+      for job in compile_jobs:
+        job.wait()
 
+
+      # obj_files = list(set(obj_files))
       # Device link step: critical for CUDA separable compilation
       device_link_obj = f"{file_name}_device_link.o"
       dlink_cmd = [
         "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_86",
-        *(obj_files + [kernel_obj_file]), "-o", device_link_obj
+        *(obj_files + [kernel_obj_file]), "-o", device_link_obj,
+        "--relocatable-device-code=true"
       ]
       subprocess.run(dlink_cmd, check=True)
       print("Device link command: ")
