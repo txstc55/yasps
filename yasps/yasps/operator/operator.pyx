@@ -31,6 +31,9 @@ cdef class operator:
     else:
       return NotImplemented
 
+  def copy(self) -> operator:
+    return operator(self._name, self._operator_type, self._commutative)
+
   cdef bint _is_equal(self, operator other):
     return (self._name == other._name and
             self._operator_type == other._operator_type and

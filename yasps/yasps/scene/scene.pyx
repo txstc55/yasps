@@ -154,8 +154,17 @@ class scene:
     self.__minimizer.computeHessianAndGradient(tolerance = tolerance)
     return self.__minimizer.solutionSegments
 
-  def gradient(self):
+  @property
+  def gradientSegments(self):
     return self.__minimizer.gradientSegments
+
+  @property
+  def gradient(self):
+    return self.__minimizer.gradient
+
+  @property
+  def diagonal(self):
+    return self.__minimizer.diagonal
 
   def addMinimizeTarget(self, target: List[attribute]):
     self.__minimizer.addWrt(target)

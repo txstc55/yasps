@@ -128,7 +128,7 @@ def hashAttribute(att: ya.attribute) -> int:
   elif att.operator == ya.UNION:
     union_string: str = f"{base_string}_union({', '.join([str(x.hash) for x in att.children])})"
     att._attribute__hash = int(hashlib.sha256(union_string.encode()).hexdigest(), 16)
-  return att.hash
+  return att._attribute__hash
 
 
 def attribute2str(att: ya.attribute):

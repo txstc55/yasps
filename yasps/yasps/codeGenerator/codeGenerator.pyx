@@ -56,6 +56,22 @@ class codeGenerator:
         if current.operator == ya.TRANSPOSE:
           self.__generateCodeOrderDFS(current.children[0])
         self.__order.append(current)
+    elif current.operator == ya.SELECT:
+      self.__generateCodeOrderDFS(current.children[0])
+      self.__generateCodeOrderDFS(current.children[1])
+      self.__generateCodeOrderDFS(current.children[2])
+      self.__order.append(current)
+    # elif current.correspondance is None:
+    # # we need to check what this is
+    #   print("No correspondance check")
+    #   print("The operator is", current.operator.name)
+    #   print("Select right choice correspondance is", current.children[1].correspondance if current.children[1].correspondance is not None else "None")
+    #   print("Select left choice correspondance is", current.children[2].correspondance if current.children[2].correspondance is not None else "None")
+    #   print(str(current.children[1]))
+    #   print(str(current.children[2]))
+    #   # exit()
+    #   # print(current.fullName)
+    #   # print(str(current))
     elif current.correspondance.fullName == self.__input.correspondance.fullName:
       if current.name != "":
         # this is a named attribute, lets use the generated kernel for it

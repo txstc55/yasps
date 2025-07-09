@@ -92,9 +92,6 @@ __global__ void computePermutation(
         compressed_index_size++;
       }
     }
-    if (tid < 20){
-      printf("Thread %u: with total gradient size: %u\\n", tid, total_gradient_size);
-    }
     total_gradient_sizes[tid] = total_gradient_size; // record after compression, the size of the gradient
     compressed_index_sizes[tid] = compressed_index_size; // the number of unique indices in this instance
   }
@@ -299,9 +296,9 @@ class gradientIndicesKernel:
   def __init__(self, path_dict: Dict[attribute, List[attribute]], unioned_child_to_its_children: Dict[attribute, List[attribute]], wrt: List[attribute], wrt_start_indices: List[int], energy: attribute):
     self.__path_dict: Dict[attribute, List[attribute]] = path_dict # the path dict is basically from parent to children
     self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = unioned_child_to_its_children # this is the unioned child to its children
-    print("Checking unioned child to its children")
-    for key in self.__unioned_child_to_its_children:
-      print(f"Unioned child: {key.fullName}, children: {[x.fullName for x in self.__unioned_child_to_its_children[key]]}")
+    # print("Checking unioned child to its children")
+    # for key in self.__unioned_child_to_its_children:
+    #   print(f"Unioned child: {key.fullName}, children: {[x.fullName for x in self.__unioned_child_to_its_children[key]]}")
     self.__wrt_start_indices: List[int] = wrt_start_indices
     self.__energy: attribute = energy
     self.__used_join_attributes: List[attribute] = [] # all the join attributes, we will use its connectivities for indexing
@@ -312,9 +309,9 @@ class gradientIndicesKernel:
     self.__getUsedUnionAttributes() # get the attributes that are union operationsn
     self.__wrt: List[attribute] = wrt # the wrt attributes, we will use this to determine the position in the wrt start indices
     self.__gradientSize, self.__indexSize = self.__getGradientSize(self.__path_dict, self.__energy)
-    print("Index size and gradient size for each part check")
-    for item in self.__indexSizeForEachPart:
-      print(f"Name: {item.fullName}, index size: {self.__indexSizeForEachPart[item]}, gradient size: {self.__gradientSizeForEachPart[item]}")
+    # print("Index size and gradient size for each part check")
+    # for item in self.__indexSizeForEachPart:
+    #   print(f"Name: {item.fullName}, index size: {self.__indexSizeForEachPart[item]}, gradient size: {self.__gradientSizeForEachPart[item]}")
 
     # exit(0)
 
@@ -810,7 +807,7 @@ extern "C" void get_indices(
 '''
 
     # ok now we compile the kernel by saving it to a file and then calling nvcc
-    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"
+    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices_for_{'_'.join([x.fullName for x in self.__wrt])}"
     f = open(f"{file_name}.cu", 'w')
     self.__kernelString = prune_duplicate_functions(self.__kernelString) # just in case we have duplicated functions
     f.write(self.__kernelString)
@@ -937,17 +934,17 @@ extern "C" void get_indices(
     # print("Used Indices", self.__outputIndices.get()[:20])
     # print("Num instances are", self.__numInstances)
     # print("Dimensions of the indices:", self.__outputIndexSizes.get()[:20])
-    print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
-    # print("Checking output gradient sizes", self.__outputGradientSizes.get()[:200].reshape((-1, 10)))
-    print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
-    print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
-    print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get()[890:910])
-    print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
-    print("Number of total coordinates:", self.numTotalCoordinates)
-    print("Permutations:", self.__outputPermutations.get())
-    print("Coordinates size:", self.__outputCoordinates.get().shape)
-    print("Dimensions size:", self.__outputBlockDimensions.get().shape)
-    print("Permutation preview:", self.__outputPermutations.get()[:30])
+    # print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
+    # # print("Checking output gradient sizes", self.__outputGradientSizes.get()[:200].reshape((-1, 10)))
+    # print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
+    # print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
+    # print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get()[890:910])
+    # print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
+    # print("Number of total coordinates:", self.numTotalCoordinates)
+    # print("Permutations:", self.__outputPermutations.get())
+    # print("Coordinates size:", self.__outputCoordinates.get().shape)
+    # print("Dimensions size:", self.__outputBlockDimensions.get().shape)
+    # print("Permutation preview:", self.__outputPermutations.get()[:30])
     # exit()
 
     # # lets save the useful info to npz for check later

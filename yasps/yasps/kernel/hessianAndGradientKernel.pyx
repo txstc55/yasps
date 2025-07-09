@@ -13,7 +13,6 @@ from typing import List, Set
 import hashlib
 import subprocess
 
-
 class hessianAndGradientKernel:
   att_name_to_gradient_sizes: dict[str, Set[int]] = {}  # maps attribute names to their unique gradient sizes, this way we only need to generate unique gradient sizes once
   att_name_to_kernel: dict[str, hessianAndGradientKernel] = {}  # maps attribute names to their hessian and gradient kernel instances, this way we can just return the previous existing kernel
@@ -71,6 +70,9 @@ class hessianAndGradientKernel:
 // For small matrix < 4
 template <unsigned int N>
 __device__ void spd_projection_small(const double *A, double* output, int choice) {
+  if (choice == 0){
+    return;
+  }
   const int M = 4;
   // Initialize an M x M matrix with zeros
   Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Identity();
@@ -88,7 +90,7 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
 
   for (int i = 0; i < M; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1.0;
     }
   }
 
@@ -106,6 +108,9 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
 
 template <unsigned int N>
 __device__ void spd_projection(const double *A, double* output, int choice) {
+  if (choice == 0){
+    return;
+  }
   // Map A to an N x N Eigen matrix without copying
   Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
@@ -114,7 +119,7 @@ __device__ void spd_projection(const double *A, double* output, int choice) {
 
   for (int i = 0; i < N; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1.0;
     }
   }
 
@@ -128,15 +133,17 @@ __device__ void spd_projection(const double *A, double* output, int choice) {
 
 template <unsigned int N>
 __device__ void spd_projection_inplace(double *A, int choice) {
+  if (choice == 0){
+    return;
+  }
   // Map A to an N x N Eigen matrix without copying
   Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
   const auto& B = eigenSolver.eigenvectors();
   Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
-
   for (int i = 0; i < N; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1.0;
     }
   }
 
@@ -481,10 +488,8 @@ void compute_hessian_and_gradient_with_compression(
   cudaMemcpy(&outer_indices[0], groupedIndicesOuter, sizeof(unsigned int) * (num_unique_gradient_sizes + 1), cudaMemcpyDeviceToHost);
 
   // get the count
-  printf("Getting counts\\n");
   for (unsigned int i = 0; i < num_unique_gradient_sizes; i++) {{
     unique_gradient_sizes_instance_count[i] = outer_indices[i + 1] - outer_indices[i];
-    printf("Count is: %u\\n", unique_gradient_sizes_instance_count[i]);
   }}
 
   std::vector<cudaStream_t> streams;
@@ -501,13 +506,6 @@ void compute_hessian_and_gradient_with_compression(
         if size != 0:
           self.__kernelString += f'''
       case {size}:
-        printf("Doing kernel with size {size}\\n");
-        printf("Number of instances is %u\\n", unique_gradient_sizes_instance_count[i]);
-        {{
-        unsigned int count = unique_gradient_sizes_instance_count[i];
-        unsigned int blocks = (count + 31) / 32;
-        printf("Launching size %d with %u blocks and 32 threads\\n", unique_gradient_sizes[i], blocks);
-        }}
         compute_hessian_and_gradient_global_function_final_gradient_size_{size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0, streams[i]>>>(
           {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
           {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}

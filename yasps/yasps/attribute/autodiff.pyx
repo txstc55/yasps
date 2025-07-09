@@ -30,21 +30,21 @@ class autodiff:
     elif current.operator == ya.DIV:
       result = self.__diff_div(current, wrt)
     elif current.operator == ya.POW:
-      return self.__diff_pow(current, wrt)
+      result = self.__diff_pow(current, wrt)
     elif current.operator == ya.ATAN2:
-      return self.__diff_atan2(current, wrt)
+      result = self.__diff_atan2(current, wrt)
     elif current.operator == ya.SQRT:
-      return self.__diff_sqrt(current, wrt)
+      result = self.__diff_sqrt(current, wrt)
     elif current.operator == ya.LOG:
-      return self.__diff_log(current, wrt)
+      result = self.__diff_log(current, wrt)
     elif current.operator == ya.SIN:
-      return self.__diff_sin(current, wrt)
+      result = self.__diff_sin(current, wrt)
     elif current.operator == ya.COS:
-      return self.__diff_cos(current, wrt)
+      result = self.__diff_cos(current, wrt)
     elif current.operator == ya.NORM:
-      return self.__diff_norm(current, wrt)
+      result = self.__diff_norm(current, wrt)
     elif current.operator == ya.NEG:
-      return self.__diff_neg(current, wrt)
+      result = self.__diff_neg(current, wrt)
     elif current.operator == ya.FLOAT:
       result = self.__diff_float(current, wrt)
     elif current.operator == ya.DATA:
