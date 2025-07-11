@@ -5,13 +5,14 @@ import numpy as np
 from helpers import triangle_sphere_collision, inertia, triangle_center_distance_energy, tangent_energy, sigmoid
 from yasps import minimizer
 import faulthandler
+import random
 faulthandler.enable(all_threads=True)
 # define PI
 PI = 3.141592653589793
 s0 = scene("scene0")
 m = s0.addMesh("mesh")
 DT_VALUE = 0.01
-TANGENT_ENERGY_MODIFIER = 1.0
+TANGENT_ENERGY_MODIFIER = 50.0
 EDGE_ENERGY_MODIFIER = 1.0
 WALL_ENERGY_MODIFIER = 1.0
 HEIGHT_ENERGY_MODIFIER = 1.0
@@ -38,7 +39,7 @@ base_height = arms.addAttribute("base_height", rows = 1, cols = 1) # the height 
 base_height.updateValue([3.0, 3.0, 3.0]) # the height of the base
 
 first_segment_length = arms.addAttribute("first_segment_length", rows = 1, cols = 1) # the length of the first segment
-first_segment_length.updateValue([6.0, 6.0, 6.0])
+first_segment_length.updateValue([8.0, 8.0, 8.0])
 
 first_segment_angle_sigmoid = arms.addAttribute("first_segment_angle_sigmoid", rows = 1, cols = 1) # the angle of the first segment
 first_segment_angle_sigmoid.updateValue([0.0, 0.0, 0.0]) # the angle of the first segment, we allow it to rotate around z axis
@@ -120,17 +121,17 @@ radius = pinballs.addAttribute("radius", rows = 1, cols = 1)
 radius.updateValue([1, 0.5, 0.3, 1.0, 0.8])
 pinball_positions = pinballs.addAttribute("pinball_positions", rows = 1, cols = 3)
 # pinball_positions.updateValue([[0.0, 28.0, 0.0], [2.0, 37.0, 4.0], [3.0, 36.0, -2.0], [-2.0, 27.0, -3.0], [1.5, 29.0, -2.0]])
-pinball_positions.updateValue([[2.0, 28.0, 3.0]])
+pinball_positions.updateValue([[4.0, 28.0, 3.0], [-2.0, 25.0, 4.0]][:1])
 pinball_last_positions = pinballs.addAttribute("pinball_last_positions", rows = 1, cols = 3)
 # pinball_last_positions.updateValue([[0.0, 28.0, 0.0], [2.0, 37.0, 4.0], [3.0, 36.0, -2.0], [-5.0, 27.0, -6.0], [3.0, 29.0, -4.0]])
-pinball_last_positions.updateValue([[2.0, 28.0, 3.0]])
+pinball_last_positions.updateValue([[4.0, 28.0, 3.0], [2.0, 25.0, 4.0]][:1])
 
 pinball_velocities = pinballs.addAttribute("pinball_velocities", rows = 1, cols = 3)
 # pinball_velocities.updateValue([[-0.3, 5.0, 0.2], [1, 0.0, 0.5], [0.2, 0.0, 0], [0.0, 0.0, -0.1], [0.0, 0.0, 0.0]])
-pinball_velocities.updateValue([[-0.5, 1.0, 0.5]])
+pinball_velocities.updateValue([[-0.8, 1.0, 1.5], [1, 0.0, -0.5]][:1])
 
 pinball_masses = pinballs.addAttribute("pinball_masses", rows = 1, cols = 1)
-pinball_masses.updateValue([100.0, 1.0, 1.0, 1.0, 1.0]) # we set the masses of the pinballs
+pinball_masses.updateValue([100.0, 150.0, 1.0, 1.0, 1.0]) # we set the masses of the pinballs
 
 p2a = pinballs.addConnectivity("pinball2arms", arms, [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2]], 3)
 pinball_triangle_positions = pinballs.addAttribute("pinball_triangle_positions", through = p2a, source = second_segment_end_position) # now this will be 3 by 3 indicating the 3 positions of the triangle for each pinball
@@ -228,10 +229,16 @@ plotter.add_mesh(center, color="red", opacity=1)
 # Show the plot window
 # add a camera position
 plotter.camera_position = [(85.9773971010733, 102.73793825237743, 49.58585230666707), (0, 16, 0), (-0.5625562346850076, 0.7528964923882753, -0.34158067065695963)]
+
+all_line_segments = []
+all_pinball_positions = []
+
 plotter.show(interactive_update=True)
 # exit()
 STEP_SIZE = 0.1
-for i in range(20000):
+for i in range(2000):
+  all_line_segments.append(np.array(poly.points))
+  all_pinball_positions.append(pinball_positions.value.get())
   pinball_last_positions.updateValue(pinball_positions.value.get())
   result0 = minimizer0.computeSolution(tolerance = 1e-16)
   result1 = minimizer1.computeSolution(tolerance = 1e-16)
@@ -244,8 +251,14 @@ for i in range(20000):
 
   pinball_positions.updateValue((pinball_positions.value - d_position))
 
+  new_velocities = (pinball_positions.value.get() - pinball_last_positions.value.get()) / DT_VALUE
+  if i % 300 == 0 and i != 0:
+    new_velocities[0] += random.random() * 4 - 2.0
+    new_velocities[1] += random.random() * 8
+    new_velocities[2] += random.random() * 4 - 2.0
+  pinball_velocities.updateValue(new_velocities)
 
-  pinball_velocities.updateValue((pinball_positions.value.get() - pinball_last_positions.value.get()) / DT_VALUE)
+
   pinball_positions_cpu = pinball_positions.value.get().reshape(-1, 3)
   first_segment_end_computed = first_segment_end_position.compute().value.get().reshape(-1, 3)
   second_segment_end_computed = second_segment_end_position.compute().value.get().reshape(-1, 3)
@@ -258,8 +271,16 @@ for i in range(20000):
     sphere_actors[j].SetPosition(pinball_positions_cpu[j, :])
   plotter.render()
   plotter.update()
-  camera = plotter.camera
-  print("Camera position:", camera.GetPosition())
-  print("Camera focal point:", camera.GetFocalPoint())
-  print("Camera view up:", camera.GetViewUp())
-  plotter.screenshot(f"result_images/frame_{i:04d}.jpg")
+  # plotter.screenshot(f"result_images/frame_{i:04d}.jpg")
+
+# all_line_segments = np.array(all_line_segments)
+# print(all_line_segments.shape)
+# lines = np.array([[0, 3], [1, 4], [2, 5], [3, 6], [4, 7], [5, 8], [6, 9], [7, 10], [8, 11]])
+# triangle_face = np.array([[9, 10, 11]])
+# pinball_positions = np.array(all_pinball_positions)
+# print(pinball_positions.shape)
+# # print(all_line_segments)
+
+# np.savez("bouncing_balls.npz", arm_points=all_line_segments, lines=lines, triangle_face=triangle_face, pinball_positions=pinball_positions)
+# print(all_line_segments[-1])
+# print(all_pinball_positions[-1])

@@ -47,17 +47,17 @@ def triangle_center_distance_energy(v0, v1, v2, p, velocity, DT, epsilon=1e-3):
   return (q - center).norm()
 
 def tangent_energy(v0, v1, v2, p, target, velocity, DT, epsilon = 1e-3):
-  # center = (v0 + v1 + v2) / 3.0
+  center = (v0 + v1 + v2) / 3.0
   normal = (v2 - v0).cross(v1 - v0).transpose()
   normal = normal / normal.norm()
   target_p = p + velocity * DT
-  # A = normal.dot(target_p - v0)
-  # B = normal[1]
-  # t = - A / B
-  # q = p + t * attribute.to_array([0.0, 1.0, 0.0], rows = 1, cols = 3)
+  A = normal.dot(target_p - v0)
+  B = normal[1]
+  t = - A / B
+  q = target_p + t * attribute.to_array([0.0, 1.0, 0.0], rows = 1, cols = 3)
   target_direction = target - target_p
   target_direction = target_direction / target_direction.norm()
-  tangent_energy = -target_direction.dot(normal)
+  tangent_energy = -target_direction.dot(normal) + velocity[0] * normal[0] + velocity[2] * normal[2] + 0.01 * (center - q).norm()
   return tangent_energy
 
 def sigmoid(x):
