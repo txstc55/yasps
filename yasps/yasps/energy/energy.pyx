@@ -25,6 +25,7 @@ class energy:
     # self.__roots: List[attribute] = []
 
     self.__wrt: List[attribute] = [] # an energy can be minimized for different attributes, for safety let's save all histories
+    self.__wrt_start_indices: List[int] = [] # the start indices of the wrt attributes, this is used to determine the indices of the gradient
     self.__indices_cpu: np.ndarray = np.array([]) # save the indices on cpu
     self.__block_indices_gpu: gpuarray.GPUArray = gpuarray.to_gpu(np.array([])) # save the block indices, this is for hessian accumulation
     self.__gradient_sizes_cpu: List[int] = [] # save the sizes of the gradient, this is to determine for the gradient, how large it is for each segment
@@ -162,6 +163,7 @@ class energy:
   @timed("energy.getSparseIndices")
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
     self.__wrt = wrt
+    self.__wrt_start_indices = wrt_start_indices
     # # the wrt_start_indices, size and if type is primitive
     # wrtStartIndicesAndSize: Dict[int, Tuple[int, int, bool]] = {x.hash: (wrt_start_indices[i], x.size, x.correspondance.type == "primitive") for i, x in enumerate(wrt)} # this maps from all the data being used, to where it should start in the gradient, its size and if it is a primitive (we can optimize for mesh or scene primitive, which doesnt really have any number of instances)
     # # we have the path, now determine which path to use since we have the wrt
@@ -204,6 +206,11 @@ class energy:
     assert self.__indices_kernel is not None
     self.__indices_kernel.computeIndices(wrt_start_indices) # actually compute the indices
     # exit(0)
+    return
+
+  def computeIndices(self) -> None:
+    assert self.__indices_kernel is not None, "energy.computeIndices: Indices kernel not initialized"
+    self.__indices_kernel.computeIndices(self.__wrt_start_indices)
     return
 
   def __generateGradientThroughPathDict(self, wrt: List[attribute], differentiater: autodiff) -> None:

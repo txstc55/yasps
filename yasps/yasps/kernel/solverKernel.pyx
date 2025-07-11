@@ -5,15 +5,50 @@ import pycuda.gpuarray as gpuarray
 import ctypes
 import numpy as np
 import pycuda.driver as cuda
-
+import os
 
 class solverKernel:
-  def __init__(self, blockDimensions: List[Tuple[int, int]]):
-    self.__kernelString: str = '''
+  def __init__(self, blockDimensions: List[int]):
+    self.__max_row_size = 0
+    self.__cg_kernel = None
+    self.__init_kernel(blockDimensions)
+
+
+  def __init_kernel(self, blockDimensions: List[int]):
+    max_modded_row_size = (max(blockDimensions[::2]) + 2) // 3 * 3
+    if max_modded_row_size > self.__max_row_size:
+
+      self.__max_row_size = max_modded_row_size
+      file_name = f".yasps_tmp/cg_max_row_size_{self.__max_row_size}"
+      if os.path.exists(f"{file_name}.so"):
+        self.__cg_kernel = ctypes.CDLL(f"{file_name}.so").computeSolution
+        self.__cg_kernel.argtypes = [
+          ctypes.c_void_p, # cuda context
+          ctypes.c_uint,   # maxIteration
+          ctypes.c_double, # threshold
+          ctypes.c_void_p, # block_values (device pointer to double)
+          ctypes.c_void_p, # block_positions (device pointer to unsigned int)
+          ctypes.POINTER(ctypes.c_uint), # block_values_start (unsigned int list from numpy array)
+          ctypes.POINTER(ctypes.c_uint), # block_counts (unsigned int list from numpy)
+          ctypes.POINTER(ctypes.c_uint), # block_dimensions (unsigned int list from numpy)
+          ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS
+          ctypes.c_void_p, # diagonal (device pointer to double)
+          ctypes.c_void_p, # gradient (device pointer to double)
+          ctypes.c_uint,   # MATRIX_SIZE
+          ctypes.c_void_p, # d_p1_b (device pointer)
+          ctypes.c_void_p, # d_r (device pointer)
+          ctypes.c_void_p, # d_c (device pointer)
+          ctypes.c_void_p, # d_q (device pointer)
+          ctypes.c_void_p, # d_s (device pointer)
+          ctypes.c_void_p  # solution (device pointer)
+        ]
+        return
+      kernelString: str = '''
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <cuda.h>
+#include <vector>
 
 // for checking cuda error
 #define CUDA_CHECK_ERROR(ans)                                                  \\
@@ -28,10 +63,12 @@ inline void cudaAssert(cudaError_t code, const char *file, int line,
   }
 }
 
-
-template<unsigned int BLOCK_ROW_SIZE, unsigned int BLOCK_COL_SIZE>
+extern "C" {
 __device__ __forceinline__ void blockMultiply(const double *blockValues,
-                                              const double *x, double *y) {
+                                              const double *x,
+                                              double *y,
+                                              const unsigned int BLOCK_ROW_SIZE,
+                                              const unsigned int BLOCK_COL_SIZE) {
   // multiply a row
   for (int i = 0; i < BLOCK_ROW_SIZE; i++) {
     for (int j = 0; j < BLOCK_COL_SIZE; j++) {
@@ -40,48 +77,53 @@ __device__ __forceinline__ void blockMultiply(const double *blockValues,
   }
 }
 
-template<unsigned int BLOCK_ROW_SIZE, unsigned int BLOCK_COL_SIZE>
 __device__ __forceinline__ void
-blockMultiplyTranspose(const double *blockValues, const double *x, double *y) {
-  double temp[BLOCK_COL_SIZE] = {.0};
+blockMultiplyTranspose(const double *blockValues,
+                       const double *x,
+                       double *y,
+                       const unsigned int BLOCK_ROW_SIZE,
+                       const unsigned int BLOCK_COL_SIZE) {
   for (int i = 0; i < BLOCK_COL_SIZE; i++) {
-  for (int j = 0; j < BLOCK_ROW_SIZE; j++) {
-      temp[i] += blockValues[j * BLOCK_COL_SIZE + i] * x[j];
+    double temp = 0.0;
+    for (int j = 0; j < BLOCK_ROW_SIZE; j++) {
+      temp += blockValues[j * BLOCK_COL_SIZE + i] * x[j];
     }
-  }
-
-#pragma unroll
-  for (int i = 0; i < BLOCK_COL_SIZE; i++) {
-    atomicAdd(y + i, temp[i]);
+    atomicAdd(y + i, temp);
   }
 }
 
 // computes Ax=y where A does not contain any diagonal blocks
-template<unsigned int BLOCK_ROW_SIZE, unsigned int BLOCK_COL_SIZE>
 __global__ void spmvOffDiagonalBlocks(const double *blockValues,
                                       const unsigned int VALUE_START, // where in the block values does this dimension's block start
                                       const unsigned int* positions, // the coordinate of this block
                                       const unsigned int POSITIONS_START, // where does the positions start for this dimension
                                       const unsigned int POSITIONS_END, // where does the positions end for this dimension
                                       const double *x, // the Ax = y
-                                      double *y) {
+                                      double *y,
+                                      const unsigned int BLOCK_ROW_SIZE,
+                                      const unsigned int BLOCK_COL_SIZE) {
   int id = blockIdx.x * blockDim.x + threadIdx.x; // we first get the id of this thread
   int tid = threadIdx.x;
-  __shared__ double allResults[BLOCK_ROW_SIZE * 32]; // accumulate the multiplied result
+'''
+      kernelString += f'''
+  __shared__ double allResults[{self.__max_row_size} * 32]; // accumulate the multiplied result
   __shared__ unsigned int rows[32];
   __shared__ unsigned int cols[32];
-  if (tid == 0){
+  if (tid == 0){{
     // initialize allResults to 0
-    for (unsigned int i = 0; i < BLOCK_ROW_SIZE * 32; i++){
+    for (unsigned int i = 0; i < {self.__max_row_size} * 32; i++){{
       allResults[i] = 0.0;
-    }
-  }
+    }}
+  }}
+'''
+      kernelString += '''
+
   __syncthreads(); // synchronize all threads after initialization
   if (id < POSITIONS_END - POSITIONS_START) {
     // do the multiplication, and put the result in allresults
     rows[tid] = positions[POSITIONS_START * 2 + id * 2]; // get the coordinate of the block
     cols[tid] = positions[POSITIONS_START * 2 + id * 2 + 1]; // get the coordinate of the block
-    blockMultiply<BLOCK_ROW_SIZE, BLOCK_COL_SIZE>(blockValues + VALUE_START + id * BLOCK_ROW_SIZE * BLOCK_COL_SIZE, x + cols[tid], allResults + tid * BLOCK_ROW_SIZE);
+    blockMultiply(blockValues + VALUE_START + id * BLOCK_ROW_SIZE * BLOCK_COL_SIZE, x + cols[tid], allResults + tid * BLOCK_ROW_SIZE, BLOCK_ROW_SIZE, BLOCK_COL_SIZE);
   }else{
     rows[tid] = 1316134911; // TODO: REPLACE THIS WITH A BETTER VALUE
     cols[tid] = 1316134911;
@@ -92,7 +134,11 @@ __global__ void spmvOffDiagonalBlocks(const double *blockValues,
   if (id < POSITIONS_END - POSITIONS_START) {
     if (tid == 0 || rows[tid] != rows[tid - 1]) {
       // this is usually where the start of a row
-      double sum[BLOCK_ROW_SIZE] = {}; // initialize the sum
+'''
+      kernelString += f'''
+      double sum[{self.__max_row_size}] = {{0}}; // initialize the sum
+'''
+      kernelString += '''
       for (int i = tid; i < 32 && rows[i] == rows[tid]; i++) {
         for (int j = 0; j < BLOCK_ROW_SIZE; j++) {
           sum[j] += allResults[i * BLOCK_ROW_SIZE + j];
@@ -109,7 +155,7 @@ __global__ void spmvOffDiagonalBlocks(const double *blockValues,
     unsigned int row = rows[tid];
     unsigned int col = cols[tid];
     if (row != col) {
-      blockMultiplyTranspose<BLOCK_ROW_SIZE, BLOCK_COL_SIZE>(blockValues + VALUE_START + id * BLOCK_ROW_SIZE * BLOCK_COL_SIZE, x + rows[tid], y + cols[tid]);
+      blockMultiplyTranspose(blockValues + VALUE_START + id * BLOCK_ROW_SIZE * BLOCK_COL_SIZE, x + rows[tid], y + cols[tid], BLOCK_ROW_SIZE, BLOCK_COL_SIZE);
     }
   }
 }
@@ -119,21 +165,22 @@ void spmvWithSystem(const double* block_values, // the value of the blocks in th
                     const unsigned int* block_values_start, // for each different dimension of blocks, where in the values array does it start
                     const unsigned int* block_counts, // how many blocks in each dimension
                     const double* x, // Ax = y
-                    double* y){
+                    double* y,
+                    const unsigned int* block_dimensions,
+                    const unsigned int NUM_BLOCK_DIMENSIONS,
+                    std::vector<cudaStream_t>& streams
+                    ){
   unsigned int positions_start = 0;
   unsigned int positions_end = 0;
-'''
-    index: int = 0
-    for dimension in blockDimensions:
-      blockRowSize = dimension[0]
-      blockColSize = dimension[1]
-      self.__kernelString += f'''
-  positions_end = positions_start + block_counts[{index}];
-  spmvOffDiagonalBlocks<{blockRowSize}, {blockColSize}><<<(block_counts[{index}] + 32) / 32, 32>>>(block_values, block_values_start[{index}], block_positions, positions_start, positions_end, x, y);
-  positions_start = positions_end;
-'''
-      index += 1
-    self.__kernelString += '''
+  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS; i++){
+    positions_end = positions_start + block_counts[i];
+    spmvOffDiagonalBlocks<<<(block_counts[i] + 32) / 32, 32, 0, streams[i]>>>(block_values, block_values_start[i], block_positions, positions_start, positions_end, x, y, block_dimensions[i * 2], block_dimensions[i * 2 + 1]);
+    positions_start = positions_end;
+  }
+  // synchronize all streams
+  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS; i++) {
+    cudaStreamSynchronize(streams[i]);
+  }
 }
 
 __global__ void jacobiPreconditioner(const double* diagonal, const double* x, double* y, unsigned int N){
@@ -185,7 +232,6 @@ __global__ void vecAddWithScalar(const double *a, const double *b, double *c,
   }
 }
 
-extern "C" {
 int computeSolution(CUcontext ctx,
                              unsigned int maxIteration,
                              double threshold,
@@ -193,6 +239,8 @@ int computeSolution(CUcontext ctx,
                              const unsigned int* block_positions,
                              const unsigned int* block_values_start,
                              const unsigned int* block_counts,
+                             const unsigned int* block_dimensions,
+                             const unsigned int NUM_BLOCK_DIMENSIONS,
                              const double* diagonal,
                              const double* gradient,
                              const unsigned int MATRIX_SIZE,
@@ -205,7 +253,12 @@ int computeSolution(CUcontext ctx,
   // Instead, retrieve the current context (if necessary)
   CUcontext current_ctx;
   cuCtxGetCurrent(&current_ctx);
-
+  std::vector<cudaStream_t> streams;
+  streams.resize(NUM_BLOCK_DIMENSIONS);
+  // initialize cuda streams for block multiplciations
+  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS; i++) {
+    cudaStreamCreate(&streams[i]);
+  }
   // Optionally, compare with the passed context
   if (current_ctx != ctx) {
     printf("Context mismatch\\n");
@@ -267,7 +320,10 @@ int computeSolution(CUcontext ctx,
                    block_values_start,
                    block_counts,
                    d_c,
-                   d_q);
+                   d_q,
+                   block_dimensions,
+                   NUM_BLOCK_DIMENSIONS,
+                   streams);
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     cudaMemset(d_alpha, 0, sizeof(double));
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
@@ -316,17 +372,16 @@ int computeSolution(CUcontext ctx,
 
 } // close the extern "C"
 '''
-    # ok now we compile the kernel by saving it to a file and then calling nvcc
-    file_name = f".yasps_tmp/cg_{'_'.join([f'{x[0]}_{x[1]}' for x in blockDimensions])}"
-    f = open(f"{file_name}.cu", 'w')
-    f.write(self.__kernelString)
-    f.close()
+      # ok now we compile the kernel by saving it to a file and then calling nvcc
+      file_name = f".yasps_tmp/cg_max_row_size_{self.__max_row_size}"
+      f = open(f"{file_name}.cu", 'w')
+      f.write(kernelString)
+      f.close()
 
-    # now we compile the kernel
-    import os
-    os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
-    self.__cg_kernel = ctypes.CDLL(f"{file_name}.so").computeSolution
-    self.__cg_kernel.argtypes = [
+      # now we compile the kernel
+      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
+      self.__cg_kernel = ctypes.CDLL(f"{file_name}.so").computeSolution
+      self.__cg_kernel.argtypes = [
         ctypes.c_void_p, # cuda context
         ctypes.c_uint,   # maxIteration
         ctypes.c_double, # threshold
@@ -334,6 +389,8 @@ int computeSolution(CUcontext ctx,
         ctypes.c_void_p, # block_positions (device pointer to unsigned int)
         ctypes.POINTER(ctypes.c_uint), # block_values_start (unsigned int list from numpy array)
         ctypes.POINTER(ctypes.c_uint), # block_counts (unsigned int list from numpy)
+        ctypes.POINTER(ctypes.c_uint), # block_dimensions (unsigned int list from numpy)
+        ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS
         ctypes.c_void_p, # diagonal (device pointer to double)
         ctypes.c_void_p, # gradient (device pointer to double)
         ctypes.c_uint,   # MATRIX_SIZE
@@ -343,7 +400,7 @@ int computeSolution(CUcontext ctx,
         ctypes.c_void_p, # d_q (device pointer)
         ctypes.c_void_p, # d_s (device pointer)
         ctypes.c_void_p  # solution (device pointer)
-    ]
+      ]
 
   def __to_void_p(self, x: gpuarray.GPUArray):
     if x is None or x.size == 0:
@@ -351,10 +408,28 @@ int computeSolution(CUcontext ctx,
       return ctypes.c_void_p(None)
     return ctypes.c_void_p(int(x.gpudata))
 
-  def computeSolution(self, cuda_context, maxIteration, threshold, block_values: gpuarray.GPUArray, block_positions: gpuarray.GPUArray, block_values_start: List[int], block_counts: List[int], diagonal: gpuarray.GPUArray, gradient: gpuarray.GPUArray, d_p1_b: gpuarray.GPUArray, d_r: gpuarray.GPUArray, d_c: gpuarray.GPUArray, d_q: gpuarray.GPUArray, d_s: gpuarray.GPUArray, solution: gpuarray.GPUArray):
+  def computeSolution(self,
+    cuda_context,
+    maxIteration: int,
+    threshold: float,
+    block_values: gpuarray.GPUArray,
+    block_positions: gpuarray.GPUArray,
+    block_values_start: List[int],
+    block_counts: List[int],
+    block_dimensions: List[int],
+    diagonal: gpuarray.GPUArray,
+    gradient: gpuarray.GPUArray,
+    d_p1_b: gpuarray.GPUArray,
+    d_r: gpuarray.GPUArray,
+    d_c: gpuarray.GPUArray,
+    d_q: gpuarray.GPUArray,
+    d_s: gpuarray.GPUArray,
+    solution: gpuarray.GPUArray
+  ):
     start_call = cuda.Event()
     end_call = cuda.Event()
     start_call.record()
+    assert self.__cg_kernel is not None, "Kernel not initialized. Call __init_kernel first."
     result = self.__cg_kernel(
       cuda_context,
       maxIteration,
@@ -363,6 +438,8 @@ int computeSolution(CUcontext ctx,
       self.__to_void_p(block_positions),
       np.array(block_values_start, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
       np.array(block_counts, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+      np.array(block_dimensions, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+      len(block_dimensions) // 2,
       self.__to_void_p(diagonal),
       self.__to_void_p(gradient),
       gradient.shape[0],

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pycuda.autoinit
 import numpy as np
 import pycuda.gpuarray as gpuarray
-from typing import List, Tuple, Set, Optional, Dict
+from typing import List, Tuple, Set, Optional
 from yasps.energy import energy
 from yasps.attribute import attribute
 from yasps.solverKernel import solverKernel
@@ -11,12 +11,12 @@ from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 import time
 import ctypes
 
-def unique_row_view(data):
-  b = np.ascontiguousarray(data).view(
-    np.dtype((np.void, data.dtype.itemsize * data.shape[1]))
-  )
-  u = np.unique(b).view(data.dtype).reshape(-1, data.shape[1])
-  return u
+# def unique_row_view(data):
+#   b = np.ascontiguousarray(data).view(
+#     np.dtype((np.void, data.dtype.itemsize * data.shape[1]))
+#   )
+#   u = np.unique(b).view(data.dtype).reshape(-1, data.shape[1])
+#   return u
 
 class minimizer:
   def __init__(self):
@@ -25,13 +25,13 @@ class minimizer:
     self.__gradient: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
     self.__diagonal: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # only store the diagonal elements
 
-    self.__blockDimensions: List[Tuple[int, int]] = [] # record the dimension of blocks
-    self.__blocks: List[gpuarray.GPUArray] = [] # for each different block dimensions, the datas
+    self.__blockDimensions: List[int] = [] # record the dimension of blocks
+    # self.__blocks: List[gpuarray.GPUArray] = [] # for each different block dimensions, the datas
     self.__blocksFlattened: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # the flattened blocks
     self.__blocksStartIndices: List[int] = [] # for each different block dimensions, where do they start, this is to navigate through the flattened blocks
-    self.__blocksStartIndicesGPU: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32) # for each block, where do they start, this is to navigate through the flattened blocks
+    # self.__blocksStartIndicesGPU: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32) # for each block, where do they start, this is to navigate through the flattened blocks
     self.__blockPositions: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32) # for each block, what's its coordinate, we will use it for spmv
-    self.__blockPositionsList: List[gpuarray.GPUArray] = [] # for each different block sizes, for each block, what's its coordinate, we will use it for spmv, this is just segmented from blockPositions
+    # self.__blockPositionsList: List[gpuarray.GPUArray] = [] # for each different block sizes, for each block, what's its coordinate, we will use it for spmv, this is just segmented from blockPositions
     self.__blockCounts: List[int] = [] # record for each size of block, the number of blocks
     self.__gradientSizes: List[int] = []
     self.__gradientSegments: List[gpuarray.GPUArray] = []
@@ -148,24 +148,25 @@ class minimizer:
     self.__blocksFlattened = gpuarray.empty(totalBlockSize, dtype=np.float64)
     num_unique_dimensions = self.__compressionKernel.numUniqueDimensions # get how many unique block dimensions there are
 
-    blockOuter = self.__compressionKernel.uniqueDimensionsOuterIndices.get()
-    for i in range(num_unique_dimensions):
-      self.__blocks.append(self.__blocksFlattened[blockOuter[i]:blockOuter[i+1]])
+    # blockOuter = self.__compressionKernel.uniqueDimensionsOuterIndices.get()
+    # for i in range(num_unique_dimensions):
+    #   self.__blocks.append(self.__blocksFlattened[blockOuter[i]:blockOuter[i+1]])
     self.__blocksStartIndices = self.__compressionKernel.uniqueDimensionsOuterIndices.get().tolist()[: self.__compressionKernel.numUniqueDimensions + 1]
-    self.__blocksStartIndicesGPU = gpuarray.to_gpu(np.array(self.__blocksStartIndices).astype(np.uint32))
+    # self.__blocksStartIndicesGPU = gpuarray.to_gpu(np.array(self.__blocksStartIndices).astype(np.uint32))
     self.__blockPositions = self.__compressionKernel.uniqueCoordinates
 
-    # here we segment the large array to correspond to the smaller ones
-    total_count = 0
+    # # here we segment the large array to correspond to the smaller ones
+    # total_count = 0
     self.__blockCounts = self.__compressionKernel.uniqueDimensionsBlockCounts.get().tolist()
-    for i in range(len(self.__blockCounts)):
-      self.__blockPositionsList.append(self.__blockPositions[total_count:total_count + self.__blockCounts[i] * 2])
-      total_count += self.__blockCounts[i] * 2 # because the positions are 2d
+    # for i in range(len(self.__blockCounts)):
+    #   self.__blockPositionsList.append(self.__blockPositions[total_count:total_count + self.__blockCounts[i] * 2])
+    #   total_count += self.__blockCounts[i] * 2 # because the positions are 2d
 
     # here we set the unique dimensions to generate the code
     unique_block_dimensions = self.__compressionKernel.uniqueDimensions.get().tolist()[: num_unique_dimensions * 2]
-    for i in range(num_unique_dimensions):
-      self.__blockDimensions.append((unique_block_dimensions[i * 2], unique_block_dimensions[i * 2 + 1]))
+    self.__blockDimensions = unique_block_dimensions
+    # for i in range(num_unique_dimensions):
+    #   self.__blockDimensions.append((unique_block_dimensions[i * 2], unique_block_dimensions[i * 2 + 1]))
 
 
   def generateHessianAndGradient(self):
@@ -245,7 +246,24 @@ class minimizer:
     context_ptr = int(cuda_context.handle)
     context_ptr_c = ctypes.c_void_p(context_ptr)
     # call the kernel
-    self.__solver.computeSolution(context_ptr_c, 20000, tolerance, self.__blocksFlattened, self.__blockPositions, self.__blocksStartIndices, self.__blockCounts, self.__diagonal, self.__gradient, self.__d_p1_b, self.__d_r, self.__d_c, self.__d_q, self.__d_s, self.__solution)
+    self.__solver.computeSolution(
+      context_ptr_c,
+      20000,
+      tolerance,
+      self.__blocksFlattened,
+      self.__blockPositions,
+      self.__blocksStartIndices,
+      self.__blockCounts,
+      self.__blockDimensions,
+      self.__diagonal,
+      self.__gradient,
+      self.__d_p1_b,
+      self.__d_r,
+      self.__d_c,
+      self.__d_q,
+      self.__d_s,
+      self.__solution
+    )
 
 
 

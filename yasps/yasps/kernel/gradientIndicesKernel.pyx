@@ -890,6 +890,7 @@ extern "C" void get_indices(
     result = np.empty(1, dtype=np.uint32)
     assert self.__outputCompressedCoordinateCountsOuter is not None
     cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
+    # return int(self.__outputCompressedCoordinateCountsOuter[self.__numInstances])
     return int(result[0])
 
   @timed("gradientIndicesKernel.allocateSpaceForCoordinates")
