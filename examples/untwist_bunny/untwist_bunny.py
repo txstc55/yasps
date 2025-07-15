@@ -192,7 +192,7 @@ minimizer0 = minimizer()
 minimizer1 = minimizer()
 
 minimizer0.addEnergy(bunny.vertex["position_penalty"])
-minimizer1.addEnergy(snh)
+minimizer1.addEnergy(snh, dynamic_instances = False)
 
 minimizer0.addWrt([bunny["roll"], bunny["pitch"], bunny["yaw"], bunny["translation"]])
 minimizer1.addWrt([bunny.vertex["current_position"]])

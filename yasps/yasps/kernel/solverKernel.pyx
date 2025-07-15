@@ -13,13 +13,15 @@ class solverKernel:
     self.__cg_kernel = None
     self.__init_kernel(blockDimensions)
 
+  def updateBlockDimensions(self, blockDimensions: List[int]):
+    self.__init_kernel(blockDimensions)
+
 
   def __init_kernel(self, blockDimensions: List[int]):
     max_modded_row_size = (max(blockDimensions[::2]) + 2) // 3 * 3
     if max_modded_row_size > self.__max_row_size:
-
       self.__max_row_size = max_modded_row_size
-      file_name = f".yasps_tmp/cg_max_row_size_{self.__max_row_size}"
+      file_name = f".yasps_constant/cg_max_row_size_{self.__max_row_size}"
       if os.path.exists(f"{file_name}.so"):
         self.__cg_kernel = ctypes.CDLL(f"{file_name}.so").computeSolution
         self.__cg_kernel.argtypes = [
@@ -32,6 +34,12 @@ class solverKernel:
           ctypes.POINTER(ctypes.c_uint), # block_counts (unsigned int list from numpy)
           ctypes.POINTER(ctypes.c_uint), # block_dimensions (unsigned int list from numpy)
           ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS
+          ctypes.c_void_p, # block_values_dynamic (device pointer to double)
+          ctypes.c_void_p, # block_positions_dynamic (device pointer to unsigned int)
+          ctypes.POINTER(ctypes.c_uint), # block_values_start_dynamic (unsigned int list from numpy array)
+          ctypes.POINTER(ctypes.c_uint), # block_counts_dynamic (unsigned int list from numpy)
+          ctypes.POINTER(ctypes.c_uint), # block_dimensions_dynamic (unsigned int list from numpy)
+          ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS_DYNAMIC
           ctypes.c_void_p, # diagonal (device pointer to double)
           ctypes.c_void_p, # gradient (device pointer to double)
           ctypes.c_uint,   # MATRIX_SIZE
@@ -164,10 +172,16 @@ void spmvWithSystem(const double* block_values, // the value of the blocks in th
                     const unsigned int* block_positions, // the coordinate of each block
                     const unsigned int* block_values_start, // for each different dimension of blocks, where in the values array does it start
                     const unsigned int* block_counts, // how many blocks in each dimension
+                    const double* block_values_dynamic, // the value of the dynamic blocks in the hessian
+                    const unsigned int* block_positions_dynamic, // the coordinate of each dynamic block
+                    const unsigned int* block_values_start_dynamic, // for each different dimension of dynamic blocks, where in the values array does it start
+                    const unsigned int* block_counts_dynamic, // how many dynamic blocks in each dimension
                     const double* x, // Ax = y
                     double* y,
                     const unsigned int* block_dimensions,
                     const unsigned int NUM_BLOCK_DIMENSIONS,
+                    const unsigned int* block_dimensions_dynamic,
+                    const unsigned int NUM_BLOCK_DIMENSIONS_DYNAMIC,
                     std::vector<cudaStream_t>& streams
                     ){
   unsigned int positions_start = 0;
@@ -177,8 +191,15 @@ void spmvWithSystem(const double* block_values, // the value of the blocks in th
     spmvOffDiagonalBlocks<<<(block_counts[i] + 32) / 32, 32, 0, streams[i]>>>(block_values, block_values_start[i], block_positions, positions_start, positions_end, x, y, block_dimensions[i * 2], block_dimensions[i * 2 + 1]);
     positions_start = positions_end;
   }
+  positions_start = 0;
+  positions_end = 0;
+  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS_DYNAMIC; i++){
+    positions_end = positions_start + block_counts_dynamic[i];
+    spmvOffDiagonalBlocks<<<(block_counts_dynamic[i] + 32) / 32, 32, 0, streams[i + NUM_BLOCK_DIMENSIONS]>>>(block_values_dynamic, block_values_start_dynamic[i], block_positions_dynamic, positions_start, positions_end, x, y, block_dimensions_dynamic[i * 2], block_dimensions_dynamic[i * 2 + 1]);
+    positions_start = positions_end;
+  }
   // synchronize all streams
-  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS; i++) {
+  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; i++) {
     cudaStreamSynchronize(streams[i]);
   }
 }
@@ -233,32 +254,40 @@ __global__ void vecAddWithScalar(const double *a, const double *b, double *c,
 }
 
 int computeSolution(CUcontext ctx,
-                             unsigned int maxIteration,
-                             double threshold,
-                             const double* block_values,
-                             const unsigned int* block_positions,
-                             const unsigned int* block_values_start,
-                             const unsigned int* block_counts,
-                             const unsigned int* block_dimensions,
-                             const unsigned int NUM_BLOCK_DIMENSIONS,
-                             const double* diagonal,
-                             const double* gradient,
-                             const unsigned int MATRIX_SIZE,
-                             double* d_p1_b, // for the computation of P^-1 * b
-                             double* d_r, // for residual
-                             double* d_c,
-                             double* d_q,
-                             double* d_s,
-                             double* solution) {
+                            unsigned int maxIteration,
+                            double threshold,
+                            const double* block_values,
+                            const unsigned int* block_positions,
+                            const unsigned int* block_values_start,
+                            const unsigned int* block_counts,
+                            const unsigned int* block_dimensions,
+                            const unsigned int NUM_BLOCK_DIMENSIONS,
+                            const double* block_values_dynamic,
+                            const unsigned int* block_positions_dynamic,
+                            const unsigned int* block_values_start_dynamic,
+                            const unsigned int* block_counts_dynamic,
+                            const unsigned int* block_dimensions_dynamic,
+                            const unsigned int NUM_BLOCK_DIMENSIONS_DYNAMIC,
+                            const double* diagonal,
+                            const double* gradient,
+                            const unsigned int MATRIX_SIZE,
+                            double* d_p1_b, // for the computation of P^-1 * b
+                            double* d_r, // for residual
+                            double* d_c,
+                            double* d_q,
+                            double* d_s,
+                            double* solution) {
   // Instead, retrieve the current context (if necessary)
   CUcontext current_ctx;
   cuCtxGetCurrent(&current_ctx);
   std::vector<cudaStream_t> streams;
-  streams.resize(NUM_BLOCK_DIMENSIONS);
+  streams.resize(NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC);
+  std::vector<cudaStream_t> streams_dynamic;
   // initialize cuda streams for block multiplciations
-  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS; i++) {
+  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; i++) {
     cudaStreamCreate(&streams[i]);
   }
+
   // Optionally, compare with the passed context
   if (current_ctx != ctx) {
     printf("Context mismatch\\n");
@@ -319,10 +348,16 @@ int computeSolution(CUcontext ctx,
                    block_positions,
                    block_values_start,
                    block_counts,
+                   block_values_dynamic,
+                   block_positions_dynamic,
+                   block_values_start_dynamic,
+                   block_counts_dynamic,
                    d_c,
                    d_q,
                    block_dimensions,
                    NUM_BLOCK_DIMENSIONS,
+                   block_dimensions_dynamic,
+                   NUM_BLOCK_DIMENSIONS_DYNAMIC,
                    streams);
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     cudaMemset(d_alpha, 0, sizeof(double));
@@ -373,7 +408,7 @@ int computeSolution(CUcontext ctx,
 } // close the extern "C"
 '''
       # ok now we compile the kernel by saving it to a file and then calling nvcc
-      file_name = f".yasps_tmp/cg_max_row_size_{self.__max_row_size}"
+      file_name = f".yasps_constant/cg_max_row_size_{self.__max_row_size}"
       f = open(f"{file_name}.cu", 'w')
       f.write(kernelString)
       f.close()
@@ -391,6 +426,12 @@ int computeSolution(CUcontext ctx,
         ctypes.POINTER(ctypes.c_uint), # block_counts (unsigned int list from numpy)
         ctypes.POINTER(ctypes.c_uint), # block_dimensions (unsigned int list from numpy)
         ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS
+        ctypes.c_void_p, # block_values_dynamic (device pointer to double)
+        ctypes.c_void_p, # block_positions_dynamic (device pointer to unsigned int)
+        ctypes.POINTER(ctypes.c_uint), # block_values_start_dynamic (unsigned int list from numpy array)
+        ctypes.POINTER(ctypes.c_uint), # block_counts_dynamic (unsigned int list from numpy)
+        ctypes.POINTER(ctypes.c_uint), # block_dimensions_dynamic (unsigned int list from numpy)
+        ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS_DYNAMIC
         ctypes.c_void_p, # diagonal (device pointer to double)
         ctypes.c_void_p, # gradient (device pointer to double)
         ctypes.c_uint,   # MATRIX_SIZE
@@ -417,6 +458,11 @@ int computeSolution(CUcontext ctx,
     block_values_start: List[int],
     block_counts: List[int],
     block_dimensions: List[int],
+    block_values_dynamic: gpuarray.GPUArray,
+    block_positions_dynamic: gpuarray.GPUArray,
+    block_values_start_dynamic: List[int],
+    block_counts_dynamic: List[int],
+    block_dimensions_dynamic: List[int],
     diagonal: gpuarray.GPUArray,
     gradient: gpuarray.GPUArray,
     d_p1_b: gpuarray.GPUArray,
@@ -440,6 +486,12 @@ int computeSolution(CUcontext ctx,
       np.array(block_counts, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
       np.array(block_dimensions, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
       len(block_dimensions) // 2,
+      self.__to_void_p(block_values_dynamic),
+      self.__to_void_p(block_positions_dynamic),
+      np.array(block_values_start_dynamic, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+      np.array(block_counts_dynamic, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+      np.array(block_dimensions_dynamic, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+      len(block_dimensions_dynamic) // 2,
       self.__to_void_p(diagonal),
       self.__to_void_p(gradient),
       gradient.shape[0],
