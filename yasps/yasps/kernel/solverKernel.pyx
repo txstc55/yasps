@@ -332,6 +332,13 @@ int computeSolution(CUcontext ctx,
   // printf("Initial residual %lf, relative tolerance: %lf\\n", h_delta_new, relativeTolerance);
   if (h_delta_new <= relativeTolerance){
     // printf("Converged in 0 iterations with residual %lf\\n", h_delta_new);
+    for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
+      cudaStreamDestroy(streams[i]);
+    }
+
+    // free
+    cudaFree(d_delta0);
+    cudaFree(d_delta_new);
     return 0;
   }
   CUDA_CHECK_ERROR(cudaDeviceSynchronize());
@@ -368,6 +375,14 @@ int computeSolution(CUcontext ctx,
 
     if (h_alpha <= 0){
       printf("Non SPD matrix detected in %d iterations with residual %lf\\n", iteration, h_delta_new);
+      for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
+        cudaStreamDestroy(streams[i]);
+      }
+
+      // free
+      cudaFree(d_delta0);
+      cudaFree(d_delta_new);
+      cudaFree(d_alpha);
       return -iteration;
     }
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
@@ -399,9 +414,26 @@ int computeSolution(CUcontext ctx,
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     if (h_delta_new <= relativeTolerance){
       // printf("Converged in %d iterations with residual %lf\\n", iteration, h_delta_new);
+      for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
+        cudaStreamDestroy(streams[i]);
+      }
+
+      // free
+      cudaFree(d_delta0);
+      cudaFree(d_delta_new);
+      cudaFree(d_alpha);
       return iteration;
     }
   }
+  // after the two for‑loops that synchronize the streams
+  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
+    cudaStreamDestroy(streams[i]);
+  }
+
+  // free
+  cudaFree(d_delta0);
+  cudaFree(d_delta_new);
+  cudaFree(d_alpha);
   return maxIteration + 1;
 }
 

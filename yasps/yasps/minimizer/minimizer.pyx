@@ -266,6 +266,7 @@ class minimizer:
     context_ptr = int(cuda_context.handle)
     context_ptr_c = ctypes.c_void_p(context_ptr)
     # call the kernel
+
     self.__solver.computeSolution(
       context_ptr_c,
       20000,
