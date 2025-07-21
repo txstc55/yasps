@@ -36,6 +36,7 @@ setup(
     package_data={'yasps': ['*.txt', '*.cuh', '*.cu']},
     ext_modules=cythonize(
       extensions,
+      annotate=True,        # Generates the HTML .html annotation files
       compiler_directives={"language_level": "3"},
       nthreads=16,       # optional, parallel compile
       force=False       # important! only rebuild changed files

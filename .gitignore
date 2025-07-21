@@ -61,3 +61,4 @@ yasps/fcm_token
 
 **/*.o
 **/*.jpg
+**/*.html

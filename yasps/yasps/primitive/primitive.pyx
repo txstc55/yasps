@@ -180,7 +180,7 @@ class primitive:
           return newAttribute
         # the source is not set up
         # we automatically try to retrieve the attribute with the same name
-        if name not in toPrimitive.__attributes:
+        if name not in toPrimitive.attributes:
           raise ValueError(f"primitive.addAttribute: attribute with name '{name}' does not exist in primitive '{toPrimitive.name}'. The through construction is not successful for the joining operation.")
         if through.dimension == 0 and operation is None:
           raise ValueError("primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
