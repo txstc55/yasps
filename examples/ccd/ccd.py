@@ -13,11 +13,6 @@ import subprocess
 
 class CCD:
   def __init__(self, num_vertices: int, max_cd_pairs: int = 100000, max_ccd_pairs: int = 100000):
-    double3_p = ctypes.c_void_p
-    uint2_p = ctypes.c_void_p
-    int4_p = ctypes.c_void_p
-    uint32_p = ctypes.c_void_p
-    int_p = ctypes.c_void_p
     if not os.path.exists("libmlbvh.so"):
       # we first compile the code
       compile_cmds = [
@@ -86,23 +81,60 @@ class CCD:
       ctypes.c_uint32, # number of vertices
     ]
 
-    self.__lbvh_e_construct = self.__mlbvh.lbvh_e_construct
-    self.__lbvh_e_construct.argtypes = [
-      ctypes.c_void_p, # the object
-      ctypes.c_void_p # positions of the vertices
-    ]
-
     self.__lbvh_f_construct = self.__mlbvh.lbvh_f_construct
     self.__lbvh_f_construct.argtypes = [
       ctypes.c_void_p, # the object
       ctypes.c_void_p # positions of the vertices
     ]
 
+    self.__lbvh_e_construct = self.__mlbvh.lbvh_e_construct
+    self.__lbvh_e_construct.argtypes = [
+      ctypes.c_void_p, # the object
+      ctypes.c_void_p # positions of the vertices
+    ]
+
+
+
     self.__lbvh_f_construct_full_ccd = self.__mlbvh.lbvh_f_construct_full_ccd
     self.__lbvh_f_construct_full_ccd.argtypes = [
       ctypes.c_void_p, # the object
+      ctypes.c_void_p, # positions of the vertices
       ctypes.c_void_p, # moving directions
       ctypes.POINTER(ctypes.c_double)
+    ]
+
+    self.__lbvh_e_construct_full_ccd = self.__mlbvh.lbvh_e_construct_full_ccd
+    self.__lbvh_e_construct_full_ccd.argtypes = [
+      ctypes.c_void_p, # the object
+      ctypes.c_void_p, # positions of the vertices
+      ctypes.c_void_p, # moving directions
+      ctypes.POINTER(ctypes.c_double)
+    ]
+
+    self.__lbvh_f_self_collision_detect = self.__mlbvh.lbvh_f_self_collision_detect
+    self.__lbvh_f_self_collision_detect.argtypes = [
+      ctypes.c_void_p, # the object
+      ctypes.c_double, # dhat
+    ]
+    self.__lbvh_e_self_collision_detect = self.__mlbvh.lbvh_e_self_collision_detect
+    self.__lbvh_e_self_collision_detect.argtypes = [
+      ctypes.c_void_p, # the object
+      ctypes.c_double, # dhat
+    ]
+
+    self.__lbvh_f_self_collision_full_detect = self.__mlbvh.lbvh_f_self_collision_full_detect
+    self.__lbvh_f_self_collision_full_detect.argtypes = [
+      ctypes.c_void_p, # the object
+      ctypes.c_double, #dhat
+      ctypes.c_void_p, # moving directions
+      ctypes.POINTER(ctypes.c_double) # alpha
+    ]
+    self.__lbvh_e_self_collision_full_detect = self.__mlbvh.lbvh_e_self_collision_full_detect
+    self.__lbvh_e_self_collision_full_detect.argtypes = [
+      ctypes.c_void_p, # the object
+      ctypes.c_double, #dhat
+      ctypes.c_void_p, # moving directions
+      ctypes.POINTER(ctypes.c_double) # alpha
     ]
 
     self.__collision_pairs = gpuarray.to_gpu(np.zeros((max_cd_pairs, 4), dtype=np.int32))
@@ -114,9 +146,42 @@ class CCD:
 
     self.__num_vertices = num_vertices
     self.__btypes = gpuarray.to_gpu(np.zeros(num_vertices, dtype=np.int32)) # initialize empty array for btypes
+    self.__pp = gpuarray.to_gpu(np.zeros((max_ccd_pairs, 2), dtype=np.uint32))
+    self.__pe = gpuarray.to_gpu(np.zeros((max_ccd_pairs, 3), dtype=np.uint32))
+    self.__pt = gpuarray.to_gpu(np.zeros((max_ccd_pairs, 4), dtype=np.uint32))
+    self.__ee = gpuarray.to_gpu(np.zeros((max_ccd_pairs, 4), dtype=np.uint32))
+    self.__separated_counts = gpuarray.to_gpu(np.zeros(3, dtype=np.uint32))
+
+    self.__lbvh_f_separate_cases = self.__mlbvh.lbvh_f_separate_cases
+    self.__lbvh_f_separate_cases.argtypes = [
+      ctypes.c_void_p, # the object
+      ctypes.c_void_p, # pp
+      ctypes.c_void_p, # pe
+      ctypes.c_void_p, # pt
+      ctypes.c_void_p, # separated counts
+    ]
+    self.__lbvh_e_separate_cases = self.__mlbvh.lbvh_e_separate_cases
+    self.__lbvh_e_separate_cases.argtypes = [
+      ctypes.c_void_p, # the object
+      ctypes.c_void_p, # pp
+      ctypes.c_void_p, # pe
+      ctypes.c_void_p, # ee
+      ctypes.c_void_p, # separated counts
+    ]
+
+  @property
+  def collision_pairs(self) -> gpuarray.GPUArray:
+    return self.__collision_pairs
+
+  @property
+  def collision_pairs_ccd(self) -> gpuarray.GPUArray:
+    return self.__collision_pairs_ccd
+
+  @property
+  def cp_num(self) -> gpuarray.GPUArray:
+    return self.__cp_num
 
 
-  # def init_faces(self)
   def __to_void_p(self, x: gpuarray.GPUArray):
     if x is None or x.size == 0:
       # Return a NULL pointer if array is empty
@@ -149,26 +214,138 @@ class CCD:
       self.__to_void_p(vertices)
     )
 
-  def construct_full_ccd_edges(self, moving_directions: gpuarray.GPUArray, time_step: float):
-    """
-    Constructs the full CCD edges with the given moving directions and time step.
-    """
-    assert moving_directions.dtype == np.float64, "Moving directions must be of type float64"
-    assert moving_directions.shape[0] == self.__num_vertices, "Moving directions must have the same number of elements as vertices"
-    c_time_step = ctypes.c_double(time_step)
-    time_step_p = ctypes.byref(c_time_step)
-    self.__lbvh_f_construct_full_ccd(
-      self.__bvh_f,
+  def construct_full_ccd_edges(self, vertices: gpuarray.GPUArray, moving_directions: gpuarray.GPUArray, alpha: float):
+    c_alpha = ctypes.c_double(alpha)
+    alpha_p = ctypes.byref(c_alpha)
+    self.__lbvh_e_construct_full_ccd(
+      self.__bvh_e,
+      self.__to_void_p(vertices),
       self.__to_void_p(moving_directions),
-      time_step_p
+      alpha_p
+    )
+
+  def cd_edges(self, vertices: gpuarray.GPUArray, dhat: float):
+    self.construct_edges(vertices)
+    self.__collision_pairs.fill(0)
+    self.__cp_num.fill(0)
+    self.__lbvh_e_self_collision_detect(
+      self.__bvh_e,
+      ctypes.c_double(dhat)
+    )
+
+  def ccd_edges(self, vertices: gpuarray.GPUArray, dhat: float, moving_directions: gpuarray.GPUArray, alpha: float):
+    c_alpha = ctypes.c_double(alpha)
+    alpha_p = ctypes.byref(c_alpha)
+    self.construct_full_ccd_edges(vertices, moving_directions, alpha)
+    self.__collision_pairs_ccd.fill(0)
+    self.__cp_num.fill(0)
+    self.__lbvh_e_self_collision_full_detect(
+      self.__bvh_e,
+      ctypes.c_double(dhat),
+      self.__to_void_p(moving_directions),
+      alpha_p
+    )
+
+  def init_faces(self,
+    vertices: gpuarray.GPUArray, # list of double
+    faces: gpuarray.GPUArray, # list of int3
+    surface_vertices: gpuarray.GPUArray, # list of uint32
+    face_num: int, # number of faces
+  ):
+    self.__lbvh_f_init(
+      self.__bvh_f,
+      self.__to_void_p(self.__btypes),
+      self.__to_void_p(vertices),
+      self.__to_void_p(faces),
+      self.__to_void_p(surface_vertices),
+      self.__to_void_p(self.__collision_pairs),
+      self.__to_void_p(self.__collision_pairs_ccd),
+      self.__to_void_p(self.__cp_num),
+      self.__to_void_p(self.__mat_index),
+      ctypes.c_int(face_num),
+      ctypes.c_int(self.__num_vertices)
     )
 
 
+  def construct_faces(self, vertices: gpuarray.GPUArray):
+    self.__lbvh_f_construct(
+      self.__bvh_f,
+      self.__to_void_p(vertices)
+    )
+
+  def construct_full_ccd_faces(self, vertices: gpuarray.GPUArray, moving_directions: gpuarray.GPUArray, alpha: float):
+    c_alpha = ctypes.c_double(alpha)
+    alpha_p = ctypes.byref(c_alpha)
+    self.__lbvh_f_construct_full_ccd(
+      self.__bvh_f,
+      self.__to_void_p(vertices),
+      self.__to_void_p(moving_directions),
+      alpha_p
+    )
+
+  def cd_faces(self, vertices: gpuarray.GPUArray, dhat: float):
+    self.construct_faces(vertices)
+    # empty the collision pairs
+    self.__collision_pairs.fill(0)
+    self.__cp_num.fill(0)
+    self.__lbvh_f_self_collision_detect(
+      self.__bvh_f,
+      ctypes.c_double(dhat)
+    )
+    self.__pp.fill(0)
+    self.__pe.fill(0)
+    self.__pt.fill(0)
+    self.__separated_counts.fill(0)
+    self.__lbvh_f_separate_cases(
+      self.__bvh_f,
+      self.__to_void_p(self.__pp),
+      self.__to_void_p(self.__pe),
+      self.__to_void_p(self.__pt),
+      self.__to_void_p(self.__separated_counts)
+    )
+
+  def ccd_faces(self, vertices: gpuarray.GPUArray, dhat: float, moving_directions: gpuarray.GPUArray, alpha: float):
+    c_alpha = ctypes.c_double(alpha)
+    alpha_p = ctypes.byref(c_alpha)
+    self.__collision_pairs_ccd.fill(0)
+    self.__cp_num.fill(0)
+    self.construct_full_ccd_faces(vertices, moving_directions, alpha)
+    self.__lbvh_f_self_collision_full_detect(
+      self.__bvh_f,
+      ctypes.c_double(dhat),
+      self.__to_void_p(moving_directions),
+      alpha_p
+    )
+    self.__pp.fill(0)
+    self.__pe.fill(0)
+    self.__pt.fill(0)
+    self.__separated_counts.fill(0)
+    self.__lbvh_f_separate_cases(
+      self.__bvh_f,
+      self.__to_void_p(self.__pp),
+      self.__to_void_p(self.__pe),
+      self.__to_void_p(self.__pt),
+      self.__to_void_p(self.__separated_counts)
+    )
+    print("checking cases")
+    print(self.__pt.get())
+    print(self.__pe.get())
+    print(self.__pp.get())
 
 
-x = CCD(10)
-points = gpuarray.to_gpu(np.random.rand(10, 3).astype(np.float64))
-points_rest = gpuarray.to_gpu(np.random.rand(10, 3).astype(np.float64))
-edges = gpuarray.to_gpu(np.array([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9], [9, 0]], dtype=np.int32))
-x.init_edges(points, points_rest, edges, 10)
-x.construct_edges(points)
+
+x = CCD(4)
+points = gpuarray.to_gpu(np.array([[1.0, 0.0, 0.0, -0.5, 0.0, 0.866, -0.5, 0.0, -0.866, 0.5, 1.0, 0.0]]).astype(np.float64))
+moving_directions = gpuarray.to_gpu(np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5, -1, 0.0]]).astype(np.float64))
+faces = gpuarray.to_gpu(np.array([0, 1, 2, 1, 2, 3]).astype(np.int32))
+surface_vertices = gpuarray.to_gpu(np.array([0, 1, 2, 3]).astype(np.uint32))
+face_num = 2
+x.init_faces(points, faces, surface_vertices, face_num)
+x.cd_faces(points, 3)
+print(x.cp_num.get())
+print(x.collision_pairs.get())
+print(x.collision_pairs_ccd.get())
+x.ccd_faces(points, 0.01, moving_directions, 1.0)
+print(x.cp_num.get())
+print(x.collision_pairs.get())
+print(x.collision_pairs_ccd.get())

@@ -324,12 +324,12 @@ void _d_EEParallel(const double3& v0, const double3& v1, const double3& v2, cons
 
 __device__
 double _compute_epx(const double3& v0, const double3& v1, const double3& v2, const double3& v3) {
-    return 1e-3 * __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(v0, v1)) * __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(v2, v3));
+    return 0 * __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(v0, v1)) * __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(v2, v3));
 }
 
 __device__
 double _compute_epx_cp(const double3& v0, const double3& v1, const double3& v2, const double3& v3) {
-    return 1e-3 * __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(v0, v1)) * __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(v2, v3));
+    return 0 * __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(v0, v1)) * __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(v2, v3));
 }
 
 __device__
@@ -613,7 +613,7 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
     int dtype = _dType_EE(v0, v1, v2, v3);
     int add_e = -1;
     double d = 100.0;
-    bool smooth = true;
+    bool smooth = false;
     switch (dtype) {
     case 0: {
         _d_PP(v0, v2, d);
@@ -1382,6 +1382,8 @@ void selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _fac
     int blockNum = (numbers + threadNum - 1) / threadNum;
 
     _selfQuery_vf << <blockNum, threadNum >> > (_btype, _vertexes, _faces, _surfVerts, _bvs, _nodes, _collisonPairs, _ccd_collisonPairs, _cpNum, MatIndex, dHat, numbers);
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    // printf("selfquery vf finished without error\n");
 }
 
 void fullCCDselfQuery_vf(const int* _btype, const double3* _vertexes, const double3* moveDir, const double& alpha, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisonPairs, uint32_t* _cpNum, double dHat, int number) {
@@ -1456,7 +1458,7 @@ AABB* lbvh_f::getSceneSize() {
 double lbvh_f::Construct(double3* _mVerts) {
     _vertexes = _mVerts;
     calcLeafBvs(_vertexes, _faces, _bvs, face_number, 0);
-    //CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
     scene = calcMaxBV(_bvs, _tempLeafBox, face_number);
     calcMChash(_MChash, _bvs, face_number);
     thrust::sequence(thrust::device_ptr<uint32_t>(_indices), thrust::device_ptr<uint32_t>(_indices) + face_number);
@@ -1464,12 +1466,15 @@ double lbvh_f::Construct(double3* _mVerts) {
     sortBvs(_indices, _bvs, _tempLeafBox, face_number);
     calcLeafNodes(_nodes, _indices, face_number);
     calcInternalNodes(_nodes, _MChash, face_number);
-    //CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
     calcInternalAABB(_nodes, _bvs, _flags, face_number);
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    printf("construct finished\n");
     return 0;//time0 + time1 + time2;
 }
 
-double lbvh_f::ConstructFullCCD(const double3* moveDir, const double& alpha) {
+double lbvh_f::ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha) {
+    _vertexes = _mVerts;
     calcLeafBvs_fullCCD(_vertexes, moveDir, alpha, _faces, _bvs, face_number, 0);
     scene = calcMaxBV(_bvs, _tempLeafBox, face_number);
     calcMChash(_MChash, _bvs, face_number);
@@ -1482,7 +1487,8 @@ double lbvh_f::ConstructFullCCD(const double3* moveDir, const double& alpha) {
 
     calcInternalNodes(_nodes, _MChash, face_number);
     calcInternalAABB(_nodes, _bvs, _flags, face_number);
-
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    // printf("ccd construction finished\n");
     return 0;
 }
 
@@ -1502,7 +1508,8 @@ double lbvh_e::Construct(double3* _mVerts) {
     return 0;//time0 + time1 + time2;
 }
 
-double lbvh_e::ConstructFullCCD(const double3* moveDir, const double& alpha) {
+double lbvh_e::ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha) {
+    _vertexes = _mVerts;
     calcLeafBvs_fullCCD(_vertexes, moveDir, alpha, _edges, _bvs, edge_number, 1);
     scene = calcMaxBV(_bvs, _tempLeafBox, edge_number);
     calcMChash(_MChash, _bvs, edge_number);
@@ -1563,26 +1570,26 @@ void lbvh_e_construct(lbvh_e* obj, double3* _mVerts){
   obj->Construct(_mVerts);
 }
 
-void lbvh_f_construct_full_ccd(lbvh_f* obj, const double3* moveDir, const double& alpha){
-  obj->ConstructFullCCD(moveDir, alpha);
+void lbvh_f_construct_full_ccd(lbvh_f* obj, double3* _mVerts, const double3* moveDir, const double& alpha){
+  obj->ConstructFullCCD(_mVerts, moveDir, alpha);
 }
 
-void lbvh_e_construct_full_ccd(lbvh_e* obj, const double3* moveDir, const double& alpha){
-  obj->ConstructFullCCD(moveDir, alpha);
+void lbvh_e_construct_full_ccd(lbvh_e* obj, double3* _mVerts, const double3* moveDir, const double& alpha){
+  obj->ConstructFullCCD(_mVerts, moveDir, alpha);
 }
 
-void lbvh_f_self_collition_detect(lbvh_f* obj, double dHat){
+void lbvh_f_self_collision_detect(lbvh_f* obj, double dHat){
   obj->SelfCollitionDetect(dHat);
 }
 
-void lbvh_e_self_collition_detect(lbvh_e* obj, double dHat){
+void lbvh_e_self_collision_detect(lbvh_e* obj, double dHat){
   obj->SelfCollitionDetect(dHat);
 }
 
-void lbvh_f_self_collition_full_detect(lbvh_f* obj, double dHat, const double3* moveDir, const double& alpha){
+void lbvh_f_self_collision_full_detect(lbvh_f* obj, double dHat, const double3* moveDir, const double& alpha){
   obj->SelfCollitionFullDetect(dHat, moveDir, alpha);
 }
-void lbvh_e_self_collition_full_detect(lbvh_e* obj, double dHat, const double3* moveDir, const double& alpha){
+void lbvh_e_self_collision_full_detect(lbvh_e* obj, double dHat, const double3* moveDir, const double& alpha){
   obj->SelfCollitionFullDetect(dHat, moveDir, alpha);
 }
 void destroy_lbvh_f(lbvh_f* obj){
@@ -1591,6 +1598,85 @@ void destroy_lbvh_f(lbvh_f* obj){
 
 void destroy_lbvh_e(lbvh_e* obj){
   delete obj;
+}
+
+__global__ void separate_cases_faces(const int4* indices, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, const uint32_t* cp_num, uint32_t* cp_num_count){
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= cp_num[0]) return;
+  const int id0 = indices[idx].x;
+  const int id1 = indices[idx].y;
+  const int id2 = indices[idx].z;
+  const int id3 = indices[idx].w;
+  // this is for triangle, so there is no ee cases
+  if (id2 < 0){
+    pp_indices[atomicAdd(cp_num_count, 1)] = make_uint2(-id0 - 1, id1);
+    return;
+  }
+  if (id3 < 0){
+    pe_indices[atomicAdd(cp_num_count + 1, 1)] = make_uint3(-id0 - 1, id1, id2);
+    return;
+  }
+  pt_indices[atomicAdd(cp_num_count + 2, 1)] = make_uint4(-id0 - 1, id1, id2, id3);
+  return;
+}
+
+__global__ void separate_cases_edges(const int4* indices, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, const uint32_t* cp_num, uint32_t* cp_num_count){
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= cp_num[0]) return;
+  const int id0 = indices[idx].x;
+  const int id1 = indices[idx].y;
+  const int id2 = indices[idx].z;
+  const int id3 = indices[idx].w;
+  // this is for triangle, so there is no ee cases
+  if (id0 >= 0){
+    ee_indices[atomicAdd(cp_num_count + 2, 1)] = make_uint4(id0, id1, id2, id3);
+  }
+  if (id2 < 0){
+    pp_indices[atomicAdd(cp_num_count, 1)] = make_uint2(-id0 - 1, id1);
+    return;
+  }
+  if (id3 < 0){
+    pe_indices[atomicAdd(cp_num_count + 1, 1)] = make_uint3(-id0 - 1, id1, id2);
+    return;
+  }
+  return;
+}
+
+void lbvh_f::SeparateCases(uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* counts){
+  // first we get the actual count
+  uint32_t cp_num_count = 0;
+  CUDA_SAFE_CALL(cudaMemcpy(&cp_num_count, _cpNum, sizeof(uint32_t), cudaMemcpyDeviceToHost));
+  if (cp_num_count == 0) return;
+
+  const unsigned int threadNum = default_threads;
+  int blockNum = (cp_num_count + threadNum - 1) / threadNum;
+
+  separate_cases_faces<<<blockNum, threadNum>>>(_ccd_collisionPair, pp_indices, pe_indices, pt_indices, _cpNum, counts);
+  CUDA_SAFE_CALL(cudaDeviceSynchronize());
+}
+
+void lbvh_e::SeparateCases(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* counts){
+  // first we get the actual count
+  uint32_t cp_num_count = 0;
+  CUDA_SAFE_CALL(cudaMemcpy(&cp_num_count, _cpNum, sizeof(uint32_t), cudaMemcpyDeviceToHost));
+  if (cp_num_count == 0) return;
+
+  const unsigned int threadNum = default_threads;
+  int blockNum = (cp_num_count + threadNum - 1) / threadNum;
+
+  separate_cases_edges<<<blockNum, threadNum>>>(_ccd_collisionPair, pp_indices, pe_indices, ee_indices, _cpNum, counts);
+  CUDA_SAFE_CALL(cudaDeviceSynchronize());
+}
+
+
+
+
+
+void lbvh_f_separate_cases(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count){
+  obj->SeparateCases(pp_indices, pe_indices, pt_indices, count);
+}
+void lbvh_e_separate_cases(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count){
+  obj->SeparateCases(pp_indices,pe_indices, ee_indices, count);
 }
 
 

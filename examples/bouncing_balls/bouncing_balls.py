@@ -199,7 +199,7 @@ poly.points = points
 poly.lines = lines
 
 # Create a plotter
-plotter = pv.Plotter(window_size=[1920, 1080])
+plotter = pv.Plotter()
 
 # Add the lines to the plotter
 plotter.add_mesh(poly, color="blue", line_width=3)
@@ -236,7 +236,7 @@ all_pinball_positions = []
 plotter.show(interactive_update=True)
 # exit()
 STEP_SIZE = 0.1
-for i in range(2000):
+for i in range(20000):
   all_line_segments.append(np.array(poly.points))
   all_pinball_positions.append(pinball_positions.value.get())
   pinball_last_positions.updateValue(pinball_positions.value.get())

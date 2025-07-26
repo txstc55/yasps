@@ -63,13 +63,21 @@ public:
     uint32_t* _surfVerts;
 public:
     void init(int* _btype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int faceNum, int vertNum);
+    // cpnum, the first one is the number of collision pairs, 2 for pp, 3 for pe, 4 for pt here, but ee for edge bvh_e
     double Construct(double3* _mVerts);
-    AABB* getSceneSize();
-    double ConstructFullCCD(const double3* moveDir, const double& alpha);
-    void SelfCollitionDetect(double dHat);
-    void SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha);
+    AABB* getSceneSize(); // fuck this one
+    double ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha);
+    void SelfCollitionDetect(double dHat); // only check for local without moving direction, for checking substeps
+    void SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha); // check when moving, what's tha largest moving size
+    void SeparateCases(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint* counts);
 };
 
+
+// for collision pairs
+// if the first one is positive, then it has to be ee
+// if the first one is negative, check the third one, if the third one is negative, then it is pp
+// otherwise, if the third one is positive, check the forth one, if the forth one is negative, then it is pe
+// else, it is pt
 
 
 class lbvh_e : public lbvh{
@@ -80,9 +88,10 @@ public:
 public:
     void init(int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int edgeNum, int vertNum);
     double Construct(double3* _mVerts);
-    double ConstructFullCCD(const double3* moveDir, const double& alpha);
+    double ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha);
     void SelfCollitionDetect(double dHat);
     void SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha);
+    void SeparateCases(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint* counts);
 };
 
 lbvh_f* create_lbvh_f();
@@ -91,15 +100,18 @@ void lbvh_f_init(lbvh_f* obj, int* _btype, double3* _mVerts, uint3* _mFaces, uin
 void lbvh_e_init(lbvh_e* obj, int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int edgeNum, int vertNum);
 void lbvh_f_construct(lbvh_f* obj, double3* _mVerts);
 void lbvh_e_construct(lbvh_e* obj, double3* _mVerts);
-void lbvh_f_construct_full_ccd(lbvh_f* obj, const double3* moveDir, const double& alpha);
-void lbvh_e_construct_full_ccd(lbvh_e* obj, const double3* moveDir, const double& alpha);
-void lbvh_f_self_collition_detect(lbvh_f* obj, double dHat);
-void lbvh_e_self_collition_detect(lbvh_e* obj, double dHat);
-void lbvh_f_self_collition_full_detect(lbvh_f* obj, double dHat, const double3* moveDir, const double& alpha);
-void lbvh_e_self_collition_full_detect(lbvh_e* obj, double dHat, const double3* moveDir, const double& alpha);
+void lbvh_f_construct_full_ccd(lbvh_f* obj, double3* _mVerts, const double3* moveDir, const double& alpha);
+void lbvh_e_construct_full_ccd(lbvh_e* obj, double3* _mVerts, const double3* moveDir, const double& alpha);
+void lbvh_f_self_collision_detect(lbvh_f* obj, double dHat);
+void lbvh_e_self_collision_detect(lbvh_e* obj, double dHat);
+void lbvh_f_self_collision_full_detect(lbvh_f* obj, double dHat, const double3* moveDir, const double& alpha);
+void lbvh_e_self_collision_full_detect(lbvh_e* obj, double dHat, const double3* moveDir, const double& alpha);
 void destroy_lbvh_f(lbvh_f* obj);
 void destroy_lbvh_e(lbvh_e* obj);
 
+
+void lbvh_f_separate_cases(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count);
+void lbvh_e_separate_cases(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count);
 
 __device__
 void _d_PP(const double3& v0, const double3& v1, double& d);
