@@ -1,6 +1,6 @@
 # cython: language_level=3
 from __future__ import annotations
-from typing import Dict, Union, Tuple, Optional, List
+from typing import Dict, Union, Optional, List
 import keyword
 import numpy as np
 # a primitive may have its own attributes
@@ -22,7 +22,7 @@ class primitive:
       raise ValueError("mesh.__init__: mesh cannot be None.")
     self.__name: str = name
     self.__mesh: mesh = parent_mesh
-    self.__connectivities: Dict[str, primitive] = {}
+    self.__connectivities: Dict[str, connectivity] = {}
     self.__attributes: Dict[str, attribute] = {}
     self.__numInstances: int = numInstances
     self.__isDynamic: bool = isDynamic
@@ -106,10 +106,21 @@ class primitive:
     setattr(self, name, newConnectivity)
     return newConnectivity
 
+  def updateNumInstances(self, numInstances: int) -> None:
+    if not self.isDynamic:
+      raise ValueError("primitive.updateNumInstances: primitive is not dynamic, cannot update number of instances.")
+    if numInstances < 0:
+      raise ValueError("primitive.updateNumInstances: number of instances cannot be negative.")
+    self.__numInstances = numInstances
+
   def updateConnectivity(self, name: str, data: Union[np.ndarray, List[List[int]]], dimension: int) -> None:
     ## first check name
     if name not in self.__connectivities:
       raise ValueError(f"primitive.updateConnectivity: connectivity with name '{name}' does not exist in primitive.")
+    if dimension != self.__connectivities[name].dimension:
+      raise ValueError(f"primitive.updateConnectivity: connectivity with name '{name}' has dimension {self.__connectivities[name].dimension}, but the supplied data has dimension {dimension}.")
+    self.__connectivities[name].updateConnectivity(data)
+
 
 
 

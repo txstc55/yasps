@@ -869,7 +869,9 @@ class attribute:
       if self.__value is None or self.__value.size < self.__correspondance.numInstances * self.size:
         # reallocate a new pycuda array with the correct size
         self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
-
+    assert self.__correspondance is not None # cannot be none
+    if self.__value.size < self.__correspondance.numInstances * self.size:
+      self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
     assert self.__globalKernel is not None
     assert self.__value is not None
     self.__globalKernel.compute(self.__value)

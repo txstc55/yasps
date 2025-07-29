@@ -8,7 +8,7 @@
 
 #pragma once
 #include <cuda_runtime.h>
-
+extern "C" {
 __device__
 double point_triangle_ccd(
     const double3& _p,
@@ -33,7 +33,7 @@ double edge_edge_ccd(
     const double3& _deb1,
     double eta, double thickness);
 
-__device__ 
+__device__
 double doCCDVF(const double3& _p,
     const double3& _t0,
     const double3& _t1,
@@ -43,3 +43,12 @@ double doCCDVF(const double3& _p,
     const double3& _dt1,
     const double3& _dt2,
     double errorRate, double thickness);
+
+double self_largestFeasibleStepSize(
+  double slackness,
+  const double3* _vertexes,
+  const int4* _ccd_collisonPairs,
+  const double3* _moveDir,
+  double* mqueue,
+  int numbers);
+}

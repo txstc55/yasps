@@ -63,7 +63,7 @@ class mesh:
       return False
     return True
 
-  def addPrimitive(self, name:str, numInstances: int)->primitive:
+  def addPrimitive(self, name:str, numInstances: int, isDynamic: bool = False)->primitive:
     if name in self.__primitives:
       raise ValueError(f"mesh.addPrimitive: primitive with name '{name}' already exists in mesh.")
 
@@ -73,7 +73,7 @@ class mesh:
 
     from yasps.primitive import primitive
     # add the mesh to the scene
-    newPrimitive = primitive(name, self, numInstances)
+    newPrimitive = primitive(name, self, numInstances, isDynamic)
     self.__primitives[name] = newPrimitive
     # add mesh as an attribute to the scene
     setattr(self, name, newPrimitive)

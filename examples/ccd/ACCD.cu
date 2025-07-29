@@ -10,6 +10,7 @@
 #include "gpu_eigen_libs.cuh"
 #include <cmath>
 #include <stdio.h>
+const static int default_threads = 256;
 template <class F>
 __device__ __host__
 inline F __m_max(F a, F b) {
@@ -22,6 +23,7 @@ inline F __m_min(F a, F b) {
     return a > b ? b : a;
 }
 
+extern "C" {
 __device__
 int _dType_point_triangle(const double3& v0, const double3& v1, const double3& v2, const double3& v3)
 {
@@ -623,4 +625,160 @@ double doCCDVF(const double3& _p,
     double ret = IntersectVF(_t0, _t1, _t2, _dt0, _dt1, _dt2, _p, _dp, errorRate, thickness);
 
     return ret;
+}
+
+__global__
+void _reduct_min_selfTimeStep_to_double(const double3* vertexes, const int4* _ccd_collitionPairs, const double3* moveDir, double* minStepSizes, double slackness, int number) {
+    int idof = blockIdx.x * blockDim.x;
+    int idx = threadIdx.x + idof;
+
+    extern __shared__ double tep[];
+
+    if (idx >= number) return;
+    double temp = 1.0;
+    double CCDDistRatio = 1.0 - slackness;
+
+    int4 MMCVIDI = _ccd_collitionPairs[idx];
+
+    if (MMCVIDI.x < 0) {
+        MMCVIDI.x = -MMCVIDI.x - 1;
+
+        double temp1 = point_triangle_ccd(vertexes[MMCVIDI.x],
+            vertexes[MMCVIDI.y],
+            vertexes[MMCVIDI.z],
+            vertexes[MMCVIDI.w],
+            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.x], -1),
+            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.y], -1),
+            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.z], -1),
+            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0);
+
+        temp = 1.0 / temp1;
+    }
+    else {
+        temp = 1.0 / edge_edge_ccd(vertexes[MMCVIDI.x],
+            vertexes[MMCVIDI.y],
+            vertexes[MMCVIDI.z],
+            vertexes[MMCVIDI.w],
+            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.x], -1),
+            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.y], -1),
+            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.z], -1),
+            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0);
+    }
+
+    int warpTid = threadIdx.x % 32;
+    int warpId = (threadIdx.x >> 5);
+    double nextTp;
+    int warpNum;
+    //int tidNum = 32;
+    if (blockIdx.x == gridDim.x - 1) {
+        //tidNum = numbers - idof;
+        warpNum = ((number - idof + 31) >> 5);
+    }
+    else {
+        warpNum = ((blockDim.x) >> 5);
+    }
+    for (int i = 1; i < 32; i = (i << 1)) {
+        double tempMin = __shfl_down_sync(0xffffffff, temp, i);
+        temp = __m_max(temp, tempMin);
+    }
+    if (warpTid == 0) {
+        tep[warpId] = temp;
+    }
+    __syncthreads();
+    if (threadIdx.x >= warpNum) return;
+    if (warpNum > 1) {
+        //	tidNum = warpNum;
+        temp = tep[threadIdx.x];
+
+        //	warpNum = ((tidNum + 31) >> 5);
+        for (int i = 1; i < warpNum; i = (i << 1)) {
+            double tempMin = __shfl_down_sync(0xffffffff, temp, i);
+            temp = __m_max(temp, tempMin);
+        }
+    }
+    if (threadIdx.x == 0) {
+        minStepSizes[blockIdx.x] = temp;
+    }
+
+}
+
+
+__global__
+void _reduct_max_double(double* _double1Dim, int number) {
+    int idof = blockIdx.x * blockDim.x;
+    int idx = threadIdx.x + idof;
+
+    extern __shared__ double tep[];
+
+    if (idx >= number) return;
+    //int cfid = tid + CONFLICT_FREE_OFFSET(tid);
+    double temp = _double1Dim[idx];
+
+    __threadfence();
+
+
+    int warpTid = threadIdx.x % 32;
+    int warpId = (threadIdx.x >> 5);
+    double nextTp;
+    int warpNum;
+    //int tidNum = 32;
+    if (blockIdx.x == gridDim.x - 1) {
+        //tidNum = numbers - idof;
+        warpNum = ((number - idof + 31) >> 5);
+    }
+    else {
+        warpNum = ((blockDim.x) >> 5);
+    }
+    for (int i = 1; i < 32; i = (i << 1)) {
+        double tempMax = __shfl_down_sync(0xffffffff, temp, i);
+        temp = __m_max(temp, tempMax);
+    }
+    if (warpTid == 0) {
+        tep[warpId] = temp;
+    }
+    __syncthreads();
+    if (threadIdx.x >= warpNum) return;
+    if (warpNum > 1) {
+        //	tidNum = warpNum;
+        temp = tep[threadIdx.x];
+
+        //	warpNum = ((tidNum + 31) >> 5);
+        for (int i = 1; i < warpNum; i = (i << 1)) {
+            double tempMax = __shfl_down_sync(0xffffffff, temp, i);
+            temp = __m_max(temp, tempMax);
+        }
+    }
+    if (threadIdx.x == 0) {
+        _double1Dim[blockIdx.x] = temp;
+    }
+}
+
+
+double self_largestFeasibleStepSize(
+  double slackness,
+  const double3* _vertexes,
+  const int4* _ccd_collisonPairs,
+  const double3* _moveDir,
+  double* mqueue,
+  int numbers) {
+    if (numbers < 1) return 1;
+    const unsigned int threadNum = default_threads;
+    int blockNum = (numbers + threadNum - 1) / threadNum;
+
+    unsigned int sharedMsize = sizeof(double) * (threadNum >> 5);
+    _reduct_min_selfTimeStep_to_double <<<blockNum, threadNum, sharedMsize >>> (_vertexes, _ccd_collisonPairs, _moveDir, mqueue, slackness, numbers);
+
+    numbers = blockNum;
+    blockNum = (numbers + threadNum - 1) / threadNum;
+
+    while (numbers > 1) {
+      _reduct_max_double <<<blockNum, threadNum, sharedMsize >>> (mqueue, numbers);
+      numbers = blockNum;
+      blockNum = (numbers + threadNum - 1) / threadNum;
+
+    }
+    double minValue;
+    cudaMemcpy(&minValue, mqueue, sizeof(double), cudaMemcpyDeviceToHost);
+    return 1.0 / minValue;
+}
 }

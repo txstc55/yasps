@@ -92,14 +92,23 @@ class connectivity:
     return f'{self.fullName}_compressed_row_indices'
 
   # for updating connectivity when the primitive has dynamic count
-  def updateConnectivity(self, value: Union[np.ndarray, List[List[int]]]):
+  def updateConnectivity(self, value: Union[np.ndarray, List[List[int]], gpuarray.GPUArray]):
     ## check if we can reserve space by not reallocating
     oldGPUArraySize: int = int(self.__value.size)
+    if isinstance(value, gpuarray.GPUArray):
+      if oldGPUArraySize > int(value.size):
+        self.__value[:value.size] = value
+      else:
+        new_gpu_array = gpuarray.empty_like(value)
+        new_gpu_array[:] = value  # Device-to-device copy
+        self.__value = new_gpu_array
+      return
+
     newCPUArray = np.array(value).flatten().astype(np.uint32)
     newGPUArraySize: int = newCPUArray.size
     # now we set the new value
-    if oldGPUArraySize >= newGPUArraySize:
-      self.__value.set(newCPUArray)
+    if oldGPUArraySize < newGPUArraySize:
+      self.__value = gpuarray.to_gpu(newCPUArray)
     else:
       self.__value[:newGPUArraySize] = gpuarray.to_gpu(newCPUArray)
       self.__compressedRows = gpuarray.empty(0, dtype = np.uint32)
