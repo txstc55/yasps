@@ -69,7 +69,8 @@ public:
     double ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha);
     void SelfCollitionDetect(double dHat); // only check for local without moving direction, for checking substeps
     void SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha); // check when moving, what's tha largest moving size
-    void SeparateCases(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint* counts);
+    void SeparateCasesCCD(uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint* counts);
+    void SeparateCasesCD(uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint* counts);
 };
 
 
@@ -91,7 +92,8 @@ public:
     double ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha);
     void SelfCollitionDetect(double dHat);
     void SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha);
-    void SeparateCases(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint* counts);
+    void SeparateCasesCCD(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint* counts);
+    void SeparateCasesCD(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint* counts);
 };
 
 lbvh_f* create_lbvh_f();
@@ -110,8 +112,10 @@ void destroy_lbvh_f(lbvh_f* obj);
 void destroy_lbvh_e(lbvh_e* obj);
 
 
-void lbvh_f_separate_cases(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count);
-void lbvh_e_separate_cases(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count);
+void lbvh_f_separate_cases_ccd(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count);
+void lbvh_e_separate_cases_ccd(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count);
+void lbvh_f_separate_cases_cd(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count);
+void lbvh_e_separate_cases_cd(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count);
 
 __device__
 void _d_PP(const double3& v0, const double3& v1, double& d);

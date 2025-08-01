@@ -1392,6 +1392,7 @@ void fullCCDselfQuery_vf(const int* _btype, const double3* _vertexes, const doub
     int blockNum = (numbers + threadNum - 1) / threadNum;
 
     _selfQuery_vf_ccd << <blockNum, threadNum >> > (_btype, _vertexes, moveDir, alpha, _faces, _surfVerts, _bvs, _nodes, _ccd_collisonPairs, _cpNum, dHat, numbers);
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 
 void lbvh::FREE_DEVICE_MEM() {
@@ -1469,7 +1470,7 @@ double lbvh_f::Construct(double3* _mVerts) {
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
     calcInternalAABB(_nodes, _bvs, _flags, face_number);
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    printf("construct finished\n");
+    // printf("construct finished\n");
     return 0;//time0 + time1 + time2;
 }
 
@@ -1629,7 +1630,8 @@ __global__ void separate_cases_edges(const int4* indices, uint2* pp_indices, uin
   const int id3 = indices[idx].w;
   // this is for triangle, so there is no ee cases
   if (id0 >= 0){
-    ee_indices[atomicAdd(cp_num_count + 2, 1)] = make_uint4(id0, id1, id2, id3);
+    ee_indices[atomicAdd(cp_num_count + 3, 1)] = make_uint4(id0, id1, id2, id3);
+    return;
   }
   if (id2 < 0){
     pp_indices[atomicAdd(cp_num_count, 1)] = make_uint2(-id0 - 1, id1);
@@ -1642,20 +1644,29 @@ __global__ void separate_cases_edges(const int4* indices, uint2* pp_indices, uin
   return;
 }
 
-void lbvh_f::SeparateCases(uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* counts){
+void lbvh_f::SeparateCasesCCD(uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* counts){
   // first we get the actual count
   uint32_t cp_num_count = 0;
   CUDA_SAFE_CALL(cudaMemcpy(&cp_num_count, _cpNum, sizeof(uint32_t), cudaMemcpyDeviceToHost));
   if (cp_num_count == 0) return;
-
   const unsigned int threadNum = default_threads;
   int blockNum = (cp_num_count + threadNum - 1) / threadNum;
-
   separate_cases_faces<<<blockNum, threadNum>>>(_ccd_collisionPair, pp_indices, pe_indices, pt_indices, _cpNum, counts);
   CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 
-void lbvh_e::SeparateCases(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* counts){
+void lbvh_f::SeparateCasesCD(uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* counts){
+  // first we get the actual count
+  uint32_t cp_num_count = 0;
+  CUDA_SAFE_CALL(cudaMemcpy(&cp_num_count, _cpNum, sizeof(uint32_t), cudaMemcpyDeviceToHost));
+  if (cp_num_count == 0) return;
+  const unsigned int threadNum = default_threads;
+  int blockNum = (cp_num_count + threadNum - 1) / threadNum;
+  separate_cases_faces<<<blockNum, threadNum>>>(_collisionPair, pp_indices, pe_indices, pt_indices, _cpNum, counts);
+  CUDA_SAFE_CALL(cudaDeviceSynchronize());
+}
+
+void lbvh_e::SeparateCasesCCD(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* counts){
   // first we get the actual count
   uint32_t cp_num_count = 0;
   CUDA_SAFE_CALL(cudaMemcpy(&cp_num_count, _cpNum, sizeof(uint32_t), cudaMemcpyDeviceToHost));
@@ -1668,15 +1679,35 @@ void lbvh_e::SeparateCases(uint2* pp_indices, uint3* pe_indices, uint4* ee_indic
   CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 
+void lbvh_e::SeparateCasesCD(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* counts){
+  // first we get the actual count
+  uint32_t cp_num_count = 0;
+  CUDA_SAFE_CALL(cudaMemcpy(&cp_num_count, _cpNum, sizeof(uint32_t), cudaMemcpyDeviceToHost));
+  if (cp_num_count == 0) return;
 
+  const unsigned int threadNum = default_threads;
+  int blockNum = (cp_num_count + threadNum - 1) / threadNum;
 
-
-
-void lbvh_f_separate_cases(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count){
-  obj->SeparateCases(pp_indices, pe_indices, pt_indices, count);
+  separate_cases_edges<<<blockNum, threadNum>>>(_collisionPair, pp_indices, pe_indices, ee_indices, _cpNum, counts);
+  CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
-void lbvh_e_separate_cases(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count){
-  obj->SeparateCases(pp_indices,pe_indices, ee_indices, count);
+
+
+
+
+
+void lbvh_f_separate_cases_ccd(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count){
+  obj->SeparateCasesCCD(pp_indices, pe_indices, pt_indices, count);
+}
+void lbvh_e_separate_cases_ccd(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count){
+  obj->SeparateCasesCCD(pp_indices,pe_indices, ee_indices, count);
+}
+
+void lbvh_f_separate_cases_cd(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count){
+  obj->SeparateCasesCD(pp_indices, pe_indices, pt_indices, count);
+}
+void lbvh_e_separate_cases_cd(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count){
+  obj->SeparateCasesCD(pp_indices,pe_indices, ee_indices, count);
 }
 
 

@@ -373,8 +373,8 @@ int computeSolution(CUcontext ctx,
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(&h_alpha, d_alpha, sizeof(double), cudaMemcpyDeviceToHost);
 
-    if (h_alpha <= 0){
-      printf("Non SPD matrix detected in %d iterations with residual %lf\\n", iteration, h_delta_new);
+    if (h_alpha < 0){
+      printf("Non SPD matrix detected in %d iterations with residual %lf and alpha %lf\\n", iteration, h_delta_new, h_alpha);
       for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
         cudaStreamDestroy(streams[i]);
       }
@@ -383,7 +383,7 @@ int computeSolution(CUcontext ctx,
       cudaFree(d_delta0);
       cudaFree(d_delta_new);
       cudaFree(d_alpha);
-      return -iteration;
+      return -iteration - 4;
     }
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     h_alpha = h_delta_new / h_alpha;
@@ -413,7 +413,7 @@ int computeSolution(CUcontext ctx,
     vecAddWithScalar<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_s, d_c, d_c, h_delta_new / h_delta_old, MATRIX_SIZE);
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     if (h_delta_new <= relativeTolerance){
-      // printf("Converged in %d iterations with residual %lf\\n", iteration, h_delta_new);
+      printf("Converged in %d iterations with residual %lf\\n", iteration, h_delta_new);
       for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
         cudaStreamDestroy(streams[i]);
       }
@@ -434,6 +434,13 @@ int computeSolution(CUcontext ctx,
   cudaFree(d_delta0);
   cudaFree(d_delta_new);
   cudaFree(d_alpha);
+  cudaDeviceSynchronize();
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    printf("CUDA error during kernel execution: %s\\n", cudaGetErrorString(err));
+    return -3;  // Return error to Python
+  }
+  printf("Converged in %d iterations with residual %lf\\n", maxIteration + 1, h_delta_new);
   return maxIteration + 1;
 }
 
@@ -538,18 +545,22 @@ int computeSolution(CUcontext ctx,
     end_call.record()
     # Wait for the end event to complete
     end_call.synchronize()
-    is_non_spd_matrix = False
     if result == -1:
       # the kernel failed in the first iteration
       # we set the solution to gradient instead
       solution.set(gradient)
       result = -result
+    elif result == -2:
+      raise RuntimeError("solverKernel.computeSolution: CUDA context mismatch or not set")
+    elif result == -3:
+      # the kernel failed to set the context
+      raise RuntimeError("solverKernel.computeSolution: CUDA error during kernel execution")
+      exit()
     elif result < 0:
-      is_non_spd_matrix = True
-      result = -result
+      # result = -result
+      print("Non SPD matrix detected")
+      exit()
     # Calculate the elapsed time in milliseconds
     elapsed_time_ms = start_call.time_till(end_call)
     print(f"Solver converged in {result} iterations")
-    if is_non_spd_matrix:
-      print("Non SPD matrix detected")
     print(f"Solver time: {elapsed_time_ms:.5f} ms")

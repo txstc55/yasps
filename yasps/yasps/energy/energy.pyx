@@ -191,22 +191,16 @@ class energy:
           if child not in pathDict[parent]:
             pathDict[parent].append(child)
       self.__path_dict = pathDict
-      # print("-----------------------------------------------------")
-      # print("wrt_start_indices check")
-      # print("wrt_start_indices:", wrt_start_indices)
-      # print("-----------------------------------------------------")
       self.__indices_kernel = gradientIndicesKernel(pathDict, self.__unioned_child_to_its_children, wrt, wrt_start_indices, self.__energy)
-
-
-    # print("Path dict check")
-    # for parent in self.__path_dict.keys():
-    #   print("Parent:", parent.fullName)
-    #   print("Children:", ", ".join([x.fullName for x in self.__path_dict[parent]]))
-
     assert self.__indices_kernel is not None
     self.__indices_kernel.computeIndices(wrt_start_indices) # actually compute the indices
     # exit(0)
     return
+  @timed("energy.getSparseIndicesAgain")
+  def getSparseIndicesAgain(self):
+    assert self.__indices_kernel is not None
+    self.__indices_kernel.computeIndices(self.__wrt_start_indices) # actually compute the indices
+
 
   def computeIndices(self) -> None:
     assert self.__indices_kernel is not None, "energy.computeIndices: Indices kernel not initialized"
@@ -1191,6 +1185,8 @@ class energy:
         assert self.__hessian is not None
         merged_hessian_rows = self.__hessian.rows + 1
       self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = merged_hessian_rows, cols = self.__gradient.size))
+
+      # print("computed value", self.__merged_hessian_and_gradient_attribute.compute().value.get())
       # print("----------------------------------------------------------------------------")
       # print("merged hessian and gradient attribute")
       # print("size is ", self.__gradient.size)
@@ -1203,9 +1199,9 @@ class energy:
       codegen.generateCode() # this will give us the local kernel strings
       # now add the global kernel
       self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__project_entire_hessian, self.__projection_method, self.__gradient_only)
-      assert self.__hessianAndGradientKernel is not None
-      assert self.__indices_kernel is not None
-      self.__hessianAndGradientKernel.generateKernel(self.__indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
+    assert self.__hessianAndGradientKernel is not None
+    assert self.__indices_kernel is not None
+    self.__hessianAndGradientKernel.generateKernel(self.__indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
 
     # print(f"There are {len(self.__intermediate_compute_pairs)} intermediate attributes")
     # make sure that we also compute the intermediate values
@@ -1215,9 +1211,9 @@ class energy:
       print(f"Computed intermediate attribute with name {name}, hash: {value[0].hash}")
 
     # assertion here
-    assert self.__hessianAndGradientKernel is not None
+    # assert self.__hessianAndGradientKernel is not None
     assert self.__merged_hessian_and_gradient_attribute is not None
-    assert self.__indices_kernel is not None
+    # assert self.__indices_kernel is not None
 
     # after we allocated, we invoke the kernel
     counts_gpu = [x.children_primitive_counts_gpu for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelPrimitiveUnions] # get the children counts

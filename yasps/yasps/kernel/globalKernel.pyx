@@ -212,7 +212,7 @@ extern "C" {{
 '''
       self.__kernelString += f'''
 extern "C"
-void compute(
+int compute(
   {"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}
   {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}
   {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
@@ -229,6 +229,12 @@ void compute(
     MAX_INDEX
   );
   cudaDeviceSynchronize();
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {{
+    fprintf(stderr, "CUDA error: %s\\n", cudaGetErrorString(err));
+    return -1;
+  }}
+  return 0;
 }}
 '''
       self.__kernelString = prune_duplicate_functions(self.__kernelString)
@@ -284,7 +290,7 @@ void compute(
         ctypes.c_void_p,  # result
         ctypes.c_uint  # MAX_INDEX
       ]
-      self.__kernel.restype = None
+      self.__kernel.restype = ctypes.c_int
     else:
       print(f"File {file_name}.so does exists, linking")
       self.__kernel = ctypes.CDLL(f"{file_name}.so").compute
@@ -296,11 +302,13 @@ void compute(
         ctypes.c_void_p,  # result
         ctypes.c_uint  # MAX_INDEX
       ]
-      self.__kernel.restype = None
+      self.__kernel.restype = ctypes.c_int
 
   @timed("globalKernel.compute")
   def compute(self, output):
     assert self.__kernel is not None
+    if self.__att.correspondance.numInstances == 0:
+      return # there is nothing to compute
     counts_gpu = [x.children_primitive_counts_gpu for x in self.__att.deviceKernel.kernelPrimitiveUnions]
     args = [self.__to_void_p(x.value) for x in self.__att.deviceKernel.kernelDatas]
     args += [self.__to_void_p(x.value) for x in self.__att.deviceKernel.kernelConnectivity]
@@ -308,7 +316,9 @@ void compute(
     args += [self.__to_void_p(x) for x in counts_gpu]
     args += [self.__to_void_p(output)]
     args += [ctypes.c_uint32(self.__att.correspondance.numInstances)]
-    self.__kernel(*args)
+    error_code = self.__kernel(*args)
+    if error_code != 0:
+      raise RuntimeError(f"globalKernel.compute: Kernel execution failed with error code {error_code}")
 
 
 

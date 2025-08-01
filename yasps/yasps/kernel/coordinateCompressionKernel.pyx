@@ -61,7 +61,7 @@ __global__ void pack_coord_dim_kernel(CoordDim* output, const unsigned int* coor
 }
 
 extern "C"
-void get_unique_coords(
+int get_unique_coords(
   const unsigned int* coords,           // array of device pointers, size K * 2
   const unsigned short int* dims,       // array of device pointers, size K * 2
   const unsigned int NUM_COORDINATES,                // the total number of coordinates, K
@@ -98,11 +98,13 @@ void get_unique_coords(
   num_unique_coords = unique_end - uncompressedCoordinatesAndDimensionsTmp;
   // printf("Finished getting unique coordinates...\\n");
   // printf("Unique coordinates: %u\\n", num_unique_coords);
-
+  cudaDeviceSynchronize();
   err = cudaGetLastError();
   if (err != cudaSuccess) {
     printf("CUDA Error: %s\\n", cudaGetErrorString(err));
+    return -1; // return error code
   }
+  return 0;
 }
 '''
 
@@ -224,7 +226,7 @@ struct CoordToTuple {
 
 
 extern "C"
-void compress_unique_coords(
+int compress_unique_coords(
   const unsigned int* coords,           // array of device pointers, size K
   const unsigned short int* dims,       // array of device pointers, size K
   const unsigned int NUM_COORDINATES,                // the total number of coordinates, K
@@ -340,6 +342,13 @@ void compress_unique_coords(
   cudaFree(unique_coord_dims);
   cudaFree(unique_dims_outer_indices_copy);
   cudaFree(unique_coord_dims_dimension_only);
+  cudaDeviceSynchronize();
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    fprintf(stderr, "CUDA error: %s\\n", cudaGetErrorString(err));
+    return -1;
+  }
+  return 0;
 }
 '''
 
@@ -390,7 +399,7 @@ class coordinateCompressionKernel:
     wrt_sizes = [x.size for x in wrt]
     unique_wrt_sizes = set(wrt_sizes)
     largest_num_unique_dimensions = len(unique_wrt_sizes) ** 2 # the maximum size is just the square of len
-    print(f"largest_num_unique_dimensions: {largest_num_unique_dimensions}")
+    # print(f"largest_num_unique_dimensions: {largest_num_unique_dimensions}")
     self.__uniqueDimensions = gpuarray.empty(largest_num_unique_dimensions * 2, np.uint16) # allocate the array
     self.__uniqueDimensionsOuterIndices = gpuarray.empty(largest_num_unique_dimensions + 1, np.uint32) # allocate the array
     self.__uniqueDimensionsBlockCounts = gpuarray.empty(largest_num_unique_dimensions, np.uint32) # allocate the array
@@ -438,10 +447,14 @@ class coordinateCompressionKernel:
 
   @property
   def numUniqueCoordinates(self):
+    if self.__total_coordinates == 0:
+      return 0
     return self.__num_unique_coords
 
   @property
   def numUniqueDimensions(self):
+    if self.__total_coordinates == 0:
+      return 0
     return self.__num_unique_dimensions
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -453,6 +466,8 @@ class coordinateCompressionKernel:
 
   @property
   def totalBlockSize(self):
+    if self.__total_coordinates == 0:
+      return 0
     return self.__uniqueDimensionsOuterIndices.get()[self.__num_unique_dimensions]
 
   @timed("coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions")
@@ -471,24 +486,26 @@ class coordinateCompressionKernel:
         f.close()
         os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
         self.__get_unique_coords_kernel = ctypes.CDLL(f"{file_name}.so").get_unique_coords # get the compiled kernel
-        self.__get_unique_coords_kernel.restype = None # set the return type to None
+        self.__get_unique_coords_kernel.restype = ctypes.c_int # set the return type to None
         self.__get_unique_coords_kernel.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_uint32] + [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_uint32)] * 1
       else:
         self.__get_unique_coords_kernel = ctypes.CDLL(f"{file_name}.so").get_unique_coords # get the compiled kernel
-        self.__get_unique_coords_kernel.restype = None # set the return type to None
+        self.__get_unique_coords_kernel.restype = ctypes.c_int # set the return type to None
         self.__get_unique_coords_kernel.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_uint32] + [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_uint32)] * 1
 
     # we have confirmed the kernel is not none
     assert self.__get_unique_coords_kernel is not None
     # call the kernel
     num_unique_coords = ctypes.c_uint32(0)
-    self.__get_unique_coords_kernel(
+    error_code = self.__get_unique_coords_kernel(
       self.__to_void_p(uncompressedCoordinates),
       self.__to_void_p(uncompressedDimensions),
       ctypes.c_uint32(total_coordinates),
       self.__to_void_p(uncompressedCoordinatesAndDimensionsTmp),
       ctypes.byref(num_unique_coords)
     )
+    if error_code != 0:
+      raise RuntimeError(f"coordinateCompressionKernel._getUniqueCoordinatesAndDimensions: Error in get_unique_coords kernel: {error_code}")
     # here we will get the unique number of coordinates
     self.__num_unique_coords = num_unique_coords.value
     # print(f"Number of unique coordinates: {self.__num_unique_coords}")
@@ -507,17 +524,17 @@ class coordinateCompressionKernel:
         f.close()
         os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda --extended-lambda")
         self.__compress_unique_coords_kernel = ctypes.CDLL(f"{file_name}.so").compress_unique_coords # get the compiled kernel
-        self.__compress_unique_coords_kernel.restype = None # set the return type to None
+        self.__compress_unique_coords_kernel.restype = ctypes.c_int # set the return type to None
         self.__compress_unique_coords_kernel.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_uint32] + [ctypes.c_void_p] + [ctypes.c_uint32] +[ctypes.c_void_p] * 5 + [ctypes.POINTER(ctypes.c_uint32)] * 1
       else:
         self.__compress_unique_coords_kernel = ctypes.CDLL(f"{file_name}.so").compress_unique_coords # get the compiled kernel
-        self.__compress_unique_coords_kernel.restype = None # set the return type to None
+        self.__compress_unique_coords_kernel.restype = ctypes.c_int # set the return type to None
         self.__compress_unique_coords_kernel.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_uint32] + [ctypes.c_void_p] + [ctypes.c_uint32] +[ctypes.c_void_p] * 5 + [ctypes.POINTER(ctypes.c_uint32)] * 1
     assert self.__compress_unique_coords_kernel is not None
 
 
     num_unique_dims = ctypes.c_uint32(0)
-    self.__compress_unique_coords_kernel(
+    error_code = self.__compress_unique_coords_kernel(
       self.__to_void_p(uncompressedCoordinates),
       self.__to_void_p(uncompressedDimensions),
       ctypes.c_uint32(total_coordinates),
@@ -530,6 +547,8 @@ class coordinateCompressionKernel:
       self.__to_void_p(self.__lookupArray),
       ctypes.byref(num_unique_dims)
     )
+    if error_code != 0:
+      raise RuntimeError(f"coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd: Error in compress unique coords kernel: {error_code}")
     self.__num_unique_dimensions = num_unique_dims.value
 
 
@@ -540,6 +559,8 @@ class coordinateCompressionKernel:
     count = 0
     for i in range(len(self.__num_coordinates)):
       num_coordinate = self.__num_coordinates[i]
+      if num_coordinate == 0:
+        continue
       # copy coordinates and dimensions into the uncompressed array
       gpu_copy_slice(self.__uncompressedCoordinates, count, self.__coordinates[i], num_coordinate * 2)
       gpu_copy_slice(self.__uncompressedDimensions, count, self.__dimensions[i], num_coordinate * 2)
@@ -555,6 +576,8 @@ class coordinateCompressionKernel:
   def compressCoordinatesAndDimensions(self):
     # first we check if we need to reallocate space
     self.__total_coordinates = sum(self.__num_coordinates)
+    if self.__total_coordinates == 0:
+      return # nothing we need to do
     # allocate space if needed
     if self.__total_coordinates > self.__lookupArray.size:
       self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = gpuarray.empty(self.__total_coordinates, coord_dim_dtype)

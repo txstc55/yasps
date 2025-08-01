@@ -203,6 +203,27 @@ class minimizer:
     # here we set the unique dimensions to generate the code
     self.__blockDimensionsDynamic = self.__compressionKernelDynamic.uniqueDimensions.get().tolist()[: num_unique_dimensions * 2]
 
+  @timed("minimizer.__getSparseIndicesDynamicAgain")
+  def __getSparseIndicesDynamicAgain(self):
+    if len(self.__energiesDynamic) == 0:
+      return
+    for local_energy in self.__energiesDynamic:
+      local_energy.getSparseIndicesAgain()
+    self.__compressionKernelDynamic = coordinateCompressionKernel([x.outputCoordinates for x in self.__energiesDynamic], [x.outputBlockDimensions for x in self.__energiesDynamic], [x.numTotalCoordinates for x in self.__energiesDynamic], self.wrt)
+    self.__compressionKernelDynamic.compressCoordinatesAndDimensions()
+    # set for each energy, for where does the block reside for each coordinate
+    lookupArrays = self.__compressionKernelDynamic.lookupArrays
+    for i in range(len(self.__energiesDynamic)):
+      self.__energiesDynamic[i].block_indices_gpu = lookupArrays[i]
+    # we also initialize the space for blocks flattened
+    totalBlockSize = self.__compressionKernelDynamic.totalBlockSize
+    self.__blocksFlattenedDynamic = gpuarray.empty(totalBlockSize, dtype=np.float64)
+    num_unique_dimensions = self.__compressionKernelDynamic.numUniqueDimensions # get how many unique block dimensions there are
+    self.__blocksStartIndicesDynamic = self.__compressionKernelDynamic.uniqueDimensionsOuterIndices.get().tolist()[: self.__compressionKernelDynamic.numUniqueDimensions + 1]
+    self.__blockPositionsDynamic = self.__compressionKernelDynamic.uniqueCoordinates
+    self.__blockCountsDynamic = self.__compressionKernelDynamic.uniqueDimensionsBlockCounts.get().tolist()
+    # here we set the unique dimensions to generate the code
+    self.__blockDimensionsDynamic = self.__compressionKernelDynamic.uniqueDimensions.get().tolist()[: num_unique_dimensions * 2]
 
   def generateHessianAndGradient(self):
     start = time.time()
@@ -226,12 +247,16 @@ class minimizer:
     self.__diagonal.fill(0)
 
     # for dynamic energies we need to get the sparse indices again
-    self.__getSparseIndicesDynamic()
-
-    for e in self.energies:
-      e.computeHessianAndGradient(self.__gradient, self.__blocksFlattened, self.__diagonal)
+    self.__getSparseIndicesDynamicAgain()
+    print("Sparse indices for dynamic energies updated")
+    print("Computing hessian and gradient for dynamic energies")
     for e in self.energiesDynamic:
       e.computeHessianAndGradient(self.__gradient, self.__blocksFlattenedDynamic, self.__diagonal)
+
+    print("Computing hessian and gradient for static energies")
+    for e in self.energies:
+      e.computeHessianAndGradient(self.__gradient, self.__blocksFlattened, self.__diagonal)
+
 
     # now we have the hessian and gradient
     # we need to solve the system

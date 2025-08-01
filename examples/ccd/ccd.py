@@ -12,7 +12,7 @@ import subprocess
 
 
 class CCD:
-  def __init__(self, num_vertices: int, max_cd_pairs: int = 100000, max_ccd_pairs: int = 100000):
+  def __init__(self, num_vertices: int, max_cd_pairs: int = 10000000, max_ccd_pairs: int = 10000000):
     module_dir = os.path.dirname(os.path.abspath(__file__))  # always resolves to y.py's directory
     mlbvh_so_path = os.path.join(module_dir, "libmlbvh.so")
     accd_so_path = os.path.join(module_dir, "libaccd.so")
@@ -80,6 +80,7 @@ class CCD:
       ctypes.c_void_p, # mqueue, gpu array pointer to double
       ctypes.c_int # number of collision pairs
     ]
+    self.__self_largestFeasibleStepSize.restype = ctypes.c_double
 
 
     self.__mlbvh.create_lbvh_f.restype = ctypes.c_void_p
@@ -182,22 +183,40 @@ class CCD:
 
     self.__num_vertices = num_vertices
     self.__btypes = gpuarray.to_gpu(np.zeros(num_vertices, dtype=np.int32)) # initialize empty array for btypes
-    self.__pp = gpuarray.to_gpu(np.zeros((max_ccd_pairs, 2), dtype=np.uint32))
-    self.__pe = gpuarray.to_gpu(np.zeros((max_ccd_pairs, 3), dtype=np.uint32))
-    self.__pt = gpuarray.to_gpu(np.zeros((max_ccd_pairs, 4), dtype=np.uint32))
-    self.__ee = gpuarray.to_gpu(np.zeros((max_ccd_pairs, 4), dtype=np.uint32))
-    self.__separated_counts = gpuarray.to_gpu(np.zeros(3, dtype=np.uint32))
+    self.__pp = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 2), dtype=np.uint32))
+    self.__pe = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 3), dtype=np.uint32))
+    self.__pt = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 4), dtype=np.uint32))
+    self.__ee = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 4), dtype=np.uint32))
+    self.__separated_counts = gpuarray.to_gpu(np.zeros(4, dtype=np.uint32))
+    self.__mqueue = gpuarray.to_gpu(np.zeros(max_ccd_pairs, dtype=np.float64))
 
-    self.__lbvh_f_separate_cases = self.__mlbvh.lbvh_f_separate_cases
-    self.__lbvh_f_separate_cases.argtypes = [
+    self.__lbvh_f_separate_cases_ccd = self.__mlbvh.lbvh_f_separate_cases_ccd
+    self.__lbvh_f_separate_cases_ccd.argtypes = [
       ctypes.c_void_p, # the object
       ctypes.c_void_p, # pp
       ctypes.c_void_p, # pe
       ctypes.c_void_p, # pt
       ctypes.c_void_p, # separated counts
     ]
-    self.__lbvh_e_separate_cases = self.__mlbvh.lbvh_e_separate_cases
-    self.__lbvh_e_separate_cases.argtypes = [
+    self.__lbvh_e_separate_cases_ccd = self.__mlbvh.lbvh_e_separate_cases_ccd
+    self.__lbvh_e_separate_cases_ccd.argtypes = [
+      ctypes.c_void_p, # the object
+      ctypes.c_void_p, # pp
+      ctypes.c_void_p, # pe
+      ctypes.c_void_p, # ee
+      ctypes.c_void_p, # separated counts
+    ]
+
+    self.__lbvh_f_separate_cases_cd = self.__mlbvh.lbvh_f_separate_cases_cd
+    self.__lbvh_f_separate_cases_cd.argtypes = [
+      ctypes.c_void_p, # the object
+      ctypes.c_void_p, # pp
+      ctypes.c_void_p, # pe
+      ctypes.c_void_p, # pt
+      ctypes.c_void_p, # separated counts
+    ]
+    self.__lbvh_e_separate_cases_cd = self.__mlbvh.lbvh_e_separate_cases_cd
+    self.__lbvh_e_separate_cases_cd.argtypes = [
       ctypes.c_void_p, # the object
       ctypes.c_void_p, # pp
       ctypes.c_void_p, # pe
@@ -216,6 +235,26 @@ class CCD:
   @property
   def cp_num(self) -> gpuarray.GPUArray:
     return self.__cp_num
+
+  @property
+  def separated_counts(self) -> list[int]:
+      return self.__separated_counts.get().tolist()
+
+  @property
+  def pp(self) -> gpuarray.GPUArray:
+    return self.__pp
+
+  @property
+  def pe(self) -> gpuarray.GPUArray:
+    return self.__pe
+
+  @property
+  def pt(self) -> gpuarray.GPUArray:
+    return self.__pt
+
+  @property
+  def ee(self) -> gpuarray.GPUArray:
+    return self.__ee
 
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -266,7 +305,7 @@ class CCD:
       self.__bvh_e,
       ctypes.c_double(dhat)
     )
-    self.__lbvh_e_separate_cases(
+    self.__lbvh_e_separate_cases_cd(
       self.__bvh_e,
       self.__to_void_p(self.__pp),
       self.__to_void_p(self.__pe),
@@ -284,7 +323,7 @@ class CCD:
       self.__to_void_p(moving_directions),
       alpha_p
     )
-    self.__lbvh_e_separate_cases(
+    self.__lbvh_e_separate_cases_ccd(
       self.__bvh_e,
       self.__to_void_p(self.__pp),
       self.__to_void_p(self.__pe),
@@ -335,7 +374,7 @@ class CCD:
       self.__bvh_f,
       ctypes.c_double(dhat)
     )
-    self.__lbvh_f_separate_cases(
+    self.__lbvh_f_separate_cases_cd(
       self.__bvh_f,
       self.__to_void_p(self.__pp),
       self.__to_void_p(self.__pe),
@@ -353,7 +392,7 @@ class CCD:
       self.__to_void_p(moving_directions),
       alpha_p
     )
-    self.__lbvh_f_separate_cases(
+    self.__lbvh_f_separate_cases_ccd(
       self.__bvh_f,
       self.__to_void_p(self.__pp),
       self.__to_void_p(self.__pe),
@@ -367,9 +406,11 @@ class CCD:
     self.__pt.fill(0)
     self.__ee.fill(0)
     self.__separated_counts.fill(0)
+    self.__mat_index.fill(0)
     self.__cp_num.fill(0)
     self.__collision_pairs.fill(0)
     self.__collision_pairs_ccd.fill(0)
+    self.__mqueue.fill(0)
 
   def cd(self, vertices: gpuarray.GPUArray, dhat: float):
     self.reset()
@@ -389,14 +430,15 @@ class CCD:
 
   def compute_largest_step_size(self, slackness, vertices: gpuarray.GPUArray, moving_directions: gpuarray.GPUArray):
     c_slackness = ctypes.c_double(slackness)
-    return self.__self_largestFeasibleStepSize(
+    step = self.__self_largestFeasibleStepSize(
       c_slackness,
       self.__to_void_p(vertices),
-      self.__to_void_p(self.__collision_pairs),
+      self.__to_void_p(self.__collision_pairs_ccd),
       self.__to_void_p(moving_directions),
-      self.__to_void_p(self.__cp_num),
+      self.__to_void_p(self.__mqueue),
       self.__cp_num.get()[0]
     )
+    return step
 
 
 

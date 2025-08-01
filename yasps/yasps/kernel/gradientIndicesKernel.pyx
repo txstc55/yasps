@@ -104,7 +104,7 @@ struct triangular_transform {
   }
 };
 extern "C" {
-void compress_indices(
+int compress_indices(
   const unsigned int* d_indices,           // indices for each local gradient
   const unsigned short int* d_index_sizes,       // sizes of each variable for each index
   short int* d_permutations,               // permutations for compression
@@ -186,7 +186,12 @@ void compress_indices(
     count_ptr + 1 + num_instances, // input end
     count_ptr + 1                  // output: starts at index 0
   );
-  CUDA_CHECK_ERROR(cudaDeviceSynchronize()); // wait for the kernel to finish
+  cudaDeviceSynchronize();
+  if (cudaGetLastError() != cudaSuccess) {
+    printf("CUDA Error: %s\\n", cudaGetErrorString(cudaGetLastError()));
+    return -1; // return error code
+  }
+  return 0;
 }
 } // extern "C"
 '''
@@ -268,7 +273,7 @@ __global__ void computeCoordinatesGlobalFunction(const unsigned int* indices, //
 
 extern "C"
 {
-void computeCoordinates(
+int computeCoordinates(
   const unsigned int* indices, // the index, or coordinate
   const short int* permutations,     // how we permute the indices to compress them
   const short unsigned int* indexSizes, // the size for each index (the size of the corresponding attribute)
@@ -279,7 +284,12 @@ void computeCoordinates(
   const unsigned int num_instances // how many instances
 ){
   computeCoordinatesGlobalFunction<<<(num_instances + 255) / 256, 256>>>(indices, permutations, indexSizes, coordinates, dimensions, coordinatesCountsOuterIndices, num_indices_for_each_instance, num_instances);
-  CUDA_CHECK_ERROR(cudaDeviceSynchronize()); // wait for the kernel to finish
+  cudaDeviceSynchronize(); // wait for the kernel to finish
+  if (cudaGetLastError() != cudaSuccess) {
+    printf("CUDA Error: %s\\n", cudaGetErrorString(cudaGetLastError()));
+    return -1; // return error code
+  }
+  return 0;
 }
 }'''
 
@@ -399,18 +409,24 @@ class gradientIndicesKernel:
 
   @property
   def numUniqueGradientSizes(self):
+    if self.__numInstances == 0:
+      return 0
     return self.__outputNumUniqueGradientSizes.get()[0]
 
   @property
   def numUniqueGradientSizesCPU(self):
-    if self.__outputNumUniqueGradientSizesCPU is None:
-      self.__outputNumUniqueGradientSizesCPU = self.__outputNumUniqueGradientSizes.get()[0]
+    if self.__numInstances == 0:
+      return 0
+    # if self.__outputNumUniqueGradientSizesCPU is None:
+    self.__outputNumUniqueGradientSizesCPU = self.__outputNumUniqueGradientSizes.get()[0]
     return self.__outputNumUniqueGradientSizesCPU
 
   @property
   def outputUniqueGradientSizesCPU(self):
-    if self.__outputUniqueGradientSizesCPU is None:
-      self.__outputUniqueGradientSizesCPU = np.array(self.__outputUniqueGradientSizes.get(), dtype=np.uint16).flatten()[:self.numUniqueGradientSizesCPU]
+    if self.__numInstances == 0:
+      return np.array([], dtype=np.uint16)
+    # if self.__outputUniqueGradientSizesCPU is None:
+    self.__outputUniqueGradientSizesCPU = np.array(self.__outputUniqueGradientSizes.get(), dtype=np.uint16).flatten()[:self.numUniqueGradientSizesCPU]
     return self.__outputUniqueGradientSizesCPU
 
   @property
@@ -433,11 +449,11 @@ class gradientIndicesKernel:
         f.close()
         os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
         self.__compression_kernel = ctypes.CDLL(f"{file_name}.so").compress_indices # get the compiled kernel
-        self.__compression_kernel.restype = None # set the return type to None
+        self.__compression_kernel.restype = ctypes.c_int # set the return type to None
         self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2
       else:
         self.__compression_kernel = ctypes.CDLL(f"{file_name}.so").compress_indices # get the compiled kernel
-        self.__compression_kernel.restype = None # set the return type to None
+        self.__compression_kernel.restype = ctypes.c_int # set the return type to None
         self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2
 
   def __getCoordinateKernel(self):
@@ -451,11 +467,11 @@ class gradientIndicesKernel:
         f.close()
         os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
         self.__coordinate_kernel = ctypes.CDLL(f"{file_name}.so").computeCoordinates # get the compiled kernel
-        self.__coordinate_kernel.restype = None # set the return type to None
+        self.__coordinate_kernel.restype = ctypes.c_int # set the return type to None
         self.__coordinate_kernel.argtypes = [ctypes.c_void_p] * 6 + [ctypes.c_uint32] * 2
       else:
         self.__coordinate_kernel = ctypes.CDLL(f"{file_name}.so").computeCoordinates # get the compiled kernel
-        self.__coordinate_kernel.restype = None # set the return type to None
+        self.__coordinate_kernel.restype = ctypes.c_int # set the return type to None
         self.__coordinate_kernel.argtypes = [ctypes.c_void_p] * 6 + [ctypes.c_uint32] * 2
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -539,7 +555,7 @@ class gradientIndicesKernel:
     if os.path.exists(f'{file_name}.so'):
       # we just use that file?
       self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
-      self.__indices_kernel.restype = None # set the return type to None
+      self.__indices_kernel.restype = ctypes.c_int # set the return type to None
       self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_union_attributes) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
       return
 
@@ -786,7 +802,7 @@ inline void cudaAssert(cudaError_t code, const char *file, int line,
       exit(code);
   }}
 }}
-extern "C" void get_indices(
+extern "C" int get_indices(
   {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
   {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
   const unsigned int* wrtStartIndices,
@@ -802,7 +818,12 @@ extern "C" void get_indices(
     outputSizes,
     NUM_INSTANCES
   );
-  CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+  cudaDeviceSynchronize();
+  if (cudaGetLastError() != cudaSuccess) {{
+    fprintf(stderr, "CUDA Error: %s\\n", cudaGetErrorString(cudaGetLastError()));
+    return -1; // return error code
+  }}
+  return 0; // return success code
 }}
 '''
 
@@ -815,13 +836,16 @@ extern "C" void get_indices(
     # we will now compile this kernel
     os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
     self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
-    self.__indices_kernel.restype = None # set the return type to None
+    self.__indices_kernel.restype = ctypes.c_int # set the return type to None
     self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_union_attributes) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
 
 
   @timed("gradientIndicesKernel.__reallocate")
   def __reallocate(self):
     newNumInstances: int = self.__energy.correspondance.numInstances
+    if newNumInstances == 0:
+      self.__numInstances = 0
+      return
     if newNumInstances > self.__maxInstances:
       # resize the gpu arrays
       self.__outputIndices = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
@@ -855,13 +879,15 @@ extern "C" void get_indices(
     # print([x.fullName for x in self.__used_union_attributes])
     # now we invoke the kernel
     assert self.__indices_kernel is not None
-    self.__indices_kernel(
+    error_code = self.__indices_kernel(
       *connectivity_list_gpu,
       *union_count_list_gpu,
       self.__to_void_p(wrt_start_indices_gpu),
       self.__to_void_p(self.__outputIndices),
       self.__to_void_p(self.__outputIndexSizes),
       self.__numInstances)
+    if error_code != 0:
+      raise RuntimeError(f"gradientIndiciesKernel.__computeIndices: Error in computing indices: {error_code}")
     # print("Indices check: ")
     # print(self.__outputIndices.get()[:40].reshape((-1, 4)))
     # print("Index sizes check: ")
@@ -871,7 +897,7 @@ extern "C" void get_indices(
   @timed("gradientIndicesKernel.__compressIndicesLocal")
   def __compressIndicesLocal(self):
     assert self.__compression_kernel is not None
-    self.__compression_kernel(
+    error_code = self.__compression_kernel(
       self.__to_void_p(self.__outputIndices),
       self.__to_void_p(self.__outputIndexSizes),
       self.__to_void_p(self.__outputPermutations),
@@ -883,10 +909,14 @@ extern "C" void get_indices(
       self.__to_void_p(self.__outputNumUniqueGradientSizes),
       self.__numInstances,
       self.maxNumIndicesNeeded)
+    if error_code != 0:
+      raise RuntimeError(f"gradientIndiciesKernel.__compressIndicesLocal: Error in compressing indices: {error_code}")
 
 
   @property
   def numTotalCoordinates(self) -> int:
+    if self.__numInstances == 0:
+      return 0
     result = np.empty(1, dtype=np.uint32)
     assert self.__outputCompressedCoordinateCountsOuter is not None
     cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
@@ -909,7 +939,7 @@ extern "C" void get_indices(
   @timed("gradientIndicesKernel.generateCoordinates")
   def __generateCoordinates(self):
     assert self.__coordinate_kernel is not None
-    self.__coordinate_kernel(
+    error_code = self.__coordinate_kernel(
       self.__to_void_p(self.__outputIndices),
       self.__to_void_p(self.__outputPermutations),
       self.__to_void_p(self.__outputIndexSizes),
@@ -919,11 +949,15 @@ extern "C" void get_indices(
       self.maxNumIndicesNeeded,
       self.__numInstances
     )
+    if error_code != 0:
+      raise RuntimeError(f"gradientIndiciesKernel.__generateCoordinates: Error in generating coordinates: {error_code}")
 
 
   @timed("gradientIndicesKernel.computeIndices")
   def computeIndices(self, wrt_start_indices: List[int]):
     self.__reallocate()
+    if self.__numInstances == 0:
+      return
     self.__computeIndices(wrt_start_indices)
     self.__compressIndicesLocal()
     self.__allocateSpaceForCoordinates()

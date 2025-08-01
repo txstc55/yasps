@@ -39,6 +39,7 @@ class hessianAndGradientKernel:
 
   def generateKernel(self, unique_gradient_sizes: List[int], wrt: List[attribute]) -> None:
     # check if our unique gradient sizes contains the input gradient sizes
+    # print("unique gradient sizes are", unique_gradient_sizes)
     if set(unique_gradient_sizes).issubset(self.__unique_gradient_sizes):
       return
     self.__unique_gradient_sizes.update(unique_gradient_sizes)
@@ -90,7 +91,7 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
 
   for (int i = 0; i < M; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1.0;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }
   }
 
@@ -119,7 +120,7 @@ __device__ void spd_projection(const double *A, double* output, int choice) {
 
   for (int i = 0; i < N; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1.0;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }
   }
 
@@ -143,7 +144,7 @@ __device__ void spd_projection_inplace(double *A, int choice) {
   Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
   for (int i = 0; i < N; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1.0;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }
   }
 
@@ -167,11 +168,6 @@ __device__ void spd_projection_inplace(double *A, int choice) {
 extern "C" {{
 {item.kernelHeader};
 }}'''
-        if "scene0_handMesh_bone_level_4_d_scene0_handMesh_bones_matrix_global_current_d_scene0_handMesh_bone_level_1_theta__scene0_handMesh_bone_level_2_theta__scene0_handMesh_bone_level_3_theta__scene0_handMesh_bone_level_4_theta_filled_for_scene0_handMesh_skin_with_1_weights_surface_repulse_energy_0_device_function" in item.kernelHeader:
-          print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-          print("Pay attention to this file")
-          print(f".yasps_tmp/{item.attributeName}.cu")
-          print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
       for unique_gradient_size in unique_gradient_sizes:
         if unique_gradient_size == 0:
           continue
@@ -459,7 +455,7 @@ inline void cudaAssert(cudaError_t code, const char *file, int line,
 }}
 
 extern "C"
-void compute_hessian_and_gradient_with_compression(
+int compute_hessian_and_gradient_with_compression(
   {"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}
   {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}
   {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
@@ -480,6 +476,9 @@ void compute_hessian_and_gradient_with_compression(
   const short unsigned int* unique_gradient_sizes, // the unique gradient sizes, on cpu
   const unsigned int num_unique_gradient_sizes // the number of unique gradient sizes
 ){{
+  if (num_unique_gradient_sizes == 0){{
+    return 0; // nothing to do
+  }}
   std::vector<unsigned int> unique_gradient_sizes_instance_count;
   unique_gradient_sizes_instance_count.resize(num_unique_gradient_sizes);
   // copy the outer indices
@@ -552,6 +551,13 @@ void compute_hessian_and_gradient_with_compression(
     cudaStreamSynchronize(streams[i]);
     cudaStreamDestroy(streams[i]);
   }
+  cudaDeviceSynchronize();
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    printf("CUDA error during kernel execution: %s\\n", cudaGetErrorString(err));
+    return -1;  // Return error to Python
+  }
+  return 0; // success
 }
 '''
 
@@ -605,7 +611,7 @@ void compute_hessian_and_gradient_with_compression(
 
 
       self.__kernel = ctypes.CDLL(f"{file_name}.so").compute_hessian_and_gradient_with_compression # get the compiled kernel
-      self.__kernel.restype = None # set the return type to None
+      self.__kernel.restype = ctypes.c_int # set the return type to None
       self.__kernel.argtypes = [
         # Data arrays
         *(ctypes.c_void_p for _ in sortedDatas),             # const double* for each data array
@@ -634,7 +640,7 @@ void compute_hessian_and_gradient_with_compression(
       ]
     else:
       self.__kernel = ctypes.CDLL(f"{file_name}.so").compute_hessian_and_gradient_with_compression # get the compiled kernel
-      self.__kernel.restype = None # set the return type to None
+      self.__kernel.restype = ctypes.c_int # set the return type to None
       self.__kernel.argtypes = [
         # Data arrays
         *(ctypes.c_void_p for _ in sortedDatas),             # const double* for each data array
@@ -674,34 +680,12 @@ void compute_hessian_and_gradient_with_compression(
   ):
     # print("Unique gradient sizes cpu before hessian kernel:", giKernel.outputUniqueGradientSizesCPU)
     # print("Num unique gradient sizes cpu before hessian kernel:", giKernel.numUniqueGradientSizesCPU)
+    if giKernel.numUniqueGradientSizesCPU == 0:
+      # there is nothing to compute
+      return
     assert self.__kernel is not None
-    # ## let's save all the inputs
-    # attributes = [x.get() for x in attributeArgs]
-    # gikernel_stuffs = [x.get() for x in [
-    #   giKernel.outputIndices,
-    #   giKernel.outputSizes,
-    #   giKernel.outputPermutations,
-    #   lookups,
-    #   giKernel.outputCompressedCoordinateCountsOuter,
-    #   giKernel.outputGroupedIndicesInner,
-    #   giKernel.outputGroupedIndicesOuter
-    # ]]
-    # extra_cint_args = [0, giKernel.maxNumIndicesNeeded, self.__projection_method]
-    # outputs = [x.get() for x in [gradient, hessian_blocks, diagonal]]
-    # unique_gradient_sizes_cpu = giKernel.outputUniqueGradientSizesCPU
-    # num_unique_gradient_sizes_cpu = giKernel.numUniqueGradientSizesCPU
 
-    # # now we save everything in a numpy npz file
-    # import numpy as np
-    # np.savez("dumped_kernel_data.npz",
-    #          attributes=np.array(attributes, dtype=object),
-    #          gikernel_stuffs=np.array(gikernel_stuffs, dtype=object),
-    #          extra_cint_args=np.array(extra_cint_args),
-    #          outputs=np.array(outputs, dtype=object),
-    #          unique_gradient_sizes_cpu=np.array(unique_gradient_sizes_cpu),
-    #          num_unique_gradient_sizes_cpu=np.array(num_unique_gradient_sizes_cpu))
-
-    self.__kernel(
+    error_code = self.__kernel(
       *[self.__to_void_p(x) for x in attributeArgs],
       self.__to_void_p(giKernel.outputIndices),
       self.__to_void_p(giKernel.outputSizes),
@@ -719,6 +703,8 @@ void compute_hessian_and_gradient_with_compression(
       giKernel.outputUniqueGradientSizesCPU.ctypes.data_as(ctypes.c_void_p),
       ctypes.c_uint32(giKernel.numUniqueGradientSizesCPU)
     )
+    if error_code != 0:
+      raise RuntimeError(f"HessianAndGradientKernel.compute: Kernel execution failed with error code {error_code}")
 
   @property
   def kernelString(self) -> str:

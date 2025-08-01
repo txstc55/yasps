@@ -775,7 +775,6 @@ double self_largestFeasibleStepSize(
       _reduct_max_double <<<blockNum, threadNum, sharedMsize >>> (mqueue, numbers);
       numbers = blockNum;
       blockNum = (numbers + threadNum - 1) / threadNum;
-
     }
     double minValue;
     cudaMemcpy(&minValue, mqueue, sizeof(double), cudaMemcpyDeviceToHost);

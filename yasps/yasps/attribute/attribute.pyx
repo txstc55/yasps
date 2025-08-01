@@ -388,9 +388,11 @@ class attribute:
 
     elif isinstance(value, gpuarray.GPUArray):
       if deepCopy:
-        self.__value = value.copy().ravel()
+        if self.__value.shape != value.shape or self.__value.dtype != value.dtype:
+          self.__value = gpuarray.empty_like(value)
+        self.__value.set(value)
       else:
-        self.__value = value.ravel()
+        self.__value = value
     else:
       try:
         flattend_value = np.array(value, dtype=np.float64).flatten()
@@ -872,6 +874,8 @@ class attribute:
     assert self.__correspondance is not None # cannot be none
     if self.__value.size < self.__correspondance.numInstances * self.size:
       self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
+    if self.__value.size > 0:
+      self.__value.fill(0)
     assert self.__globalKernel is not None
     assert self.__value is not None
     self.__globalKernel.compute(self.__value)

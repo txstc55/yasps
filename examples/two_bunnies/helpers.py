@@ -1,5 +1,6 @@
 import numpy as np
 from yasps import attribute
+import pycuda.gpuarray as gpuarray
 def extract_surface_triangles(tets):
   from collections import defaultdict
   face_count = defaultdict(int)
@@ -32,7 +33,10 @@ def extract_edges_from_triangles(triangles):
       edge_set.add(edge)
   return np.array([list(e) for e in edge_set])
 
-
+def safe_gpu_sum(arr: gpuarray.GPUArray) -> float:
+  if arr.size == 0:
+      return 0.0
+  return gpuarray.sum(arr).get()
 
 
 def stable_neo_hookean(tet_position_rest, tet_position, mu, lam, dt):
@@ -67,27 +71,58 @@ def inertia(x_before, vel, dt, x, mass):
   return (0.5 * (x - x_target).transpose() * mass * (x - x_target))
 
 
-def point_point(position, delta, dt):
+def point_point(position, dHat, kappa):
   p0 = position.row(0)
   p1 = position.row(1)
-  pass
+  d = (p1 - p0).dot(p1 - p0)
+  I5 = d / dHat
+  lenE = d - dHat
+  I5log = I5.log()
+  return kappa * lenE * lenE * I5log * I5log
 
-def point_edge(position, delta, dt):
+def point_edge(position, dHat, kappa):
   p0 = position.row(0)
   p1 = position.row(1)
   p2 = position.row(2)
-  pass
+  d = (p1 - p0).cross(p2 - p0) / ((p2 - p1).dot(p2 - p1))
+  d = d.dot(d)
+  I5 = d / dHat
+  lenE = d - dHat
+  I5log = I5.log()
+  return kappa * lenE * lenE * I5log * I5log
 
-def point_triangle(position, delta, dt):
+def point_triangle(position, dHat, kappa):
   p0 = position.row(0)
   p1 = position.row(1)
   p2 = position.row(2)
   p3 = position.row(3)
-  pass
+  b = (p2 - p1).cross(p3 - p1)
+  atb = (p0 - p1).dot(b)
+  d = atb * atb / (b.dot(b))
+  I5 = d / dHat
+  lenE = d - dHat
+  I5log = I5.log()
+  return kappa * lenE * lenE * I5log * I5log
 
-def edge_edge(position, delta, dt):
+def edge_edge(position, dHat, kappa):
   p0 = position.row(0)
   p1 = position.row(1)
   p2 = position.row(2)
   p3 = position.row(3)
-  pass
+  b = (p1 - p0).cross(p3 - p2)
+  atb = (p2 - p0).dot(b)
+  d = atb * atb / (b.dot(b))
+  I5 = d / dHat
+  lenE = d - dHat
+  I5log = I5.log()
+  return kappa * lenE * lenE * I5log * I5log
+
+from pycuda.reduction import ReductionKernel
+# Define the reduction kernel once
+abs_max_reduce = ReductionKernel(
+  np.float64,
+  neutral="0",
+  reduce_expr="max(a, b)",
+  map_expr="fabs(x[i])",
+  arguments="double *x"
+)
