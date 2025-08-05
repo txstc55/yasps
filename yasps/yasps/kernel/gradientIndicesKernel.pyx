@@ -186,10 +186,10 @@ int compress_indices(
     count_ptr + 1 + num_instances, // input end
     count_ptr + 1                  // output: starts at index 0
   );
-  cudaDeviceSynchronize();
-  if (cudaGetLastError() != cudaSuccess) {
-    printf("CUDA Error: %s\\n", cudaGetErrorString(cudaGetLastError()));
-    return -1; // return error code
+  cudaError_t err = cudaDeviceSynchronize();
+  if (err != cudaSuccess) {
+    fprintf(stderr, "CUDA Error (synchronize): %s\\n", cudaGetErrorString(err));
+    return -1;
   }
   return 0;
 }
@@ -199,7 +199,6 @@ int compress_indices(
 coordinate_kernel_string = '''
 #include <stdio.h>
 #include <stdlib.h>
-#include <cuda.h>
 #include <cuda_runtime.h>
 // for checking cuda error
 #define CUDA_CHECK_ERROR(ans)                                                  \
@@ -284,10 +283,10 @@ int computeCoordinates(
   const unsigned int num_instances // how many instances
 ){
   computeCoordinatesGlobalFunction<<<(num_instances + 255) / 256, 256>>>(indices, permutations, indexSizes, coordinates, dimensions, coordinatesCountsOuterIndices, num_indices_for_each_instance, num_instances);
-  cudaDeviceSynchronize(); // wait for the kernel to finish
-  if (cudaGetLastError() != cudaSuccess) {
-    printf("CUDA Error: %s\\n", cudaGetErrorString(cudaGetLastError()));
-    return -1; // return error code
+  cudaError_t err = cudaDeviceSynchronize();
+  if (err != cudaSuccess) {
+    fprintf(stderr, "CUDA Error (synchronize): %s\\n", cudaGetErrorString(err));
+    return -1;
   }
   return 0;
 }
@@ -566,7 +565,7 @@ class gradientIndicesKernel:
     self.__kernelString += '''
 #include <stdio.h>
 #include <stdlib.h>
-#include <cuda.h>
+#include <cuda_runtime.h>
 '''
     # now, for each parent-child relationship, we will have a kernel
     for parent in self.__path_dict.keys():
@@ -818,10 +817,10 @@ extern "C" int get_indices(
     outputSizes,
     NUM_INSTANCES
   );
-  cudaDeviceSynchronize();
-  if (cudaGetLastError() != cudaSuccess) {{
-    fprintf(stderr, "CUDA Error: %s\\n", cudaGetErrorString(cudaGetLastError()));
-    return -1; // return error code
+  cudaError_t err = cudaDeviceSynchronize();
+  if (err != cudaSuccess) {{
+    fprintf(stderr, "CUDA Error (synchronize): %s\\n", cudaGetErrorString(err));
+    return -1;
   }}
   return 0; // return success code
 }}
@@ -843,9 +842,6 @@ extern "C" int get_indices(
   @timed("gradientIndicesKernel.__reallocate")
   def __reallocate(self):
     newNumInstances: int = self.__energy.correspondance.numInstances
-    if newNumInstances == 0:
-      self.__numInstances = 0
-      return
     if newNumInstances > self.__maxInstances:
       # resize the gpu arrays
       self.__outputIndices = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
@@ -855,8 +851,10 @@ extern "C" int get_indices(
       self.__outputGroupedIndicesInner = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
       self.__outputCompressedCoordinateCountsOuter = gpuarray.empty(newNumInstances + 1, dtype=np.uint32)
       self.__maxInstances = newNumInstances # update the maximum size
-
     self.__numInstances = newNumInstances # update the number of instances
+    if newNumInstances == 0:
+      self.__numInstances = 0
+      return
     # we clear the output arrays
     self.__outputIndices.fill(0)
     self.__outputIndexSizes.fill(0)
@@ -870,14 +868,13 @@ extern "C" int get_indices(
   @timed("gradientIndicesKernel.__computeIndices")
   def __computeIndices(self, wrt_start_indices: List[int]):
     # first let's convert wrt_start_indices to a pycuda array
-    wrt_start_indices_gpu = gpuarray.to_gpu(np.array(wrt_start_indices, dtype=np.uint32))
+    wrt_start_indices_gpu = gpuarray.to_gpu(np.array(wrt_start_indices, dtype=np.uint32)) # this has to be non empty
     # then we get all the gpu arrays for the connectivity
     connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
     self.__union_counts = [x.correspondance.children_primitive_counts_gpu for x in self.__used_union_attributes]
     union_count_list_gpu = [self.__to_void_p(x) for x in self.__union_counts]
-    # print("Used union attributes are")
-    # print([x.fullName for x in self.__used_union_attributes])
     # now we invoke the kernel
+
     assert self.__indices_kernel is not None
     error_code = self.__indices_kernel(
       *connectivity_list_gpu,
@@ -885,14 +882,11 @@ extern "C" int get_indices(
       self.__to_void_p(wrt_start_indices_gpu),
       self.__to_void_p(self.__outputIndices),
       self.__to_void_p(self.__outputIndexSizes),
-      self.__numInstances)
+      self.__numInstances
+    )
+
     if error_code != 0:
       raise RuntimeError(f"gradientIndiciesKernel.__computeIndices: Error in computing indices: {error_code}")
-    # print("Indices check: ")
-    # print(self.__outputIndices.get()[:40].reshape((-1, 4)))
-    # print("Index sizes check: ")
-    # print(self.__outputIndexSizes.get()[:40].reshape((-1, 4)))
-    # exit()
 
   @timed("gradientIndicesKernel.__compressIndicesLocal")
   def __compressIndicesLocal(self):
@@ -962,37 +956,3 @@ extern "C" int get_indices(
     self.__compressIndicesLocal()
     self.__allocateSpaceForCoordinates()
     self.__generateCoordinates()
-    # print("Indices computed")
-    # print("wrt start indices are")
-    # print(wrt_start_indices)
-
-    # print("Used Indices", self.__outputIndices.get()[:20])
-    # print("Num instances are", self.__numInstances)
-    # print("Dimensions of the indices:", self.__outputIndexSizes.get()[:20])
-    # print("There are", self.__outputNumUniqueGradientSizes.get()[0], "unique gradient sizes")
-    # # print("Checking output gradient sizes", self.__outputGradientSizes.get()[:200].reshape((-1, 10)))
-    # print("The unique gradient sizes are:", self.__outputUniqueGradientSizes.get())
-    # print("Grouped Indices outer:", self.__outputGroupedIndicesOuter.get())
-    # print("Grouped Indices inner:", self.__outputGroupedIndicesInner.get()[890:910])
-    # print("Total coordinates counts outer:", self.__outputCompressedCoordinateCountsOuter.get())
-    # print("Number of total coordinates:", self.numTotalCoordinates)
-    # print("Permutations:", self.__outputPermutations.get())
-    # print("Coordinates size:", self.__outputCoordinates.get().shape)
-    # print("Dimensions size:", self.__outputBlockDimensions.get().shape)
-    # print("Permutation preview:", self.__outputPermutations.get()[:30])
-    # exit()
-
-    # # lets save the useful info to npz for check later
-    # np.savez("output_indices.npz",
-    #   outputIndices = self.__outputIndices.get(),
-    #   outputIndexSizes = self.__outputIndexSizes.get(),
-    #   outputNumUniqueGradientSizes = self.__outputNumUniqueGradientSizes.get(),
-    #   outputGroupedIndicesOuter = self.__outputGroupedIndicesOuter.get(),
-    #   outputGroupedIndicesInner = self.__outputGroupedIndicesInner.get(),
-    #   outputCompressedCoordinateCountsOuter = self.__outputCompressedCoordinateCountsOuter.get(),
-    #   numTotalCoordinates = self.numTotalCoordinates,
-    #   outputPermutations = self.__outputPermutations.get(),
-    #   outputCoordinates = self.__outputCoordinates.get(),
-    #   outputBlockDimensions = self.__outputBlockDimensions.get(),
-    # )
-    # exit()
