@@ -127,7 +127,7 @@ class minimizer:
     self.__getGradientSize() # get the size of the gradient
     start = time.time()
     self.__getSparseIndices() # get the sparse indices
-    self.__getSparseIndicesDynamic()
+    # self.__getSparseIndicesDynamic()
     end = time.time()
     print(f"Sparse indices generation: {1000.0 * (end - start)} ms")
     # exit()
@@ -191,8 +191,11 @@ class minimizer:
     self.__compressionKernelDynamic.compressCoordinatesAndDimensions()
     # set for each energy, for where does the block reside for each coordinate
     lookupArrays = self.__compressionKernelDynamic.lookupArrays
+    tmp_count = 0
     for i in range(len(self.__energiesDynamic)):
-      self.__energiesDynamic[i].block_indices_gpu = lookupArrays[i]
+      if self.__energiesDynamic[i].numTotalCoordinates > 0:
+        self.__energiesDynamic[i].block_indices_gpu = lookupArrays[tmp_count]
+        tmp_count += 1
     # we also initialize the space for blocks flattened
     totalBlockSize = self.__compressionKernelDynamic.totalBlockSize
     self.__blocksFlattenedDynamic = gpuarray.empty(totalBlockSize, dtype=np.float64)
@@ -209,15 +212,21 @@ class minimizer:
       return
     for local_energy in self.__energiesDynamic:
       local_energy.getSparseIndicesAgain()
-    self.__compressionKernelDynamic = coordinateCompressionKernel([x.outputCoordinates for x in self.__energiesDynamic], [x.outputBlockDimensions for x in self.__energiesDynamic], [x.numTotalCoordinates for x in self.__energiesDynamic], self.wrt)
+    assert self.__compressionKernelDynamic is not None, "minimizer.__getSparseIndicesDynamicAgain: compression kernel for dynamic energies is not initialized."
+    self.__compressionKernelDynamic.updateCoordinates([x.outputCoordinates for x in self.__energiesDynamic], [x.outputBlockDimensions for x in self.__energiesDynamic], [x.numTotalCoordinates for x in self.__energiesDynamic])
     self.__compressionKernelDynamic.compressCoordinatesAndDimensions()
     # set for each energy, for where does the block reside for each coordinate
     lookupArrays = self.__compressionKernelDynamic.lookupArrays
+    tmp_count = 0
     for i in range(len(self.__energiesDynamic)):
-      self.__energiesDynamic[i].block_indices_gpu = lookupArrays[i]
+      if self.__energiesDynamic[i].numTotalCoordinates > 0:
+        self.__energiesDynamic[i].block_indices_gpu = lookupArrays[tmp_count]
+        tmp_count += 1
     # we also initialize the space for blocks flattened
     totalBlockSize = self.__compressionKernelDynamic.totalBlockSize
-    self.__blocksFlattenedDynamic = gpuarray.empty(totalBlockSize, dtype=np.float64)
+    if self.__blocksFlattenedDynamic.size < totalBlockSize:
+      # if the size is not enough, we need to reallocate
+      self.__blocksFlattenedDynamic = gpuarray.zeros(totalBlockSize, dtype=np.float64)
     num_unique_dimensions = self.__compressionKernelDynamic.numUniqueDimensions # get how many unique block dimensions there are
     self.__blocksStartIndicesDynamic = self.__compressionKernelDynamic.uniqueDimensionsOuterIndices.get().tolist()[: self.__compressionKernelDynamic.numUniqueDimensions + 1]
     self.__blockPositionsDynamic = self.__compressionKernelDynamic.uniqueCoordinates
@@ -234,7 +243,9 @@ class minimizer:
 
   @timed("minimizer.computeSolution")
   def computeSolution(self, tolerance = 1e-3) -> List[gpuarray.GPUArray]:
-    self.computeHessianAndGradient(tolerance = tolerance)
+    error_code = self.computeHessianAndGradient(tolerance = tolerance)
+    if error_code < 0:
+      return []
     return self.solutionSegments
 
   def computeHessianAndGradient(self, tolerance = 1e-3):
@@ -245,17 +256,17 @@ class minimizer:
     if self.__blocksFlattenedDynamic.shape[0] > 0:
       self.__blocksFlattenedDynamic.fill(0)
     self.__diagonal.fill(0)
+    for e in self.energies:
+        e.computeHessianAndGradient(self.__gradient, self.__blocksFlattened, self.__diagonal)
+    # print("Diagonal sum before dynamic", np.sum((self.__diagonal.get())))
+    # print("Gradient sum before dynamic", np.sum((self.__gradient.get())))
 
     # for dynamic energies we need to get the sparse indices again
     self.__getSparseIndicesDynamicAgain()
-    print("Sparse indices for dynamic energies updated")
-    print("Computing hessian and gradient for dynamic energies")
     for e in self.energiesDynamic:
-      e.computeHessianAndGradient(self.__gradient, self.__blocksFlattenedDynamic, self.__diagonal)
+      if e.numTotalCoordinates > 0:
+        e.computeHessianAndGradient(self.__gradient, self.__blocksFlattenedDynamic, self.__diagonal)
 
-    print("Computing hessian and gradient for static energies")
-    for e in self.energies:
-      e.computeHessianAndGradient(self.__gradient, self.__blocksFlattened, self.__diagonal)
 
 
     # now we have the hessian and gradient
@@ -287,13 +298,8 @@ class minimizer:
     self.__d_s.fill(0)
     self.__solution.fill(0)
 
-    cuda_context = pycuda.autoinit.context
-    context_ptr = int(cuda_context.handle)
-    context_ptr_c = ctypes.c_void_p(context_ptr)
-    # call the kernel
 
-    self.__solver.computeSolution(
-      context_ptr_c,
+    error_code = self.__solver.computeSolution(
       20000,
       tolerance,
       self.__blocksFlattened,
@@ -315,6 +321,7 @@ class minimizer:
       self.__d_s,
       self.__solution
     )
+    return error_code
 
 
 

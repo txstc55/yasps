@@ -151,7 +151,10 @@ class scene:
 
 
   def minimizeEnergy(self, tolerance = 1e-3):
-    self.__minimizer.computeHessianAndGradient(tolerance = tolerance)
+    error_code = self.__minimizer.computeHessianAndGradient(tolerance = tolerance)
+    if error_code < 0:
+      print("scene.minimizeEnergy: got error code", error_code)
+      return []
     return self.__minimizer.solutionSegments
 
   @property
