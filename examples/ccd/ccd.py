@@ -9,10 +9,10 @@ from yasps.helper import timed
 import os
 import pycuda.driver as cuda
 import subprocess
-
+import time
 
 class CCD:
-  def __init__(self, num_vertices: int, max_cd_pairs: int = 10000000, max_ccd_pairs: int = 10000000):
+  def __init__(self, num_vertices: int, max_cd_pairs: int = 100000000, max_ccd_pairs: int = 100000000):
     module_dir = os.path.dirname(os.path.abspath(__file__))  # always resolves to y.py's directory
     mlbvh_so_path = os.path.join(module_dir, "libmlbvh.so")
     accd_so_path = os.path.join(module_dir, "libaccd.so")
@@ -179,7 +179,7 @@ class CCD:
     self.__collision_pairs_ccd = gpuarray.to_gpu(np.zeros((max_ccd_pairs, 4), dtype=np.int32))
     assert self.__collision_pairs_ccd.ptr % 16 == 0, "Device memory is not 16-byte aligned!"
     self.__mat_index = gpuarray.to_gpu(np.zeros(max_cd_pairs, dtype=np.int32))
-    self.__cp_num = gpuarray.to_gpu(np.zeros(5, dtype=np.int32)) # for some reason this is 5 in GIPC and we will keep it this way
+    self.__cp_num = gpuarray.to_gpu(np.zeros(5, dtype=np.uint32)) # for some reason this is 5 in GIPC and we will keep it this way
 
     self.__num_vertices = num_vertices
     self.__btypes = gpuarray.to_gpu(np.zeros(num_vertices, dtype=np.int32)) # initialize empty array for btypes
@@ -238,7 +238,7 @@ class CCD:
 
   @property
   def separated_counts(self) -> list[int]:
-      return self.__separated_counts.get().tolist()
+    return self.__separated_counts.get().tolist()
 
   @property
   def pp(self) -> gpuarray.GPUArray:
@@ -323,13 +323,13 @@ class CCD:
       self.__to_void_p(moving_directions),
       alpha_p
     )
-    self.__lbvh_e_separate_cases_ccd(
-      self.__bvh_e,
-      self.__to_void_p(self.__pp),
-      self.__to_void_p(self.__pe),
-      self.__to_void_p(self.__ee),
-      self.__to_void_p(self.__separated_counts)
-    )
+    # self.__lbvh_e_separate_cases_ccd(
+    #   self.__bvh_e,
+    #   self.__to_void_p(self.__pp),
+    #   self.__to_void_p(self.__pe),
+    #   self.__to_void_p(self.__ee),
+    #   self.__to_void_p(self.__separated_counts)
+    # )
 
   def init_faces(self,
     vertices: gpuarray.GPUArray, # list of double
@@ -383,6 +383,7 @@ class CCD:
     )
 
   def ccd_faces(self, vertices: gpuarray.GPUArray, dhat: float, moving_directions: gpuarray.GPUArray, alpha: float):
+
     c_alpha = ctypes.c_double(alpha)
     alpha_p = ctypes.byref(c_alpha)
     self.construct_full_ccd_faces(vertices, moving_directions, alpha)
@@ -392,13 +393,13 @@ class CCD:
       self.__to_void_p(moving_directions),
       alpha_p
     )
-    self.__lbvh_f_separate_cases_ccd(
-      self.__bvh_f,
-      self.__to_void_p(self.__pp),
-      self.__to_void_p(self.__pe),
-      self.__to_void_p(self.__pt),
-      self.__to_void_p(self.__separated_counts)
-    )
+    # self.__lbvh_f_separate_cases_ccd(
+    #   self.__bvh_f,
+    #   self.__to_void_p(self.__pp),
+    #   self.__to_void_p(self.__pe),
+    #   self.__to_void_p(self.__pt),
+    #   self.__to_void_p(self.__separated_counts)
+    # )
 
   def reset(self):
     self.__pp.fill(0)
@@ -412,15 +413,27 @@ class CCD:
     self.__collision_pairs_ccd.fill(0)
     self.__mqueue.fill(0)
 
+
   def cd(self, vertices: gpuarray.GPUArray, dhat: float):
+    time_start = time.time()
     self.reset()
     self.cd_faces(vertices, dhat)
+    self.__collision_pairs.fill(0)
+    self.__cp_num.fill(0)
+    self.__collision_pairs_ccd.fill(0)
     self.cd_edges(vertices, dhat)
+    time_end = time.time()
+    # print time in milliseconds
+    print(f"Collision detection took {(time_end - time_start) * 1000:.2f} ms")
 
   def ccd(self, vertices: gpuarray.GPUArray, dhat: float, moving_directions: gpuarray.GPUArray, alpha: float):
+    time_start = time.time()
     self.reset()
     self.ccd_faces(vertices, dhat, moving_directions, alpha)
     self.ccd_edges(vertices, dhat, moving_directions, alpha)
+    time_end = time.time()
+    # print time in milliseconds
+    print(f"Collision detection took {(time_end - time_start) * 1000:.2f} ms")
 
   def __del__(self):
     if self.__mlbvh is not None:
@@ -446,11 +459,12 @@ class CCD:
 # x = CCD(4)
 # points = gpuarray.to_gpu(np.array([[1.0, 0.0, 0.0, -0.5, 0.0, 0.866, -0.5, 0.0, -0.866, 0.5, 1.0, 0.0]]).astype(np.float64))
 # moving_directions = gpuarray.to_gpu(np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5, -1, 0.0]]).astype(np.float64))
-# faces = gpuarray.to_gpu(np.array([0, 1, 2, 1, 2, 3]).astype(np.int32))
+# faces = gpuarray.to_gpu(np.array([0, 1, 2]).astype(np.int32))
 # surface_vertices = gpuarray.to_gpu(np.array([0, 1, 2, 3]).astype(np.uint32))
-# face_num = 2
+# face_num = 1
 # x.init_faces(points, faces, surface_vertices, face_num)
-# x.cd_faces(points, 3)
+# print("Face initialized")
+# x.cd_faces(points, 3.0)
 # print(x.cp_num.get())
 # print(x.collision_pairs.get())
 # print(x.collision_pairs_ccd.get())

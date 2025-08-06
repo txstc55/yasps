@@ -164,17 +164,10 @@ class energy:
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
     self.__wrt = wrt
     self.__wrt_start_indices = wrt_start_indices
-    # # the wrt_start_indices, size and if type is primitive
-    # wrtStartIndicesAndSize: Dict[int, Tuple[int, int, bool]] = {x.hash: (wrt_start_indices[i], x.size, x.correspondance.type == "primitive") for i, x in enumerate(wrt)} # this maps from all the data being used, to where it should start in the gradient, its size and if it is a primitive (we can optimize for mesh or scene primitive, which doesnt really have any number of instances)
-    # # we have the path, now determine which path to use since we have the wrt
     usedPaths: List[List[attribute]] = []
     for path in self.__paths:
       if path[-1] in wrt:
         usedPaths.append(path)
-    # print("Used path")
-    # for path in usedPaths:
-    #   print(", ".join([x.fullName for x in path]))
-    #   print("===================================================")
     if self.__indices_kernel is None:
       # construct the path dict and generate the kernel
       pathDict: Dict[attribute, List[attribute]] = {}
@@ -194,8 +187,8 @@ class energy:
       self.__indices_kernel = gradientIndicesKernel(pathDict, self.__unioned_child_to_its_children, wrt, wrt_start_indices, self.__energy)
     assert self.__indices_kernel is not None
     self.__indices_kernel.computeIndices(wrt_start_indices) # actually compute the indices
-    # exit(0)
     return
+
   @timed("energy.getSparseIndicesAgain")
   def getSparseIndicesAgain(self):
     assert self.__indices_kernel is not None
@@ -1186,13 +1179,6 @@ class energy:
         merged_hessian_rows = self.__hessian.rows + 1
       self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = merged_hessian_rows, cols = self.__gradient.size))
 
-      # print("computed value", self.__merged_hessian_and_gradient_attribute.compute().value.get())
-      # print("----------------------------------------------------------------------------")
-      # print("merged hessian and gradient attribute")
-      # print("size is ", self.__gradient.size)
-      # for item in merged_hessian_and_gradient:
-      #   print(str(item))
-      # print("----------------------------------------------------------------------------")
 
       from yasps.codeGenerator import codeGenerator
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
@@ -1208,7 +1194,7 @@ class energy:
     for name, value in self.__intermediate_compute_pairs.items():
       value[0].compute()
       value[1].updateValue(value[0].value)
-      print(f"Computed intermediate attribute with name {name}, hash: {value[0].hash}")
+      # print(f"Computed intermediate attribute with name {name}, hash: {value[0].hash}")
 
     # assertion here
     # assert self.__hessianAndGradientKernel is not None

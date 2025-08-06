@@ -481,6 +481,7 @@ inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, 
     double3 v1 = _vertexes[id1];
     double3 v2 = _vertexes[id2];
     double3 v3 = _vertexes[id3];
+    // printf("id0: %u, id1: %u, id2: %u, id3: %u\n", id0, id1, id2, id3);
 
     int dtype = _dType_PT(v0, v1, v2, v3);
 
@@ -637,6 +638,9 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
             }
             else {
                 int cdp_idx = atomicAdd(_cpNum, 1);
+                // if (cdp_idx >= 100000000){
+                //   printf("cpd idx is too large %d\n", cdp_idx);
+                // }
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, -1, add_e);
                 MatIndex[cdp_idx] = atomicAdd(_cpNum + 2, 1);
@@ -1069,7 +1073,7 @@ void _selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _fa
         const uint32_t L_idx = _nodes[node_id].left_idx;
         const uint32_t R_idx = _nodes[node_id].right_idx;
 
-        if (overlap(_bv, _bvs[L_idx], gapl))
+        if (L_idx != 0xFFFFFFFF && overlap(_bv, _bvs[L_idx], gapl))
         {
             const auto obj_idx = _nodes[L_idx].element_idx;
             if (obj_idx != 0xFFFFFFFF)
@@ -1084,7 +1088,7 @@ void _selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _fa
                 *stack_ptr++ = L_idx;
             }
         }
-        if (overlap(_bv, _bvs[R_idx], gapl))
+        if (R_idx != 0xFFFFFFFF && overlap(_bv, _bvs[R_idx], gapl))
         {
             const auto obj_idx = _nodes[R_idx].element_idx;
             if (obj_idx != 0xFFFFFFFF)
@@ -1127,7 +1131,7 @@ void _selfQuery_vf_ccd(const int* _btype, const double3* _vertexes, const double
         const uint32_t L_idx = _nodes[node_id].left_idx;
         const uint32_t R_idx = _nodes[node_id].right_idx;
 
-        if (overlap(_bv, _bvs[L_idx], gapl))
+        if (L_idx != 0xFFFFFFFF && overlap(_bv, _bvs[L_idx], gapl))
         {
             const auto obj_idx = _nodes[L_idx].element_idx;
             if (obj_idx != 0xFFFFFFFF)
@@ -1143,7 +1147,7 @@ void _selfQuery_vf_ccd(const int* _btype, const double3* _vertexes, const double
                 *stack_ptr++ = L_idx;
             }
         }
-        if (overlap(_bv, _bvs[R_idx], gapl))
+        if (R_idx != 0xFFFFFFFF && overlap(_bv, _bvs[R_idx], gapl))
         {
             const auto obj_idx = _nodes[R_idx].element_idx;
             if (obj_idx != 0xFFFFFFFF)
@@ -1380,8 +1384,10 @@ void selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _fac
     int numbers = number;
     const unsigned int threadNum = 256;
     int blockNum = (numbers + threadNum - 1) / threadNum;
-
+    // printf("Before selfQuery_vf\n");
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
     _selfQuery_vf << <blockNum, threadNum >> > (_btype, _vertexes, _faces, _surfVerts, _bvs, _nodes, _collisonPairs, _ccd_collisonPairs, _cpNum, MatIndex, dHat, numbers);
+    // printf("After selfQuery_vf\n");
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
     // printf("selfquery vf finished without error\n");
 }
@@ -1390,8 +1396,10 @@ void fullCCDselfQuery_vf(const int* _btype, const double3* _vertexes, const doub
     int numbers = number;
     const unsigned int threadNum = 256;
     int blockNum = (numbers + threadNum - 1) / threadNum;
-
+    // printf("Before selfQuery_vf_ccd\n");
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
     _selfQuery_vf_ccd << <blockNum, threadNum >> > (_btype, _vertexes, moveDir, alpha, _faces, _surfVerts, _bvs, _nodes, _ccd_collisonPairs, _cpNum, dHat, numbers);
+    // printf("After selfQuery_vf_ccd\n");
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 

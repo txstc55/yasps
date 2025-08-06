@@ -375,9 +375,17 @@ def gpu_copy_slice(dst: gpuarray.GPUArray, dst_offset: int, src: gpuarray.GPUArr
 # and a really long array that indicates for each energy, the position we need to look for in the data array to put the data back
 class coordinateCompressionKernel:
   def __init__(self, coordinates: List[gpuarray.GPUArray], dimensions: List[gpuarray.GPUArray], num_coordinates: List[int], wrt: List[attribute]):
-    self.__coordinates: List[gpuarray.GPUArray] = coordinates
-    self.__dimensions: List[gpuarray.GPUArray] = dimensions
-    self.__num_coordinates : List[int]= num_coordinates
+    self.__num_coordinates : List[int] = []
+    self.__coordinates: List[gpuarray.GPUArray] = []
+    self.__dimensions: List[gpuarray.GPUArray] = []
+    # we only care about the ones with coordinates
+    for i in range(len(num_coordinates)):
+      num_coordinate = num_coordinates[i]
+      if num_coordinate > 0:
+        self.__num_coordinates.append(num_coordinate)
+        self.__coordinates.append(coordinates[i])
+        self.__dimensions.append(dimensions[i])
+
     self.__uniqueCoordinates: gpuarray.GPUArray = gpuarray.empty(2, np.uint32)
     # temporary arrays for uncompressed coordinates and dimensions
     # used for compressing coordinates
@@ -391,11 +399,9 @@ class coordinateCompressionKernel:
     self.__lookupArray: gpuarray.GPUArray = gpuarray.empty(1, np.uint32) # should have the same size as the total number of coordinates
     self.__num_unique_coords: int = 0
     self.__num_unique_dimensions: int = 0
-
     self.__total_coordinates: int = 0
 
     # we compute the maximum possible number of unique dimensions
-
     wrt_sizes = [x.size for x in wrt]
     unique_wrt_sizes = set(wrt_sizes)
     largest_num_unique_dimensions = len(unique_wrt_sizes) ** 2 # the maximum size is just the square of len
@@ -410,9 +416,16 @@ class coordinateCompressionKernel:
     # invoke functions
 
   def updateCoordinates(self, coordinates: List[gpuarray.GPUArray], dimensions: List[gpuarray.GPUArray], num_coordinates: List[int]):
-    self.__coordinates: List[gpuarray.GPUArray] = coordinates
-    self.__dimensions: List[gpuarray.GPUArray] = dimensions
-    self.__num_coordinates : List[int]= num_coordinates
+    self.__num_coordinates = []
+    self.__coordinates = []
+    self.__dimensions = []
+    # we only care about the ones with coordinates
+    for i in range(len(num_coordinates)):
+      num_coordinate = num_coordinates[i]
+      if num_coordinate > 0:
+        self.__num_coordinates.append(num_coordinate)
+        self.__coordinates.append(coordinates[i])
+        self.__dimensions.append(dimensions[i])
 
 
   @property
@@ -559,8 +572,6 @@ class coordinateCompressionKernel:
     count = 0
     for i in range(len(self.__num_coordinates)):
       num_coordinate = self.__num_coordinates[i]
-      if num_coordinate == 0:
-        continue
       # copy coordinates and dimensions into the uncompressed array
       gpu_copy_slice(self.__uncompressedCoordinates, count, self.__coordinates[i], num_coordinate * 2)
       gpu_copy_slice(self.__uncompressedDimensions, count, self.__dimensions[i], num_coordinate * 2)
@@ -576,6 +587,14 @@ class coordinateCompressionKernel:
   def compressCoordinatesAndDimensions(self):
     # first we check if we need to reallocate space
     self.__total_coordinates = sum(self.__num_coordinates)
+    # do a reset
+    self.__uniqueCoordinates.fill(0)
+    # self.__uncompressedCoordinatesAndDimensionsTmp.fill(0)
+    self.__uncompressedCoordinates.fill(0)
+    self.__uncompressedDimensions.fill(0)
+    self.__lookupArray.fill(0)
+    self.__num_unique_coords = 0
+    self.__num_unique_dimensions = 0
     if self.__total_coordinates == 0:
       return # nothing we need to do
     # allocate space if needed

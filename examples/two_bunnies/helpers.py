@@ -64,7 +64,7 @@ def stable_neo_hookean(tet_position_rest, tet_position, mu, lam, dt):
   J = FI.determinant()
   IC = (FI.transpose() * FI).trace()
   I3 = IC + 1.0
-  return vol * (0.5 * mu * (IC - 3.0) - 0.5 * mu * I3.log() + 0.5 * lam * ((J - (1.0 + 0.75 * mu / lam)) * (J - (1.0 + 0.75 * mu / lam))))
+  return dt * dt * vol * (0.5 * mu * (IC - 3.0) - 0.5 * mu * I3.log() + 0.5 * lam * ((J - (1.0 + 0.75 * mu / lam)) * (J - (1.0 + 0.75 * mu / lam))))
 
 def inertia(x_before, vel, dt, x, mass):
   x_target = x_before + vel * dt - attribute.to_array([0.0, 9.8 * dt * dt, 0.0], rows = 3, cols = 1)
@@ -85,8 +85,9 @@ def point_edge(position, dHat, kappa):
   p0 = position.row(0)
   p1 = position.row(1)
   p2 = position.row(2)
-  d = (p1 - p0).cross(p2 - p0) / ((p2 - p1).dot(p2 - p1))
-  d = d.dot(d)
+  cross = (p1 - p0).cross(p2 - p0)
+  cross = cross.dot(cross)
+  d = cross / ((p2 - p1).dot(p2 - p1))
   I5 = d / dHat
   lenE = d - dHat
   I5log = I5.log()

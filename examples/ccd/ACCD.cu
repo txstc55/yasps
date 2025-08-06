@@ -308,7 +308,7 @@ double edge_edge_ccd(
     int count = 0;
     while (true) {
         count++;
-        if (count > 50000) return toc;
+        // if (count > 50000) return toc;
         double toc_lower_bound = (1 - eta) * dFunc / ((dist_cur + thickness) * max_disp_mag);
         ea0 = __GEIGEN__::__add(ea0, __GEIGEN__::__s_vec_multiply3(dea0, toc_lower_bound));
         ea1 = __GEIGEN__::__add(ea1, __GEIGEN__::__s_vec_multiply3(dea1, toc_lower_bound));
@@ -375,7 +375,7 @@ double point_triangle_ccd(
     int count = 0;
     while (true) {
         count++;
-        if (count > 50000) return toc;
+        // if (count > 50000) return toc;
         //if (count > 5000)
         //    printf("pt  %f  %f  %f\n%f  %f  %f\n%f  %f  %f\n%f  %f  %f\n\n %f  %f  %f\n%f  %f  %f\n%f  %f  %f\n%f  %f  %f\n\n\n", _dp.x, _dp.y, _dp.z, _dt0.x, _dt0.y, _dt0.z,
         //        _dt1.x, _dt1.y, _dt1.z, _dt2.x, _dt2.y, _dt2.z, _p.x, _p.y, _p.z, _t0.x, _t0.y, _t0.z, _t1.x, _t1.y, _t1.z, _t2.x, _t2.y, _t2.z);
