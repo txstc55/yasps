@@ -329,6 +329,16 @@ int computeSolution(unsigned int maxIteration,
   double h_alpha;
   cudaMalloc(&d_alpha, sizeof(double));
   cudaMemset(d_alpha, 0, sizeof(double));
+  printf("===================================================\\n");
+  printf("Solver got NUM_BLOCK_DIMENSIONS: %u\\n", NUM_BLOCK_DIMENSIONS_DYNAMIC);
+  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS; ++i) {
+    printf("Block count is %u\\n", block_counts[i]);
+  }
+  printf("Solver got NUM_BLOCK_DIMENSIONS_DYNAMIC: %u\\n", NUM_BLOCK_DIMENSIONS_DYNAMIC);
+  for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
+    printf("Block count dynamic is %u\\n", block_counts_dynamic[i]);
+  }
+  printf("===================================================\\n");
 
   for (unsigned int iteration = 1; iteration <= maxIteration; iteration++){
     // q = A * c

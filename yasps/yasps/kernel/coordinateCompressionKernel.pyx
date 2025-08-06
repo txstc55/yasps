@@ -386,17 +386,17 @@ class coordinateCompressionKernel:
         self.__coordinates.append(coordinates[i])
         self.__dimensions.append(dimensions[i])
 
-    self.__uniqueCoordinates: gpuarray.GPUArray = gpuarray.empty(2, np.uint32)
+    self.__uniqueCoordinates: gpuarray.GPUArray = gpuarray.zeros(2, np.uint32)
     # temporary arrays for uncompressed coordinates and dimensions
     # used for compressing coordinates
     self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = gpuarray.empty(1, coord_dim_dtype)
-    self.__uncompressedCoordinates = gpuarray.empty(2, np.uint32)
-    self.__uncompressedDimensions = gpuarray.empty(2, np.uint16)
+    self.__uncompressedCoordinates = gpuarray.zeros(2, np.uint32)
+    self.__uncompressedDimensions = gpuarray.zeros(2, np.uint16)
 
     self.__uniqueDimensions: gpuarray.GPUArray
     self.__uniqueDimensionsOuterIndices: gpuarray.GPUArray # for each dimension, whats the start and end position inside the data array
     self.__uniqueDimensionsBlockCounts: gpuarray.GPUArray # for each dimension, how many blocks of data are there
-    self.__lookupArray: gpuarray.GPUArray = gpuarray.empty(1, np.uint32) # should have the same size as the total number of coordinates
+    self.__lookupArray: gpuarray.GPUArray = gpuarray.zeros(1, np.uint32) # should have the same size as the total number of coordinates
     self.__num_unique_coords: int = 0
     self.__num_unique_dimensions: int = 0
     self.__total_coordinates: int = 0
@@ -406,9 +406,9 @@ class coordinateCompressionKernel:
     unique_wrt_sizes = set(wrt_sizes)
     largest_num_unique_dimensions = len(unique_wrt_sizes) ** 2 # the maximum size is just the square of len
     # print(f"largest_num_unique_dimensions: {largest_num_unique_dimensions}")
-    self.__uniqueDimensions = gpuarray.empty(largest_num_unique_dimensions * 2, np.uint16) # allocate the array
-    self.__uniqueDimensionsOuterIndices = gpuarray.empty(largest_num_unique_dimensions + 1, np.uint32) # allocate the array
-    self.__uniqueDimensionsBlockCounts = gpuarray.empty(largest_num_unique_dimensions, np.uint32) # allocate the array
+    self.__uniqueDimensions = gpuarray.zeros(largest_num_unique_dimensions * 2, np.uint16)
+    self.__uniqueDimensionsOuterIndices = gpuarray.zeros(largest_num_unique_dimensions + 1, np.uint32)
+    self.__uniqueDimensionsBlockCounts = gpuarray.zeros(largest_num_unique_dimensions, np.uint32)
 
     # kernels
     self.__get_unique_coords_kernel = None # the kernel that gets the unique coordinates as well as the unique number of coordinates
@@ -595,12 +595,14 @@ class coordinateCompressionKernel:
     self.__lookupArray.fill(0)
     self.__num_unique_coords = 0
     self.__num_unique_dimensions = 0
+    self.__uniqueDimensionsBlockCounts.fill(0)
+    self.__uniqueDimensionsOuterIndices.fill(0)
     if self.__total_coordinates == 0:
       return # nothing we need to do
     # allocate space if needed
     if self.__total_coordinates > self.__lookupArray.size:
       self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = gpuarray.empty(self.__total_coordinates, coord_dim_dtype)
-      self.__uncompressedCoordinates = gpuarray.empty(self.__total_coordinates * 2, np.uint32)
-      self.__uncompressedDimensions = gpuarray.empty(self.__total_coordinates * 2, np.uint16)
-      self.__lookupArray = gpuarray.empty(self.__total_coordinates, np.uint32)
+      self.__uncompressedCoordinates = gpuarray.zeros(self.__total_coordinates * 2, np.uint32)
+      self.__uncompressedDimensions = gpuarray.zeros(self.__total_coordinates * 2, np.uint16)
+      self.__lookupArray = gpuarray.zeros(self.__total_coordinates, np.uint32)
     self.__compressCoordinatesAndDimensions()

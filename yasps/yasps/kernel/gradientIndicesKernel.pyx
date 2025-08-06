@@ -369,9 +369,9 @@ class gradientIndicesKernel:
     self.__getCoordinateKernel() # generate or just get the coordinate kernel
 
     # we can pre allocate the spaces for unique sizes
-    self.__outputUniqueGradientSizes = gpuarray.empty(self.__gradientSizeForEachPart[energy] + 1, np.uint16) # this is the largest possible size
-    self.__outputGroupedIndicesOuter = gpuarray.empty(self.__gradientSizeForEachPart[energy] + 2, np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
-    self.__outputNumUniqueGradientSizes = gpuarray.empty(1, np.uint16) # this will record the number of unique sizes of the attributes after compression
+    self.__outputUniqueGradientSizes = gpuarray.zeros(self.__gradientSizeForEachPart[energy] + 1, np.uint16) # this is the largest possible size
+    self.__outputGroupedIndicesOuter = gpuarray.zeros(self.__gradientSizeForEachPart[energy] + 2, np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
+    self.__outputNumUniqueGradientSizes = gpuarray.zeros(1, np.uint16) # this will record the number of unique sizes of the attributes after compression
 
 
   @property
@@ -844,12 +844,12 @@ extern "C" int get_indices(
     newNumInstances: int = self.__energy.correspondance.numInstances
     if newNumInstances > self.__maxInstances:
       # resize the gpu arrays
-      self.__outputIndices = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
-      self.__outputIndexSizes = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint16)
-      self.__outputPermutations = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.int16)
-      self.__outputGradientSizes = gpuarray.empty(newNumInstances, dtype=np.uint16)
-      self.__outputGroupedIndicesInner = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
-      self.__outputCompressedCoordinateCountsOuter = gpuarray.empty(newNumInstances + 1, dtype=np.uint32)
+      self.__outputIndices = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
+      self.__outputIndexSizes = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint16)
+      self.__outputPermutations = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.int16)
+      self.__outputGradientSizes = gpuarray.zeros(newNumInstances, dtype=np.uint16)
+      self.__outputGroupedIndicesInner = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
+      self.__outputCompressedCoordinateCountsOuter = gpuarray.zeros(newNumInstances + 1, dtype=np.uint32)
       self.__maxInstances = newNumInstances # update the maximum size
     self.__numInstances = newNumInstances # update the number of instances
     if newNumInstances == 0:
@@ -911,7 +911,7 @@ extern "C" int get_indices(
   def numTotalCoordinates(self) -> int:
     if self.__numInstances == 0:
       return 0
-    result = np.empty(1, dtype=np.uint32)
+    result = np.zeros(1, dtype=np.uint32)
     assert self.__outputCompressedCoordinateCountsOuter is not None
     cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
     # return int(self.__outputCompressedCoordinateCountsOuter[self.__numInstances])
@@ -924,8 +924,8 @@ extern "C" int get_indices(
     # now determine if it is larger than what we currently have
     if spaceNeeded > self.__outputCoordinates.size:
       # here we will allocate more space than needed to avoid frequent reallocations
-      self.__outputCoordinates = gpuarray.empty(int(spaceNeeded * 1), dtype=np.uint32)
-      self.__outputBlockDimensions = gpuarray.empty(int(spaceNeeded * 1), dtype=np.uint16)
+      self.__outputCoordinates = gpuarray.zeros(int(spaceNeeded * 1), dtype=np.uint32)
+      self.__outputBlockDimensions = gpuarray.zeros(int(spaceNeeded * 1), dtype=np.uint16)
     # fill in 0
     self.__outputCoordinates.fill(0)
     self.__outputBlockDimensions.fill(0)

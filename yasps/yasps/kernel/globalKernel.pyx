@@ -68,7 +68,7 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
 
   for (int i = 0; i < M; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1e-6;
     }
   }
 
@@ -94,7 +94,7 @@ __device__ void spd_projection(const double *A, double* output, int choice) {
 
   for (int i = 0; i < N; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1e-6;
     }
   }
 
@@ -116,7 +116,7 @@ __device__ void spd_projection_inplace(double *A, int choice) {
 
   for (int i = 0; i < N; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1e-6;
     }
   }
 

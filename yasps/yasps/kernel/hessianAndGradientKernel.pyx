@@ -42,8 +42,9 @@ class hessianAndGradientKernel:
     # print("unique gradient sizes are", unique_gradient_sizes)
     if set(unique_gradient_sizes).issubset(self.__unique_gradient_sizes):
       return
+    print("Unique gradient sizes before is", unique_gradient_sizes)
     self.__unique_gradient_sizes.update(unique_gradient_sizes)
-    # print("Unique gradient sizes updated to", unique_gradient_sizes)
+    print("Unique gradient sizes after is", self.__unique_gradient_sizes)
     ## first we get all the header functions
     sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
@@ -58,6 +59,7 @@ class hessianAndGradientKernel:
     print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
       # add the includes and the evd function
+      self.__headerFileString = ""
       self.__headerFileString += '''
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,7 +69,8 @@ class hessianAndGradientKernel:
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 #include <vector>
-
+#ifndef EIGEN_PROJECTION
+#define EIGEN_PROJECTION
 // For small matrix < 4
 template <unsigned int N>
 __device__ void spd_projection_small(const double *A, double* output, int choice) {
@@ -91,7 +94,7 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
 
   for (int i = 0; i < M; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1e-6;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }
   }
 
@@ -120,7 +123,7 @@ __device__ void spd_projection(const double *A, double* output, int choice) {
 
   for (int i = 0; i < N; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1e-6;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }
   }
 
@@ -160,6 +163,7 @@ __device__ void spd_projection_inplace(double *A, int choice) {
   }
   return;
 }
+#endif // EIGEN_PROJECTION
 '''
 
       # we first generate the header file
@@ -168,7 +172,7 @@ __device__ void spd_projection_inplace(double *A, int choice) {
 extern "C" {{
 {item.kernelHeader};
 }}'''
-      for unique_gradient_size in unique_gradient_sizes:
+      for unique_gradient_size in self.__unique_gradient_sizes:
         if unique_gradient_size == 0:
           continue
         self.__headerFileString += f'''
@@ -234,13 +238,14 @@ extern "C"{{
         attributeName = f'attr_{self.__att.hash}'.replace("-", "_neg_")
       else:
         attributeName = self.__att.fullName
-      for unique_gradient_size in unique_gradient_sizes:
+      for unique_gradient_size in self.__unique_gradient_sizes:
         if unique_gradient_size == 0:
           continue
         cu_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}.cu"
         obj_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}.o"
         obj_files.append(obj_file)
-        if not os.path.exists(obj_file):
+        # if not os.path.exists(obj_file):
+        if True: # always regenerate the kernel because header has been replaced
           with open(cu_file, 'w') as f:
             f.write(f'''
 #include "allHeaders.cuh"
@@ -440,7 +445,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             compile_jobs.append(job)
 
       # now we add the c functions that will go over all the unique gradient sizes
-      self.__kernelString += f'''
+      self.__kernelString = f'''
 #include "allHeaders.cuh"
 #define CUDA_CHECK_ERROR(ans)                                                  \
   {{ cudaAssert((ans), __FILE__, __LINE__); }}

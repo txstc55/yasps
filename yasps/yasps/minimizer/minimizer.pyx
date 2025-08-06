@@ -127,7 +127,7 @@ class minimizer:
     self.__getGradientSize() # get the size of the gradient
     start = time.time()
     self.__getSparseIndices() # get the sparse indices
-    # self.__getSparseIndicesDynamic()
+    self.__getSparseIndicesDynamic()
     end = time.time()
     print(f"Sparse indices generation: {1000.0 * (end - start)} ms")
     # exit()
@@ -214,6 +214,7 @@ class minimizer:
       local_energy.getSparseIndicesAgain()
     assert self.__compressionKernelDynamic is not None, "minimizer.__getSparseIndicesDynamicAgain: compression kernel for dynamic energies is not initialized."
     self.__compressionKernelDynamic.updateCoordinates([x.outputCoordinates for x in self.__energiesDynamic], [x.outputBlockDimensions for x in self.__energiesDynamic], [x.numTotalCoordinates for x in self.__energiesDynamic])
+    print("Updated num total coordinates are: ", [x.numTotalCoordinates for x in self.__energiesDynamic])
     self.__compressionKernelDynamic.compressCoordinatesAndDimensions()
     # set for each energy, for where does the block reside for each coordinate
     lookupArrays = self.__compressionKernelDynamic.lookupArrays
@@ -257,16 +258,16 @@ class minimizer:
       self.__blocksFlattenedDynamic.fill(0)
     self.__diagonal.fill(0)
     for e in self.energies:
-        e.computeHessianAndGradient(self.__gradient, self.__blocksFlattened, self.__diagonal)
-    # print("Diagonal sum before dynamic", np.sum((self.__diagonal.get())))
-    # print("Gradient sum before dynamic", np.sum((self.__gradient.get())))
+      e.computeHessianAndGradient(self.__gradient, self.__blocksFlattened, self.__diagonal)
 
     # for dynamic energies we need to get the sparse indices again
     self.__getSparseIndicesDynamicAgain()
     for e in self.energiesDynamic:
       if e.numTotalCoordinates > 0:
         e.computeHessianAndGradient(self.__gradient, self.__blocksFlattenedDynamic, self.__diagonal)
-
+    print("--------------------------------------------------------")
+    print("Block counts dynamic is: ", self.__blockCountsDynamic)
+    print("--------------------------------------------------------")
 
 
     # now we have the hessian and gradient
