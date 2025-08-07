@@ -305,8 +305,13 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     if (segment_placement == 0){{
       gradient_offset += 1;
       continue; // we encountered space reserved for union, skip
-    }}else{{
-      segment_placement -= 1; // make it 0 indexed
+    }}else if (segment_placement == 1){{
+      // this is a special case where we want the variable to be in the matrix, but not in the final hessian
+      // we keep it because it's necessary for the hessian projection
+      gradient_offset += segment_size; // skip this segment
+      continue; // skip
+    }}{{
+      segment_placement -= 2; // make it 0 indexed
     }}
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
@@ -384,20 +389,22 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   for (unsigned int i = 0; i < max_num_indices; i++){{
     // we first determine what's the correct position to put in the compressed hessian
     short int permutation_i = local_permutations[instance * max_num_indices + i]; // get the permuted placement
-    if (permutation_i > 0){{
+    unsigned int segment_index_i = segment_indices[instance * max_num_indices + i];1
+    if (permutation_i > 0 && segment_index_i >= 2){{
       // make it 0 indexed first
       permutation_i -= 1;
       unsigned short int segment_size_i = segment_sizes[instance * max_num_indices + i];
-      unsigned int segment_index_i = segment_indices[instance * max_num_indices + i] - 1;
+      segment_index_i -= 2;
       // we know exactly the row block, we now check for column block
       for (unsigned int j = i; j < max_num_indices; j++){{
         short int permutation_j = local_permutations[instance * max_num_indices + j]; // get the permuted placement
-        if (permutation_j > 0){{
+        unsigned int segment_index_j = segment_indices[instance * max_num_indices + j];
+        if (permutation_j > 0 && segment_index_j >= 2){{
           // ok we have found a valid block
           // first again we make it 0 indexed
           permutation_j -= 1;
           unsigned short int segment_size_j = segment_sizes[instance * max_num_indices + j];
-          unsigned int segment_index_j = segment_indices[instance * max_num_indices + j] - 1;
+          segment_index_j -= 2;
           // we now need to get the index
           unsigned int placement_index = lookups[coordinate_start + valid_block_counts];
           // now we put the block in

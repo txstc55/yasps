@@ -117,11 +117,11 @@ class minimizer:
     from yasps.attribute import DATA
     for att in wrt:
       if att.hash in seenAttributeHashes:
-        raise ValueError(f"minimizer.addWrt: wrt {att} is duplicate attribute.")
+        raise ValueError(f"minimizer.addWrt: wrt {att.fullName} is duplicate attribute.")
       if att.operator is not DATA:
-        raise ValueError(f"minimizer.addWrt: wrt {att} is non-data attribute.")
+        raise ValueError(f"minimizer.addWrt: wrt {att.fullName} is non-data attribute.")
       if att.isDynamic:
-        raise ValueError(f"minimizer.addWrt: wrt {att} is dynamic attribute.")
+        raise ValueError(f"minimizer.addWrt: wrt {att.fullName} is dynamic attribute.")
       seenAttributeHashes.add(attribute.hash)
     self.__wrt.extend(wrt)
     self.__getGradientSize() # get the size of the gradient
@@ -140,8 +140,8 @@ class minimizer:
         raise ValueError("minimizer.__getGradientSize: wrt is a dynamic attributes.")
       self.__gradientSizes.append(item.size * item.correspondance.numInstances)
     # allocate the array
-    self.__gradient = gpuarray.empty(sum(self.__gradientSizes), dtype = np.float64)
-    self.__diagonal = gpuarray.empty(sum(self.__gradientSizes), dtype = np.float64)
+    self.__gradient = gpuarray.zeros(sum(self.__gradientSizes), dtype = np.float64)
+    self.__diagonal = gpuarray.zeros(sum(self.__gradientSizes), dtype = np.float64)
     # assign the gradient segments by reference
     start = 0
     self.__wrtStartIndices.append(start) # get where each data element starts

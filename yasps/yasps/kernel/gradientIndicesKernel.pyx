@@ -76,20 +76,28 @@ __global__ void computePermutation(
         continue;
       }
       bool found = false;
-      for (unsigned short int j = 0; j < i; j++){
-        const unsigned int idx_j = indices[tid * K + j];
-        if (idx_j == idx_i) {
-          // we found a duplicate
-          permutation[tid * K + i] = -permutation[tid * K + j];
-          found = true;
-          break;
+      // if idx_i is 1, this means it's a variable we want to keep in the local matrix
+      // but not in the final matrix
+
+      // if idx is >= 2, then it means it's an actual variable that will be in the final matrix
+      if (idx_i >= 2){
+        for (unsigned short int j = 0; j < i; j++){
+          const unsigned int idx_j = indices[tid * K + j];
+          if (idx_j == idx_i) {
+            // we found a duplicate
+            permutation[tid * K + i] = -permutation[tid * K + j];
+            found = true;
+            break;
+          }
         }
       }
       if (!found) {
         permutation[tid * K + i] = gradient_offset + 1; // always exclude 0
         gradient_offset += index_sizes[tid * K + i]; // we offset the gradient_offset so we know exactly where to put this segment
         total_gradient_size += index_sizes[tid * K + i];
-        compressed_index_size++;
+        if (idx_i >= 2){
+          compressed_index_size++; // we only need to increase the index size (which will be used for coordinate size) when it is an actual block we want to put back
+        }
       }
     }
     total_gradient_sizes[tid] = total_gradient_size; // record after compression, the size of the gradient
@@ -222,23 +230,30 @@ __device__ void computeCoordinatesDeviceFunction(const unsigned int* indices,
   for (unsigned int i = 0; i < num_indices_for_each_instance; i++) {
     const unsigned int ind_i = indices[i];
     const int permutation_i = permutations[i];
-    if (permutation_i > 0){
+    if (permutation_i > 0 && ind_i >= 2){
+      // we reserved 0 and 1 for special cases
+      // 0 for empty space
+      // and 1 for variables that are not in the final matrix
+      const unsigned int true_coordinate_i = ind_i - 2;
+      const unsigned short int true_dimension_i = indexSizes[i];
       for (unsigned int j = i; j < num_indices_for_each_instance; j++){
         const unsigned int ind_j = indices[j];
         const int permutation_j = permutations[j];
-        if (permutation_j > 0){
+        if (permutation_j > 0 && ind_j >= 2){
           // this is a valid coordinate that is not compressed
           // we also only want the upper triangular part
+          const unsigned int true_coordinate_j = ind_j - 2;
+          const unsigned short int true_dimension_j = indexSizes[j];
           if (ind_i < ind_j){
-            coordinates[total_coordinates] = ind_i - 1;
-            coordinates[total_coordinates + 1] = ind_j - 1;
-            dimensions[total_coordinates] = indexSizes[i];
-            dimensions[total_coordinates + 1] = indexSizes[j];
+            coordinates[total_coordinates] = true_coordinate_i;
+            coordinates[total_coordinates + 1] = true_coordinate_j;
+            dimensions[total_coordinates] = true_dimension_i;
+            dimensions[total_coordinates + 1] = true_dimension_j;
           }else{
-            coordinates[total_coordinates] = ind_j - 1;
-            coordinates[total_coordinates + 1] = ind_i - 1;
-            dimensions[total_coordinates] = indexSizes[j];
-            dimensions[total_coordinates + 1] = indexSizes[i];
+            coordinates[total_coordinates] = true_coordinate_j;
+            coordinates[total_coordinates + 1] = true_coordinate_i;
+            dimensions[total_coordinates] = true_dimension_j;
+            dimensions[total_coordinates + 1] = true_dimension_i;
           }
           total_coordinates += 2;
         }
@@ -609,12 +624,26 @@ __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
           # we have reached the bottom
           # we now record that index, added by offset, and the size of this attribute
           # we determine its position in wrt
-          pos: int = self.__positionInWrtStartIndices[child]
+          pos: int = 0
+          if child in self.__positionInWrtStartIndices:
+            # we will need to check if this attribute exists in the wrt
+            # if it does we will use the position info
+            pos = self.__positionInWrtStartIndices[child]
           self.__kernelString += f'''
-  // we add 1 so that we can use 0 as a flag for empty
+  // we add 2 so that we can use 0 as a flag for empty
+  // and we can use 1 as a flag for elements that are not in wrt
   // the empty is used to indicate that we reserve space for union operator
-  outputIndices[0] = wrtStartIndices[{pos}] + index * {child.size if child.correspondance.type == "primitive" else 0} + 1; // map the index to the index in final gradient array
+  // if this is an attribute is also in wrt, we will record the position
+'''
+          if child in self.__positionInWrtStartIndices:
+            self.__kernelString += f'''
+  outputIndices[0] = wrtStartIndices[{pos}] + index * {child.size if child.correspondance.type == "primitive" else 0} + 2; // map the index to the index in final gradient array
   outputSizes[0] = {child.size}; // provide the size of this attribute for a single instance
+'''
+          else:
+            self.__kernelString += f'''
+  outputIndices[0] = 1; // this is not in wrt, we wil leave it as 1 as a mark
+  outputSizes[0] = {child.size}; // this is not in wrt, we will record the size, only for reconstruction later
 '''
         elif child.operator == JOIN:
           # we are at a join operator again
