@@ -389,7 +389,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   for (unsigned int i = 0; i < max_num_indices; i++){{
     // we first determine what's the correct position to put in the compressed hessian
     short int permutation_i = local_permutations[instance * max_num_indices + i]; // get the permuted placement
-    unsigned int segment_index_i = segment_indices[instance * max_num_indices + i];1
+    unsigned int segment_index_i = segment_indices[instance * max_num_indices + i];
     if (permutation_i > 0 && segment_index_i >= 2){{
       // make it 0 indexed first
       permutation_i -= 1;
