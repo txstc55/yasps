@@ -162,6 +162,7 @@ class energy:
 
   @timed("energy.getSparseIndices")
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
+    from yasps.attribute import DATA
     self.__wrt = wrt
     self.__wrt_start_indices = wrt_start_indices
     usedPaths: List[List[attribute]] = []
@@ -170,9 +171,9 @@ class energy:
     # after differentiation, we will decide which part of the matrix to put back in
     # if we simply cut off an attribute here, it will not be the full hessian we are projecting
     # as the eigen value we get will just be wrong
-    # for path in self.__paths:
-    #   if path[-1] in wrt:
-    #     usedPaths.append(path)
+    for path in self.__paths:
+      if path[-1].operator == DATA:
+        usedPaths.append(path)
     if self.__indices_kernel is None:
       # construct the path dict and generate the kernel
       pathDict: Dict[attribute, List[attribute]] = {}

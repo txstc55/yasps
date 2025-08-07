@@ -54,11 +54,11 @@ surface_indices = list(set(surface_triangle_indices.flatten().tolist()))
 ## create the mesh with primitives and attributes
 ##################################################
 s0 = scene("scene0")
-dt = s0.addAttribute("dt", rows = 1, cols = 1)
+dt = s0.addConstant("dt", rows = 1, cols = 1)
 dt.updateValue([DT_VALUE])
-dhat = s0.addAttribute("dhat", rows = 1, cols = 1)
+dhat = s0.addConstant("dhat", rows = 1, cols = 1)
 dhat.updateValue([DHAT_VALUE])
-kappa = s0.addAttribute("kappa", rows = 1, cols = 1)
+kappa = s0.addConstant("kappa", rows = 1, cols = 1)
 kappa.updateValue([KAPPA_VALUE])
 
 bunnies = s0.addMesh("bunnies")
@@ -70,7 +70,7 @@ bunnies.addPrimitive("pe", numInstances = 0, isDynamic = True) # for point edge 
 bunnies.addPrimitive("pt", numInstances = 0, isDynamic = True) # for point triangle collision
 bunnies.addPrimitive("ee", numInstances = 0, isDynamic = True) # for edge edge collision
 
-bunnies.vertices.addAttribute("rest_position", rows = 3, cols = 1)
+bunnies.vertices.addConstant("rest_position", rows = 3, cols = 1)
 bunnies.vertices["rest_position"].updateValue(position)
 bunnies.vertices.addAttribute("position", rows = 3, cols = 1)
 # position[0, 0] -= 1.0
@@ -84,11 +84,11 @@ velocities[:position.shape[0] //2, 0] = 8
 velocities[position.shape[0] // 2:, 0] = -8
 bunnies.vertices["velocity"].updateValue(velocities)
 
-bunnies.vertices.addAttribute("mass", rows = 1, cols = 1)
+bunnies.vertices.addConstant("mass", rows = 1, cols = 1)
 bunnies.vertices["mass"].updateValue(np.ones((position.shape[0]), dtype=np.float64) * 1.0)
 
-mu = bunnies.addAttribute("mu", rows = 1, cols = 1) # for stable neo hookean
-lam = bunnies.addAttribute("lam", rows = 1, cols = 1) # for stable neo hookean
+mu = bunnies.addConstant("mu", rows = 1, cols = 1) # for stable neo hookean
+lam = bunnies.addConstant("lam", rows = 1, cols = 1) # for stable neo hookean
 mu.updateValue([MU_VALUE])
 lam.updateValue([LAMBDA_VALUE])
 
