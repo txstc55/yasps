@@ -94,6 +94,14 @@ class primitiveUnion:
   def children_primitive_counts_gpu(self):
     return gpuarray.to_gpu(np.array([child.numInstances for child in self.__primitives], dtype=np.uint32))
 
+  def addConstant(self, name: str, rows: int = 1, cols: int = 1):
+    if name in self.__attributes:
+      raise ValueError(f"primitiveUnion.addConstant: attribute with name '{name}' already exists in the primitive union.")
+    from yasps.attribute import attribute
+    newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols, is_constant = True)
+    self.__attributes[name] = newAttribute
+    return newAttribute
+
   def addAttribute(self, name: str, computed_attribute: Optional[attribute] = None, rows = 0, cols = 0) -> attribute:
     # ok addint attribute for primitive union is different
     # we technically cannot add new attribute

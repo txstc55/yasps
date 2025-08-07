@@ -120,6 +120,16 @@ class mesh:
       self.__attributes[name] = newAttribute
       return newAttribute
 
+  def addConstant(self, name, rows: int = 1, cols: int = 1) -> attribute:
+    # add a constant attribute to the mesh
+    # constant attributes will never be considered to be any part of minimization
+    if name in self.__attributes:
+      raise ValueError(f"mesh.addConstant: attribute with name '{name}' already exists in mesh.")
+    from yasps.attribute import attribute
+    newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols, is_constant = True)
+    self.__attributes[name] = newAttribute
+    return newAttribute
+
   # accessing attributes by name
   # user can get multiple attributes by passing a list of names
   def __getitem__(self, key: Union[str, Tuple[str]]) -> attribute:

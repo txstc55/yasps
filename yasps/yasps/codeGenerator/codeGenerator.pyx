@@ -136,7 +136,7 @@ class codeGenerator:
     if self.__input.deviceKernel is not None:
       # nothing to do
       return
-    if len(self.__stack) == 0 and self.__input.operator == ya.DATA:
+    if len(self.__stack) == 0 and (self.__input.operator == ya.DATA or self.__input.operator == ya.CONSTANT):
       # this attribute is a data, generate special code for it
       current: ya.attribute = self.__input
       kernelString: str
@@ -188,7 +188,7 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
             self.__generate_code_for_float(current)
           elif current.operator == ya.ARRAY_ACCESS:
             self.__generate_code_for_array_access(current)
-          elif current.operator == ya.DATA:
+          elif current.operator == ya.DATA or current.operator == ya.CONSTANT:
             # the only reason we will reach here
             # is because we are at the root node
             # since data attribute should always have a name

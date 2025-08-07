@@ -49,6 +49,8 @@ class autodiff:
       result = self.__diff_float(current, wrt)
     elif current.operator == ya.DATA:
       result = self.__diff_data(current, wrt)
+    elif current.operator == ya.CONSTANT:
+      result = self.__diff_constant(current, wrt)
     elif current.operator == ya.ARRAY_ACCESS:
       result = self.__diff_array_access(current, wrt)
     elif current.operator == ya.ARRAY:
@@ -243,6 +245,12 @@ class autodiff:
     # checking if the data is the same
     # if it is, we return identity
     # else we return zeros
+    if current.fullName == wrt.fullName:
+      return ya.attribute.identity(current.size)
+    else:
+      return ya.attribute.zeros(current.size, wrt.size)
+
+  def __diff_constant(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     if current.fullName == wrt.fullName:
       return ya.attribute.identity(current.size)
     else:

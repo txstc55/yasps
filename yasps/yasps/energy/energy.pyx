@@ -240,7 +240,9 @@ class energy:
     return
 
   def __generateGradientThroughRecursion(self, current: attribute, wrt: List[attribute]) -> attribute:
-    from yasps.attribute import JOIN, UNION, DATA
+    from yasps.attribute import JOIN, UNION, DATA, CONSTANT
+    if current.operator == CONSTANT:
+      raise ValueError(f"energy.__generateHessianThroughRecursion: CONSTANT attributes are not supposed to show up in the path dict")
     if current.operator == DATA:
       # we are at the bottom level
       # end the recursion and return identity
@@ -1081,7 +1083,9 @@ class energy:
     return
 
   def __generateHessianThroughRecursion(self, current: attribute, wrt: List[attribute]) -> attribute:
-    from yasps.attribute import JOIN, UNION, DATA
+    from yasps.attribute import JOIN, UNION, DATA, CONSTANT
+    if current.operator == CONSTANT:
+      raise ValueError(f"energy.__generateHessianThroughRecursion: CONSTANT attributes are not supposed to show up in the path dict")
     if current.operator == DATA:
       # if its data, the second derivative is just zeros
       return attribute.zeros(current.size, current.size * current.size)

@@ -122,7 +122,13 @@ class primitive:
     self.__connectivities[name].updateConnectivity(data)
 
 
-
+  def addConstant(self, name: str, rows: int = 1, cols: int = 1):
+    if name in self.__attributes:
+      raise ValueError(f"primitive.addConstant: attribute with name '{name}' already exists in the primitive.")
+    from yasps.attribute import attribute
+    newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols, is_constant = True)
+    self.__attributes[name] = newAttribute
+    return newAttribute
 
   def addAttribute(self, name: str, computed_attribute: Optional[attribute] = None, rows: int = 1, cols: int = 1, through: Optional[connectivity] = None, source: Optional[attribute] = None, operation: Optional[str] = None) -> attribute:
     from yasps.attribute import attribute

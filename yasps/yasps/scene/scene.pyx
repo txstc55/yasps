@@ -99,6 +99,16 @@ class scene:
   def numMeshes(self)->int:
     return len(self.__meshes)
 
+  def addConstant(self, name, rows: int = 1, cols: int = 1) -> attribute:
+    # add a constant attribute to the scene
+    # constant attributes will never be considered to be any part of minimization
+    if name in self.__attributes:
+      raise ValueError(f"scene.addConstant: attribute with name '{name}' already exists in scene.")
+    from yasps.attribute import attribute
+    newAttribute = attribute(name = name, correspondance = self, rows = rows, cols = cols, is_constant = True)
+    self.__attributes[name] = newAttribute
+    return newAttribute
+
   def addAttribute(self, name, computed_attribute: Optional[attribute] = None, rows: int = 1, cols: int = 1)->attribute:
     if name in self.__attributes:
       raise ValueError(f"scene.addAttribute: attribute with name '{name}' already exists in scene.")

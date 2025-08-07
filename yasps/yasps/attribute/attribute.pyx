@@ -45,6 +45,7 @@ INDEX = operator("ijk", 3, False) # the index used for array access
 FLOAT = operator("float", 3, False) # for float numbers
 ARRAY_ACCESS = operator("access", 3, False) # for accessing an element in the array
 DATA = operator("data", 3, False) # for directly accessing data
+CONSTANT = operator("constant", 3, False) # for constant values, constant values are mostly like data values, but they are never used for differentiation
 ARRAY = operator("array", 3, False) # for constructing an array
 
 TRANSPOSE = operator("transpose", 3, False) # for transposing a matrix
@@ -71,7 +72,7 @@ UNION = operator("union", 3, False) # for union of multiple attributes
 class attribute:
   __isZeroAttributeChecks: Dict[int, int] = {}
 
-  def __init__(self, name: str = "", rows: int = 1, cols: int = 1, correspondance: Optional[Union[scene, mesh, primitive]] = None, through: Optional[connectivity] = None, float_value: Optional[float] = None, children: List[attribute] = [], operator: operator = DATA, index_value: Optional[int] = None):
+  def __init__(self, name: str = "", rows: int = 1, cols: int = 1, correspondance: Optional[Union[scene, mesh, primitive]] = None, through: Optional[connectivity] = None, float_value: Optional[float] = None, children: List[attribute] = [], operator: operator = DATA, index_value: Optional[int] = None, is_constant: bool = False):
     # by default, any attribute is a data access
     # which does the following:
     # given x the data, and id, return x + id * rows * cols
@@ -83,6 +84,10 @@ class attribute:
     self.__through: Optional[connectivity] = through
     self.__children: List[attribute] = children
     self.__operator: operator = operator
+    if self.__operator != DATA and is_constant:
+      raise ValueError("attribute.__init__: is_constant can only be set when the operator is DATA.")
+    if self.__operator == DATA and is_constant:
+      self.__operator = CONSTANT
     self.__float_value: float = 0.0
     self.__index_value: int = 0
     self.__is_intermediate = False # if this is an intermediate value, we will need to generate the code and compute it before it being promped to another computation
@@ -452,7 +457,7 @@ class attribute:
           return true_value[index]
         else:
           return attribute.select(self.children[0], true_value[index], false_value[index])
-      if self.operator == DATA:
+      if self.operator == DATA or self.operator == CONSTANT:
         indexAttribute = attribute(operator = INDEX, index_value = index)
         return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
       if self.size == 1 and index == 0:
@@ -481,7 +486,7 @@ class attribute:
           return true_value[new_ind]
         else:
           return attribute.select(self.children[0], true_value[new_ind], false_value[new_ind])
-      if self.operator == DATA:
+      if self.operator == DATA or self.operator == CONSTANT:
         indexAttribute = attribute(operator = INDEX, index_value = index[0] * self.cols + index[1])
         return attribute(children = [self, indexAttribute], operator = ARRAY_ACCESS, correspondance = self.correspondance)
       if self.size == 1 and index[0] == 0 and index[1] == 0:
@@ -848,7 +853,7 @@ class attribute:
   ################################################
   ################################################
   def compute(self) -> attribute:
-    if self.__operator == DATA:
+    if self.__operator == DATA or self.__operator == CONSTANT:
       # do nothing, its a data attribute
       return self
     if self.__globalKernel is None:

@@ -84,7 +84,7 @@ def hashAttribute(att: ya.attribute) -> int:
     # Convert the hexadecimal hash to an integer
     hash_int = int(hash_hex, 16)
     att._attribute__hash = hash_int
-  elif att.operator == ya.DATA:
+  elif att.operator == ya.DATA or att.operator == ya.CONSTANT:
     fullname = str(att)
     # Compute the SHA-256 hash and convert to an integer
     hash_hex = hashlib.sha256(fullname.encode()).hexdigest()
@@ -148,7 +148,7 @@ def attribute2str(att: ya.attribute):
       row = array_index // att.children[0].cols
       col = array_index % att.children[0].cols
       return f"{att.children[0]}[{row}, {col}]"
-    elif att.operator == ya.DATA:
+    elif att.operator == ya.DATA or att.operator == ya.CONSTANT:
       if att.correspondance is not None:
         return f"{att.correspondance.fullName}.{att.name}"
       else:
