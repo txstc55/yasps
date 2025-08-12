@@ -12,7 +12,7 @@ import subprocess
 import time
 
 class CCD:
-  def __init__(self, num_vertices: int, max_cd_pairs: int = 100000000, max_ccd_pairs: int = 100000000):
+  def __init__(self, num_vertices: int, all_vertices: int, max_cd_pairs: int = 10000000, max_ccd_pairs: int = 10000000):
     module_dir = os.path.dirname(os.path.abspath(__file__))  # always resolves to y.py's directory
     mlbvh_so_path = os.path.join(module_dir, "libmlbvh.so")
     accd_so_path = os.path.join(module_dir, "libaccd.so")
@@ -27,35 +27,40 @@ class CCD:
 
       compile_cmds = [
         [
-          "nvcc", "-std=c++17", "-O3", "-Xcompiler", "-fPIC",
+          "nvcc", "-std=c++17", "-Xcompiler", "-fPIC",
+          "-O3",
           "-I/usr/include/eigen", "-I.",
           "-gencode", "arch=compute_86,code=sm_86",
           "--relocatable-device-code=true",
           "-c", mlbvh_cu, "-o", mlbvh_o
         ],
         [
-          "nvcc", "-std=c++17", "-O3", "-Xcompiler", "-fPIC",
+          "nvcc", "-std=c++17", "-Xcompiler", "-fPIC",
+          "-O3",
           "-I/usr/include/eigen", "-I.",
           "-gencode", "arch=compute_86,code=sm_86",
           "--relocatable-device-code=true",
           "-c", accd_cu, "-o", accd_o
         ],
         [
-          "nvcc", "-std=c++17", "-O3", "-Xcompiler", "-fPIC",
+          "nvcc", "-std=c++17", "-Xcompiler", "-fPIC",
+          "-O3",
           "-I/usr/include/eigen", "-I.",
           "-gencode", "arch=compute_86,code=sm_86",
           "--relocatable-device-code=true",
           "-c", eigen_cu, "-o", eigen_o
         ],
         [
-          "nvcc", "-std=c++17", "-O3", "-Xcompiler", "-fPIC",
+          "nvcc", "-std=c++17", "-Xcompiler", "-fPIC",
+          "-O3",
           "-gencode", "arch=compute_86,code=sm_86",
           "--relocatable-device-code=true",
           mlbvh_o, eigen_o,
           "-o", mlbvh_so_path, "--shared"
         ],
         [
-          "nvcc", "-std=c++17", "-O3", "-Xcompiler", "-fPIC",
+          "nvcc", "-std=c++17", "-Xcompiler", "-fPIC",
+          "-O3",
           "-gencode", "arch=compute_86,code=sm_86",
           "--relocatable-device-code=true",
           accd_o, eigen_o,
@@ -182,7 +187,7 @@ class CCD:
     self.__cp_num = gpuarray.to_gpu(np.zeros(5, dtype=np.uint32)) # for some reason this is 5 in GIPC and we will keep it this way
 
     self.__num_vertices = num_vertices
-    self.__btypes = gpuarray.to_gpu(np.zeros(num_vertices, dtype=np.int32)) # initialize empty array for btypes
+    self.__btypes = gpuarray.to_gpu(np.zeros(all_vertices, dtype=np.int32)) # initialize empty array for btypes
     self.__pp = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 2), dtype=np.uint32))
     self.__pe = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 3), dtype=np.uint32))
     self.__pt = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 4), dtype=np.uint32))
@@ -433,7 +438,7 @@ class CCD:
     self.ccd_edges(vertices, dhat, moving_directions, alpha)
     time_end = time.time()
     # print time in milliseconds
-    print(f"Collision detection took {(time_end - time_start) * 1000:.2f} ms")
+    print(f"Continuous collision detection took {(time_end - time_start) * 1000:.2f} ms")
 
   def __del__(self):
     if self.__mlbvh is not None:
@@ -442,6 +447,7 @@ class CCD:
       self.__mlbvh.destroy_lbvh_e(self.__bvh_e)
 
   def compute_largest_step_size(self, slackness, vertices: gpuarray.GPUArray, moving_directions: gpuarray.GPUArray):
+    time_start = time.time()
     c_slackness = ctypes.c_double(slackness)
     step = self.__self_largestFeasibleStepSize(
       c_slackness,
@@ -451,6 +457,9 @@ class CCD:
       self.__to_void_p(self.__mqueue),
       self.__cp_num.get()[0]
     )
+    time_end = time.time()
+    # print time in milliseconds
+    print(f"Computing largest step size took {(time_end - time_start) * 1000:.2f} ms")
     return step
 
 

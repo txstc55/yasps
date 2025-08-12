@@ -1,6 +1,7 @@
 from __future__ import annotations
 from yasps.attribute import attribute
-from typing import List, Tuple, Dict
+from yasps.primitiveUnion import primitiveUnion
+from typing import List, Tuple, Dict, Set
 import pycuda.gpuarray as gpuarray
 import ctypes
 import numpy as np
@@ -44,7 +45,7 @@ compression_kernel_string = '''
 inline void cudaAssert(cudaError_t code, const char *file, int line,
                         bool abort = true) {{
                         if (code != cudaSuccess) {{
-    fprintf(stderr, "CUDA Error: %s at %s:%d\\n", cudaGetErrorString(code), file,
+    fprintf(stderr, "CUDA Error: %s at %s:%from yasps.attribute import attributed\\n", cudaGetErrorString(code), file,
             line);
     if (abort)
       exit(code);
@@ -326,7 +327,13 @@ class gradientIndicesKernel:
     self.__wrt_start_indices: List[int] = wrt_start_indices
     self.__energy: attribute = energy
     self.__used_join_attributes: List[attribute] = [] # all the join attributes, we will use its connectivities for indexing
+    self.__used_join_attributes_hashes: Set[int] = set() # we will use this to quickly check if an attribute is already included
     self.__used_union_attributes: List[attribute] = [] # all the union attributes, we will them for indexing
+    self.__used_union_attributes_hashes: Set[int] = set() # we will use this to quickly check if an attribute is already included
+    self.__used_primitive_unions: List[primitiveUnion] = [] # all the union primitives, we will use them for indexing
+    self.__used_primitive_unions_names: Set[str] = set() # we will use this to quickly check if a primitive union is already included
+
+
     self.__gradientSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the size of the gradient being used, this will always record the theoretical largest size of the gradient (the size before compression)
     self.__indexSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the number of indices needed, again this is the theoretical largest size
     self.__getUsedJoinAttributes() # get the attributes that are join operations, so we can just grab the connectivities later on
@@ -554,14 +561,21 @@ class gradientIndicesKernel:
   def __getUsedJoinAttributes(self):
     # we literally just go over the attributes
     for att in self.__path_dict.keys():
-      if att.operator == JOIN:
+      if att.operator == JOIN and att.hash not in self.__used_join_attributes_hashes:
         self.__used_join_attributes.append(att)
+        self.__used_join_attributes_hashes.add(att.hash) # we add the hash to the set so we can quickly check if an attribute is already included
 
   def __getUsedUnionAttributes(self):
     # we literally just go over the attributes
     for att in self.__path_dict.keys():
-      if att.operator == UNION:
+      if att.operator == UNION and att.hash not in self.__used_union_attributes_hashes:
         self.__used_union_attributes.append(att)
+        self.__used_union_attributes_hashes.add(att.hash) # we add the hash to the set so we can quickly check if an attribute is already included
+        # check if the primitive union is included
+        if att.correspondance.fullName not in self.__used_primitive_unions_names:
+          # we add the primitive union to the list
+          self.__used_primitive_unions.append(att.correspondance)
+          self.__used_primitive_unions_names.add(att.correspondance.fullName)
 
   def __generateKernel(self):
     # ok now we compile the kernel by saving it to a file and then calling nvcc
@@ -570,7 +584,7 @@ class gradientIndicesKernel:
       # we just use that file?
       self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
       self.__indices_kernel.restype = ctypes.c_int # set the return type to None
-      self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_union_attributes) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
+      self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_primitive_unions) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
       return
 
 
@@ -589,7 +603,7 @@ class gradientIndicesKernel:
         self.__kernelString += f'''
 __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
   {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  {", ".join([f"const unsigned int* {x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
   const unsigned int* wrtStartIndices,
   unsigned int* outputIndices,
   unsigned short int* outputSizes,
@@ -600,7 +614,7 @@ __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
       self.__kernelString += f'''
 __device__ inline void {parent.fullName}_get_indices(
   {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  {", ".join([f"const unsigned int* {x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
   const unsigned int* wrtStartIndices,
   unsigned int* outputIndices,
   unsigned short int* outputSizes,
@@ -614,7 +628,7 @@ __device__ inline void {parent.fullName}_get_indices(
         self.__kernelString += f'''
 __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
   {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  {", ".join([f"const unsigned int* {x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
   const unsigned int* wrtStartIndices,
   unsigned int* outputIndices,
   unsigned short int* outputSizes,
@@ -652,7 +666,7 @@ __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
   // we still need to keep going, go ahead and call the function that accumulates indices
   {child.fullName}_get_indices(
     {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-    {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+    {", ".join([f"{x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
     wrtStartIndices,
     outputIndices,
     outputSizes,
@@ -664,7 +678,7 @@ __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
           self.__kernelString += f'''
   {child.fullName}_get_indices(
     {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-    {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+    {", ".join([f"{x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
     wrtStartIndices,
     outputIndices,
     outputSizes,
@@ -679,7 +693,7 @@ __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
       self.__kernelString += f'''
 __device__ inline void {parent.fullName}_get_indices(
   {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  {", ".join([f"const unsigned int* {x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
   const unsigned int* wrtStartIndices,
   unsigned int* outputIndices,
   unsigned short int* outputSizes,
@@ -729,7 +743,7 @@ __device__ inline void {parent.fullName}_get_indices(
             self.__kernelString += f'''
         {parent.fullName}_get_indices_from_{used_grandchild.fullName}(
           {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-          {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+          {", ".join([f"{x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
           wrtStartIndices,
           outputIndices + outputIndexShift,
           outputSizes + outputIndexShift,
@@ -760,7 +774,7 @@ __device__ inline void {parent.fullName}_get_indices(
           self.__kernelString += f'''
     {parent.fullName}_get_indices_from_{child.fullName}(
       {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-      {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+      {", ".join([f"{x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
       wrtStartIndices,
       outputIndices + {index_accumulation} + {self.__indexSizeForEachPart[parent] // parent.through.dimension} * i,
       outputSizes + {index_accumulation} + {self.__indexSizeForEachPart[parent] // parent.through.dimension} * i,
@@ -781,7 +795,7 @@ __device__ inline void {parent.fullName}_get_indices(
   // grab indices from child {child.fullName} to parent {parent.fullName}
   {parent.fullName}_get_indices_from_{child.fullName}(
     {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-    {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+    {", ".join([f"{x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
     wrtStartIndices,
     outputIndices + {index_accumulation},
     outputSizes + {index_accumulation},
@@ -797,7 +811,7 @@ __device__ inline void {parent.fullName}_get_indices(
     self.__kernelString += f'''
 __global__ void {self.__energy.fullName}_get_indices_global_function(
   {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  {", ".join([f"const unsigned int* {x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
   const unsigned int* wrtStartIndices,
   unsigned int* outputIndices,
   unsigned short int* outputSizes,
@@ -807,7 +821,7 @@ __global__ void {self.__energy.fullName}_get_indices_global_function(
   if (index < NUM_INSTANCES) {{
     {self.__energy.fullName}_get_indices(
       {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-      {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+      {", ".join([f"{x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
       wrtStartIndices,
       outputIndices + index * {self.maxNumIndicesNeeded},
       outputSizes + index * {self.maxNumIndicesNeeded},
@@ -832,7 +846,7 @@ inline void cudaAssert(cudaError_t code, const char *file, int line,
 }}
 extern "C" int get_indices(
   {", ".join([f"const unsigned int* {x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-  {", ".join([f"const unsigned int* {x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+  {", ".join([f"const unsigned int* {x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
   const unsigned int* wrtStartIndices,
   unsigned int* outputIndices,
   unsigned short int* outputSizes,
@@ -840,7 +854,7 @@ extern "C" int get_indices(
 ) {{
   {self.__energy.fullName}_get_indices_global_function<<<(NUM_INSTANCES + 32 - 1) / 32, 32>>>(
     {", ".join([f"{x.fullName}_indices" for x in self.__used_join_attributes]) + ", " if self.__used_join_attributes else ""}
-    {", ".join([f"{x.correspondance.code_generation_counts_name}" for x in self.__used_union_attributes]) + ", " if self.__used_union_attributes else ""}
+    {", ".join([f"{x.code_generation_counts_name}" for x in self.__used_primitive_unions]) + ", " if self.__used_union_attributes else ""}
     wrtStartIndices,
     outputIndices,
     outputSizes,
@@ -865,7 +879,7 @@ extern "C" int get_indices(
     os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
     self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
     self.__indices_kernel.restype = ctypes.c_int # set the return type to None
-    self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_union_attributes) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
+    self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_primitive_unions) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
 
 
   @timed("gradientIndicesKernel.__reallocate")
@@ -900,7 +914,7 @@ extern "C" int get_indices(
     wrt_start_indices_gpu = gpuarray.to_gpu(np.array(wrt_start_indices, dtype=np.uint32)) # this has to be non empty
     # then we get all the gpu arrays for the connectivity
     connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
-    self.__union_counts = [x.correspondance.children_primitive_counts_gpu for x in self.__used_union_attributes]
+    self.__union_counts = [x.children_primitive_counts_gpu for x in self.__used_primitive_unions]
     union_count_list_gpu = [self.__to_void_p(x) for x in self.__union_counts]
     # now we invoke the kernel
 

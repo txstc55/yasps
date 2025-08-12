@@ -76,9 +76,9 @@ bunnies.vertices.addAttribute("position", rows = 3, cols = 1)
 # position[0, 0] -= 1.0
 bunnies.vertices["position"].updateValue(position)
 
-bunnies.vertices.addAttribute("last_position", rows = 3, cols = 1)
+bunnies.vertices.addConstant("last_position", rows = 3, cols = 1)
 bunnies.vertices["last_position"].updateValue(position)
-bunnies.vertices.addAttribute("velocity", rows = 3, cols = 1)
+bunnies.vertices.addConstant("velocity", rows = 3, cols = 1)
 velocities = np.zeros_like(position, dtype=np.float64)
 velocities[:position.shape[0] //2, 0] = 8
 velocities[position.shape[0] // 2:, 0] = -8
@@ -112,7 +112,7 @@ ee_positions = bunnies.ee.addAttribute("positions", through = ee2v, source = bun
 ##################################################
 # construct ccd
 ##################################################
-ccd = CCD(len(surface_indices))
+ccd = CCD(len(surface_indices), position.shape[0])
 surface_indices_gpu = gpuarray.to_gpu(np.array(surface_indices).astype(np.uint32))
 edge_indices_gpu = gpuarray.to_gpu(edge_indices.astype(np.uint32))
 ccd.init_faces(bunnies.vertices["position"].value, tri2v.value, surface_indices_gpu, surface_triangle_indices.shape[0])

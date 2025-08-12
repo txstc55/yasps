@@ -221,7 +221,8 @@ extern "C"{{
 }}
 ''')
             compile_cmd = [
-              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-O3", "-arch=sm_86",
+              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-arch=sm_86",
+              "-O3",
               "-c", cu_file, "-o", obj_file,
               "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
               "--relocatable-device-code=true"
@@ -426,7 +427,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
           // additionally, if it is a diagonal block, we also need to put the diagonal elements
           if (i == j){{
             // get the placement
-            unsigned int segment_index = segment_indices[instance * max_num_indices + i] - 1;
+            unsigned int segment_index = segment_indices[instance * max_num_indices + i] - 2;
             for (unsigned int k = 0; k < segment_size_i; k++){{
               atomicAdd(&diagonal[segment_index + k], compressed_hessian(permutation_i + k, permutation_j + k));
             }}
@@ -441,7 +442,8 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 }}
 ''')
             compile_cmd = [
-              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-O3", "-arch=sm_86",
+              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-arch=sm_86",
+              "-O3",
               "-c", cu_file, "-o", obj_file,
               "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
               "--relocatable-device-code=true"
@@ -583,7 +585,8 @@ int compute_hessian_and_gradient_with_compression(
       kernel_cu_file = f"{file_name}.cu"
       kernel_obj_file = f"{file_name}.o"
       kernel_compile_cmd = [
-        "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-O3", "-arch=sm_86",
+        "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-arch=sm_86",
+        "-O3",
         "-c", kernel_cu_file, "-o", kernel_obj_file,
         "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
         "--relocatable-device-code=true"
@@ -603,6 +606,7 @@ int compute_hessian_and_gradient_with_compression(
       device_link_obj = f"{file_name}_device_link.o"
       dlink_cmd = [
         "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_86",
+        "-O3",
         *(obj_files + [kernel_obj_file]), "-o", device_link_obj,
         "--relocatable-device-code=true"
       ]
@@ -613,6 +617,7 @@ int compute_hessian_and_gradient_with_compression(
       # Final shared object linking
       final_link_cmd = [
         "nvcc", "-shared", "-Xcompiler", "-fPIC", "-arch=sm_86",
+        "-O3",
         kernel_obj_file, device_link_obj, *obj_files,
         "-o", f"{file_name}.so",
         "-lcudart", "-lcuda"

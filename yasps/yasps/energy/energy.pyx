@@ -584,9 +584,10 @@ class energy:
       if joined_child_global_jacobian.fullName not in self.__intermediate_compute_pairs:
         # we save the intermediate result as an evaluated data pair
         new_name = joined_child_global_jacobian.name + "_evaluated"
-        evaluated_result = joined_child_global_jacobian.correspondance.addAttribute(new_name, rows = joined_child_global_jacobian.rows, cols = joined_child_global_jacobian.cols)
-        self.__intermediate_compute_pairs[joined_child_global_jacobian.fullName] = (joined_child_global_jacobian, evaluated_result)
-        joined_child_global_jacobian = evaluated_result
+        if new_name not in joined_child_global_jacobian.correspondance.attributes:
+          evaluated_result = joined_child_global_jacobian.correspondance.addAttribute(new_name, rows = joined_child_global_jacobian.rows, cols = joined_child_global_jacobian.cols)
+          self.__intermediate_compute_pairs[joined_child_global_jacobian.fullName] = (joined_child_global_jacobian, evaluated_result)
+          joined_child_global_jacobian = evaluated_result
       else:
         # we already have the intermediate result, we just return the evaluated result
         joined_child_global_jacobian = self.__intermediate_compute_pairs[joined_child_global_jacobian.fullName][1]
@@ -697,9 +698,10 @@ class energy:
       if joined_child_global_hessian.fullName not in self.__intermediate_compute_pairs:
         # we save the intermediate result as an evaluated data pair
         new_name = joined_child_global_hessian.name + "_evaluated"
-        evaluated_result = joined_child_global_hessian.correspondance.addAttribute(new_name, rows = joined_child_global_hessian.rows, cols = joined_child_global_hessian.cols)
-        self.__intermediate_compute_pairs[joined_child_global_hessian.fullName] = (joined_child_global_hessian, evaluated_result)
-        joined_child_global_hessian = evaluated_result
+        if new_name not in joined_child_global_hessian.correspondance.attributes:
+          evaluated_result = joined_child_global_hessian.correspondance.addAttribute(new_name, rows = joined_child_global_hessian.rows, cols = joined_child_global_hessian.cols)
+          self.__intermediate_compute_pairs[joined_child_global_hessian.fullName] = (joined_child_global_hessian, evaluated_result)
+          joined_child_global_hessian = evaluated_result
       else:
         # we already have the intermediate result, we just return the evaluated result
         joined_child_global_hessian = self.__intermediate_compute_pairs[joined_child_global_hessian.fullName][1]
@@ -881,9 +883,10 @@ class energy:
         if item.fullName not in self.__intermediate_compute_pairs:
           # we save the intermediate result as an evaluated data pair
           new_name = item.name + "_evaluated"
-          evaluated_result = item.correspondance.addAttribute(new_name, rows = item.rows, cols = item.cols)
-          self.__intermediate_compute_pairs[item.fullName] = (item, evaluated_result)
-          unioned_children_global_jacobians[index] = evaluated_result
+          if new_name not in item.correspondance.attributes:
+            evaluated_result = item.correspondance.addAttribute(new_name, rows = item.rows, cols = item.cols)
+            self.__intermediate_compute_pairs[item.fullName] = (item, evaluated_result)
+            unioned_children_global_jacobians[index] = evaluated_result
         else:
           # we already have the intermediate result, we just return the evaluated result
           unioned_children_global_jacobians[index] = self.__intermediate_compute_pairs[item.fullName][1]
@@ -1027,9 +1030,10 @@ class energy:
         if item.fullName not in self.__intermediate_compute_pairs:
           # we save the intermediate result as an evaluated data pair
           new_name = item.name + "_evaluated"
-          evaluated_result = item.correspondance.addAttribute(new_name, rows = item.rows, cols = item.cols)
-          self.__intermediate_compute_pairs[item.fullName] = (item, evaluated_result)
-          unioned_children_global_hessians[index] = evaluated_result
+          if new_name not in item.correspondance.attributes:
+            evaluated_result = item.correspondance.addAttribute(new_name, rows = item.rows, cols = item.cols)
+            self.__intermediate_compute_pairs[item.fullName] = (item, evaluated_result)
+            unioned_children_global_hessians[index] = evaluated_result
         else:
           # we already have the intermediate result, we just return the evaluated result
           unioned_children_global_hessians[index] = self.__intermediate_compute_pairs[item.fullName][1]
@@ -1060,8 +1064,9 @@ class energy:
           if hessian_data_attribute.fullName not in self.__intermediate_compute_pairs:
             # add the pair
             new_name = hessian_data_attribute.name + "_pre_evaluated"
-            unioned_child.correspondance.addAttribute(new_name, computed_attribute = expanded_hessian)
-            self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (expanded_hessian, hessian_data_attribute)
+            if new_name not in unioned_child.correspondance.attributes:
+              unioned_child.correspondance.addAttribute(new_name, computed_attribute = expanded_hessian)
+              self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (expanded_hessian, hessian_data_attribute)
       else:
         if global_hessian_name not in unioned_child.correspondance.attributes:
           # we add the expanded hessian to the correspondance

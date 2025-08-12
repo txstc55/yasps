@@ -119,7 +119,7 @@ ee_positions = bunnies.ee.addAttribute("positions", through = ee2v, source = bun
 ##################################################
 # construct ccd
 ##################################################
-ccd = CCD(len(surface_indices))
+ccd = CCD(len(surface_indices), position.shape[0])
 surface_indices_gpu = gpuarray.to_gpu(np.array(surface_indices).astype(np.uint32).flatten())
 edge_indices_gpu = gpuarray.to_gpu(edge_indices.astype(np.uint32).flatten())
 triangle_indices_gpu = gpuarray.to_gpu(surface_triangle_indices.astype(np.uint32).flatten())
