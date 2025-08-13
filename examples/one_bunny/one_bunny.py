@@ -94,8 +94,8 @@ bunnies.vertices.addAttribute("rest_position")
 bunnies.vertices.addAttribute("last_position")
 bunnies.vertices.addAttribute("velocity")
 
-mu = bunnies.addAttribute("mu", rows = 1, cols = 1) # for stable neo hookean
-lam = bunnies.addAttribute("lam", rows = 1, cols = 1) # for stable neo hookean
+mu = bunnies.addConstant("mu", rows = 1, cols = 1) # for stable neo hookean
+lam = bunnies.addConstant("lam", rows = 1, cols = 1) # for stable neo hookean
 mu.updateValue([MU_VALUE])
 lam.updateValue([LAMBDA_VALUE])
 

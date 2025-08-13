@@ -224,7 +224,7 @@ triangles = triangles[:triangles.shape[0] // 2]
 cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
 bunny_poly0 = pv.PolyData(position[:position.shape[0] // 2, :], cells)
 bunny_poly1 = pv.PolyData(position[position.shape[0] // 2:, :], cells)
-plotter = pv.Plotter(window_size=(3840, 2160))
+plotter = pv.Plotter()
 plotter.add_mesh(bunny_poly0, color='blue', opacity = 0.2)
 plotter.add_mesh(bunny_poly1, color='red', opacity = 1.0)
 plotter.camera_position = [(0, 0, 20), (0, 0, 0), (0, 1, 0)]

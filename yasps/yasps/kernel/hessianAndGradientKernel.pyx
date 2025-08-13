@@ -304,16 +304,15 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     // and the position for this segment
     unsigned int segment_placement = segment_indices[instance * max_num_indices + i];
     if (segment_placement == 0){{
-      gradient_offset += 1;
+      gradient_offset += segment_size;
       continue; // we encountered space reserved for union, skip
     }}else if (segment_placement == 1){{
       // this is a special case where we want the variable to be in the matrix, but not in the final hessian
       // we keep it because it's necessary for the hessian projection
       gradient_offset += segment_size; // skip this segment
       continue; // skip
-    }}{{
-      segment_placement -= 2; // make it 0 indexed
     }}
+    segment_placement -= 2; // make it 0 indexed
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
 #if {int(not self.__gradient_only)} // did we compute the hessian
@@ -337,7 +336,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     // we first determine what's the correct position to put in the compressed hessian
     short int permutation_i = local_permutations[instance * max_num_indices + i];
     if (permutation_i == 0){{
-      row_offset += 1; // done with the row since it's reserved for union empty space
+      row_offset += segment_sizes[instance * max_num_indices + i]; // done with the row since it's reserved for union empty space
       continue; // we encountered space reserved for union, skip
     }}
     if (permutation_i < 0){{
@@ -349,7 +348,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     for (unsigned int j = 0; j < max_num_indices; j++){{
       short int permutation_j = local_permutations[instance * max_num_indices + j];
       if (permutation_j == 0){{
-        col_offset += 1; // done with the column since it's reserved for union empty space
+        col_offset += segment_sizes[instance * max_num_indices + j]; // done with the column since it's reserved for union empty space
         continue; // we encountered space reserved for union, skip
       }}
       if (permutation_j < 0){{

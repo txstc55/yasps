@@ -528,7 +528,7 @@ class gradientIndicesKernel:
       for child in current_attribute.children:
         child_gradient_size, child_index_size = self.__getGradientSize(path_dict, child)
         total_size = max(child_gradient_size, total_size)
-        index_size = max(child_index_size, index_size)
+        index_size = max(child_index_size + 1, index_size) # we add 1 so that whenever there's a union operator and its children doesnt fill the full size, we will have a placeholder indicator for us to move the pointer forward when computing and compressing hessian
       self.__gradientSizeForEachPart[current_attribute] = total_size
       self.__indexSizeForEachPart[current_attribute] = index_size
       return total_size, index_size
@@ -738,6 +738,7 @@ __device__ inline void {parent.fullName}_get_indices(
         // we will add an index shift because there can be multiple indices
         // we need to grab for the same child
         unsigned int outputIndexShift = 0;
+        unsigned int actualSize = 0;
 '''
           for used_grandchild in used_grandchildren:
             self.__kernelString += f'''
@@ -750,9 +751,13 @@ __device__ inline void {parent.fullName}_get_indices(
           shifted_index // use the shifted index instead of the original index since primitives are stacked in a union operation
         );
         outputIndexShift += {self.__indexSizeForEachPart[used_grandchild]};
+        actualSize += {self.__gradientSizeForEachPart[used_grandchild]};
 '''
-          self.__kernelString += '''
-      }
+          self.__kernelString += f'''
+        // now we add the white space for the last place
+        // outputIndices[{self.__indexSizeForEachPart[parent] - 1}] = 0; // we add a zero at the end to indicate the end of the indices
+        outputSizes[{self.__indexSizeForEachPart[parent] - 1}] = {self.__gradientSizeForEachPart[parent]} - actualSize; // we add a zero at the end to indicate the end of the sizes
+      }}
       break;
 '''
         self.__kernelString += f'''
