@@ -12,7 +12,7 @@ import subprocess
 import time
 
 class CCD:
-  def __init__(self, num_vertices: int, all_vertices: int, max_cd_pairs: int = 100000000, max_ccd_pairs: int = 100000000):
+  def __init__(self, num_vertices: int, all_vertices: int, max_cd_pairs: int = 10000000, max_ccd_pairs: int = 100000000):
     module_dir = os.path.dirname(os.path.abspath(__file__))  # always resolves to y.py's directory
     mlbvh_so_path = os.path.join(module_dir, "libmlbvh.so")
     accd_so_path = os.path.join(module_dir, "libaccd.so")
@@ -188,10 +188,10 @@ class CCD:
 
     self.__num_vertices = num_vertices
     self.__btypes = gpuarray.to_gpu(np.zeros(all_vertices, dtype=np.int32)) # initialize empty array for btypes
-    self.__pp = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 2), dtype=np.uint32))
-    self.__pe = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 3), dtype=np.uint32))
-    self.__pt = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 4), dtype=np.uint32))
-    self.__ee = gpuarray.to_gpu(np.zeros((max_ccd_pairs * 4), dtype=np.uint32))
+    self.__pp = gpuarray.to_gpu(np.zeros((max_cd_pairs * 2), dtype=np.uint32))
+    self.__pe = gpuarray.to_gpu(np.zeros((max_cd_pairs * 3), dtype=np.uint32))
+    self.__pt = gpuarray.to_gpu(np.zeros((max_cd_pairs * 4), dtype=np.uint32))
+    self.__ee = gpuarray.to_gpu(np.zeros((max_cd_pairs * 4), dtype=np.uint32))
     self.__separated_counts = gpuarray.to_gpu(np.zeros(4, dtype=np.uint32))
     self.__mqueue = gpuarray.to_gpu(np.zeros(max_ccd_pairs, dtype=np.float64))
 
