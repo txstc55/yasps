@@ -249,7 +249,7 @@ class minimizer:
       return []
     return self.solutionSegments
 
-  def computeHessianAndGradient(self, tolerance = 1e-3):
+  def computeHessianAndGradient(self, tolerance = 1e-3, maxIterations = 20000):
     # set gradient and hessian to 0
     self.__gradient.fill(0)
     if self.__blocksFlattened.shape[0] > 0:
@@ -301,7 +301,7 @@ class minimizer:
 
 
     error_code = self.__solver.computeSolution(
-      20000,
+      maxIterations,
       tolerance,
       self.__blocksFlattened,
       self.__blockPositions,

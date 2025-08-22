@@ -2,7 +2,7 @@ from yasps import scene
 from yasps.attribute import attribute
 import numpy as np
 np.random.seed(13)
-NUM_POINTS = 400
+NUM_POINTS = 1000
 NUM_LOOPS = 2
 def generate_points_near_equator(num_points, delta_phi_deg=5):
   theta = np.linspace(0, 2 * np.pi, num_points, endpoint=False, dtype=np.float64)
@@ -179,7 +179,8 @@ for i in range(NUM_LOOPS):
 ax.set_xlim([-1, 1])
 ax.set_ylim([-1, 1])
 ax.set_zlim([-1, 1])
-plt.show()
+# plt.show()
+# plt.close()
 
 def plot_segments(points):
   # Extract coordinates
@@ -192,13 +193,16 @@ def plot_segments(points):
   fig.canvas.draw()
   fig.canvas.flush_events()
 
-# plot_segments(vertex_positions_value)
-# plt.show()
+plot_segments(vertex_positions_value)
+plt.show()
 
-weight = 0.05
+weight = 0.00005
 for i in range(500):
   result = s.minimizeEnergy()
   result = result[0].get().reshape(-1, 3)
+  print(max(result))
+  print(min(result))
+  print("max and min printed")
   updated_value = (vertex_positions.value.get().reshape(-1, 3) - weight * result)
   # normalize it
   updated_value = updated_value / np.linalg.norm(updated_value, axis=1)[:, None]
