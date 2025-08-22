@@ -66,13 +66,13 @@ print(f"There are {len(different_loop_edge_pair_indices)} different loop pairs")
 
 s = scene("scene")
 m = s.addMesh("mesh")
-m.addAttribute("same_repulsive_weight", rows = 1, cols = 1)
+m.addConstant("same_repulsive_weight", rows = 1, cols = 1)
 m.attributes["same_repulsive_weight"].updateValue(np.array([1.0], dtype=np.float64))
-m.addAttribute("diff_repulsive_weight", rows = 1, cols = 1)
+m.addConstant("diff_repulsive_weight", rows = 1, cols = 1)
 m.attributes["diff_repulsive_weight"].updateValue(np.array([1.0], dtype=np.float64))
-m.addAttribute("alpha", rows = 1, cols = 1)
+m.addConstant("alpha", rows = 1, cols = 1)
 m.attributes["alpha"].updateValue(np.array([3.0], dtype=np.float64))
-m.addAttribute("beta", rows = 1, cols = 1)
+m.addConstant("beta", rows = 1, cols = 1)
 m.attributes["beta"].updateValue(np.array([6.0], dtype=np.float64))
 
 vertex = m.addPrimitive("vertex", NUM_POINTS * NUM_LOOPS) # add vertices
@@ -196,13 +196,10 @@ def plot_segments(points):
 plot_segments(vertex_positions_value)
 plt.show()
 
-weight = 0.00005
+weight = 0.1
 for i in range(500):
   result = s.minimizeEnergy()
   result = result[0].get().reshape(-1, 3)
-  print(max(result))
-  print(min(result))
-  print("max and min printed")
   updated_value = (vertex_positions.value.get().reshape(-1, 3) - weight * result)
   # normalize it
   updated_value = updated_value / np.linalg.norm(updated_value, axis=1)[:, None]
