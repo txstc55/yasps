@@ -1415,10 +1415,10 @@ void lbvh::FREE_DEVICE_MEM() {
 void lbvh::MALLOC_DEVICE_MEM(const int& number) {
     CUDA_SAFE_CALL(cudaMalloc((void**)&_indices, (number) * sizeof(uint32_t)));
     CUDA_SAFE_CALL(cudaMalloc((void**)&_MChash, (number) * sizeof(uint64_t)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&_nodes, (2 * number - 1) * sizeof(Node)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&_bvs, (2 * number - 1) * sizeof(AABB)));
+    CUDA_SAFE_CALL(cudaMalloc((void**)&_nodes, (max(2 * number - 1, 0)) * sizeof(Node)));
+    CUDA_SAFE_CALL(cudaMalloc((void**)&_bvs, (max(2 * number - 1, 0)) * sizeof(AABB)));
     CUDA_SAFE_CALL(cudaMalloc((void**)&_tempLeafBox, number * sizeof(AABB)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&_flags, (number - 1) * sizeof(uint32_t)));
+    CUDA_SAFE_CALL(cudaMalloc((void**)&_flags, (max(number - 1, 0)) * sizeof(uint32_t)));
     //CUDA_SAFE_CALL(cudaMalloc((void**)&_cpNum, sizeof(uint32_t)));ye
     //CUDA_SAFE_CALL(cudaMemset(_cpNum, 0, sizeof(uint32_t)));
 }

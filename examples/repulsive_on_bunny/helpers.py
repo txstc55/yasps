@@ -2,46 +2,29 @@ import numpy as np
 from yasps import attribute
 import pycuda.gpuarray as gpuarray
 
-def extract_edges_from_triangles(triangles):
-  edge_set = set()
-  for tri in triangles:
-    edges = [
-      tuple(sorted([tri[0], tri[1]])),
-      tuple(sorted([tri[1], tri[2]])),
-      tuple(sorted([tri[2], tri[0]]))
-    ]
-    for edge in edges:
-      edge_set.add(edge)
-  return np.array([list(e) for e in edge_set])
 
-def extract_edges_2_tri(triangles, edges):
-  edge_indices = {}
-  for i, edge in enumerate(edges):
-    edge_indices[tuple(edge)] = i
-  tri_list = []
-  for edge in edges:
-    tri_list.append([])
-  for tri in triangles:
-    edge0 = tuple([tri[0], tri[1]])
-    edge1 = tuple([tri[1], tri[2]])
-    edge2 = tuple([tri[2], tri[0]])
-    edge0r = tuple([tri[1], tri[0]])
-    edge1r = tuple([tri[2], tri[1]])
-    edge2r = tuple([tri[0], tri[2]])
-    if edge0 in edge_indices:
-      tri_list[edge_indices[edge0]].append(tri)
-    if edge1 in edge_indices:
-      tri_list[edge_indices[edge1]].append(tri)
-    if edge2 in edge_indices:
-      tri_list[edge_indices[edge2]].append(tri)
-    if edge0r in edge_indices:
-      tri_list[edge_indices[edge0r]].append(tri)
-    if edge1r in edge_indices:
-      tri_list[edge_indices[edge1r]].append(tri)
-    if edge2r in edge_indices:
-      tri_list[edge_indices[edge2r]].append(tri)
+def extract_boundary_edges(F: np.ndarray) -> np.ndarray:
+  """
+  F: (n,3) triangle indices (any integer dtype).
+  Returns: (m,2) array of undirected boundary edges with u < v.
+  """
+  # List all triangle edges
+  E = np.vstack([
+    F[:, [0, 1]],
+    F[:, [1, 2]],
+    F[:, [2, 0]],
+  ])
 
-  return np.array(tri_list)
+  # Treat edges as undirected by sorting endpoints
+  E_sorted = np.sort(E, axis=1)
+
+  # Count occurrences of each undirected edge
+  uniq, counts = np.unique(E_sorted, axis=0, return_counts=True)
+
+  # Boundary edges occur exactly once
+  boundary = uniq[counts == 1]
+  return boundary
+
 
 
 
@@ -129,3 +112,42 @@ abs_max_reduce = ReductionKernel(
   map_expr="fabs(x[i])",
   arguments="double *x"
 )
+
+
+# add the repulsive force
+def repulsive_loop(points, alpha, beta):
+  p0 = points.row(0)
+  p1 = points.row(1)
+  p2 = points.row(2)
+  p3 = points.row(3)
+  # r = p0.dot_explicit(p0) + p1.dot_explicit(p1) + p2.dot_explicit(p2) + p3.dot_explicit(p3)
+  T01 = (p1 - p0) / (p1 - p0).norm()
+  T23 = (p3 - p2) / (p3 - p2).norm()
+  m01 = 0.5 * (p0 + p1)
+  m23 = 0.5 * (p2 + p3)
+  r = ((T01.cross(m01 - m23)).norm()).pow(alpha) / (((m01 - m23).norm()).pow(beta))
+  r += ((T23.cross(m23 - m01)).norm()).pow(alpha) / (((m23 - m01).norm()).pow(beta))
+  # r += ((T01.cross(m01 - p2)).norm()).pow(alpha) / (((m01 - p2).norm()).pow(beta))
+  # r += ((T01.cross(m01 - p3)).norm()).pow(alpha) / (((m01 - p3).norm()).pow(beta))
+  # r += ((T23.cross(m23 - p0)).norm()).pow(alpha) / (((m23 - p0).norm()).pow(beta))
+  # r += ((T23.cross(m23 - p1)).norm()).pow(alpha) / (((m23 - p1).norm()).pow(beta))
+  return r
+
+def smooth_loop(points):
+  p0 = points.row(0)
+  p1 = points.row(1)
+  p2 = points.row(2)
+  p3 = points.row(3)
+
+  # t01 = p1 - p0
+  # t01 = t01 / t01.norm()
+  # t12 = p2 - p1
+  # t12 = t12 / t12.norm()
+  # t23 = p3 - p2
+  # t23 = t23 / t23.norm()
+  # return 1.0 - t01.dot(t12) + 1.0 - t12.dot(t23)
+  e0 = p0 - 2.0 * p1 + p2
+  e0 = e0.dot(e0)
+  e1 = p1 - 2.0 * p2 + p3
+  e1 = e1.dot(e1)
+  return e0 + e1
