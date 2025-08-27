@@ -9,6 +9,7 @@
 #include "mlbvh.cuh"
 #include <cmath>
 #include "cuda_tools.h"
+#include <cstdint>
 #include <thrust/sort.h>
 #include <thrust/sequence.h>
 #include <thrust/device_ptr.h>
@@ -475,7 +476,7 @@ int _dType_EE(const double3& v0, const double3& v1, const double3& v2, const dou
 
 
 __device__
-inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, const uint32_t& id1, const uint32_t& id2, const uint32_t& id3, const double& dHat, uint32_t* _cpNum, int* _mInx, int4* _collisionPair, int4* _ccd_collisionPair) noexcept
+inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, const uint32_t& id1, const uint32_t& id2, const uint32_t& id3, const double& dHat, uint32_t* _cpNum, uint32_t* _meshIndices, int4* _collisionPair, int4* _ccd_collisionPair) noexcept
 {
     double3 v0 = _vertexes[id0];
     double3 v1 = _vertexes[id1];
@@ -494,7 +495,6 @@ inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, 
             int cdp_idx = atomicAdd(_cpNum, 1);
             _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
             _collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, -1, -1);
-            _mInx[cdp_idx] = atomicAdd(_cpNum + 2, 1);
         }
         break;
     }
@@ -506,7 +506,6 @@ inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, 
             int cdp_idx = atomicAdd(_cpNum, 1);
             _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
             _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, -1, -1);
-            _mInx[cdp_idx] = atomicAdd(_cpNum + 2, 1);
         }
         break;
     }
@@ -518,7 +517,6 @@ inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, 
             int cdp_idx = atomicAdd(_cpNum, 1);
             _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
             _collisionPair[cdp_idx] = make_int4(-id0 - 1, id3, -1, -1);
-            _mInx[cdp_idx] = atomicAdd(_cpNum + 2, 1);
         }
         break;
     }
@@ -530,7 +528,6 @@ inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, 
             int cdp_idx = atomicAdd(_cpNum, 1);
             _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
             _collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, -1);
-            _mInx[cdp_idx] = atomicAdd(_cpNum + 3, 1);
         }
         break;
     }
@@ -542,7 +539,6 @@ inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, 
             int cdp_idx = atomicAdd(_cpNum, 1);
             _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
             _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, id3, -1);
-            _mInx[cdp_idx] = atomicAdd(_cpNum + 3, 1);
         }
         break;
     }
@@ -554,7 +550,6 @@ inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, 
             int cdp_idx = atomicAdd(_cpNum, 1);
             _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
             _collisionPair[cdp_idx] = make_int4(-id0 - 1, id3, id1, -1);
-            _mInx[cdp_idx] = atomicAdd(_cpNum + 3, 1);
         }
         break;
     }
@@ -567,7 +562,6 @@ inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, 
             _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
             _collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
             //printf("ccbcbcbcbbcbcbbcbcb  %d  %d  %d  %d\n", -id0 - 1, id1, id2, id3);
-            _mInx[cdp_idx] = atomicAdd(_cpNum + 4, 1);
         }
         break;
     }
@@ -603,7 +597,7 @@ inline bool _checkPTintersection_fullCCD(const double3* _vertexes, const uint32_
 }
 
 __device__
-inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_vertexes, const uint32_t& id0, const uint32_t& id1, const uint32_t& id2, const uint32_t& id3, const uint32_t& obj_idx, const double& dHat, uint32_t* _cpNum, int* MatIndex, int4* _collisionPair, int4* _ccd_collisionPair, int edgeNum) noexcept
+inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_vertexes, const uint32_t& id0, const uint32_t& id1, const uint32_t& id2, const uint32_t& id3, const uint32_t& obj_idx, const double& dHat, uint32_t* _cpNum, int4* _collisionPair, int4* _ccd_collisionPair, int edgeNum) noexcept
 {
     double3 v0 = _vertexes[id0];
     double3 v1 = _vertexes[id1];
@@ -629,12 +623,9 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 if (smooth) {
                     _collisionPair[cdp_idx] = make_int4(-id0 - 1, -id2 - 1, -id1 - 1, -id3 - 1);
-                    MatIndex[cdp_idx] = atomicAdd(_cpNum + 4, 1);
-
                     break;
                 }
                 _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, -1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 2, 1);
             }
             else {
                 int cdp_idx = atomicAdd(_cpNum, 1);
@@ -643,7 +634,6 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
                 // }
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, -1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 2, 1);
             }
         }
         break;
@@ -662,17 +652,14 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 if (smooth) {
                     _collisionPair[cdp_idx] = make_int4(-id0 - 1, -id3 - 1, -id1 - 1, -id2 - 1);
-                    MatIndex[cdp_idx] = atomicAdd(_cpNum + 4, 1);
                     break;
                 }
                 _collisionPair[cdp_idx] = make_int4(-id0 - 1, id3, -1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 2, 1);
             }
             else {
                 int cdp_idx = atomicAdd(_cpNum, 1);
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 _collisionPair[cdp_idx] = make_int4(-id0 - 1, id3, -1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 2, 1);
             }
         }
         break;
@@ -692,17 +679,14 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 if (smooth) {
                     _collisionPair[cdp_idx] = make_int4(-id0 - 1, -id2 - 1, id3, -id1 - 1);
-                    MatIndex[cdp_idx] = atomicAdd(_cpNum + 4, 1);
                     break;
                 }
                 _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, id3, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 3, 1);
             }
             else {
                 int cdp_idx = atomicAdd(_cpNum, 1);
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, id3, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 3, 1);
             }
         }
         break;
@@ -721,17 +705,14 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 if (smooth) {
                     _collisionPair[cdp_idx] = make_int4(-id1 - 1, -id2 - 1, -id0 - 1, -id3 - 1);
-                    MatIndex[cdp_idx] = atomicAdd(_cpNum + 4, 1);
                     break;
                 }
                 _collisionPair[cdp_idx] = make_int4(-id1 - 1, id2, -1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 2, 1);
             }
             else {
                 int cdp_idx = atomicAdd(_cpNum, 1);
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 _collisionPair[cdp_idx] = make_int4(-id1 - 1, id2, -1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 2, 1);
             }
         }
         break;
@@ -750,17 +731,14 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 if (smooth) {
                     _collisionPair[cdp_idx] = make_int4(-id1 - 1, -id3 - 1, -id0 - 1, -id2 - 1);
-                    MatIndex[cdp_idx] = atomicAdd(_cpNum + 4, 1);
                     break;
                 }
                 _collisionPair[cdp_idx] = make_int4(-id1 - 1, id3, -1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 2, 1);
             }
             else {
                 int cdp_idx = atomicAdd(_cpNum, 1);
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 _collisionPair[cdp_idx] = make_int4(-id1 - 1, id3, -1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 2, 1);
             }
         }
         break;
@@ -779,17 +757,14 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 if (smooth) {
                     _collisionPair[cdp_idx] = make_int4(-id1 - 1, -id2 - 1, id3, -id0 - 1);
-                    MatIndex[cdp_idx] = atomicAdd(_cpNum + 4, 1);
                     break;
                 }
                 _collisionPair[cdp_idx] = make_int4(-id1 - 1, id2, id3, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 3, 1);
             }
             else {
                 int cdp_idx = atomicAdd(_cpNum, 1);
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 _collisionPair[cdp_idx] = make_int4(-id1 - 1, id2, id3, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 3, 1);
             }
         }
         break;
@@ -809,17 +784,14 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 if (smooth) {
                     _collisionPair[cdp_idx] = make_int4(-id2 - 1, -id0 - 1, id1, -id3 - 1);
-                    MatIndex[cdp_idx] = atomicAdd(_cpNum + 4, 1);
                     break;
                 }
                 _collisionPair[cdp_idx] = make_int4(-id2 - 1, id0, id1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 3, 1);
             }
             else {
                 int cdp_idx = atomicAdd(_cpNum, 1);
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 _collisionPair[cdp_idx] = make_int4(-id2 - 1, id0, id1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 3, 1);
             }
         }
         break;
@@ -839,17 +811,14 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 if (smooth) {
                     _collisionPair[cdp_idx] = make_int4(-id3 - 1, -id0 - 1, id1, -id2 - 1);
-                    MatIndex[cdp_idx] = atomicAdd(_cpNum + 4, 1);
                     break;
                 }
                 _collisionPair[cdp_idx] = make_int4(-id3 - 1, id0, id1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 3, 1);
             }
             else {
                 int cdp_idx = atomicAdd(_cpNum, 1);
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 _collisionPair[cdp_idx] = make_int4(-id3 - 1, id0, id1, add_e);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 3, 1);
             }
         }
         break;
@@ -866,7 +835,6 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
             if (add_e <= -2) {
                 //printf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nxxxxxxxxxxx\n");
                 int cdp_idx = atomicAdd(_cpNum, 1);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 4, 1);
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 if (smooth) {
                     _collisionPair[cdp_idx] = make_int4(id0, id1, id2, -id3 - 1);
@@ -879,7 +847,6 @@ inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_
                 int cdp_idx = atomicAdd(_cpNum, 1);
                 _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
                 _collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                MatIndex[cdp_idx] = atomicAdd(_cpNum + 4, 1);
 
             }
         }
@@ -1050,7 +1017,7 @@ void _sortBvs(const uint32_t* _indices, AABB* _bvs, AABB* _temp_bvs, int number)
 }
 
 __global__
-void _selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _collisionPair, int4* _ccd_collisionPair, uint32_t* _cpNum, int* MatIndex, double dHat, int number) {
+void _selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _collisionPair, int4* _ccd_collisionPair, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= number) return;
 
@@ -1066,22 +1033,28 @@ void _selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _fa
     //printf("%f\n", bboxDiagSize2);
     double gapl = sqrt(dHat);//0.001 * sqrt(bboxDiagSize2);
     //double dHat = gapl * gapl;// *bboxDiagSize2;
+    const uint32_t currentMeshIndex = _meshIndices[idx];
     unsigned int num_found = 0;
     do
     {
         const uint32_t node_id = *--stack_ptr;
         const uint32_t L_idx = _nodes[node_id].left_idx;
         const uint32_t R_idx = _nodes[node_id].right_idx;
-
         if (L_idx != 0xFFFFFFFF && overlap(_bv, _bvs[L_idx], gapl))
         {
             const auto obj_idx = _nodes[L_idx].element_idx;
+
             if (obj_idx != 0xFFFFFFFF)
             {
+              const uint32_t f_mesh_index_0 = _meshIndices[_faces[obj_idx].x];
+              const uint32_t f_mesh_index_1 = _meshIndices[_faces[obj_idx].y];
+              const uint32_t f_mesh_index_2 = _meshIndices[_faces[obj_idx].z];
+              if (currentMeshIndex == 0 || (currentMeshIndex != 0 && ((currentMeshIndex != f_mesh_index_0) || (currentMeshIndex != f_mesh_index_1) || (currentMeshIndex != f_mesh_index_2 )))){
                 if (idx != _faces[obj_idx].x && idx != _faces[obj_idx].y && idx != _faces[obj_idx].z) {
                     if (!(_btype[idx] >= 2 && _btype[_faces[obj_idx].x] >= 2 && _btype[_faces[obj_idx].y] >= 2 && _btype[_faces[obj_idx].z] >= 2))
-                        _checkPTintersection(_vertexes, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, dHat, _cpNum, MatIndex, _collisionPair, _ccd_collisionPair);
+                        _checkPTintersection(_vertexes, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, dHat, _cpNum, _meshIndices, _collisionPair, _ccd_collisionPair);
                 }
+              }
             }
             else // the node is not a leaf.
             {
@@ -1093,10 +1066,15 @@ void _selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _fa
             const auto obj_idx = _nodes[R_idx].element_idx;
             if (obj_idx != 0xFFFFFFFF)
             {
+              const uint32_t f_mesh_index_0 = _meshIndices[_faces[obj_idx].x];
+              const uint32_t f_mesh_index_1 = _meshIndices[_faces[obj_idx].y];
+              const uint32_t f_mesh_index_2 = _meshIndices[_faces[obj_idx].z];
+              if (currentMeshIndex == 0 || (currentMeshIndex != 0 && ((currentMeshIndex != f_mesh_index_0) || (currentMeshIndex != f_mesh_index_1) || (currentMeshIndex != f_mesh_index_2 )))){
                 if (idx != _faces[obj_idx].x && idx != _faces[obj_idx].y && idx != _faces[obj_idx].z) {
                     if (!(_btype[idx] >= 2 && _btype[_faces[obj_idx].x] >= 2 && _btype[_faces[obj_idx].y] >= 2 && _btype[_faces[obj_idx].z] >= 2))
-                        _checkPTintersection(_vertexes, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, dHat, _cpNum, MatIndex, _collisionPair, _ccd_collisionPair);
+                        _checkPTintersection(_vertexes, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, dHat, _cpNum, _meshIndices, _collisionPair, _ccd_collisionPair);
                 }
+              }
             }
             else // the node is not a leaf.
             {
@@ -1107,7 +1085,7 @@ void _selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _fa
 }
 
 __global__
-void _selfQuery_vf_ccd(const int* _btype, const double3* _vertexes, const double3* moveDir, double alpha, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisionPair, uint32_t* _cpNum, double dHat, int number) {
+void _selfQuery_vf_ccd(const int* _btype, const double3* _vertexes, const double3* moveDir, double alpha, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisionPair, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= number) return;
 
@@ -1124,6 +1102,7 @@ void _selfQuery_vf_ccd(const int* _btype, const double3* _vertexes, const double
     _bv.combines(current_vertex.x - mvD.x * alpha, current_vertex.y - mvD.y * alpha, current_vertex.z - mvD.z * alpha);
     double gapl = sqrt(dHat);//0.001 * sqrt(bboxDiagSize2);
     //double dHat = gapl * gapl;// *bboxDiagSize2;
+    const uint32_t currentMeshIndex = _meshIndices[idx];
     unsigned int num_found = 0;
     do
     {
@@ -1136,11 +1115,17 @@ void _selfQuery_vf_ccd(const int* _btype, const double3* _vertexes, const double
             const auto obj_idx = _nodes[L_idx].element_idx;
             if (obj_idx != 0xFFFFFFFF)
             {
-                if(!(_btype[idx]>=2&& _btype[_faces[obj_idx].x] >= 2 && _btype[_faces[obj_idx].y] >= 2 && _btype[_faces[obj_idx].z] >= 2))
+                if(!(_btype[idx]>=2&& _btype[_faces[obj_idx].x] >= 2 && _btype[_faces[obj_idx].y] >= 2 && _btype[_faces[obj_idx].z] >= 2)){
+                  const uint32_t f_mesh_index_0 = _meshIndices[_faces[obj_idx].x];
+                  const uint32_t f_mesh_index_1 = _meshIndices[_faces[obj_idx].y];
+                  const uint32_t f_mesh_index_2 = _meshIndices[_faces[obj_idx].z];
+                  if (currentMeshIndex == 0 || (currentMeshIndex != 0 && ((currentMeshIndex != f_mesh_index_0) || (currentMeshIndex != f_mesh_index_1) || (currentMeshIndex != f_mesh_index_2 )))){
                     if (idx != _faces[obj_idx].x && idx != _faces[obj_idx].y && idx != _faces[obj_idx].z) {
                         _ccd_collisionPair[atomicAdd(_cpNum, 1)] = make_int4(-idx - 1, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z);
                         //_checkPTintersection_fullCCD(_vertexes, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, dHat, _cpNum, _ccd_collisionPair);
                     }
+                  }
+                }
             }
             else // the node is not a leaf.
             {
@@ -1152,11 +1137,17 @@ void _selfQuery_vf_ccd(const int* _btype, const double3* _vertexes, const double
             const auto obj_idx = _nodes[R_idx].element_idx;
             if (obj_idx != 0xFFFFFFFF)
             {
-                if(!(_btype[idx]>=2&& _btype[_faces[obj_idx].x] >= 2 && _btype[_faces[obj_idx].y] >= 2 && _btype[_faces[obj_idx].z] >= 2))
+                if(!(_btype[idx]>=2&& _btype[_faces[obj_idx].x] >= 2 && _btype[_faces[obj_idx].y] >= 2 && _btype[_faces[obj_idx].z] >= 2)){
+                  const uint32_t f_mesh_index_0 = _meshIndices[_faces[obj_idx].x];
+                  const uint32_t f_mesh_index_1 = _meshIndices[_faces[obj_idx].y];
+                  const uint32_t f_mesh_index_2 = _meshIndices[_faces[obj_idx].z];
+                  if (currentMeshIndex == 0 || (currentMeshIndex != 0 && ((currentMeshIndex != f_mesh_index_0) || (currentMeshIndex != f_mesh_index_1) || (currentMeshIndex != f_mesh_index_2 )))){
                     if (idx != _faces[obj_idx].x && idx != _faces[obj_idx].y && idx != _faces[obj_idx].z) {
                         _ccd_collisionPair[atomicAdd(_cpNum, 1)] = make_int4(-idx - 1, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z);
                         //_checkPTintersection_fullCCD(_vertexes, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, dHat, _cpNum, _ccd_collisionPair);
                     }
+                  }
+                }
             }
             else // the node is not a leaf.
             {
@@ -1168,7 +1159,7 @@ void _selfQuery_vf_ccd(const int* _btype, const double3* _vertexes, const double
 
 
 __global__
-void _selfQuery_ee(const int* _btype, const double3* _vertexes, const double3* _rest_vertexes, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _collisionPair, int4* _ccd_collisionPair, uint32_t* _cpNum, int* MatIndex, double dHat, int number) {
+void _selfQuery_ee(const int* _btype, const double3* _vertexes, const double3* _rest_vertexes, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _collisionPair, int4* _ccd_collisionPair, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= number) return;
 
@@ -1181,6 +1172,8 @@ void _selfQuery_ee(const int* _btype, const double3* _vertexes, const double3* _
     uint32_t self_eid = _nodes[idx].element_idx;
     double gapl = sqrt(dHat);//0.001 * sqrt(bboxDiagSize2);
     unsigned int num_found = 0;
+    const uint32_t currentMeshIndex0 = _meshIndices[_edges[self_eid].x];
+    const uint32_t currentMeshIndex1 = _meshIndices[_edges[self_eid].y];
     do
     {
         const uint32_t node_id = *--stack_ptr;
@@ -1193,11 +1186,15 @@ void _selfQuery_ee(const int* _btype, const double3* _vertexes, const double3* _
             if (obj_idx != 0xFFFFFFFF)
             {
                 if (self_eid != obj_idx) {
+                  const uint32_t e_mesh_index_0 = _meshIndices[_edges[obj_idx].x];
+                  const uint32_t e_mesh_index_1 = _meshIndices[_edges[obj_idx].y];
+                  if (currentMeshIndex0 == 0 || currentMeshIndex1 == 0 || (currentMeshIndex0 == currentMeshIndex1) && (currentMeshIndex0 != e_mesh_index_0 || currentMeshIndex0 != e_mesh_index_1)){
                     if (!(_edges[self_eid].x == _edges[obj_idx].x || _edges[self_eid].x == _edges[obj_idx].y || _edges[self_eid].y == _edges[obj_idx].x || _edges[self_eid].y == _edges[obj_idx].y || obj_idx < self_eid)) {
                         //printf("%d   %d   %d   %d\n", _edges[self_eid].x, _edges[self_eid].y, _edges[obj_idx].x, _edges[obj_idx].y);
                         if (!(_btype[_edges[self_eid].x] >= 2 && _btype[_edges[self_eid].y]>= 2 && _btype[_edges[obj_idx].x] >= 2 && _btype[_edges[obj_idx].y] >= 2))
-                            _checkEEintersection(_vertexes, _rest_vertexes, _edges[self_eid].x, _edges[self_eid].y, _edges[obj_idx].x, _edges[obj_idx].y, obj_idx, dHat, _cpNum, MatIndex, _collisionPair, _ccd_collisionPair, number);
+                            _checkEEintersection(_vertexes, _rest_vertexes, _edges[self_eid].x, _edges[self_eid].y, _edges[obj_idx].x, _edges[obj_idx].y, obj_idx, dHat, _cpNum, _collisionPair, _ccd_collisionPair, number);
                     }
+                  }
                 }
             }
             else // the node is not a leaf.
@@ -1211,11 +1208,15 @@ void _selfQuery_ee(const int* _btype, const double3* _vertexes, const double3* _
             if (obj_idx != 0xFFFFFFFF)
             {
                 if (self_eid != obj_idx) {
+                  const uint32_t e_mesh_index_0 = _meshIndices[_edges[obj_idx].x];
+                  const uint32_t e_mesh_index_1 = _meshIndices[_edges[obj_idx].y];
+                  if (currentMeshIndex0 == 0 || currentMeshIndex1 == 0 || (currentMeshIndex0 == currentMeshIndex1) && (currentMeshIndex0 != e_mesh_index_0 || currentMeshIndex0 != e_mesh_index_1)){
                     if (!(_edges[self_eid].x == _edges[obj_idx].x || _edges[self_eid].x == _edges[obj_idx].y || _edges[self_eid].y == _edges[obj_idx].x || _edges[self_eid].y == _edges[obj_idx].y || obj_idx < self_eid)) {
                         //printf("%d   %d   %d   %d\n", _edges[self_eid].x, _edges[self_eid].y, _edges[obj_idx].x, _edges[obj_idx].y);
                         if (!(_btype[_edges[self_eid].x] >= 2 && _btype[_edges[self_eid].y]>= 2 && _btype[_edges[obj_idx].x] >= 2 && _btype[_edges[obj_idx].y] >= 2))
-                            _checkEEintersection(_vertexes, _rest_vertexes, _edges[self_eid].x, _edges[self_eid].y, _edges[obj_idx].x, _edges[obj_idx].y, obj_idx, dHat, _cpNum, MatIndex, _collisionPair, _ccd_collisionPair, number);
+                            _checkEEintersection(_vertexes, _rest_vertexes, _edges[self_eid].x, _edges[self_eid].y, _edges[obj_idx].x, _edges[obj_idx].y, obj_idx, dHat, _cpNum, _collisionPair, _ccd_collisionPair, number);
                     }
+                  }
                 }
             }
             else // the node is not a leaf.
@@ -1227,7 +1228,7 @@ void _selfQuery_ee(const int* _btype, const double3* _vertexes, const double3* _
 }
 
 __global__
-void _selfQuery_ee_ccd(const int* _btype, const double3* _vertexes, const double3* moveDir, double alpha, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisionPair, uint32_t* _cpNum, double dHat, int number) {
+void _selfQuery_ee_ccd(const int* _btype, const double3* _vertexes, const double3* moveDir, double alpha, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisionPair, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= number) return;
 
@@ -1239,7 +1240,8 @@ void _selfQuery_ee_ccd(const int* _btype, const double3* _vertexes, const double
     uint32_t self_eid = _nodes[idx].element_idx;
     uint2 current_edge = _edges[self_eid];
     double gapl = sqrt(dHat);
-
+    const uint32_t currentMeshIndex0 = _meshIndices[_edges[self_eid].x];
+    const uint32_t currentMeshIndex1 = _meshIndices[_edges[self_eid].y];
     unsigned int num_found = 0;
     do
     {
@@ -1253,10 +1255,14 @@ void _selfQuery_ee_ccd(const int* _btype, const double3* _vertexes, const double
             if (obj_idx != 0xFFFFFFFF)
             {
                 if (self_eid != obj_idx) {
+                  const uint32_t e_mesh_index_0 = _meshIndices[_edges[obj_idx].x];
+                  const uint32_t e_mesh_index_1 = _meshIndices[_edges[obj_idx].y];
+                  if (currentMeshIndex0 == 0 || currentMeshIndex1 == 0 || (currentMeshIndex0 == currentMeshIndex1) && (currentMeshIndex0 != e_mesh_index_0 || currentMeshIndex0 != e_mesh_index_1)){
                     if (!(_btype[_edges[self_eid].x] >= 2 && _btype[_edges[self_eid].y] >= 2 && _btype[_edges[obj_idx].x] >= 2 && _btype[_edges[obj_idx].y] >= 2))
                         if (!(current_edge.x == _edges[obj_idx].x || current_edge.x == _edges[obj_idx].y || current_edge.y == _edges[obj_idx].x || current_edge.y == _edges[obj_idx].y || obj_idx < self_eid)) {
                             _ccd_collisionPair[atomicAdd(_cpNum, 1)] = make_int4(current_edge.x, current_edge.y, _edges[obj_idx].x, _edges[obj_idx].y);
                         }
+                  }
                 }
             }
             else // the node is not a leaf.
@@ -1270,10 +1276,14 @@ void _selfQuery_ee_ccd(const int* _btype, const double3* _vertexes, const double
             if (obj_idx != 0xFFFFFFFF)
             {
                 if (self_eid != obj_idx) {
+                  const uint32_t e_mesh_index_0 = _meshIndices[_edges[obj_idx].x];
+                  const uint32_t e_mesh_index_1 = _meshIndices[_edges[obj_idx].y];
+                  if (currentMeshIndex0 == 0 || currentMeshIndex1 == 0 || (currentMeshIndex0 == currentMeshIndex1) && (currentMeshIndex0 != e_mesh_index_0 || currentMeshIndex0 != e_mesh_index_1)){
                     if (!(_btype[_edges[self_eid].x] >= 2 && _btype[_edges[self_eid].y] >= 2 && _btype[_edges[obj_idx].x] >= 2 && _btype[_edges[obj_idx].y] >= 2))
                         if (!(current_edge.x == _edges[obj_idx].x || current_edge.x == _edges[obj_idx].y || current_edge.y == _edges[obj_idx].x || current_edge.y == _edges[obj_idx].y || obj_idx < self_eid)) {
                             _ccd_collisionPair[atomicAdd(_cpNum, 1)] = make_int4(current_edge.x, current_edge.y, _edges[obj_idx].x, _edges[obj_idx].y);
                         }
+                  }
                 }
             }
             else // the node is not a leaf.
@@ -1364,41 +1374,41 @@ void sortBvs(const uint32_t* _indices, AABB* _bvs, AABB* _temp_bvs, int number) 
 }
 
 
-void selfQuery_ee(const int* _btype, const double3* _vertexes, const double3* _rest_vertexes, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _collisonPairs, int4* _ccd_collisonPairs, uint32_t* _cpNum, int* MatIndex, double dHat, int number) {
+void selfQuery_ee(const int* _btype, const double3* _vertexes, const double3* _rest_vertexes, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _collisonPairs, int4* _ccd_collisonPairs, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
     int numbers = number;
     const unsigned int threadNum = 256;
     int blockNum = (numbers + threadNum - 1) / threadNum;
 
-    _selfQuery_ee << <blockNum, threadNum >> > (_btype, _vertexes, _rest_vertexes, _edges, _bvs, _nodes, _collisonPairs, _ccd_collisonPairs, _cpNum, MatIndex, dHat, numbers);
+    _selfQuery_ee << <blockNum, threadNum >> > (_btype, _vertexes, _rest_vertexes, _edges, _bvs, _nodes, _collisonPairs, _ccd_collisonPairs, _cpNum, _meshIndices, dHat, numbers);
 }
 
-void fullCCDselfQuery_ee(const int* _btype, const double3* _vertexes, const double3* moveDir, const double& alpha, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisonPairs, uint32_t* _cpNum, double dHat, int number) {
+void fullCCDselfQuery_ee(const int* _btype, const double3* _vertexes, const double3* moveDir, const double& alpha, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisonPairs, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
     int numbers = number;
     const unsigned int threadNum = 256;
     int blockNum = (numbers + threadNum - 1) / threadNum;
 
-    _selfQuery_ee_ccd << <blockNum, threadNum >> > (_btype, _vertexes, moveDir, alpha, _edges, _bvs, _nodes, _ccd_collisonPairs, _cpNum, dHat, numbers);
+    _selfQuery_ee_ccd << <blockNum, threadNum >> > (_btype, _vertexes, moveDir, alpha, _edges, _bvs, _nodes, _ccd_collisonPairs, _cpNum, _meshIndices, dHat, numbers);
 }
 
-void selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _collisonPairs, int4* _ccd_collisonPairs, uint32_t* _cpNum, int* MatIndex, double dHat, int number) {
+void selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _collisonPairs, int4* _ccd_collisonPairs, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
     int numbers = number;
     const unsigned int threadNum = 256;
     int blockNum = (numbers + threadNum - 1) / threadNum;
     // printf("Before selfQuery_vf\n");
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    _selfQuery_vf << <blockNum, threadNum >> > (_btype, _vertexes, _faces, _surfVerts, _bvs, _nodes, _collisonPairs, _ccd_collisonPairs, _cpNum, MatIndex, dHat, numbers);
+    _selfQuery_vf << <blockNum, threadNum >> > (_btype, _vertexes, _faces, _surfVerts, _bvs, _nodes, _collisonPairs, _ccd_collisonPairs, _cpNum, _meshIndices, dHat, numbers);
     // printf("After selfQuery_vf\n");
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
     // printf("selfquery vf finished without error\n");
 }
 
-void fullCCDselfQuery_vf(const int* _btype, const double3* _vertexes, const double3* moveDir, const double& alpha, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisonPairs, uint32_t* _cpNum, double dHat, int number) {
+void fullCCDselfQuery_vf(const int* _btype, const double3* _vertexes, const double3* moveDir, const double& alpha, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisonPairs, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
     int numbers = number;
     const unsigned int threadNum = 256;
     int blockNum = (numbers + threadNum - 1) / threadNum;
     // printf("Before selfQuery_vf_ccd\n");
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    _selfQuery_vf_ccd << <blockNum, threadNum >> > (_btype, _vertexes, moveDir, alpha, _faces, _surfVerts, _bvs, _nodes, _ccd_collisonPairs, _cpNum, dHat, numbers);
+    _selfQuery_vf_ccd << <blockNum, threadNum >> > (_btype, _vertexes, moveDir, alpha, _faces, _surfVerts, _bvs, _nodes, _ccd_collisonPairs, _cpNum, _meshIndices, dHat, numbers);
     // printf("After selfQuery_vf_ccd\n");
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
@@ -1429,31 +1439,31 @@ lbvh::~lbvh() {
 
 
 
-void lbvh_f::init(int* _mbtype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int faceNum, int vertNum) {
+void lbvh_f::init(int* _mbtype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* meshIndices, int faceNum, int vertNum) {
     _faces = _mFaces;
     _surfVerts = _mSurfVert;
     _vertexes = _mVerts;
     _collisionPair = _mCollisonPairs;
     _ccd_collisionPair = _ccd_mCollisonPairs;
     _cpNum = _mcpNum;
-    _MatIndex = _mMatIndex;
     face_number = faceNum;
     vert_number = vertNum;
     _btype = _mbtype;
+    _meshIndices = meshIndices;
     MALLOC_DEVICE_MEM(face_number);
 }
 
-void lbvh_e::init(int* _mbtype, double3* _mVerts, double3* _mRest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int edgeNum, int vertNum) {
+void lbvh_e::init(int* _mbtype, double3* _mVerts, double3* _mRest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* meshIndices, int edgeNum, int vertNum) {
     _rest_vertexes = _mRest_vertexes;
     _edges = _mEdges;
     _vertexes = _mVerts;
     _cpNum = _mcpNum;
     _collisionPair = _mCollisonPairs;
     _ccd_collisionPair = _ccd_mCollisonPairs;
-    _MatIndex = _mMatIndex;
     edge_number = edgeNum;
     vert_number = vertNum;
     _btype = _mbtype;
+    _meshIndices = meshIndices;
     MALLOC_DEVICE_MEM(edge_number);
 }
 
@@ -1534,19 +1544,19 @@ double lbvh_e::ConstructFullCCD(double3* _mVerts, const double3* moveDir, const 
 
 
 void lbvh_f::SelfCollitionDetect(double dHat) {
-    selfQuery_vf(_btype, _vertexes, _faces, _surfVerts, _bvs, _nodes, _collisionPair, _ccd_collisionPair, _cpNum, _MatIndex, dHat, vert_number);
+    selfQuery_vf(_btype, _vertexes, _faces, _surfVerts, _bvs, _nodes, _collisionPair, _ccd_collisionPair, _cpNum, _meshIndices, dHat, vert_number);
 }
 
 void lbvh_e::SelfCollitionDetect(double dHat) {
-    selfQuery_ee(_btype, _vertexes, _rest_vertexes, _edges, _bvs, _nodes, _collisionPair, _ccd_collisionPair, _cpNum, _MatIndex, dHat, edge_number);
+    selfQuery_ee(_btype, _vertexes, _rest_vertexes, _edges, _bvs, _nodes, _collisionPair, _ccd_collisionPair, _cpNum, _meshIndices, dHat, edge_number);
 }
 
 void lbvh_f::SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha) {
-    fullCCDselfQuery_vf(_btype, _vertexes, moveDir, alpha, _faces, _surfVerts, _bvs, _nodes, _ccd_collisionPair, _cpNum, dHat, vert_number);
+    fullCCDselfQuery_vf(_btype, _vertexes, moveDir, alpha, _faces, _surfVerts, _bvs, _nodes, _ccd_collisionPair, _cpNum, _meshIndices, dHat, vert_number);
 }
 
 void lbvh_e::SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha) {
-    fullCCDselfQuery_ee(_btype, _vertexes, moveDir, alpha, _edges, _bvs, _nodes, _ccd_collisionPair, _cpNum, dHat, edge_number);
+    fullCCDselfQuery_ee(_btype, _vertexes, moveDir, alpha, _edges, _bvs, _nodes, _ccd_collisionPair, _cpNum, _meshIndices, dHat, edge_number);
 }
 
 lbvh_f* create_lbvh_f(){
@@ -1557,18 +1567,18 @@ lbvh_e* create_lbvh_e(){
   return new lbvh_e();
 }
 
-void lbvh_f_init(lbvh_f* obj, int* _btype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int faceNum, int vertNum){
+void lbvh_f_init(lbvh_f* obj, int* _btype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int faceNum, int vertNum){
   if (obj == nullptr) {
     obj = new lbvh_f();
   }
-  obj->init(_btype, _mVerts, _mFaces, _mSurfVert, _mCollisonPairs, _ccd_mCollisonPairs, _mcpNum, _mMatIndex, faceNum, vertNum);
+  obj->init(_btype, _mVerts, _mFaces, _mSurfVert, _mCollisonPairs, _ccd_mCollisonPairs, _mcpNum, _meshIndices, faceNum, vertNum);
 }
 
-void lbvh_e_init(lbvh_e* obj, int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int edgeNum, int vertNum){
+void lbvh_e_init(lbvh_e* obj, int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int edgeNum, int vertNum){
   if (obj == nullptr) {
     obj = new lbvh_e();
   }
-  obj->init(_btype, _mVerts, _rest_vertexes, _mEdges, _mCollisonPairs, _ccd_mCollisonPairs, _mcpNum, _mMatIndex, edgeNum, vertNum);
+  obj->init(_btype, _mVerts, _rest_vertexes, _mEdges, _mCollisonPairs, _ccd_mCollisonPairs, _mcpNum, _meshIndices, edgeNum, vertNum);
 }
 
 void lbvh_f_construct(lbvh_f* obj, double3* _mVerts){

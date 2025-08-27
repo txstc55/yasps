@@ -12,7 +12,7 @@ import subprocess
 import time
 
 class CCD:
-  def __init__(self, num_vertices: int, all_vertices: int, max_cd_pairs: int = 10000000, max_ccd_pairs: int = 100000000):
+  def __init__(self, num_vertices: int, all_vertices: int, max_cd_pairs: int = 10000000, max_ccd_pairs: int = 100000000, mesh_indices: List[int] = []):
     module_dir = os.path.dirname(os.path.abspath(__file__))  # always resolves to y.py's directory
     mlbvh_so_path = os.path.join(module_dir, "libmlbvh.so")
     accd_so_path = os.path.join(module_dir, "libaccd.so")
@@ -105,7 +105,7 @@ class CCD:
       ctypes.c_void_p, # collision pairs, gpu array pointer to int4
       ctypes.c_void_p, # continuous collision pairs, gpu array pointer to int4
       ctypes.c_void_p, # mcp num
-      ctypes.c_void_p, # mat index, useless for us but we will need to allocate it
+      ctypes.c_void_p, # the mesh index, we use this to avoid self collision detection if needed
       ctypes.c_int, # number of faces
       ctypes.c_int, # number of vertices
     ]
@@ -118,7 +118,7 @@ class CCD:
       ctypes.c_void_p, # collision pairs, gpu array pointer to int4
       ctypes.c_void_p, # continuous collision pairs, gpu array pointer to int4
       ctypes.c_void_p, # mcp num
-      ctypes.c_void_p, # mat index, useless for us but we will need to allocate it
+      ctypes.c_void_p, # the mesh index, we use this to avoid self collision detection if needed
       ctypes.c_uint32, # number of edges
       ctypes.c_uint32, # number of vertices
     ]
@@ -183,7 +183,6 @@ class CCD:
     assert self.__collision_pairs.ptr % 16 == 0, "Device memory is not 16-byte aligned!"
     self.__collision_pairs_ccd = gpuarray.to_gpu(np.zeros((max_ccd_pairs, 4), dtype=np.int32))
     assert self.__collision_pairs_ccd.ptr % 16 == 0, "Device memory is not 16-byte aligned!"
-    self.__mat_index = gpuarray.to_gpu(np.zeros(max_cd_pairs, dtype=np.int32))
     self.__cp_num = gpuarray.to_gpu(np.zeros(5, dtype=np.uint32)) # for some reason this is 5 in GIPC and we will keep it this way
 
     self.__num_vertices = num_vertices
@@ -194,6 +193,14 @@ class CCD:
     self.__ee = gpuarray.to_gpu(np.zeros((max_cd_pairs * 4), dtype=np.uint32))
     self.__separated_counts = gpuarray.to_gpu(np.zeros(4, dtype=np.uint32))
     self.__mqueue = gpuarray.to_gpu(np.zeros(max_ccd_pairs, dtype=np.float64))
+
+    self.__mesh_indices: gpuarray.GPUArray
+    if len(mesh_indices) == 0:
+      self.__mesh_indices = gpuarray.to_gpu(np.zeros(num_vertices, dtype=np.uint32))
+    else:
+      if len(mesh_indices) != num_vertices:
+        raise ValueError("Length of mesh_indices must be equal to num_vertices")
+      self.__mesh_indices = gpuarray.to_gpu(np.array(mesh_indices, dtype=np.uint32))
 
     self.__lbvh_f_separate_cases_ccd = self.__mlbvh.lbvh_f_separate_cases_ccd
     self.__lbvh_f_separate_cases_ccd.argtypes = [
@@ -284,7 +291,7 @@ class CCD:
       self.__to_void_p(self.__collision_pairs),
       self.__to_void_p(self.__collision_pairs_ccd),
       self.__to_void_p(self.__cp_num),
-      self.__to_void_p(self.__mat_index),
+      self.__to_void_p(self.__mesh_indices),
       ctypes.c_uint32(edge_num),
       ctypes.c_uint32(self.__num_vertices)
     )
@@ -351,7 +358,7 @@ class CCD:
       self.__to_void_p(self.__collision_pairs),
       self.__to_void_p(self.__collision_pairs_ccd),
       self.__to_void_p(self.__cp_num),
-      self.__to_void_p(self.__mat_index),
+      self.__to_void_p(self.__mesh_indices),
       ctypes.c_int(face_num),
       ctypes.c_int(self.__num_vertices)
     )
@@ -412,7 +419,6 @@ class CCD:
     self.__pt.fill(0)
     self.__ee.fill(0)
     self.__separated_counts.fill(0)
-    self.__mat_index.fill(0)
     self.__cp_num.fill(0)
     self.__collision_pairs.fill(0)
     self.__collision_pairs_ccd.fill(0)

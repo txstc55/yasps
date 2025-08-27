@@ -43,10 +43,10 @@ public:
     int4* _collisionPair;
     int4* _ccd_collisionPair;
     uint32_t* _cpNum;
-    int* _MatIndex;
     uint32_t* _flags;
     AABB scene;
     int* _btype;
+    uint32_t* _meshIndices;
 public:
     lbvh() {}
     ~lbvh();
@@ -62,7 +62,7 @@ public:
     uint3* _faces;
     uint32_t* _surfVerts;
 public:
-    void init(int* _btype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int faceNum, int vertNum);
+    void init(int* _btype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int faceNum, int vertNum);
     // cpnum, the first one is the number of collision pairs, 2 for pp, 3 for pe, 4 for pt here, but ee for edge bvh_e
     double Construct(double3* _mVerts);
     AABB* getSceneSize(); // fuck this one
@@ -87,7 +87,7 @@ public:
     uint32_t edge_number;
     uint2* _edges;
 public:
-    void init(int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int edgeNum, int vertNum);
+    void init(int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int edgeNum, int vertNum);
     double Construct(double3* _mVerts);
     double ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha);
     void SelfCollitionDetect(double dHat);
@@ -98,8 +98,8 @@ public:
 
 lbvh_f* create_lbvh_f();
 lbvh_e* create_lbvh_e();
-void lbvh_f_init(lbvh_f* obj, int* _btype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int faceNum, int vertNum);
-void lbvh_e_init(lbvh_e* obj, int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, int* _mMatIndex, int edgeNum, int vertNum);
+void lbvh_f_init(lbvh_f* obj, int* _btype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int faceNum, int vertNum);
+void lbvh_e_init(lbvh_e* obj, int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int edgeNum, int vertNum);
 void lbvh_f_construct(lbvh_f* obj, double3* _mVerts);
 void lbvh_e_construct(lbvh_e* obj, double3* _mVerts);
 void lbvh_f_construct_full_ccd(lbvh_f* obj, double3* _mVerts, const double3* moveDir, const double& alpha);
