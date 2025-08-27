@@ -9,7 +9,7 @@ import random
 
 DT_VALUE = 0.01
 KAPPA_VALUE = 1000000000000.0 # for collision
-DHAT_VALUE = 1e-3 # for collision detection
+DHAT_VALUE = 1e-4 # for collision detection
 NUM_LOOP_POINTS = 6000
 ALPHA_VALUE = 3.0
 BETA_VALUE = 6.0
@@ -369,8 +369,13 @@ for i in range(2000):
     loop_poly.points = loop_positions
     plotter.render()
     plotter.update()
-    plotter.screenshot(f"outputs/loop_{total_iterations:06d}.jpg")
+    # plotter.screenshot(f"outputs/loop_{total_iterations:06d}.jpg")
+    # save the loop positions as obj
+    loop_poly.save(f"outputs/loop_{total_iterations:06d}.obj")
+
     total_iterations += 1
+    if total_iterations == 200:
+      exit()
 
     if max_grad < 1000.0:
       print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")

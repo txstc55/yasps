@@ -139,15 +139,15 @@ def smooth_loop(points):
   p2 = points.row(2)
   p3 = points.row(3)
 
-  # t01 = p1 - p0
-  # t01 = t01 / t01.norm()
-  # t12 = p2 - p1
-  # t12 = t12 / t12.norm()
-  # t23 = p3 - p2
-  # t23 = t23 / t23.norm()
-  # return 1.0 - t01.dot(t12) + 1.0 - t12.dot(t23)
-  e0 = p0 - 2.0 * p1 + p2
-  e0 = e0.dot(e0)
-  e1 = p1 - 2.0 * p2 + p3
-  e1 = e1.dot(e1)
-  return e0 + e1
+  t01 = p1 - p0
+  t01 = t01 / t01.norm()
+  t12 = p2 - p1
+  t12 = t12 / t12.norm()
+  t23 = p3 - p2
+  t23 = t23 / t23.norm()
+  return 1.0 - t01.dot(t12) + 1.0 - t12.dot(t23)
+  # e0 = p0 - 2.0 * p1 + p2
+  # e0 = e0.dot(e0)
+  # e1 = p1 - 2.0 * p2 + p3
+  # e1 = e1.dot(e1)
+  # return e0 + e1
