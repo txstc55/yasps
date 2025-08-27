@@ -168,7 +168,7 @@ ee_positions = bunnies.ee.addAttribute("positions", through = ee2v, source = bun
 ##################################################
 # construct ccd
 ##################################################
-ccd = CCD(len(surface_indices), position.shape[0])
+ccd = CCD(len(surface_indices), position.shape[0], mesh_indices = [2] * (position.shape[0] // 2) + [1] * (position.shape[0] // 2))
 surface_indices_gpu = gpuarray.to_gpu(np.array(surface_indices).astype(np.uint32))
 edge_indices_gpu = gpuarray.to_gpu(edge_indices.astype(np.uint32))
 ccd.init_faces(bunnies.vertices["position"].compute().value, tri2v.value, surface_indices_gpu, surface_triangle_indices.shape[0])
@@ -336,8 +336,8 @@ for i in range(200):
     print("substep is", substep)
     bunny_poly0.points = bunny0.vertices["position"].compute().value.get().reshape(-1, 3)
     bunny_poly1.points = bunny1.vertices["position"].compute().value.get().reshape(-1, 3)
-    plotter.render()
-    plotter.update()
+    # plotter.render()
+    # plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
     if max_grad < 1e-3:
@@ -350,6 +350,6 @@ for i in range(200):
   bunny1.vertices["velocity"].updateValue(new_velocities1, deepCopy = True)
   bunny_poly0.points = bunny0.vertices["position"].compute().value.get().reshape(-1, 3)
   bunny_poly1.points = bunny1.vertices["position"].compute().value.get().reshape(-1, 3)
-  plotter.render()
-  plotter.update()
-  plotter.screenshot(f"outputs/bunny_abd_{i:04d}.jpg")
+  # plotter.render()
+  # plotter.update()
+  # plotter.screenshot(f"outputs/bunny_abd_{i:04d}.jpg")

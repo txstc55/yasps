@@ -7,12 +7,12 @@ sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
 import pycuda.gpuarray as gpuarray
 DT_VALUE = 0.01 # for time step
-DHAT_VALUE = 1e-4 # for collision detection
+DHAT_VALUE = 1e-6 # for collision detection
 NUM_FIXED_POINTS = 1
-NUM_RIGID_POINTS = 4000
-KAPPA_VALUE = 10000.0 # for collision
-POISSON_VALUE = 0.01
-YOUNG_VALUE = 10000000.0
+NUM_RIGID_POINTS = 300
+KAPPA_VALUE = 1000000.0 # for collision
+POISSON_VALUE = 0.499
+YOUNG_VALUE = 1000000.0
 MU_LAME_VALUE = YOUNG_VALUE / (2 * (1 + POISSON_VALUE))
 LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
 MU_VALUE = 4.0 * MU_LAME_VALUE / 3.0
@@ -88,7 +88,7 @@ bunny.abd_vertices.addConstant("velocity", rows = 3, cols = 1)
 velocities = np.zeros_like(position[NUM_FIXED_POINTS:NUM_FIXED_POINTS + NUM_RIGID_POINTS, :], dtype=np.float64)
 bunny.abd_vertices["velocity"].updateValue(velocities)
 bunny.abd_vertices.addConstant("mass", rows = 1, cols = 1)
-bunny.abd_vertices["mass"].updateValue(np.ones((NUM_RIGID_POINTS), dtype=np.float64) * 0.01)
+bunny.abd_vertices["mass"].updateValue(np.ones((NUM_RIGID_POINTS), dtype=np.float64) * 0.001)
 
 # add attributes for moving vertices
 bunny.moving_vertices.addConstant("rest_position", rows = 3, cols = 1)
@@ -101,7 +101,7 @@ bunny.moving_vertices.addConstant("velocity", rows = 3, cols = 1)
 velocities = np.zeros_like(position[NUM_FIXED_POINTS + NUM_RIGID_POINTS:, :], dtype=np.float64)
 bunny.moving_vertices["velocity"].updateValue(velocities)
 bunny.moving_vertices.addConstant("mass", rows = 1, cols = 1)
-bunny.moving_vertices["mass"].updateValue(np.ones((position.shape[0] - 1), dtype=np.float64) * 4.0)
+bunny.moving_vertices["mass"].updateValue(np.ones((position.shape[0] - 1), dtype=np.float64) * 0.5)
 
 # add attributes for fixed vertices
 bunny.fixed_vertices.addAttribute("position", rows = 3, cols = 1)
@@ -144,7 +144,7 @@ ee_positions = bunny.ee.addAttribute("positions", through = ee2v, source = bunny
 ##################################################
 # construct ccd
 ##################################################
-ccd = CCD(len(surface_indices), position.shape[0])
+ccd = CCD(len(surface_indices), position.shape[0], mesh_indices = [0] * NUM_FIXED_POINTS + [1] * (NUM_RIGID_POINTS) + [0] * (position.shape[0] - NUM_RIGID_POINTS - NUM_FIXED_POINTS))
 surface_indices_gpu = gpuarray.to_gpu(np.array(surface_indices).astype(np.uint32).flatten())
 edge_indices_gpu = gpuarray.to_gpu(edge_indices.astype(np.uint32).flatten())
 triangle_indices_gpu = gpuarray.to_gpu(surface_triangle_indices.astype(np.uint32).flatten())
@@ -180,14 +180,14 @@ ee = edge_edge(ee_positions, dhat, kappa)
 ee_energy = bunny.ee.addAttribute("edge_edge", computed_attribute = ee)
 
 
-s0.addEnergy(snh_energy, projection_method = 2)
-s0.addEnergy(affine_energy, projection_method = 2)
-s0.addEnergy(inertia_energy_abd, projection_method = 2)
-s0.addEnergy(inertia_energy_moving, projection_method = 2)
-s0.addEnergy(pp_energy, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(pe_energy, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(pt_energy, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(ee_energy, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(snh_energy, projection_method = 1)
+s0.addEnergy(affine_energy, projection_method = 1)
+s0.addEnergy(inertia_energy_abd, projection_method = 1)
+s0.addEnergy(inertia_energy_moving, projection_method = 1)
+s0.addEnergy(pp_energy, dynamic_instances = True, projection_method = 1)
+s0.addEnergy(pe_energy, dynamic_instances = True, projection_method = 1)
+s0.addEnergy(pt_energy, dynamic_instances = True, projection_method = 1)
+s0.addEnergy(ee_energy, dynamic_instances = True, projection_method = 1)
 s0.addMinimizeTarget([bunny.moving_vertices["position"], bunny["rotation"], bunny["translation"]])
 
 ##################################################
@@ -216,7 +216,7 @@ for i in range(2000):
   inner_iteration = 0
   min_inner_iteration_energy = 100000000
   while True:
-    result = s0.minimizeEnergy(tolerance = 1e-6)
+    result = s0.minimizeEnergy(tolerance = 1e-9)
     gradient_gpu = s0.gradient
     max_grad = abs_max_reduce(gradient_gpu).get()  # only one scalar transfer
     snh_energy_sum = sum(snh_energy.compute().value.get())

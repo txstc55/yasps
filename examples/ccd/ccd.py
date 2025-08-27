@@ -196,10 +196,10 @@ class CCD:
 
     self.__mesh_indices: gpuarray.GPUArray
     if len(mesh_indices) == 0:
-      self.__mesh_indices = gpuarray.to_gpu(np.zeros(num_vertices, dtype=np.uint32))
+      self.__mesh_indices = gpuarray.to_gpu(np.zeros(all_vertices, dtype=np.uint32))
     else:
-      if len(mesh_indices) != num_vertices:
-        raise ValueError("Length of mesh_indices must be equal to num_vertices")
+      if len(mesh_indices) != all_vertices:
+        raise ValueError("Length of mesh_indices must be equal to all_vertices")
       self.__mesh_indices = gpuarray.to_gpu(np.array(mesh_indices, dtype=np.uint32))
 
     self.__lbvh_f_separate_cases_ccd = self.__mlbvh.lbvh_f_separate_cases_ccd
