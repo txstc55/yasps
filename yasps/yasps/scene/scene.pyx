@@ -161,7 +161,7 @@ class scene:
 
 
   def minimizeEnergy(self, tolerance = 1e-3, maxIterations = 20000):
-    error_code = self.__minimizer.computeHessianAndGradient(tolerance = tolerance)
+    error_code = self.__minimizer.computeHessianAndGradient(tolerance = tolerance, maxIterations = maxIterations)
     if error_code < 0:
       print("scene.minimizeEnergy: got error code", error_code)
       return []
