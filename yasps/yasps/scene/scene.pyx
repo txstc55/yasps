@@ -4,7 +4,7 @@ import os
 
 # a scene can have meshes
 # and its own attributes
-from typing import Dict, Union, Tuple, Optional, List
+from typing import Dict, Union, Tuple, Optional, List, Set
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
   from yasps.mesh import mesh  # Only imported for type hints
@@ -35,6 +35,7 @@ class scene:
     self.__energies: Dict[int, attribute] = {}
     from yasps.minimizer import minimizer
     self.__minimizer: yminimizer = minimizer()
+    self.__seen_pre_targets_full_names: Set[str] = set() # for recording partial tagets for any energy added, because maybe for some energy it doesnt want to optimize wrt all the targets supported in the end
 
 
 
@@ -151,13 +152,16 @@ class scene:
   def energies(self) -> Dict[int, attribute]:
     return self.__energies
 
-  def addEnergy(self, e: attribute, projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False) -> None:
+  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False) -> None:
     # projection_method = 0 means no projection, 1 means project eigen value to absolute, 2 means project eigen value to max(e, 0)
     # save_intermediate = True means save intermediate results for gradient and hessian computation
     # gradient only means in the CG system we will not have the hessian
     if e.name == "":
       raise ValueError("scene.addEnergy: energy attribute must have a name.")
-    self.__minimizer.addEnergy(e, projection_method = projection_method, save_intermediate = save_intermediate, gradient_only = gradient_only, dynamic_instances = dynamic_instances)
+    # we add the names of the targes to the pre_targets_full_names set
+    for t in targets:
+      self.__seen_pre_targets_full_names.add(t.fullName)
+    self.__minimizer.addEnergy(e, targets = targets, projection_method = projection_method, save_intermediate = save_intermediate, gradient_only = gradient_only, dynamic_instances = dynamic_instances)
 
 
   def minimizeEnergy(self, tolerance = 1e-3, maxIterations = 20000):
@@ -180,5 +184,13 @@ class scene:
     return self.__minimizer.diagonal
 
   def addMinimizeTarget(self, target: List[attribute]):
+    # we check if the target matches the pre_targets_full_names set
+    target_full_name_set = set([t.fullName for t in target])
+    if len(target_full_name_set) != len(target):
+      raise ValueError("scene.addMinimizeTarget: target contains duplicate attributes.")
+    # check if the target full name set contains all the pre_targets_full_names
+    if not self.__seen_pre_targets_full_names.issubset(target_full_name_set):
+      missing = self.__seen_pre_targets_full_names - target_full_name_set
+      raise ValueError(f"scene.addMinimizeTarget: target is missing attributes {missing} that are required by the energies added.")
     self.__minimizer.addWrt(target)
     self.__minimizer.generateHessianAndGradient()

@@ -245,7 +245,7 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
   {"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}
   {"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}
   {"".join([f'{x.code_generation_counts_name},' for x in current.deviceKernel.kernelPrimitiveUnions])}
-  {"0" if ((current.correspondance.type == "scene" or current.correspondance.type == "mesh") and (self.__input.correspondance.type != "scene" and self.__input.correspondance.type != "mesh")) else f"{current.correspondance.fullName}_index"},
+  {"0" if ((current.correspondance.type == "scene" or current.correspondance.type == "mesh") and (self.__input.correspondance.fullName != current.correspondance.fullName)) else f"{current.correspondance.fullName}_index"},
   {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
   ''')
         else:

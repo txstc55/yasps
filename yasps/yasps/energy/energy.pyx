@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 
 class energy:
-  def __init__(self, energy: attribute, projection_method = 1, save_intermediate = False, gradient_only = False):
+  def __init__(self, energy: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False):
     if energy.size != 1:
       raise ValueError("energy.__init__: energy must be size 1.")
     self.__energy: attribute = energy
@@ -45,6 +45,7 @@ class energy:
     self.__path_dict: Dict[attribute, List[attribute]] = {}
     self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = {} # because of the way our path is constructed, the direct unioned attribute doesnt show up in the path. So we need to record its children in the path
     _, self.__paths = self.getRoots(energy, [energy]) # get the root attributes
+    self.__local_targets = targets # the local targets for this energy, if its not empty, we will only minimize the energy wrt the targets
 
   # @property
   # def roots(self) -> List[attribute]:
@@ -163,9 +164,13 @@ class energy:
   @timed("energy.getSparseIndices")
   def getSparseIndices(self, wrt: List[attribute], wrt_start_indices: List[int]):
     from yasps.attribute import DATA
-    self.__wrt = wrt
+    if len(self.__local_targets) == 0:
+      self.__wrt = wrt
+    else:
+      self.__wrt = self.__local_targets
     self.__wrt_start_indices = wrt_start_indices
     usedPaths: List[List[attribute]] = []
+    local_targets_hashes = [x.hash for x in self.__local_targets]
     # we now always differentiate wrt all the data attributes
     # note that this excludes the constant attributes
     # after differentiation, we will decide which part of the matrix to put back in
@@ -173,7 +178,11 @@ class energy:
     # as the eigen value we get will just be wrong
     for path in self.__paths:
       if path[-1].operator == DATA:
-        usedPaths.append(path)
+        if len(self.__local_targets) != 0:
+          if path[-1].hash in local_targets_hashes:
+            usedPaths.append(path)
+        else:
+          usedPaths.append(path)
     if self.__indices_kernel is None:
       # construct the path dict and generate the kernel
       pathDict: Dict[attribute, List[attribute]] = {}
@@ -190,7 +199,7 @@ class energy:
           if child not in pathDict[parent]:
             pathDict[parent].append(child)
       self.__path_dict = pathDict
-      self.__indices_kernel = gradientIndicesKernel(pathDict, self.__unioned_child_to_its_children, wrt, wrt_start_indices, self.__energy)
+      self.__indices_kernel = gradientIndicesKernel(pathDict, self.__unioned_child_to_its_children, self.__wrt, wrt_start_indices, self.__energy)
     assert self.__indices_kernel is not None
     self.__indices_kernel.computeIndices(wrt_start_indices) # actually compute the indices
     return
@@ -1136,10 +1145,10 @@ class energy:
 
 
 
-  def generateHessianAndGradient(self, wrt: List[attribute]) -> None:
+  def generateHessianAndGradient(self) -> None:
     differentiater = autodiff()
     # generate the symbolic code for gradient and hessian
-    self.__generateGradientThroughPathDict(wrt, differentiater)
+    self.__generateGradientThroughPathDict(self.__wrt, differentiater)
     assert self.__gradient is not None
     # print("----------------------------------------------------------------------------")
     # print("Gradient actual")
@@ -1152,7 +1161,7 @@ class energy:
     # exit(0)
     if not self.__gradient_only:
       # dont generate hessian if we only need gradient
-      self.__generateHessianThroughPathDict(wrt, differentiater)
+      self.__generateHessianThroughPathDict(self.__wrt, differentiater)
       # print("Hessian generated")
       assert self.__hessian is not None, "yasps.energy.generateHessianAndGradient: The hessian is not computed yet. Please call generateHessianAndGradient first."
       # print("----------------------------------------------------------------------------")

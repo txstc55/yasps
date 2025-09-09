@@ -50,7 +50,7 @@ class minimizer:
     self.__wrtStartIndices: List[int] = []
     self.__compressionKernel = None # for compressing the indices
 
-
+    self.__seen_pre_targets_full_names: Set[str] = set() # for recording partial tagets for any energy added, because maybe for some energy it doesnt want to optimize wrt all the targets supported in the end
 
 
 
@@ -98,11 +98,13 @@ class minimizer:
         raise ValueError("minimizer.addEnergies: energies has duplicate energies.")
     self.__energies.extend(energies)
 
-  def addEnergy(self, e: attribute, projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False) -> None:
+  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False) -> None:
     if e.name == "":
       raise ValueError("scene.addEnergy: energy attribute must have a name.")
     from yasps.energy import energy
-    newEnergy = energy(e, projection_method, save_intermediate, gradient_only)
+    for t in targets:
+      self.__seen_pre_targets_full_names.add(t.fullName)
+    newEnergy = energy(e, targets, projection_method, save_intermediate, gradient_only)
     if newEnergy.hash in [energy.hash for energy in self.__energies]:
       raise ValueError("minimizer.addEnergy: energy already exists.")
     if not dynamic_instances:
@@ -123,6 +125,14 @@ class minimizer:
       if att.isDynamic:
         raise ValueError(f"minimizer.addWrt: wrt {att.fullName} is dynamic attribute.")
       seenAttributeHashes.add(attribute.hash)
+
+    # we check if the target matches the pre_targets_full_names set
+    target_full_name_set = set([t.fullName for t in wrt])
+    # check if the target full name set contains all the pre_targets_full_names
+    if not self.__seen_pre_targets_full_names.issubset(target_full_name_set):
+      missing = self.__seen_pre_targets_full_names - target_full_name_set
+      raise ValueError(f"minimizer.addWrt: target is missing attributes {missing} that are required by the energies added.")
+
     self.__wrt.extend(wrt)
     self.__getGradientSize() # get the size of the gradient
     start = time.time()
@@ -238,7 +248,7 @@ class minimizer:
   def generateHessianAndGradient(self):
     start = time.time()
     for e in (self.__energies + self.__energiesDynamic):
-      e.generateHessianAndGradient(self.wrt)
+      e.generateHessianAndGradient()
     end = time.time()
     print(f"Autodiff computation: {1000.0 * (end - start)} ms")
 
