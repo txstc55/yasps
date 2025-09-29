@@ -13,10 +13,10 @@ DT_VALUE = 0.001
 KAPPA_VALUE = 1000000.0 # for collision
 DHAT_VALUE = 1e-6 # for collision detection
 BENDING_STIFFNESS = 0.001
-STRETCH_STIFFNESS = 10000000.0
-SHEAR_STIFFNESS = 1000.0
-THICKNESS = 0.1
-G = 9.8
+STRETCH_STIFFNESS = 10000.0
+SHEAR_STIFFNESS = 0.01
+THICKNESS = 1.0
+G = 0.0
 ######################################################
 # Read the bunny mesh
 ######################################################
@@ -112,7 +112,7 @@ sphere.addPrimitive("vertices", numInstances = v_sphere.shape[0])
 sphere.vertices.addAttribute("position", rows = 3, cols = 1)
 sphere.vertices["position"].updateValue(v_sphere)
 sphere.vertices.addConstant("rest_position", rows = 3, cols = 1)
-sphere.vertices["rest_position"].updateValue(v_sphere / 10.0)
+sphere.vertices["rest_position"].updateValue(v_sphere / 100.0)
 sphere.vertices.addAttribute("mass", rows = 1, cols = 1)
 sphere.vertices["mass"].updateValue(np.ones(v_sphere.shape[0]) * 0.01)
 sphere.vertices.addAttribute("last_position", rows = 3, cols = 1)
@@ -229,7 +229,7 @@ direction_copy = gpuarray.zeros((v_bunny.shape[0] + v_sphere.shape[0]) * 3, dtyp
 sphere_position_copy = sphere.vertices["position"].value.copy()
 total_iterations = 0
 
-for i in range(500):
+for i in range(1000):
   inner_iteration = 0
   sphere.vertices["last_position"].updateValue(sphere.vertices["position"].value, deepCopy = True)
   while True:

@@ -8,18 +8,14 @@ sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
 import pycuda.gpuarray as gpuarray
 DT_VALUE = 0.01 # for time step
-DHAT_VALUE = 1e-4 # for collision detection
-KAPPA_VALUE = 10000.0 # for collision
+DHAT_VALUE = 1e-6 # for collision detection
+KAPPA_VALUE = 10000000.0 # for collision
 POISSON_VALUE = 0.49
-YOUNG_VALUE = 100000.0
+YOUNG_VALUE = 10000000.0
 MU_LAME_VALUE = YOUNG_VALUE / (2 * (1 + POISSON_VALUE))
 LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
 MU_VALUE = 4.0 * MU_LAME_VALUE / 3.0
 LAMBDA_VALUE = LAMBDA_LAME_VALUE + 5.0 * MU_LAME_VALUE / 6.0
-AFFINE_PENALTY_0 = 1.0
-AFFINE_PENALTY_1 = 0.0
-SNH_COEFFICIENT_0 = 1.0
-SNH_COEFFICIENT_1 = 100000000.0
 print("Using mu = ", MU_VALUE, " and lambda = ", LAMBDA_VALUE)
 ##################################################
 ## read the bunny file
@@ -42,8 +38,8 @@ f.close()
 position = np.array(position, dtype = np.float64)
 position_second = position.copy()
 
-position = position + np.array([-4.0, 2.0, 0.2])
-position_second = position_second + np.array([4.0, 2.0, -0.1])
+position = position + np.array([-2.0, 2.0, 0.0])
+position_second = position_second + np.array([2.0, 2.0, -0.0])
 tet_indices_second = tet_indices_second + position.shape[0]
 
 position = np.concatenate((position, position_second), axis = 0)
@@ -53,8 +49,9 @@ tet_indices = np.concatenate((tet_indices, tet_indices_second), axis = 0)
 surface_triangle_indices = extract_surface_triangles(tet_indices)
 edge_indices = extract_edges_from_triangles(surface_triangle_indices)
 surface_indices = list(set(surface_triangle_indices.flatten().tolist()))
-
-
+NUM_BUNNY_VERTEX = position.shape[0] // 2
+NUM_TETS = tet_indices.shape[0] // 2
+BUNNY_VERTEX_POSITIONS = position[:NUM_BUNNY_VERTEX, :]
 ##################################################
 ## create the mesh with primitives and attributes
 ##################################################
@@ -66,73 +63,75 @@ dhat.updateValue([DHAT_VALUE])
 kappa = s0.addConstant("kappa", rows = 1, cols = 1)
 kappa.updateValue([KAPPA_VALUE])
 
-affine_penalty_0 = s0.addConstant("affine_penalty_0", rows = 1, cols = 1)
-affine_penalty_0.updateValue([AFFINE_PENALTY_0])
-affine_penalty_1 = s0.addConstant("affine_penalty_1", rows = 1, cols = 1)
-affine_penalty_1.updateValue([AFFINE_PENALTY_1])
-
-snh_coefficient_0 = s0.addConstant("snh_coefficient_0", rows = 1, cols = 1)
-snh_coefficient_0.updateValue([SNH_COEFFICIENT_0])
-snh_coefficient_1 = s0.addConstant("snh_coefficient_1", rows = 1, cols = 1)
-snh_coefficient_1.updateValue([SNH_COEFFICIENT_1])
+# here we add the second bunny mesh, which is affected by ABD
+bunny2 = s0.addMesh("bunny2")
+bunny2.addPrimitive("vertices", numInstances = NUM_BUNNY_VERTEX)
+bunny2.addPrimitive("affine_body", numInstances = 1)
+bunny2.addPrimitive("tets", numInstances = NUM_TETS)
 
 
-# create the first bunny, and bind attributes and constants
-bunny0 = s0.addMesh("bunny0")
-bunny0.addPrimitive("vertices", numInstances = position.shape[0] // 2)
-bunny0.addAttribute("rotation", rows = 3, cols = 3)
-bunny0["rotation"].updateValue(np.eye(3, dtype=np.float64))
-bunny0.addAttribute("translation", rows = 3, cols = 1)
-bunny0["translation"].updateValue(np.array([0.0, 0.0, 0.0], dtype=np.float64))
-bunny0.vertices.addConstant("rest_position", rows = 3, cols = 1)
-bunny0.vertices["rest_position"].updateValue(position[:position.shape[0] // 2, :])
-bunny0.vertices.addConstant("last_position", rows = 3, cols = 1)
-bunny0.vertices["last_position"].updateValue(position[:position.shape[0] // 2, :])
-bunny0.vertices.addConstant("velocity", rows = 3, cols = 1)
-velocities = np.zeros_like(position[:position.shape[0] // 2, :], dtype=np.float64)
-velocities[:, 0] = 4.0
-bunny0.vertices["velocity"].updateValue(velocities)
-bunny0.vertices.addAttribute("position", computed_attribute = bunny0["rotation"] * bunny0.vertices["rest_position"] + bunny0["translation"])
-bunny0.vertices.addConstant("mass", rows = 1, cols = 1)
-bunny0.vertices["mass"].updateValue(np.ones(position.shape[0] // 2, dtype=np.float64) * 0.5)
-mu0 = bunny0.addConstant("mu", rows = 1, cols = 1) # for stable neo hookean
-lam0 = bunny0.addConstant("lam", rows = 1, cols = 1) # for stable neo hookean
+bunny2.affine_body.addAttribute("affine_matrix", rows = 3, cols = 3)
+bunny2.affine_body["affine_matrix"].updateValue(np.eye(3, dtype=np.float64))
+bunny2.affine_body.addAttribute("translation", rows = 3, cols = 1)
+bunny2.affine_body["translation"].updateValue(np.array([0.0, 0.0, 0.0], dtype=np.float64))
+
+bunny2.vertices.addConstant("rest_position", rows = 3, cols = 1)
+bunny2.vertices["rest_position"].updateValue(BUNNY_VERTEX_POSITIONS)
+bunny2.vertices.addConstant("last_position", rows = 3, cols = 1)
+bunny2.vertices["last_position"].updateValue(BUNNY_VERTEX_POSITIONS)
+bunny2.vertices.addConstant("velocity", rows = 3, cols = 1)
+
+
+bvabd = bunny2.addConnectivity("bunny_vertex_to_affine_body", bunny2.affine_body, [0] * (NUM_BUNNY_VERTEX), 1)
+bva = bunny2.vertices.addAttribute("affine_matrix", through = bvabd, source = bunny2.affine_body["affine_matrix"])
+bva = bva.resize(3, 3)
+bvt = bunny2.vertices.addAttribute("translation", through = bvabd, source = bunny2.affine_body["translation"])
+bvt = bvt.resize(3, 1)
+
+
+bunny2.vertices.addAttribute("position", computed_attribute = bva * bunny2.vertices["rest_position"] + bvt)
+
+velocities = np.zeros_like(position[:NUM_BUNNY_VERTEX, :], dtype=np.float64)
+velocities[:, 0] = 8.0
+bunny2.vertices["velocity"].updateValue(velocities)
+
+bunny2.vertices.addConstant("mass", rows = 1, cols = 1)
+bunny2.vertices["mass"].updateValue(np.ones(NUM_BUNNY_VERTEX, dtype=np.float64) * 1.0)
+mu0 = bunny2.addConstant("mu", rows = 1, cols = 1) # for stable neo hookean
+lam0 = bunny2.addConstant("lam", rows = 1, cols = 1) # for stable neo hookean
 mu0.updateValue([MU_VALUE])
 lam0.updateValue([LAMBDA_VALUE])
 
 
-# now for the second bunny
+# now for the second bunny, we make this bunny soft
 bunny1 = s0.addMesh("bunny1")
-bunny1.addPrimitive("vertices", numInstances = position.shape[0] // 2)
-bunny1.addAttribute("rotation", rows = 3, cols = 3)
-bunny1["rotation"].updateValue(np.eye(3, dtype=np.float64))
-bunny1.addAttribute("translation", rows = 3, cols = 1)
-bunny1["translation"].updateValue(np.array([0.0, 0.0, 0.0], dtype=np.float64))
+bunny1.addPrimitive("vertices", numInstances = NUM_BUNNY_VERTEX)
 bunny1.vertices.addConstant("rest_position", rows = 3, cols = 1)
-bunny1.vertices["rest_position"].updateValue(position[position.shape[0] // 2:, :])
+bunny1.vertices["rest_position"].updateValue(position[NUM_BUNNY_VERTEX:, :])
 bunny1.vertices.addConstant("last_position", rows = 3, cols = 1)
-bunny1.vertices["last_position"].updateValue(position[position.shape[0] // 2:, :])
+bunny1.vertices["last_position"].updateValue(position[NUM_BUNNY_VERTEX:, :])
 bunny1.vertices.addConstant("velocity", rows = 3, cols = 1)
-velocities = np.zeros_like(position[position.shape[0] // 2:, :], dtype=np.float64)
+velocities = np.zeros_like(position[NUM_BUNNY_VERTEX:, :], dtype=np.float64)
 velocities[:, 0] = -8.0
 bunny1.vertices["velocity"].updateValue(velocities)
-bunny1.vertices.addAttribute("position", computed_attribute = bunny1["rotation"] * bunny1.vertices["rest_position"] + bunny1["translation"])
+bunny1.vertices.addAttribute("position", rows = 3, cols = 1)
+bunny1.vertices["position"].updateValue(position[NUM_BUNNY_VERTEX:, :])
 bunny1.vertices.addConstant("mass", rows = 1, cols = 1)
-bunny1.vertices["mass"].updateValue(np.ones(position.shape[0] // 2, dtype=np.float64) * 0.067)
+bunny1.vertices["mass"].updateValue(np.ones(NUM_BUNNY_VERTEX, dtype=np.float64) * 1.0)
 mu1 = bunny1.addConstant("mu", rows = 1, cols = 1) # for stable neo hookean
 lam1 = bunny1.addConstant("lam", rows = 1, cols = 1) # for stable neo hookean
 mu1.updateValue([MU_VALUE])
 lam1.updateValue([LAMBDA_VALUE])
 
 # we also add the tets for each bunny
-bunny0.addPrimitive("tets", numInstances = tet_indices.shape[0] // 2)
-bunny1.addPrimitive("tets", numInstances = tet_indices.shape[0] // 2)
+
+bunny1.addPrimitive("tets", numInstances = NUM_TETS)
 # add the connectivities for the tets
-tet2v0 = bunny0.tets.addConnectivity("tet2v", bunny0.vertices, tet_indices[:tet_indices.shape[0] // 2], 4)
-tet2v1 = bunny1.tets.addConnectivity("tet2v", bunny1.vertices, tet_indices[:tet_indices.shape[0] // 2], 4)
+tet2v0 = bunny2.tets.addConnectivity("tet2v", bunny2.vertices, tet_indices[:NUM_TETS], 4)
+tet2v1 = bunny1.tets.addConnectivity("tet2v", bunny1.vertices, tet_indices[:NUM_TETS], 4)
 # add things like rest_position and current position
-bunny0.tets.addAttribute("rest_positions", through = tet2v0, source = bunny0.vertices["rest_position"])
-bunny0.tets.addAttribute("positions", through = tet2v0, source = bunny0.vertices["position"])
+bunny2.tets.addAttribute("rest_positions", through = tet2v0, source = bunny2.vertices["rest_position"])
+bunny2.tets.addAttribute("positions", through = tet2v0, source = bunny2.vertices["position"])
 bunny1.tets.addAttribute("rest_positions", through = tet2v1, source = bunny1.vertices["rest_position"])
 bunny1.tets.addAttribute("positions", through = tet2v1, source = bunny1.vertices["position"])
 
@@ -141,7 +140,7 @@ bunny1.tets.addAttribute("positions", through = tet2v1, source = bunny1.vertices
 
 # ok now we add a new mesh?
 bunnies = s0.addMesh("bunnies")
-bunnies.addPrimitiveUnion("vertices", [bunny0.vertices, bunny1.vertices])
+bunnies.addPrimitiveUnion("vertices", [bunny2.vertices, bunny1.vertices])
 bunnies.vertices.addAttribute("rest_position")
 bunnies.vertices.addAttribute("position")
 bunnies.vertices.addAttribute("last_position")
@@ -149,9 +148,8 @@ bunnies.vertices.addAttribute("velocity")
 bunnies.vertices.addAttribute("mass")
 
 
-print("position check")
-print(bunnies.vertices["position"].compute().value.get())
-# exit()
+# print("position check")
+# print(bunnies.vertices["position"].compute().value.get())
 # now for the new mesh we add tets and triangles
 # as well as pp pair, pt, pe, ee
 # bunnies.addPrimitive("tets", numInstances = tet_indices.shape[0])
@@ -183,7 +181,7 @@ ee_positions = bunnies.ee.addAttribute("positions", through = ee2v, source = bun
 ##################################################
 # construct ccd
 ##################################################
-ccd = CCD(len(surface_indices), position.shape[0], mesh_indices = [2] * (position.shape[0] // 2) + [1] * (position.shape[0] // 2))
+ccd = CCD(len(surface_indices), position.shape[0], mesh_indices = [1] * (NUM_BUNNY_VERTEX) + [0] * (NUM_BUNNY_VERTEX))
 surface_indices_gpu = gpuarray.to_gpu(np.array(surface_indices).astype(np.uint32))
 edge_indices_gpu = gpuarray.to_gpu(edge_indices.astype(np.uint32))
 ccd.init_faces(bunnies.vertices["position"].compute().value, tri2v.value, surface_indices_gpu, surface_triangle_indices.shape[0])
@@ -194,9 +192,9 @@ ccd.init_edges(bunnies.vertices["position"].compute().value, bunnies.vertices["r
 ##################################################
 ## add energy to the scene
 ##################################################
-snh0 = snh_coefficient_0 * stable_neo_hookean(bunny0.tets["rest_positions"], bunny0.tets["positions"], mu0, lam0, dt)
-snh_energy0 = bunny0.tets.addAttribute("stable_neo_hookean0", computed_attribute = snh0)
-snh1 = snh_coefficient_1 * stable_neo_hookean(bunny1.tets["rest_positions"], bunny1.tets["positions"], mu1, lam1, dt)
+snh0 = stable_neo_hookean(bunny2.tets["rest_positions"], bunny2.tets["positions"], mu0, lam0, dt)
+snh_energy0 = bunny2.tets.addAttribute("stable_neo_hookean0", computed_attribute = snh0)
+snh1 = stable_neo_hookean(bunny1.tets["rest_positions"], bunny1.tets["positions"], mu1, lam1, dt)
 snh_energy1 = bunny1.tets.addAttribute("stable_neo_hookean1", computed_attribute = snh1)
 
 inertia = inertia(bunnies.vertices["last_position"], bunnies.vertices["velocity"], dt, bunnies.vertices["position"], bunnies.vertices["mass"])
@@ -213,22 +211,19 @@ ee_energy = bunnies.ee.addAttribute("edge_edge", computed_attribute = ee)
 
 # we also need to remember to make the affine transformation affine
 # which means the rotation @rotation.T should be identity
-affine0 = affine_penalty_0 * affine_energy(bunny0["rotation"])
-affine1 = affine_penalty_1 * affine_energy(bunny1["rotation"])
-bunny0.addAttribute("affine0", computed_attribute = affine0)
-bunny1.addAttribute("affine1", computed_attribute = affine1)
+affine0 = affine_energy(bunny2.affine_body["affine_matrix"])
+bunny2.addAttribute("affine0", computed_attribute = affine0)
 
 # s0.addEnergy(snh_energy, projection_method = 2, save_intermediate = True)
 s0.addEnergy(snh_energy0, projection_method = 1)
 s0.addEnergy(snh_energy1, projection_method = 1)
 s0.addEnergy(inertia_energy, projection_method = 1)
 s0.addEnergy(affine0, projection_method = 1)
-s0.addEnergy(affine1, projection_method = 1)
 s0.addEnergy(pp_energy, dynamic_instances = True, projection_method = 1)
 s0.addEnergy(pe_energy, dynamic_instances = True, projection_method = 1)
 s0.addEnergy(pt_energy, dynamic_instances = True, projection_method = 1)
 s0.addEnergy(ee_energy, dynamic_instances = True, projection_method = 1)
-s0.addMinimizeTarget([bunny0["rotation"], bunny0["translation"], bunny1["rotation"], bunny1["translation"]])
+s0.addMinimizeTarget([bunny2.affine_body["affine_matrix"], bunny2["translation"], bunny1.vertices["position"]])
 ##################################################
 ## plot the scene
 ##################################################
@@ -237,9 +232,9 @@ triangles = np.array(surface_triangle_indices)
 triangles = triangles[:triangles.shape[0] // 2]
 
 cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
-bunny_poly0 = pv.PolyData(position[:position.shape[0] // 2, :], cells)
-bunny_poly1 = pv.PolyData(position[position.shape[0] // 2:, :], cells)
-plotter = pv.Plotter()
+bunny_poly0 = pv.PolyData(position[:NUM_BUNNY_VERTEX, :], cells)
+bunny_poly1 = pv.PolyData(position[NUM_BUNNY_VERTEX:, :], cells)
+plotter = pv.Plotter(window_size=(3840, 2160))
 plotter.add_mesh(bunny_poly0, color='blue', opacity = 0.2)
 plotter.add_mesh(bunny_poly1, color='red', opacity = 1.0)
 plotter.camera_position = [(0, 0, 20), (0, 0, 0), (0, 1, 0)]
@@ -249,15 +244,14 @@ plotter.show(interactive_update=True)
 position_copy = bunnies.vertices["position"].compute().value.copy()
 rot0_copy = gpuarray.zeros(9, dtype=np.float64)
 trans0_copy = gpuarray.zeros(3, dtype=np.float64)
-rot1_copy = gpuarray.zeros(9, dtype=np.float64)
-trans1_copy = gpuarray.zeros(3, dtype=np.float64)
+pos1_copy = bunny1.vertices["position"].value.copy()
 for i in range(200):
-  bunny0.vertices["last_position"].updateValue(bunny0.vertices["position"].compute().value, deepCopy = True)
-  bunny1.vertices["last_position"].updateValue(bunny1.vertices["position"].compute().value, deepCopy = True)
+  bunny2.vertices["last_position"].updateValue(bunny2.vertices["position"].compute().value, deepCopy = True)
+  bunny1.vertices["last_position"].updateValue(bunny1.vertices["position"].value, deepCopy = True)
   inner_iteration = 0
   min_inner_iteration_energy = 100000000
   while True:
-    result = s0.minimizeEnergy(tolerance = 1e-9)
+    result = s0.minimizeEnergy(tolerance = 1e-6)
     gradient_gpu = s0.gradient
     max_grad = abs_max_reduce(gradient_gpu).get()  # only one scalar transfer
     snh_energy_sum = sum(snh_energy0.compute().value.get()) + sum(snh_energy1.compute().value.get())
@@ -266,7 +260,7 @@ for i in range(200):
     pe_energy_sum = sum(pe_energy.compute().value.get())
     pt_energy_sum = sum(pt_energy.compute().value.get())
     ee_energy_sum = sum(ee_energy.compute().value.get())
-    affine_energy_sum = sum(affine0.compute().value.get()) + sum(affine1.compute().value.get())
+    affine_energy_sum = sum(affine0.compute().value.get())
     energies_before = snh_energy_sum + inertia_energy_sum + pp_energy_sum + pe_energy_sum + pt_energy_sum + ee_energy_sum + affine_energy_sum
     print("snh energy sum before", snh_energy_sum)
     # energies_before = inertia_energy_sum + pp_energy_sum + pe_energy_sum + pt_energy_sum + ee_energy_sum + affine_energy_sum
@@ -278,21 +272,20 @@ for i in range(200):
     # first we get the rotation and translation
     d_rot0 = result[0]
     d_trans0 = result[1]
-    d_rot1 = result[2]
-    d_trans1 = result[3]
+    d_pos1 = result[2]
     step_taken = 1.0
     # copy the current position and current affine matrix
     position_copy.set(bunnies.vertices["position"].compute().value)
-    rot0_copy.set(bunny0["rotation"].value)
-    trans0_copy.set(bunny0["translation"].value)
-    rot1_copy.set(bunny1["rotation"].value)
-    trans1_copy.set(bunny1["translation"].value)
+    rot0_copy.set(bunny2.affine_body["affine_matrix"].value)
+    trans0_copy.set(bunny2["translation"].value)
+    pos1_copy.set(bunny1.vertices["position"].compute().value)
 
     # we first compute the new position
-    bunny0["rotation"].updateValue(bunny0["rotation"].value - d_rot0, deepCopy = True)
-    bunny0["translation"].updateValue(bunny0["translation"].value - d_trans0, deepCopy = True)
-    bunny1["rotation"].updateValue(bunny1["rotation"].value - d_rot1, deepCopy = True)
-    bunny1["translation"].updateValue(bunny1["translation"].value - d_trans1, deepCopy = True)
+    bunny2.affine_body["affine_matrix"].updateValue(bunny2.affine_body["affine_matrix"].value - d_rot0, deepCopy = True)
+    bunny2["translation"].updateValue(bunny2["translation"].value - d_trans0, deepCopy = True)
+    bunny1.vertices["position"].updateValue(bunny1.vertices["position"].value - d_pos1, deepCopy = True)
+
+
     new_positions = bunnies.vertices["position"].compute().value
     # now we compute the new direction, remember it's the negative we need to put in
     direction_copy = position_copy - new_positions
@@ -300,17 +293,16 @@ for i in range(200):
 
     # check for the largest step size we can take
     ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 1.0)
-    largest_step = ccd.compute_largest_step_size(0.8, position_copy, direction_copy)
+    largest_step = ccd.compute_largest_step_size(0.5, position_copy, direction_copy)
     # largest_step = 1.0
     print("largest step we can take is", largest_step)
     # here we will take this step and check for the collision sets
     substep = 1
     step_taken = largest_step
     while substep <= 8:
-      bunny0["rotation"].updateValue(rot0_copy - d_rot0 * step_taken, deepCopy = True)
-      bunny0["translation"].updateValue(trans0_copy - d_trans0 * step_taken, deepCopy = True)
-      bunny1["rotation"].updateValue(rot1_copy - d_rot1 * step_taken, deepCopy = True)
-      bunny1["translation"].updateValue(trans1_copy - d_trans1 * step_taken, deepCopy = True)
+      bunny2.affine_body["affine_matrix"].updateValue(rot0_copy - d_rot0 * step_taken, deepCopy = True)
+      bunny2["translation"].updateValue(trans0_copy - d_trans0 * step_taken, deepCopy = True)
+      bunny1.vertices["position"].updateValue(pos1_copy - d_pos1 * step_taken, deepCopy = True)
 
       # perform collision detection
       ccd.cd(bunnies.vertices["position"].compute().value, DHAT_VALUE) # perform collision detection
@@ -335,7 +327,7 @@ for i in range(200):
       pe_energy_sum = sum(pe_energy.compute().value.get())
       pt_energy_sum = sum(pt_energy.compute().value.get())
       ee_energy_sum = sum(ee_energy.compute().value.get())
-      affine_energy_sum = sum(affine0.compute().value.get()) + sum(affine1.compute().value.get())
+      affine_energy_sum = sum(affine0.compute().value.get())
       new_energies = snh_energy_sum + inertia_energy_sum + pp_energy_sum + pe_energy_sum + pt_energy_sum + ee_energy_sum + affine_energy_sum
       print(f"snh energy sum line search substep {substep}", snh_energy_sum)
       # new_energies = inertia_energy_sum + pp_energy_sum + pe_energy_sum + pt_energy_sum + ee_energy_sum + affine_energy_sum
@@ -344,27 +336,27 @@ for i in range(200):
         break
       step_taken = step_taken / 2.0
       substep += 1
-    # if substep > 8:
-    #   print("failed")
-    #   exit(1)
+    if substep > 8:
+      print("failed")
+      exit(1)
     print("step taken is", step_taken)
     print("substep is", substep)
-    bunny_poly0.points = bunny0.vertices["position"].compute().value.get().reshape(-1, 3)
+    bunny_poly0.points = bunny2.vertices["position"].compute().value.get().reshape(-1, 3)
     bunny_poly1.points = bunny1.vertices["position"].compute().value.get().reshape(-1, 3)
     plotter.render()
     plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
-    if max_grad < 1e-3:
+    if max_grad < 1e-2:
       print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
       break
     inner_iteration += 1
-  new_velocities0 = (bunny0.vertices["position"].compute().value - bunny0.vertices["last_position"].compute().value) / DT_VALUE
-  new_velocities1 = (bunny1.vertices["position"].compute().value - bunny1.vertices["last_position"].compute().value) / DT_VALUE
-  bunny0.vertices["velocity"].updateValue(new_velocities0, deepCopy = True)
+  new_velocities0 = (bunny2.vertices["position"].compute().value - bunny2.vertices["last_position"].compute().value) / DT_VALUE
+  new_velocities1 = (bunny1.vertices["position"].value - bunny1.vertices["last_position"].value) / DT_VALUE
+  bunny2.vertices["velocity"].updateValue(new_velocities0, deepCopy = True)
   bunny1.vertices["velocity"].updateValue(new_velocities1, deepCopy = True)
-  bunny_poly0.points = bunny0.vertices["position"].compute().value.get().reshape(-1, 3)
+  bunny_poly0.points = bunny2.vertices["position"].compute().value.get().reshape(-1, 3)
   bunny_poly1.points = bunny1.vertices["position"].compute().value.get().reshape(-1, 3)
   plotter.render()
   plotter.update()
-  plotter.screenshot(f"outputs/bunny_abd_{i:04d}.jpg")
+  plotter.screenshot(f"outputs/bunny_abd_soft_{i:04d}.jpg")
