@@ -52,6 +52,7 @@ surface_indices = list(set(surface_triangle_indices.flatten().tolist()))
 NUM_BUNNY_VERTEX = position.shape[0] // 2
 NUM_TETS = tet_indices.shape[0] // 2
 BUNNY_VERTEX_POSITIONS = position[:NUM_BUNNY_VERTEX, :]
+TET_INDICES = tet_indices[:NUM_TETS]
 ##################################################
 ## create the mesh with primitives and attributes
 ##################################################
@@ -127,8 +128,8 @@ lam1.updateValue([LAMBDA_VALUE])
 
 bunny1.addPrimitive("tets", numInstances = NUM_TETS)
 # add the connectivities for the tets
-tet2v2 = bunny2.tets.addConnectivity("tet2v", bunny2.vertices, tet_indices[:NUM_TETS], 4)
-tet2v1 = bunny1.tets.addConnectivity("tet2v", bunny1.vertices, tet_indices[:NUM_TETS], 4)
+tet2v2 = bunny2.tets.addConnectivity("tet2v", bunny2.vertices, TET_INDICES, 4)
+tet2v1 = bunny1.tets.addConnectivity("tet2v", bunny1.vertices, TET_INDICES, 4)
 # add things like rest_position and current position
 bunny2.tets.addAttribute("rest_positions", through = tet2v2, source = bunny2.vertices["rest_position"])
 bunny2.tets.addAttribute("positions", through = tet2v2, source = bunny2.vertices["position"])
