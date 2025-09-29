@@ -127,11 +127,11 @@ lam1.updateValue([LAMBDA_VALUE])
 
 bunny1.addPrimitive("tets", numInstances = NUM_TETS)
 # add the connectivities for the tets
-tet2v0 = bunny2.tets.addConnectivity("tet2v", bunny2.vertices, tet_indices[:NUM_TETS], 4)
+tet2v2 = bunny2.tets.addConnectivity("tet2v", bunny2.vertices, tet_indices[:NUM_TETS], 4)
 tet2v1 = bunny1.tets.addConnectivity("tet2v", bunny1.vertices, tet_indices[:NUM_TETS], 4)
 # add things like rest_position and current position
-bunny2.tets.addAttribute("rest_positions", through = tet2v0, source = bunny2.vertices["rest_position"])
-bunny2.tets.addAttribute("positions", through = tet2v0, source = bunny2.vertices["position"])
+bunny2.tets.addAttribute("rest_positions", through = tet2v2, source = bunny2.vertices["rest_position"])
+bunny2.tets.addAttribute("positions", through = tet2v2, source = bunny2.vertices["position"])
 bunny1.tets.addAttribute("rest_positions", through = tet2v1, source = bunny1.vertices["rest_position"])
 bunny1.tets.addAttribute("positions", through = tet2v1, source = bunny1.vertices["position"])
 
