@@ -455,6 +455,7 @@ class CCD:
   def compute_largest_step_size(self, slackness, vertices: gpuarray.GPUArray, moving_directions: gpuarray.GPUArray):
     time_start = time.time()
     c_slackness = ctypes.c_double(slackness)
+    print("number of collision pairs:", self.__cp_num.get()[0])
     step = self.__self_largestFeasibleStepSize(
       c_slackness,
       self.__to_void_p(vertices),

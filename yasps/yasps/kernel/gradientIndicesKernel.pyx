@@ -875,7 +875,7 @@ extern "C" int get_indices(
 '''
 
     # ok now we compile the kernel by saving it to a file and then calling nvcc
-    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices_for_{'_'.join([x.fullName for x in self.__wrt])}"
+    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"
     f = open(f"{file_name}.cu", 'w')
     self.__kernelString = prune_duplicate_functions(self.__kernelString) # just in case we have duplicated functions
     f.write(self.__kernelString)

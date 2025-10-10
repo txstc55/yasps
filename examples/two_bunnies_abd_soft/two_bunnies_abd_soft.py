@@ -10,13 +10,23 @@ import pycuda.gpuarray as gpuarray
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
 KAPPA_VALUE = 10000000.0 # for collision
-POISSON_VALUE = 0.49
-YOUNG_VALUE = 10000000.0
-MU_LAME_VALUE = YOUNG_VALUE / (2 * (1 + POISSON_VALUE))
-LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
-MU_VALUE = 4.0 * MU_LAME_VALUE / 3.0
-LAMBDA_VALUE = LAMBDA_LAME_VALUE + 5.0 * MU_LAME_VALUE / 6.0
-print("Using mu = ", MU_VALUE, " and lambda = ", LAMBDA_VALUE)
+POISSON_VALUE0 = 0.49
+YOUNG_VALUE0 = 10000000.0
+MU_LAME_VALUE0 = YOUNG_VALUE0 / (2 * (1 + POISSON_VALUE0))
+LAMBDA_LAME_VALUE0 = YOUNG_VALUE0 * POISSON_VALUE0 / ((1 + POISSON_VALUE0) * (1 - 2 * POISSON_VALUE0))
+MU_VALUE0 = 4.0 * MU_LAME_VALUE0 / 3.0
+LAMBDA_VALUE0 = LAMBDA_LAME_VALUE0 + 5.0 * MU_LAME_VALUE0 / 6.0
+print("Using mu0 = ", MU_VALUE0, " and lambda0 = ", LAMBDA_VALUE0)
+
+
+POISSON_VALUE1 = 0.20
+YOUNG_VALUE1 = 1000000.0
+MU_LAME_VALUE1 = YOUNG_VALUE1 / (2 * (1 + POISSON_VALUE1))
+LAMBDA_LAME_VALUE1 = YOUNG_VALUE1 * POISSON_VALUE1 / ((1 + POISSON_VALUE1) * (1 - 2 * POISSON_VALUE1))
+MU_VALUE1 = 4.0 * MU_LAME_VALUE1 / 3.0
+LAMBDA_VALUE1 = LAMBDA_LAME_VALUE1 + 5.0 * MU_LAME_VALUE1 / 6.0
+print("Using mu0 = ", MU_VALUE1, " and lambda0 = ", LAMBDA_VALUE1)
+
 ##################################################
 ## read the bunny file
 ##################################################
@@ -82,8 +92,8 @@ bunny0.vertices.addConstant("mass", rows = 1, cols = 1)
 bunny0.vertices["mass"].updateValue(np.ones(position.shape[0] // 2, dtype=np.float64) * 1.0)
 mu0 = bunny0.addConstant("mu", rows = 1, cols = 1) # for stable neo hookean
 lam0 = bunny0.addConstant("lam", rows = 1, cols = 1) # for stable neo hookean
-mu0.updateValue([MU_VALUE])
-lam0.updateValue([LAMBDA_VALUE])
+mu0.updateValue([MU_VALUE0])
+lam0.updateValue([LAMBDA_VALUE0])
 
 
 # now for the second bunny, we make this bunny soft
@@ -103,8 +113,8 @@ bunny1.vertices.addConstant("mass", rows = 1, cols = 1)
 bunny1.vertices["mass"].updateValue(np.ones(position.shape[0] // 2, dtype=np.float64) * 1.0)
 mu1 = bunny1.addConstant("mu", rows = 1, cols = 1) # for stable neo hookean
 lam1 = bunny1.addConstant("lam", rows = 1, cols = 1) # for stable neo hookean
-mu1.updateValue([MU_VALUE])
-lam1.updateValue([LAMBDA_VALUE])
+mu1.updateValue([MU_VALUE1])
+lam1.updateValue([LAMBDA_VALUE1])
 
 # we also add the tets for each bunny
 bunny0.addPrimitive("tets", numInstances = tet_indices.shape[0] // 2)
@@ -343,3 +353,6 @@ for i in range(200):
   plotter.render()
   plotter.update()
   plotter.screenshot(f"outputs/bunny_abd_soft_{i:04d}.jpg")
+  # save the mesh obj file
+  bunny_poly0.save(f"outputs/bunny_abd_soft0_{i:04d}.obj")
+  bunny_poly1.save(f"outputs/bunny_abd_soft1_{i:04d}.obj")
