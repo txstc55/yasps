@@ -9,10 +9,10 @@ from ccd import CCD
 import pycuda.gpuarray as gpuarray
 import random
 random.seed(1313)
-
+np.random.seed(13)      # for numpy
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
-KAPPA_VALUE = 10000000.0 # for collision
+KAPPA_VALUE = 10000.0 # for collision
 
 
 NUM_ABD_BUNNIES = 5
@@ -31,7 +31,7 @@ for i in range(NUM_ABD_BUNNIES):
 MU_VALUE_SOFTS = []
 LAMBDA_VALUE_SOFTS = []
 for i in range(NUM_SOFT_BUNNIES):
-  POISSON_VALUE = 0.20 + random.random() * 0.29
+  POISSON_VALUE = 0.10 + random.random() * 0.29
   YOUNG_VALUE = 5000.0 + random.random() * 40000
   MU_LAME_VALUE = YOUNG_VALUE / (2 * (1 + POISSON_VALUE))
   LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
@@ -107,17 +107,11 @@ tet_indices_soft = []
 position_softs = []
 for i in range(NUM_SOFT_BUNNIES):
   tet_indices_soft.append(tet_indices + i * NUM_BUNNY_VERTICES)
-  dir_x = random.random() - 0.5
-  dir_y = random.random() * 1.0
-  dir_z = random.random() - 0.5
-  dir_length = np.sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z)
-  dir_x /= dir_length
-  dir_y /= dir_length
-  dir_z /= dir_length
-  dir_x *= diag * 0.8
-  dir_y *= diag * 0.8
-  dir_z *= diag * 0.8
-  translation = prev_center + np.array([dir_x, dir_y, dir_z])
+  v = np.random.normal(0.0, 1.0, 3)
+  v /= np.linalg.norm(v)
+  v *= diag * 0.8
+  if v[1] < 0: v[1] = -v[1]
+  translation = prev_center + v
   prev_center = translation
   # genrate random rotation matrix
   phi = random.random() * 2.0 * np.pi
@@ -134,7 +128,8 @@ for i in range(NUM_SOFT_BUNNIES):
       -np.sin(theta) * np.cos(phi),
       np.cos(theta)]
     ])
-  position_softs.append(np.dot(position, rotation_matrix) + translation)
+  position_copy = np.copy(position)
+  position_softs.append(np.dot(position_copy * (random.random() * 0.5 + 0.6), rotation_matrix) + translation)
 
 
 tet_indices_abds = []
@@ -143,7 +138,10 @@ translations = []
 rotation_matrices = []
 for i in range(NUM_ABD_BUNNIES):
   tet_indices_abds.append(tet_indices + i * NUM_BUNNY_VERTICES)
-  position_abds.append(position)
+  if i != NUM_ABD_BUNNIES - 1:
+    position_abds.append(position * (random.random() * 0.5 + 0.6))
+  else:
+    position_abds.append(position * 2.0)
   # first we generate a random direction that's always pointing up
   # this doesnt guarantee non-collision, but at least spreads them out
   dir_x = random.random() - 0.5
@@ -156,7 +154,11 @@ for i in range(NUM_ABD_BUNNIES):
   dir_x *= diag * 0.8
   dir_y *= diag * 0.8
   dir_z *= diag * 0.8
-  translations.append(prev_center + np.array([dir_x, dir_y, dir_z]))
+  trans = prev_center + np.array([dir_x, dir_y, dir_z])
+  if i == NUM_ABD_BUNNIES - 1:
+    trans[0] = 0.0
+    trans[2] = 0.0
+  translations.append(trans)
   prev_center = translations[-1]
   # genrate random rotation matrix
   phi = random.random() * 2.0 * np.pi
@@ -181,8 +183,8 @@ for i in range(NUM_ABD_BUNNIES):
 ## We will now construct the cloth
 ##################################################################
 from helpers import generate_cloth_mesh
-CLOTH_LENGTH = diag * 7.0
-NUM_SEGMENTS = 50
+CLOTH_LENGTH = diag * 5.0
+NUM_SEGMENTS = 100
 positions_cloth, triangle_indices_cloth = generate_cloth_mesh(CLOTH_LENGTH, NUM_SEGMENTS)
 # we need to pick out the index of the 4 corners
 # because we want to mark them as another type of vertices
@@ -548,13 +550,13 @@ def compute_total_energy():
   total_energy += sum(ee.compute().value.get())
   return total_energy
 
-for i in range(500):
+for i in range(300):
   bunnies_abd.vertices_abd["last_position"].updateValue(bunnies_abd.vertices_abd["position"].compute().value, deepCopy = True)
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   inner_iteration = 0
   min_inner_iteration_energy = 100000000
   while True:
-    result = s0.minimizeEnergy(tolerance = 1e-3)
+    result = s0.minimizeEnergy(tolerance = 1e-6)
     gradient_gpu = s0.gradient
     max_grad = abs_max_reduce(gradient_gpu).get()  # only one scalar transfer
     energies_before = compute_total_energy()
@@ -637,7 +639,7 @@ for i in range(500):
     plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
-    if max_grad < 5e-3:
+    if max_grad < 2e-3:
       print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
       break
     inner_iteration += 1
