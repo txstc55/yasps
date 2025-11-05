@@ -20,6 +20,7 @@ NUM_SOFT_BUNNIES = 5
 
 MU_VALUE_ABDS = []
 LAMBDA_VALUE_ABDS = []
+f = open("data/abd_bunny_elasticity.txt", 'w')
 for i in range(NUM_ABD_BUNNIES):
   POISSON_VALUE = 0.45 + random.random() * 0.04
   YOUNG_VALUE = 9000000.0 + random.random() * 1000000
@@ -27,9 +28,14 @@ for i in range(NUM_ABD_BUNNIES):
   LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
   MU_VALUE_ABDS.append(4.0 * MU_LAME_VALUE / 3.0)
   LAMBDA_VALUE_ABDS.append(LAMBDA_LAME_VALUE + 5.0 * MU_LAME_VALUE / 6.0)
+  f.write(str(POISSON_VALUE) + "\n")
+  f.write(str(YOUNG_VALUE) + "\n")
+f.close()
+
 
 MU_VALUE_SOFTS = []
 LAMBDA_VALUE_SOFTS = []
+f = open("data/soft_bunny_elasticity.txt", 'w')
 for i in range(NUM_SOFT_BUNNIES):
   POISSON_VALUE = 0.10 + random.random() * 0.29
   YOUNG_VALUE = 5000.0 + random.random() * 40000
@@ -37,11 +43,21 @@ for i in range(NUM_SOFT_BUNNIES):
   LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
   MU_VALUE_SOFTS.append(4.0 * MU_LAME_VALUE / 3.0)
   LAMBDA_VALUE_SOFTS.append(LAMBDA_LAME_VALUE + 5.0 * MU_LAME_VALUE / 6.0)
+  f.write(str(POISSON_VALUE) + "\n")
+  f.write(str(YOUNG_VALUE) + "\n")
+f.close()
 
 BENDING_STIFFNESS = 1.0
 STRETCH_STIFFNESS = 100000000.0
 SHEAR_STIFFNESS = 10000000.0
 THICKNESS = 0.001
+f = open("data/cloth_bending_stretch_shear_thickness.txt", 'w')
+f.write(str(BENDING_STIFFNESS) + "\n")
+f.write(str(STRETCH_STIFFNESS) + "\n")
+f.write(str(SHEAR_STIFFNESS) + "\n")
+f.write(str(THICKNESS) + "\n")
+f.close()
+# exit()
 
 ##################################################################
 ## Load the bunny mesh
@@ -130,12 +146,18 @@ for i in range(NUM_SOFT_BUNNIES):
     ])
   position_copy = np.copy(position)
   position_softs.append(np.dot(position_copy * (random.random() * 0.5 + 0.6), rotation_matrix) + translation)
+  f = open("data/soft_bunny_" + str(i) + ".node", 'w')
+  f.write(str(NUM_BUNNY_VERTICES) + " 3 0 0\n")
+  for j in range(NUM_BUNNY_VERTICES):
+    f.write(str(j + 1) + " " + str(position_softs[-1][j][0]) + " " + str(position_softs[-1][j][1]) + " " + str(position_softs[-1][j][2]) + "\n")
+  f.close()
 
 
 tet_indices_abds = []
 position_abds = []
 translations = []
 rotation_matrices = []
+actual_positions = []
 for i in range(NUM_ABD_BUNNIES):
   tet_indices_abds.append(tet_indices + i * NUM_BUNNY_VERTICES)
   if i != NUM_ABD_BUNNIES - 1:
@@ -176,7 +198,15 @@ for i in range(NUM_ABD_BUNNIES):
       np.cos(theta)]
     ])
   rotation_matrices.append(rotation_matrix)
-
+  f = open("data/abd_bunny_" + str(i) + ".node", 'w')
+  f.write(str(NUM_BUNNY_VERTICES) + " 3 0 0\n")
+  actual_position = np.dot(position_abds[-1], rotation_matrix.T) + translations[-1]
+  for j in range(NUM_BUNNY_VERTICES):
+    f.write(str(j + 1) + " " + str(actual_position[j][0]) + " " + str(actual_position[j][1]) + " " + str(actual_position[j][2]) + "\n")
+  f.close()
+  actual_positions.append(actual_position)
+# exit()
+actual_positions = np.array(actual_positions)
 
 
 ##################################################################
@@ -224,6 +254,15 @@ from helpers import generate_edge_to_vertices_list
 edge_to_vertices_cloth = generate_edge_to_vertices_list(triangle_indices_cloth)
 edge_indices_cloth = extract_edges_from_triangles(triangle_indices_cloth)
 
+# get it to an obj file
+f = open("data/cloth.obj", 'w')
+for i in range(positions_cloth.shape[0]):
+  f.write("v " + str(positions_cloth[i][0]) + " " + str(positions_cloth[i][1]) + " " + str(positions_cloth[i][2]) + "\n")
+for i in range(triangle_indices_cloth.shape[0]):
+  f.write("f " + str(triangle_indices_cloth[i][0] + 1) + " " + str(triangle_indices_cloth[i][1] + 1) + " " + str(triangle_indices_cloth[i][2] + 1) + "\n")
+f.close()
+# exit()
+
 ##################################################################
 ## construct the abd meshes
 ##################################################################
@@ -268,6 +307,11 @@ vertices_abd_translation = vertices_abd_translation.resize(3, 1) # we need to re
 vertices_abd_position = vertices_abd.addAttribute("position", computed_attribute = vertices_abd_abd_matrix * vertices_abd_rest_position + vertices_abd_translation)
 # and we can compute the current position to update it as the last position
 vertices_abd_last_position.updateValue(vertices_abd_position.compute().value.get())
+vertices_abd_position_computed = vertices_abd_position.value.get()
+actual_positions = actual_positions.flatten()
+# print("Diff")
+# print(np.linalg.norm(vertices_abd_position_computed - actual_positions))
+# exit()
 
 # now that we are done with vertices, we can do the tets
 # each tet will have its corresponding mu and lambda values
@@ -279,9 +323,21 @@ tets_abds.addConstant("lambda_abds", rows = 1, cols = 1)
 # add connectivity from tets to vertices
 tets_abds2_vertices = tets_abds.addConnectivity("tets_abds2_vertices", vertices_abd, np.array(tet_indices_abds, dtype = np.uint32), 4)
 
+# add connectivity from tets to affine bodies'
+tets_abds2_abds = tets_abds.addConnectivity("tets_abds2_abds", abds, np.array([[i] * NUM_BUNNY_TETS for i in range(NUM_ABD_BUNNIES)]), 1)
+tets_abds_affine_matrices = tets_abds.addAttribute("affine_matrices", through = tets_abds2_abds, source = abds_abd_matrices)
+tets_abds_affine_matrices = tets_abds_affine_matrices.resize(3, 3) # we need to resize it to the correct dimension
+tets_abds_translations = tets_abds.addAttribute("translations", through = tets_abds2_abds, source = abds_translations)
+
 # now we can get the rest positions and the current positions from the vertices
-tets_abds_positions = tets_abds.addAttribute("positions", through = tets_abds2_vertices, source = vertices_abd_position)
+# tets_abds_positions = tets_abds.addAttribute("positions", through = tets_abds2_vertices, source = vertices_abd_position)
 tets_abds_rest_positions = tets_abds.addAttribute("rest_positions", through = tets_abds2_vertices, source = vertices_abd_rest_position)
+
+tmp1 = tets_abds_rest_positions * tets_abds_affine_matrices.transpose()
+translation_expanded = attribute.to_array([tets_abds_translations[0], tets_abds_translations[1], tets_abds_translations[2], tets_abds_translations[0], tets_abds_translations[1], tets_abds_translations[2], tets_abds_translations[0], tets_abds_translations[1], tets_abds_translations[2], tets_abds_translations[0], tets_abds_translations[1], tets_abds_translations[2],], rows = 4, cols = 3)
+tets_abds_positions = tets_abds.addAttribute("positions", computed_attribute = tmp1 + translation_expanded)
+
+
 tets_abds["mu_abds"].updateValue(np.array([[MU_VALUE_ABDS[i]] * NUM_BUNNY_TETS for i in range(NUM_ABD_BUNNIES)], dtype = np.float64).flatten())
 tets_abds["lambda_abds"].updateValue(np.array([[LAMBDA_VALUE_ABDS[i]] * NUM_BUNNY_TETS for i in range(NUM_ABD_BUNNIES)], dtype = np.float64).flatten())
 
@@ -524,7 +580,7 @@ plotter.camera_position = [(0, 2, 6),
  (0.0, 0.0, 0.0),
  (0, 1, 0)
 ]
-plotter.show(interactive_update=True, auto_close=False)
+# plotter.show(interactive_update=True, auto_close=False)
 # plotter.show()
 # exit()
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
@@ -550,7 +606,7 @@ def compute_total_energy():
   total_energy += sum(ee.compute().value.get())
   return total_energy
 
-for i in range(300):
+for i in range(200):
   bunnies_abd.vertices_abd["last_position"].updateValue(bunnies_abd.vertices_abd["position"].compute().value, deepCopy = True)
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   inner_iteration = 0
@@ -627,16 +683,16 @@ for i in range(300):
   #     exit(1)
     print("step taken is", step_taken)
     print("substep is", substep)
-    all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+    # all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
 
-    abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
-    soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-    cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
-    abd_poly.points = abd_vertices_computed
-    soft_poly.points = soft_vertices_computed
-    cloth_poly.points = cloth_vertices_computed
-    plotter.render()
-    plotter.update()
+    # abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
+    # soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+    # cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+    # abd_poly.points = abd_vertices_computed
+    # soft_poly.points = soft_vertices_computed
+    # cloth_poly.points = cloth_vertices_computed
+    # plotter.render()
+    # plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
     if max_grad < 2e-3:
@@ -651,11 +707,11 @@ for i in range(300):
   vertices_free_velocity.updateValue(new_velocities_free, deepCopy = True)
   # plotter.render()
   # plotter.update()
-  plotter.screenshot(f"outputs/many_bunny_one_cloth_{i:04d}.jpg")
+  # plotter.screenshot(f"outputs/many_bunny_one_cloth_{i:04d}.jpg")
   # save the mesh obj file
-  abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
-  soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")
-  cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
+  # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
+  # soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")
+  # cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
   # # save the mesh obj file
   # bunny_poly0.save(f"outputs/bunny_abd_soft0_{i:04d}.obj")
   # bunny_poly1.save(f"outputs/bunny_abd_soft1_{i:04d}.obj")

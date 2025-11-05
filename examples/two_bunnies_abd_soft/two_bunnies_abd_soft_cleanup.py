@@ -193,8 +193,8 @@ ccd.init_edges(bunnies.vertices["position"].compute().value, bunnies.vertices["r
 ##################################################
 ## add energy to the scene
 ##################################################
-snh0 = stable_neo_hookean(bunny2.tets["rest_positions"], bunny2.tets["positions"], mu0, lam0, dt)
-snh_energy0 = bunny2.tets.addAttribute("stable_neo_hookean0", computed_attribute = snh0)
+snh2 = stable_neo_hookean(bunny2.tets["rest_positions"], bunny2.tets["positions"], mu0, lam0, dt)
+snh_energy2 = bunny2.tets.addAttribute("stable_neo_hookean0", computed_attribute = snh2)
 snh1 = stable_neo_hookean(bunny1.tets["rest_positions"], bunny1.tets["positions"], mu1, lam1, dt)
 snh_energy1 = bunny1.tets.addAttribute("stable_neo_hookean1", computed_attribute = snh1)
 
@@ -216,7 +216,7 @@ affine0 = affine_energy(bunny2.affine_body["affine_matrix"])
 bunny2.addAttribute("affine0", computed_attribute = affine0)
 
 # s0.addEnergy(snh_energy, projection_method = 2, save_intermediate = True)
-s0.addEnergy(snh_energy0, projection_method = 1)
+s0.addEnergy(snh_energy2, projection_method = 1)
 s0.addEnergy(snh_energy1, projection_method = 1)
 s0.addEnergy(inertia_energy, projection_method = 1)
 s0.addEnergy(affine0, projection_method = 1)
@@ -224,7 +224,7 @@ s0.addEnergy(pp_energy, dynamic_instances = True, projection_method = 1)
 s0.addEnergy(pe_energy, dynamic_instances = True, projection_method = 1)
 s0.addEnergy(pt_energy, dynamic_instances = True, projection_method = 1)
 s0.addEnergy(ee_energy, dynamic_instances = True, projection_method = 1)
-s0.addMinimizeTarget([bunny2.affine_body["affine_matrix"], bunny2["translation"], bunny1.vertices["position"]])
+s0.addMinimizeTarget([bunny2.affine_body["affine_matrix"], bunny2.affine_body["translation"], bunny1.vertices["position"]])
 ##################################################
 ## plot the scene
 ##################################################
@@ -255,7 +255,7 @@ for i in range(200):
     result = s0.minimizeEnergy(tolerance = 1e-6)
     gradient_gpu = s0.gradient
     max_grad = abs_max_reduce(gradient_gpu).get()  # only one scalar transfer
-    snh_energy_sum = sum(snh_energy0.compute().value.get()) + sum(snh_energy1.compute().value.get())
+    snh_energy_sum = sum(snh_energy2.compute().value.get()) + sum(snh_energy1.compute().value.get())
     inertia_energy_sum = sum(inertia_energy.compute().value.get())
     pp_energy_sum = sum(pp_energy.compute().value.get())
     pe_energy_sum = sum(pe_energy.compute().value.get())
@@ -322,7 +322,7 @@ for i in range(200):
       if ee_count > 0:
         ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
 
-      snh_energy_sum = sum(snh_energy0.compute().value.get()) + sum(snh_energy1.compute().value.get())
+      snh_energy_sum = sum(snh_energy2.compute().value.get()) + sum(snh_energy1.compute().value.get())
       inertia_energy_sum = sum(inertia_energy.compute().value.get())
       pp_energy_sum = sum(pp_energy.compute().value.get())
       pe_energy_sum = sum(pe_energy.compute().value.get())
