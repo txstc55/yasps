@@ -72,7 +72,7 @@ UNION = operator("union", 3, False) # for union of multiple attributes
 class attribute:
   __isZeroAttributeChecks: Dict[int, int] = {}
 
-  def __init__(self, name: str = "", rows: int = 1, cols: int = 1, correspondance: Optional[Union[scene, mesh, primitive]] = None, through: Optional[connectivity] = None, float_value: Optional[float] = None, children: List[attribute] = [], operator: operator = DATA, index_value: Optional[int] = None, is_constant: bool = False):
+  def __init__(self, name: str = "", rows: int = 1, cols: int = 1, correspondance: Optional[Union[scene, mesh, primitive]] = None, through: Optional[connectivity] = None, float_value: Optional[float] = None, children: List[attribute] = [], operator: operator = DATA, index_value: Optional[int] = None, is_constant: bool = False, generate_code = True):
     # by default, any attribute is a data access
     # which does the following:
     # given x the data, and id, return x + id * rows * cols
@@ -103,6 +103,7 @@ class attribute:
     self.__deviceKernel: Optional[deviceKernel] = None
     self.__globalKernel: Optional[globalKernel] = None
     self.__isFloatMat = None
+    self.__generate_code: bool = generate_code
     # self.__is_dynamic = is_dynamic
 
 
@@ -364,6 +365,14 @@ class attribute:
       return self.children[0].isFloatMat
     self.__isFloatMat = False
     return False
+
+  @property
+  def generate_code(self) -> bool:
+    return self.__generate_code
+
+  @generate_code.setter
+  def generate_code(self, value: bool):
+      self.__generate_code = bool(value)
 
   ################################################
   ################################################

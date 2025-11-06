@@ -501,10 +501,10 @@ s0.addEnergy(inertia_softs, projection_method = 0)
 s0.addEnergy(inertia_free, projection_method = 0)
 s0.addEnergy(bending_energy, projection_method = 2)
 s0.addEnergy(baraff_witkin_energy, projection_method = 2)
-s0.addEnergy(pp, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(pe, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(pt, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(ee, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(pp, dynamic_instances = True, projection_method = 1)
+s0.addEnergy(pe, dynamic_instances = True, projection_method = 1)
+s0.addEnergy(pt, dynamic_instances = True, projection_method = 1)
+s0.addEnergy(ee, dynamic_instances = True, projection_method = 1)
 s0.addMinimizeTarget([abds_abd_matrices, abds_translations, vertices_soft_position, vertices_free_position])
 
 ##################################################################
@@ -580,7 +580,7 @@ plotter.camera_position = [(0, 2, 6),
  (0.0, 0.0, 0.0),
  (0, 1, 0)
 ]
-# plotter.show(interactive_update=True, auto_close=False)
+plotter.show(interactive_update=True, auto_close=False)
 # plotter.show()
 # exit()
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
@@ -683,16 +683,16 @@ for i in range(200):
   #     exit(1)
     print("step taken is", step_taken)
     print("substep is", substep)
-    # all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+    all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
 
-    # abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
-    # soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-    # cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
-    # abd_poly.points = abd_vertices_computed
-    # soft_poly.points = soft_vertices_computed
-    # cloth_poly.points = cloth_vertices_computed
-    # plotter.render()
-    # plotter.update()
+    abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
+    soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+    cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+    abd_poly.points = abd_vertices_computed
+    soft_poly.points = soft_vertices_computed
+    cloth_poly.points = cloth_vertices_computed
+    plotter.render()
+    plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
     if max_grad < 2e-3:
@@ -705,8 +705,8 @@ for i in range(200):
   vertices_abd_velocity.updateValue(new_velocities_abd, deepCopy = True)
   vertices_soft_velocity.updateValue(new_velocities_soft, deepCopy = True)
   vertices_free_velocity.updateValue(new_velocities_free, deepCopy = True)
-  # plotter.render()
-  # plotter.update()
+  plotter.render()
+  plotter.update()
   # plotter.screenshot(f"outputs/many_bunny_one_cloth_{i:04d}.jpg")
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")

@@ -24,6 +24,9 @@ class minimizer:
     self.__wrt: List[attribute] = []
     self.__gradient: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
     self.__diagonal: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # only store the diagonal elements
+    self.__diagonal_blocks: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store the block diagonal
+    self.__diagonal_blocks_start: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store for each attribute, where does the accumulated diagonal block start
+    self.__gradient_segments_start: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store for each attribute, where does the gradient segment start
 
     self.__blockDimensions: List[int] = [] # record the dimension of blocks
     # self.__blocks: List[gpuarray.GPUArray] = [] # for each different block dimensions, the datas
@@ -152,6 +155,18 @@ class minimizer:
     # allocate the array
     self.__gradient = gpuarray.zeros(sum(self.__gradientSizes), dtype = np.float64)
     self.__diagonal = gpuarray.zeros(sum(self.__gradientSizes), dtype = np.float64)
+    diagonal_block_sizes = [item.size * item.size * item.correspondance.numInstances for item in self.wrt]
+    # do a prefix sum on the diagonal block sizes
+    diagonal_block_start = [0 for _ in diagonal_block_sizes]
+    gradient_segment_start = [0 for _ in diagonal_block_sizes]
+    for i in range(1, len(diagonal_block_start)):
+      diagonal_block_start[i] = diagonal_block_sizes[i - 1] + diagonal_block_start[i - 1]
+      gradient_segment_start[i] = gradient_segment_start[i - 1] + self.__gradientSizes[i - 1]
+    diagonal_block_start.append(diagonal_block_start[-1] + diagonal_block_sizes[-1])
+    gradient_segment_start.append(gradient_segment_start[-1] + self.__gradientSizes[-1])
+    self.__diagonal_blocks = gpuarray.zeros(sum(diagonal_block_sizes), dtype = np.float64)
+    self.__diagonal_blocks_start = gpuarray.to_gpu(np.array(diagonal_block_start, dtype = np.uint32))
+    self.__gradient_segments_start = gpuarray.to_gpu(np.array(gradient_segment_start, dtype = np.uint32))
     # assign the gradient segments by reference
     start = 0
     self.__wrtStartIndices.append(start) # get where each data element starts
@@ -267,14 +282,29 @@ class minimizer:
     if self.__blocksFlattenedDynamic.shape[0] > 0:
       self.__blocksFlattenedDynamic.fill(0)
     self.__diagonal.fill(0)
+    self.__diagonal_blocks.fill(0)
     for e in self.energies:
-      e.computeHessianAndGradient(self.__gradient, self.__blocksFlattened, self.__diagonal)
+      e.computeHessianAndGradient(
+        self.__gradient,
+        self.__blocksFlattened,
+        self.__diagonal,
+        self.__diagonal_blocks,
+        self.__diagonal_blocks_start,
+        self.__gradient_segments_start
+      )
 
     # for dynamic energies we need to get the sparse indices again
     self.__getSparseIndicesDynamicAgain()
     for e in self.energiesDynamic:
       if e.numTotalCoordinates > 0:
-        e.computeHessianAndGradient(self.__gradient, self.__blocksFlattenedDynamic, self.__diagonal)
+        e.computeHessianAndGradient(
+          self.__gradient,
+          self.__blocksFlattenedDynamic,
+          self.__diagonal,
+          self.__diagonal_blocks,
+          self.__diagonal_blocks_start,
+          self.__gradient_segments_start
+        )
     print("--------------------------------------------------------")
     print("Block counts dynamic is: ", self.__blockCountsDynamic)
     print("--------------------------------------------------------")
@@ -324,6 +354,9 @@ class minimizer:
       self.__blockCountsDynamic,
       self.__blockDimensionsDynamic,
       self.__diagonal,
+      self.__diagonal_blocks,
+      self.__diagonal_blocks_start,
+      self.__gradient_segments_start,
       self.__gradient,
       self.__d_p1_b,
       self.__d_r,

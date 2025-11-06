@@ -73,7 +73,7 @@ class codeGenerator:
     #   # print(current.fullName)
     #   # print(str(current))
     elif current.correspondance.fullName == self.__input.correspondance.fullName:
-      if current.name != "":
+      if current.name != "" and current.generate_code:
         # this is a named attribute, lets use the generated kernel for it
         # instead of going over all its children
         self.__order.append(current)
@@ -163,10 +163,10 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
       if current.hash in self.__attribute_replacements:
         # we don't need to do anything about it
         pass
-      elif current.hash == self.__input.hash or current.name == "":
+      elif current.hash == self.__input.hash or current.name == "" or (current.name != "" and not current.generate_code):
         # we need to generate the code accordingly
         if current.name != "":
-          self.__attribute_replacements[current.hash] = (current, -1)
+          self.__attribute_replacements[current.hash] = (current, -1) # -1 means it has a name, we will use the name
         else:
           self.__attribute_replacements[current.hash] = (current, self.__num_intermediates)
           self.__num_intermediates += 1
@@ -292,10 +292,19 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
       self.__code_strings.append(f'''
   // put the result back
   // Eigen::Matrix<double, {self.__input.rows}, {self.__input.cols}{'' if self.__input.rows == 1 or self.__input.cols == 1 else ', Eigen::RowMajor'}> {self.getIntermediateName(self.__input)}_materialized({self.getIntermediateName(self.__input)});
-  auto&& result_eval = {self.getIntermediateName(self.__input)}.eval();
-  for (unsigned int i = 0; i < {self.__input.size}; i++){{
-    result[i] = result_eval.data()[i];
-  }}
+
+#if {int(self.__input.rows == 1 or self.__input.cols == 1)}
+  using RowMat = Eigen::Matrix<double,
+                        {self.__input.rows},
+                        {self.__input.cols}>;
+#else
+  using RowMat = Eigen::Matrix<double,
+                      {self.__input.rows},
+                      {self.__input.cols},
+                      Eigen::RowMajor>;
+#endif
+  Eigen::Map<RowMat> out(result);
+  out.noalias() = {self.getIntermediateName(self.__input)}.derived();   // Eigen decides whether a temp is needed
 ''')
     # now we need to get the datas for generating this kernel
     allNamedAttributeChildren = self.__childrenAttributeKernels.values()

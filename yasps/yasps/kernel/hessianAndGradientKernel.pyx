@@ -194,7 +194,10 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int projection_method,
   double* gradient,   // the gradient output
   double* hessian_blocks, // the blocks that will constitute the hessian
-  double* diagonal    // the diagonal, we will use it for preconditioning
+  double* diagonal,    // the diagonal, we will use it for preconditioning
+  double* diagonal_blocks, // store the diagonal blocks, use it for block preconditioning
+  const unsigned int* diagonal_blocks_start, // for each attribute, where does the diagonal block start
+  const unsigned int* gradient_segments_start // for each attribute, where does the gradient start
 );
 }}
 '''
@@ -221,7 +224,7 @@ extern "C"{{
 }}
 ''')
             compile_cmd = [
-              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-arch=sm_86",
+              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
               "-O3",
               "-c", cu_file, "-o", obj_file,
               "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
@@ -268,7 +271,10 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int projection_method,
   double* gradient,   // the gradient output
   double* hessian_blocks, // the blocks that will constitute the hessian
-  double* diagonal    // the diagonal, we will use it for preconditioning
+  double* diagonal,    // the diagonal, we will use it for preconditioning
+  double* diagonal_blocks, // store the diagonal blocks, use it for block preconditioning
+  const unsigned int* diagonal_blocks_start, // for each attribute, where does the diagonal block start
+  const unsigned int* gradient_segments_start // for each attribute, where does the gradient start
 ){{
   const unsigned int N = {unique_gradient_size}; // the size of the gradient and hessian, this is the unique gradient size
   // get the start and end position of the current gradient size
@@ -430,6 +436,26 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             for (unsigned int k = 0; k < segment_size_i; k++){{
               atomicAdd(&diagonal[segment_index + k], compressed_hessian(permutation_i + k, permutation_j + k));
             }}
+            // now we do the block diagonal placement
+            // we first need to determine where to put it in the global diagonal blocks array
+            int which_attribute = 0;
+            for (int k = 0; k < 123456; k++){{ // for now lets just make 123456 our default, need to change it later
+              if (segment_index < gradient_segments_start[k + 1]){{
+                break;
+              }}
+              which_attribute += 1;
+            }}
+            // now determine which instance in that attribute
+            const unsigned int diagonal_block_start = diagonal_blocks_start[which_attribute];
+            const unsigned int diff = segment_index - gradient_segments_start[which_attribute];
+            const unsigned int which_instance = diff / (segment_size_i);
+            const unsigned int diagonal_block_placement = diagonal_block_start + which_instance * segment_size_i * segment_size_i;
+            // now we put the diagonal block
+            for (unsigned int k = 0; k < segment_size_i; k++){{
+              for (unsigned int l = 0; l < segment_size_i; l++){{
+              atomicAdd(&diagonal_blocks[diagonal_block_placement + k * segment_size_i + l], compressed_hessian(permutation_i + k, permutation_j + l));
+              }}
+            }}
           }}
           valid_block_counts++;
         }}
@@ -441,7 +467,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 }}
 ''')
             compile_cmd = [
-              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-arch=sm_86",
+              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
               "-O3",
               "-c", cu_file, "-o", obj_file,
               "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
@@ -486,6 +512,9 @@ int compute_hessian_and_gradient_with_compression(
   double* gradient,   // the gradient output
   double* hessian_blocks, // the blocks that will constitute the hessian
   double* diagonal,    // the diagonal, we will use it for preconditioning
+  double* diagonal_blocks, // store the diagonal blocks, use it for block preconditioning
+  const unsigned int* diagonal_blocks_start, // for each attribute, where does the diagonal block start
+  const unsigned int* gradient_segments_start, // for each attribute, where does the gradient start
   const short unsigned int* unique_gradient_sizes, // the unique gradient sizes, on cpu
   const unsigned int num_unique_gradient_sizes // the number of unique gradient sizes
 ){{
@@ -535,7 +564,10 @@ int compute_hessian_and_gradient_with_compression(
           projection_method,
           gradient,   // the gradient output
           hessian_blocks, // the blocks that will constitute the hessian
-          diagonal    // the diagonal, we will use it for preconditioning
+          diagonal,    // the diagonal, we will use it for preconditioning
+          diagonal_blocks, // store the diagonal blocks, use it for block preconditioning
+          diagonal_blocks_start, // for each attribute, where does the diagonal block start
+          gradient_segments_start // for each attribute, where does the gradient start
         );
         {{
         // Step 1: Check for launch failure
@@ -584,7 +616,7 @@ int compute_hessian_and_gradient_with_compression(
       kernel_cu_file = f"{file_name}.cu"
       kernel_obj_file = f"{file_name}.o"
       kernel_compile_cmd = [
-        "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-arch=sm_86",
+        "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
         "-O3",
         "-c", kernel_cu_file, "-o", kernel_obj_file,
         "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
@@ -604,7 +636,7 @@ int compute_hessian_and_gradient_with_compression(
       # Device link step: critical for CUDA separable compilation
       device_link_obj = f"{file_name}_device_link.o"
       dlink_cmd = [
-        "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_86",
+        "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_89",
         "-O3",
         *(obj_files + [kernel_obj_file]), "-o", device_link_obj,
         "--relocatable-device-code=true"
@@ -615,7 +647,7 @@ int compute_hessian_and_gradient_with_compression(
 
       # Final shared object linking
       final_link_cmd = [
-        "nvcc", "-shared", "-Xcompiler", "-fPIC", "-arch=sm_86",
+        "nvcc", "-shared", "-Xcompiler", "-fPIC", "-arch=sm_89",
         "-O3",
         kernel_obj_file, device_link_obj, *obj_files,
         "-o", f"{file_name}.so",
@@ -650,6 +682,9 @@ int compute_hessian_and_gradient_with_compression(
         ctypes.c_void_p,    # gradient
         ctypes.c_void_p,    # hessian_blocks
         ctypes.c_void_p,    # diagonal
+        ctypes.c_void_p,    # diagonal blocks
+        ctypes.c_void_p,    # diagonal blocks start
+        ctypes.c_void_p,    # gradient segments start
         # Other CPU arrays
         ctypes.c_void_p,    # unique_gradient_sizes
         ctypes.c_uint,      # num_unique_gradient_sizes
@@ -679,6 +714,9 @@ int compute_hessian_and_gradient_with_compression(
         ctypes.c_void_p,    # gradient
         ctypes.c_void_p,    # hessian_blocks
         ctypes.c_void_p,    # diagonal
+        ctypes.c_void_p,    # diagonal blocks
+        ctypes.c_void_p,    # diagonal blocks start
+        ctypes.c_void_p,    # gradient segments start
         # Other CPU arrays
         ctypes.c_void_p,    # unique_gradient_sizes
         ctypes.c_uint,      # num_unique_gradient_sizes
@@ -693,6 +731,9 @@ int compute_hessian_and_gradient_with_compression(
     gradient: gpuarray.GPUArray,
     hessian_blocks: gpuarray.GPUArray,
     diagonal: gpuarray.GPUArray,
+    diagonal_blocks: gpuarray.GPUArray,
+    diagonal_blocks_start: gpuarray.GPUArray,
+    gradient_segments_start: gpuarray.GPUArray
   ):
     # print("Unique gradient sizes cpu before hessian kernel:", giKernel.outputUniqueGradientSizesCPU)
     # print("Num unique gradient sizes cpu before hessian kernel:", giKernel.numUniqueGradientSizesCPU)
@@ -716,6 +757,9 @@ int compute_hessian_and_gradient_with_compression(
       self.__to_void_p(gradient),
       self.__to_void_p(hessian_blocks),
       self.__to_void_p(diagonal),
+      self.__to_void_p(diagonal_blocks),
+      self.__to_void_p(diagonal_blocks_start),
+      self.__to_void_p(gradient_segments_start),
       giKernel.outputUniqueGradientSizesCPU.ctypes.data_as(ctypes.c_void_p),
       ctypes.c_uint32(giKernel.numUniqueGradientSizesCPU)
     )

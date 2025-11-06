@@ -388,6 +388,7 @@ class energy:
       if children_global_jacobian_name not in current.correspondance.attributes:
         current.correspondance.addAttribute(children_global_jacobian_name, computed_attribute = next_jacobian)
     full_gradient = current_gradient.mul_explicit(next_jacobian)
+    # full_gradient.generate_code = False
     current.correspondance.addAttribute(gradient_attribute_name, computed_attribute = full_gradient)
     return full_gradient
 
@@ -615,6 +616,7 @@ class energy:
           actual_global_jacobian_items[(index * joined_child_global_jacobian.rows + i) * actual_global_jacobian_cols + (index * joined_child_global_jacobian.cols) + j] = res[index, i * joined_child_global_jacobian.cols + j]
 
     actual_global_jacobian = attribute.to_array(actual_global_jacobian_items, rows = actual_global_jacobian_rows, cols = actual_global_jacobian_cols)
+    # actual_global_jacobian.generate_code = False
     current.correspondance.addAttribute(gradient_attribute_name, computed_attribute = actual_global_jacobian)
     return actual_global_jacobian
 
@@ -1175,7 +1177,15 @@ class energy:
 
 
   @timed("energy.computeHessianAndGradient")
-  def computeHessianAndGradient(self, gradient_array: gpuarray.GPUArray, hessian_blocks: gpuarray.GPUArray, diagonal: gpuarray.GPUArray):
+  def computeHessianAndGradient(
+    self,
+    gradient_array: gpuarray.GPUArray,
+    hessian_blocks: gpuarray.GPUArray,
+    diagonal: gpuarray.GPUArray,
+    diagonal_blocks: gpuarray.GPUArray,
+    diagonal_blocks_start: gpuarray.GPUArray,
+    gradient_segments_start: gpuarray.GPUArray
+  ):
     if self.__gradient is None:
       # the gradient is 0, return the 0 array
       return
@@ -1230,7 +1240,17 @@ class energy:
     # print(f"counts gpu: {[x.get() for x in counts_gpu]}")
     arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + counts_gpu
     print(f"Computing hessian and gradient for {self.__energy.fullName}")
-    self.__hessianAndGradientKernel.compute(arguments, self.__indices_kernel, self.__block_indices_gpu, gradient_array, hessian_blocks, diagonal)
+    self.__hessianAndGradientKernel.compute(
+      arguments,
+      self.__indices_kernel,
+      self.__block_indices_gpu,
+      gradient_array,
+      hessian_blocks,
+      diagonal,
+      diagonal_blocks,
+      diagonal_blocks_start,
+      gradient_segments_start
+    )
     return self
 
   def __hash__(self) -> int:

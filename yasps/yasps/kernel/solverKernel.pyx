@@ -435,7 +435,7 @@ int computeSolution(unsigned int maxIteration,
       f.close()
 
       # now we compile the kernel
-      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -cudart=shared -lcuda")
+      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -cudart=shared -lcuda -I/usr/include/eigen3 --expt-relaxed-constexpr --disable-warning -std=c++17")
       self.__cg_kernel = ctypes.CDLL(f"{file_name}.so").computeSolution
       self.__cg_kernel.argtypes = [
         ctypes.c_uint,   # maxIteration

@@ -468,7 +468,7 @@ class gradientIndicesKernel:
         f = open(f"{file_name}.cu", 'w')
         f.write(compression_kernel_string)
         f.close()
-        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
+        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda")
         self.__compression_kernel = ctypes.CDLL(f"{file_name}.so").compress_indices # get the compiled kernel
         self.__compression_kernel.restype = ctypes.c_int # set the return type to None
         self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2
@@ -486,7 +486,7 @@ class gradientIndicesKernel:
         f = open(f"{file_name}.cu", 'w')
         f.write(coordinate_kernel_string)
         f.close()
-        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
+        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda")
         self.__coordinate_kernel = ctypes.CDLL(f"{file_name}.so").computeCoordinates # get the compiled kernel
         self.__coordinate_kernel.restype = ctypes.c_int # set the return type to None
         self.__coordinate_kernel.argtypes = [ctypes.c_void_p] * 6 + [ctypes.c_uint32] * 2
@@ -881,7 +881,7 @@ extern "C" int get_indices(
     f.write(self.__kernelString)
     f.close()
     # we will now compile this kernel
-    os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
+    os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda")
     self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
     self.__indices_kernel.restype = ctypes.c_int # set the return type to None
     self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_primitive_unions) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]

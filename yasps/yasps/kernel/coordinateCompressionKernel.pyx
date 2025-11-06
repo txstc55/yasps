@@ -497,7 +497,7 @@ class coordinateCompressionKernel:
         f = open(f"{file_name}.cu", 'w')
         f.write(get_unique_coords_kernel_string)
         f.close()
-        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda")
+        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda")
         self.__get_unique_coords_kernel = ctypes.CDLL(f"{file_name}.so").get_unique_coords # get the compiled kernel
         self.__get_unique_coords_kernel.restype = ctypes.c_int # set the return type to None
         self.__get_unique_coords_kernel.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_uint32] + [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_uint32)] * 1
@@ -535,7 +535,7 @@ class coordinateCompressionKernel:
         f = open(f"{file_name}.cu", 'w')
         f.write(compress_unique_coords_kernel_string)
         f.close()
-        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_86 -lcudart -lcuda --extended-lambda")
+        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda --extended-lambda")
         self.__compress_unique_coords_kernel = ctypes.CDLL(f"{file_name}.so").compress_unique_coords # get the compiled kernel
         self.__compress_unique_coords_kernel.restype = ctypes.c_int # set the return type to None
         self.__compress_unique_coords_kernel.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_uint32] + [ctypes.c_void_p] + [ctypes.c_uint32] +[ctypes.c_void_p] * 5 + [ctypes.POINTER(ctypes.c_uint32)] * 1

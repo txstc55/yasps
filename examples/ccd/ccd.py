@@ -30,7 +30,7 @@ class CCD:
           "nvcc", "-std=c++17", "-Xcompiler", "-fPIC",
           "-O3",
           "-I/usr/include/eigen", "-I.",
-          "-gencode", "arch=compute_86,code=sm_86",
+          "-gencode", "arch=compute_89,code=sm_89",
           "--relocatable-device-code=true",
           "-c", mlbvh_cu, "-o", mlbvh_o
         ],
@@ -38,7 +38,7 @@ class CCD:
           "nvcc", "-std=c++17", "-Xcompiler", "-fPIC",
           "-O3",
           "-I/usr/include/eigen", "-I.",
-          "-gencode", "arch=compute_86,code=sm_86",
+          "-gencode", "arch=compute_89,code=sm_89",
           "--relocatable-device-code=true",
           "-c", accd_cu, "-o", accd_o
         ],
@@ -46,14 +46,14 @@ class CCD:
           "nvcc", "-std=c++17", "-Xcompiler", "-fPIC",
           "-O3",
           "-I/usr/include/eigen", "-I.",
-          "-gencode", "arch=compute_86,code=sm_86",
+          "-gencode", "arch=compute_89,code=sm_89",
           "--relocatable-device-code=true",
           "-c", eigen_cu, "-o", eigen_o
         ],
         [
           "nvcc", "-std=c++17", "-Xcompiler", "-fPIC",
           "-O3",
-          "-gencode", "arch=compute_86,code=sm_86",
+          "-gencode", "arch=compute_89,code=sm_89",
           "--relocatable-device-code=true",
           mlbvh_o, eigen_o,
           "-o", mlbvh_so_path, "--shared"
@@ -61,7 +61,7 @@ class CCD:
         [
           "nvcc", "-std=c++17", "-Xcompiler", "-fPIC",
           "-O3",
-          "-gencode", "arch=compute_86,code=sm_86",
+          "-gencode", "arch=compute_89,code=sm_89",
           "--relocatable-device-code=true",
           accd_o, eigen_o,
           "-o", accd_so_path, "--shared"

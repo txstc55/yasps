@@ -161,7 +161,7 @@ extern "C"{{
 }}
 ''')
             compile_cmd = [
-              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-O3", "-arch=sm_86",
+              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-O3", "-arch=sm_89",
               "-c", cu_file, "-o", obj_file,
               "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings"
             ]
@@ -246,7 +246,7 @@ int compute(
       kernel_cu_file = f"{file_name}.cu"
       kernel_obj_file = f"{file_name}.o"
       kernel_compile_cmd = [
-        "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++11", "-O3", "-arch=sm_86",
+        "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-O3", "-arch=sm_89",
         "-c", kernel_cu_file, "-o", kernel_obj_file,
         "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
       ]
@@ -263,7 +263,7 @@ int compute(
       # Device link step: critical for CUDA separable compilation
       device_link_obj = f"{file_name}_device_link.o"
       dlink_cmd = [
-        "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_86",
+        "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_89",
         *(obj_files + [kernel_obj_file]), "-o", device_link_obj
       ]
       subprocess.run(dlink_cmd, check=True)
@@ -272,7 +272,7 @@ int compute(
 
       # Final shared object linking
       final_link_cmd = [
-        "nvcc", "-shared", "-Xcompiler", "-fPIC", "-arch=sm_86",
+        "nvcc", "-shared", "-Xcompiler", "-fPIC", "-arch=sm_89",
         kernel_obj_file, device_link_obj, *obj_files,
         "-o", f"{file_name}.so",
         "-lcudart", "-lcuda"
