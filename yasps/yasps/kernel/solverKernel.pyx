@@ -394,6 +394,9 @@ int computeSolution(unsigned int maxIteration,
     for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
       cudaStreamDestroy(streams[i]);
     }
+    for (unsigned int i = 0; i < numAttributes; ++i) {
+      cudaStreamDestroy(preconditioner_streams[i]);
+    }
 
     // free
     cudaFree(d_delta0);
@@ -436,6 +439,9 @@ int computeSolution(unsigned int maxIteration,
       printf("Non SPD matrix detected in %d iterations with residual %lf and alpha %lf\\n", iteration, h_delta_new, h_alpha);
       for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
         cudaStreamDestroy(streams[i]);
+      }
+      for (unsigned int i = 0; i < numAttributes; ++i) {
+        cudaStreamDestroy(preconditioner_streams[i]);
       }
 
       // free
@@ -487,6 +493,9 @@ int computeSolution(unsigned int maxIteration,
       printf("Converged in %d iterations with residual %lf\\n", iteration, h_delta_new);
       for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
         cudaStreamDestroy(streams[i]);
+      }
+      for (unsigned int i = 0; i < numAttributes; ++i) {
+        cudaStreamDestroy(preconditioner_streams[i]);
       }
 
       // free
