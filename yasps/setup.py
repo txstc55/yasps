@@ -15,6 +15,7 @@ extensions = [
     Extension("yasps.gradientIndicesKernel", ["yasps/kernel/gradientIndicesKernel.pyx"]),
     Extension("yasps.hessianAndGradientKernel", ["yasps/kernel/hessianAndGradientKernel.pyx"]),
     Extension("yasps.coordinateCompressionKernel", ["yasps/kernel/coordinateCompressionKernel.pyx"]),
+    Extension("yasps.diagonalBlockInverseKernel", ["yasps/kernel/diagonalBlockInverseKernel.pyx"]),
     Extension("yasps.solverKernel", ["yasps/kernel/solverKernel.pyx"]),
     Extension("yasps.energy", ["yasps/energy/energy.pyx"]),
     Extension("yasps.minimizer", ["yasps/minimizer/minimizer.pyx"]),

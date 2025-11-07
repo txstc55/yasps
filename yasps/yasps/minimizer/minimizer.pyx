@@ -8,6 +8,7 @@ from yasps.energy import energy
 from yasps.attribute import attribute
 from yasps.solverKernel import solverKernel
 from yasps.coordinateCompressionKernel import coordinateCompressionKernel
+from yasps.diagonalBlockInverseKernel import diagonalBlockInverseKernel
 import time
 import ctypes
 from yasps.helper import timed
@@ -25,8 +26,11 @@ class minimizer:
     self.__gradient: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
     self.__diagonal: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # only store the diagonal elements
     self.__diagonal_blocks: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store the block diagonal
+    self.__diagonal_blocks_inverse: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store the inverse of the diagonal blocks
     self.__diagonal_blocks_start: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store for each attribute, where does the accumulated diagonal block start
+    self.__diagonal_blocks_start_cpu: List[int] = []
     self.__gradient_segments_start: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store for each attribute, where does the gradient segment start
+    self.__gradient_segments_start_cpu: List[int] = []
 
     self.__blockDimensions: List[int] = [] # record the dimension of blocks
     # self.__blocks: List[gpuarray.GPUArray] = [] # for each different block dimensions, the datas
@@ -66,6 +70,8 @@ class minimizer:
     self.__d_s: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
     self.__solution: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
     self.__solutionSegments: List[gpuarray.GPUArray] = []
+
+    self.__diagonalBlockInverseKernel: Optional[diagonalBlockInverseKernel] = None
 
   @property
   def solutionSegments(self) -> List[gpuarray.GPUArray]:
@@ -165,8 +171,11 @@ class minimizer:
     diagonal_block_start.append(diagonal_block_start[-1] + diagonal_block_sizes[-1])
     gradient_segment_start.append(gradient_segment_start[-1] + self.__gradientSizes[-1])
     self.__diagonal_blocks = gpuarray.zeros(sum(diagonal_block_sizes), dtype = np.float64)
+    self.__diagonal_blocks_inverse = gpuarray.zeros(sum(diagonal_block_sizes), dtype = np.float64)
     self.__diagonal_blocks_start = gpuarray.to_gpu(np.array(diagonal_block_start, dtype = np.uint32))
+    self.__diagonal_blocks_start_cpu = diagonal_block_start
     self.__gradient_segments_start = gpuarray.to_gpu(np.array(gradient_segment_start, dtype = np.uint32))
+    self.__gradient_segments_start_cpu = gradient_segment_start
     # assign the gradient segments by reference
     start = 0
     self.__wrtStartIndices.append(start) # get where each data element starts
@@ -310,6 +319,44 @@ class minimizer:
     print("--------------------------------------------------------")
 
 
+    if self.__diagonalBlockInverseKernel is None:
+      # initialize the diagonal block inverse kernel
+      self.__diagonal_blocks_start_cpu = self.__diagonal_blocks_start.get().tolist()
+      self.__diagonalBlockInverseKernel = diagonalBlockInverseKernel(
+        set([item.size for item in self.wrt]),
+        self.__diagonal_blocks_start_cpu,
+        [item.correspondance.numInstances for item in self.__wrt],
+        [item.size for item in self.__wrt],
+        len(self.__wrt)
+      )
+    assert self.__diagonalBlockInverseKernel is not None
+    self.__diagonalBlockInverseKernel.computeDiagonalBlockInverse(self.__diagonal_blocks, self.__diagonal_blocks_inverse)
+    # # let's check the result
+    # diagonal_block_cpu = self.__diagonal_blocks.get()
+    # diagonal_block_inverse_cpu = self.__diagonal_blocks_inverse.get()
+    # start = 0
+    # for i in range(len(self.__wrt)):
+    #   # first get the size
+    #   block_size = self.__wrt[i].size
+    #   # get the number of instances
+    #   num_instances = self.__wrt[i].correspondance.numInstances
+    #   for j in range(num_instances):
+    #     local_block = diagonal_block_cpu[start: start + block_size * block_size].reshape((block_size, block_size))
+    #     local_block_inverse = diagonal_block_inverse_cpu[start: start + block_size * block_size].reshape((block_size, block_size))
+    #     mul_result = local_block @ local_block_inverse
+    #     identity = np.eye(block_size)
+    #     if not np.allclose(mul_result, identity, atol=1e-6):
+    #       print(f"Warning: Diagonal block inverse verification failed for attribute {self.__wrt[i].fullName}, instance {j}.")
+    #       print("Original block:")
+    #       print(local_block)
+    #       print("Inverse block:")
+    #       print(local_block_inverse)
+    #       print("Product:")
+    #       print(mul_result)
+    #       exit()
+    #     start += block_size * block_size
+
+
     # now we have the hessian and gradient
     # we need to solve the system
     if self.__solver is None:
@@ -354,9 +401,12 @@ class minimizer:
       self.__blockCountsDynamic,
       self.__blockDimensionsDynamic,
       self.__diagonal,
-      self.__diagonal_blocks,
-      self.__diagonal_blocks_start,
-      self.__gradient_segments_start,
+      self.__diagonal_blocks_inverse,
+      self.__diagonal_blocks_start_cpu,
+      [item.correspondance.numInstances for item in self.__wrt],
+      [item.size for item in self.__wrt],
+      self.__gradient_segments_start_cpu,
+      len(self.__wrt),
       self.__gradient,
       self.__d_p1_b,
       self.__d_r,

@@ -12,6 +12,7 @@ from .globalKernel import globalKernel
 from .gradientIndicesKernel import gradientIndicesKernel
 from .hessianAndGradientKernel import hessianAndGradientKernel
 from .coordinateCompressionKernel import coordinateCompressionKernel
+from .diagonalBlockInverseKernel import diagonalBlockInverseKernel
 from .solverKernel import solverKernel
 from .energy import energy
 from .minimizer import minimizer

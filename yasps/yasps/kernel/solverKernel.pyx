@@ -40,6 +40,12 @@ class solverKernel:
           ctypes.POINTER(ctypes.c_uint), # block_dimensions_dynamic (unsigned int list from numpy)
           ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS_DYNAMIC
           ctypes.c_void_p, # diagonal (device pointer to double)
+          ctypes.c_void_p, # diagonalBlockInverse (device pointer to double)
+          ctypes.POINTER(ctypes.c_uint), # diagonalBlocksStart
+          ctypes.POINTER(ctypes.c_uint), # diagonalBlocksCount
+          ctypes.POINTER(ctypes.c_uint), # diagonalBlocksSize
+          ctypes.POINTER(ctypes.c_uint), # gradientSegmentsStart
+          ctypes.c_int,   # numAttributes
           ctypes.c_void_p, # gradient (device pointer to double)
           ctypes.c_uint,   # MATRIX_SIZE
           ctypes.c_void_p, # d_p1_b (device pointer)
@@ -79,7 +85,7 @@ __device__ __forceinline__ void blockMultiply(const double *blockValues,
   // multiply a row
   for (int i = 0; i < BLOCK_ROW_SIZE; i++) {
     for (int j = 0; j < BLOCK_COL_SIZE; j++) {
-      y[i] += blockValues[i * BLOCK_COL_SIZE + j] * x[j];
+      y[i] += __ldg(&blockValues[i * BLOCK_COL_SIZE + j]) * __ldg(&x[j]);
     }
   }
 }
@@ -93,7 +99,7 @@ blockMultiplyTranspose(const double *blockValues,
   for (int i = 0; i < BLOCK_COL_SIZE; i++) {
     double temp = 0.0;
     for (int j = 0; j < BLOCK_ROW_SIZE; j++) {
-      temp += blockValues[j * BLOCK_COL_SIZE + i] * x[j];
+      temp += __ldg(&blockValues[j * BLOCK_COL_SIZE + i]) * __ldg(&x[j]);
     }
     atomicAdd(y + i, temp);
   }
@@ -116,16 +122,11 @@ __global__ void spmvOffDiagonalBlocks(const double *blockValues,
   __shared__ double allResults[{self.__max_row_size} * 32]; // accumulate the multiplied result
   __shared__ unsigned int rows[32];
   __shared__ unsigned int cols[32];
-  if (tid == 0){{
-    // initialize allResults to 0
-    for (unsigned int i = 0; i < {self.__max_row_size} * 32; i++){{
+  for (int i = tid; i < {self.__max_row_size} * 32; i += 32) {{
       allResults[i] = 0.0;
-    }}
   }}
 '''
       kernelString += '''
-
-  __syncthreads(); // synchronize all threads after initialization
   if (id < POSITIONS_END - POSITIONS_START) {
     // do the multiplication, and put the result in allresults
     rows[tid] = positions[POSITIONS_START * 2 + id * 2]; // get the coordinate of the block
@@ -210,6 +211,48 @@ __global__ void jacobiPreconditioner(const double* diagonal, const double* x, do
   }
 }
 
+__global__ void blockJacobiPreconditionerGlobal(const double* diagonalBlockInverse, const double* x, double* y, const unsigned int N, const unsigned int blockSize){
+  unsigned int id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id < N){
+    for (int i = 0; i < blockSize; i++){
+      double tmp = 0.0;
+      for (int j = 0; j < blockSize; j++){
+        tmp += diagonalBlockInverse[id * blockSize * blockSize + i * blockSize + j] * x[id * blockSize + j];
+      }
+      y[id * blockSize + i] = tmp;
+    }
+  }
+}
+
+void blockJacobiPreconditioner(
+  const double* diagonalBlockInverse,
+  const double* x,
+  double* y,
+  const unsigned int* diagonalBlocksStart,
+  const unsigned int* diagonalBlocksCount,
+  const unsigned int* diagonalBlockSize,
+  const unsigned int* gradientSegmentsStart,
+  const int numAttributes,
+  std::vector<cudaStream_t>& streams
+){
+  for (unsigned int i = 0; i < numAttributes; i++){
+    const unsigned int blockStart = diagonalBlocksStart[i];
+    const unsigned int blockCount = diagonalBlocksCount[i];
+    const unsigned int blockSize = diagonalBlockSize[i];
+    const unsigned int segmentStart = gradientSegmentsStart[i];
+    blockJacobiPreconditionerGlobal<<<(blockCount + 32 - 1) / 32, 32, 0, streams[i]>>>(
+      diagonalBlockInverse + blockStart,
+      x + segmentStart,
+      y + segmentStart,
+      blockCount,
+      blockSize
+    );
+  }
+  for (unsigned int i = 0; i < numAttributes; i++) {
+    cudaStreamSynchronize(streams[i]);
+  }
+}
+
 // this function computes c = a * b^T
 __global__ void dotProduct(const double *a, const double *b, double *c, int n) {
   __shared__ double cache[256]; // Shared memory size per block
@@ -267,6 +310,12 @@ int computeSolution(unsigned int maxIteration,
                             const unsigned int* block_dimensions_dynamic,
                             const unsigned int NUM_BLOCK_DIMENSIONS_DYNAMIC,
                             const double* diagonal,
+                            const double* diagonalBlockInverse,
+                            const unsigned int* diagonalBlocksStart,
+                            const unsigned int* diagonalBlocksCount,
+                            const unsigned int* diagonalBlocksSize,
+                            const unsigned int* gradientSegmentsStart,
+                            const int numAttributes,
                             const double* gradient,
                             const unsigned int MATRIX_SIZE,
                             double* d_p1_b, // for the computation of P^-1 * b
@@ -283,8 +332,25 @@ int computeSolution(unsigned int maxIteration,
     cudaStreamCreate(&streams[i]);
   }
 
+  std::vector<cudaStream_t> preconditioner_streams;
+  preconditioner_streams.resize(numAttributes);
+  for (unsigned int i = 0; i < numAttributes; i++) {
+    cudaStreamCreate(&preconditioner_streams[i]);
+  }
+
   // now we compute P^-1 * b where P is the preconditioner
-  jacobiPreconditioner<<<MATRIX_SIZE / 32 + 1, 32>>>(diagonal, gradient, d_p1_b, MATRIX_SIZE);
+  // jacobiPreconditioner<<<MATRIX_SIZE / 32 + 1, 32>>>(diagonal, gradient, d_p1_b, MATRIX_SIZE);
+  blockJacobiPreconditioner(
+    diagonalBlockInverse,
+    gradient,
+    d_p1_b,
+    diagonalBlocksStart,
+    diagonalBlocksCount,
+    diagonalBlocksSize,
+    gradientSegmentsStart,
+    numAttributes,
+    preconditioner_streams
+  );
   // delta0 = b * A^-1 b
   double* d_delta0; // for device
   double h_delta_0; // for host
@@ -299,7 +365,18 @@ int computeSolution(unsigned int maxIteration,
 
   // c = P^-1 * r
   cudaMemset(d_c, 0, MATRIX_SIZE * sizeof(double));
-  jacobiPreconditioner<<<(MATRIX_SIZE + 255) / 256, 256>>>(diagonal, d_r, d_c, MATRIX_SIZE);
+  // jacobiPreconditioner<<<(MATRIX_SIZE + 255) / 256, 256>>>(diagonal, d_r, d_c, MATRIX_SIZE);
+  blockJacobiPreconditioner(
+    diagonalBlockInverse,
+    d_r,
+    d_c,
+    diagonalBlocksStart,
+    diagonalBlocksCount,
+    diagonalBlocksSize,
+    gradientSegmentsStart,
+    numAttributes,
+    preconditioner_streams
+  );
 
   // delta_new = r * c
   double* d_delta_new; // for device
@@ -379,7 +456,19 @@ int computeSolution(unsigned int maxIteration,
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 
     // s = P^-1 * r
-    jacobiPreconditioner<<<(MATRIX_SIZE + 255) / 256, 256>>>(diagonal, d_r, d_s, MATRIX_SIZE);
+    // jacobiPreconditioner<<<(MATRIX_SIZE + 255) / 256, 256>>>(diagonal, d_r, d_s, MATRIX_SIZE);
+    blockJacobiPreconditioner(
+      diagonalBlockInverse,
+      d_r,
+      d_s,
+      diagonalBlocksStart,
+      diagonalBlocksCount,
+      diagonalBlocksSize,
+      gradientSegmentsStart,
+      numAttributes,
+      preconditioner_streams
+    );
+
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 
     h_delta_old = h_delta_new;
@@ -412,6 +501,10 @@ int computeSolution(unsigned int maxIteration,
     cudaStreamDestroy(streams[i]);
   }
 
+  for (unsigned int i = 0; i < numAttributes; ++i) {
+    cudaStreamDestroy(preconditioner_streams[i]);
+  }
+
   // free
   cudaFree(d_delta0);
   cudaFree(d_delta_new);
@@ -435,7 +528,7 @@ int computeSolution(unsigned int maxIteration,
       f.close()
 
       # now we compile the kernel
-      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -cudart=shared -lcuda -I/usr/include/eigen3 --expt-relaxed-constexpr --disable-warning -std=c++17")
+      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -cudart=shared -lcuda --expt-relaxed-constexpr -std=c++17")
       self.__cg_kernel = ctypes.CDLL(f"{file_name}.so").computeSolution
       self.__cg_kernel.argtypes = [
         ctypes.c_uint,   # maxIteration
@@ -453,6 +546,12 @@ int computeSolution(unsigned int maxIteration,
         ctypes.POINTER(ctypes.c_uint), # block_dimensions_dynamic (unsigned int list from numpy)
         ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS_DYNAMIC
         ctypes.c_void_p, # diagonal (device pointer to double)
+        ctypes.c_void_p, # diagonalBlockInverse (device pointer to double)
+        ctypes.POINTER(ctypes.c_uint), # diagonalBlocksStart
+        ctypes.POINTER(ctypes.c_uint), # diagonalBlocksCount
+        ctypes.POINTER(ctypes.c_uint), # diagonalBlocksSize
+        ctypes.POINTER(ctypes.c_uint), # gradientSegmentsStart
+        ctypes.c_int,   # numAttributes
         ctypes.c_void_p, # gradient (device pointer to double)
         ctypes.c_uint,   # MATRIX_SIZE
         ctypes.c_void_p, # d_p1_b (device pointer)
@@ -483,6 +582,12 @@ int computeSolution(unsigned int maxIteration,
     block_counts_dynamic: List[int],
     block_dimensions_dynamic: List[int],
     diagonal: gpuarray.GPUArray,
+    diagonal_blocks_inverse: gpuarray.GPUArray,
+    diagonal_blocks_start: List[int],
+    diagonal_blocks_count: List[int],
+    diagonal_blocks_size: List[int],
+    gradient_segments_start: List[int],
+    num_attributes: int,
     gradient: gpuarray.GPUArray,
     d_p1_b: gpuarray.GPUArray,
     d_r: gpuarray.GPUArray,
@@ -511,6 +616,12 @@ int computeSolution(unsigned int maxIteration,
       np.array(block_dimensions_dynamic, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
       len(block_dimensions_dynamic) // 2,
       self.__to_void_p(diagonal),
+      self.__to_void_p(diagonal_blocks_inverse),
+      np.array(diagonal_blocks_start, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+      np.array(diagonal_blocks_count, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+      np.array(diagonal_blocks_size, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+      np.array(gradient_segments_start, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+      num_attributes,
       self.__to_void_p(gradient),
       gradient.shape[0],
       self.__to_void_p(d_p1_b),
