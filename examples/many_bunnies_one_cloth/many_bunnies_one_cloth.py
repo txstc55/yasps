@@ -606,7 +606,7 @@ def compute_total_energy():
   total_energy += sum(ee.compute().value.get())
   return total_energy
 
-for i in range(100):
+for i in range(200):
   bunnies_abd.vertices_abd["last_position"].updateValue(bunnies_abd.vertices_abd["position"].compute().value, deepCopy = True)
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   inner_iteration = 0
@@ -707,7 +707,7 @@ for i in range(100):
   vertices_free_velocity.updateValue(new_velocities_free, deepCopy = True)
   plotter.render()
   plotter.update()
-  plotter.screenshot(f"outputs/many_bunny_one_cloth_with_eig_{i:04d}.jpg")
+  plotter.screenshot(f"outputs/many_bunny_one_cloth_with_chebyshev_{i:04d}.jpg")
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
   # soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")
