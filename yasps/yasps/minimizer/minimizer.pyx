@@ -68,6 +68,8 @@ class minimizer:
     self.__d_c: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
     self.__d_q: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
     self.__d_s: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
+    self.__tmp_vec0: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
+    self.__tmp_vec1: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
     self.__solution: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
     self.__solutionSegments: List[gpuarray.GPUArray] = []
 
@@ -366,6 +368,8 @@ class minimizer:
       self.__d_c = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       self.__d_q = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       self.__d_s = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
+      self.__tmp_vec0 = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
+      self.__tmp_vec1 = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       self.__solution = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       # print("Gradient shape is: ")
       # print(self.__gradient.shape)
@@ -384,6 +388,8 @@ class minimizer:
     self.__d_c.fill(0)
     self.__d_q.fill(0)
     self.__d_s.fill(0)
+    self.__tmp_vec0.fill(0)
+    self.__tmp_vec1.fill(0)
     self.__solution.fill(0)
 
 
@@ -413,6 +419,8 @@ class minimizer:
       self.__d_c,
       self.__d_q,
       self.__d_s,
+      self.__tmp_vec0,
+      self.__tmp_vec1,
       self.__solution
     )
     return error_code

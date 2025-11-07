@@ -580,7 +580,7 @@ plotter.camera_position = [(0, 2, 6),
  (0.0, 0.0, 0.0),
  (0, 1, 0)
 ]
-# plotter.show(interactive_update=True, auto_close=False)
+plotter.show(interactive_update=True, auto_close=False)
 # plotter.show()
 # exit()
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
@@ -691,8 +691,8 @@ for i in range(100):
     abd_poly.points = abd_vertices_computed
     soft_poly.points = soft_vertices_computed
     cloth_poly.points = cloth_vertices_computed
-    # plotter.render()
-    # plotter.update()
+    plotter.render()
+    plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
     if max_grad < 2e-3:
@@ -705,9 +705,9 @@ for i in range(100):
   vertices_abd_velocity.updateValue(new_velocities_abd, deepCopy = True)
   vertices_soft_velocity.updateValue(new_velocities_soft, deepCopy = True)
   vertices_free_velocity.updateValue(new_velocities_free, deepCopy = True)
-  # plotter.render()
-  # plotter.update()
-  # plotter.screenshot(f"outputs/many_bunny_one_cloth_{i:04d}.jpg")
+  plotter.render()
+  plotter.update()
+  plotter.screenshot(f"outputs/many_bunny_one_cloth_with_eig_{i:04d}.jpg")
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
   # soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")

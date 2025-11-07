@@ -53,6 +53,8 @@ class solverKernel:
           ctypes.c_void_p, # d_c (device pointer)
           ctypes.c_void_p, # d_q (device pointer)
           ctypes.c_void_p, # d_s (device pointer)
+          ctypes.c_void_p, # tmp_vec0 (device pointer)
+          ctypes.c_void_p, # tmp_vec1 (device pointer)
           ctypes.c_void_p  # solution (device pointer)
         ]
         return
@@ -168,22 +170,23 @@ __global__ void spmvOffDiagonalBlocks(const double *blockValues,
   }
 }
 
-void spmvWithSystem(const double* block_values, // the value of the blocks in the hessian
-                    const unsigned int* block_positions, // the coordinate of each block
-                    const unsigned int* block_values_start, // for each different dimension of blocks, where in the values array does it start
-                    const unsigned int* block_counts, // how many blocks in each dimension
-                    const double* block_values_dynamic, // the value of the dynamic blocks in the hessian
-                    const unsigned int* block_positions_dynamic, // the coordinate of each dynamic block
-                    const unsigned int* block_values_start_dynamic, // for each different dimension of dynamic blocks, where in the values array does it start
-                    const unsigned int* block_counts_dynamic, // how many dynamic blocks in each dimension
-                    const double* x, // Ax = y
-                    double* y,
-                    const unsigned int* block_dimensions,
-                    const unsigned int NUM_BLOCK_DIMENSIONS,
-                    const unsigned int* block_dimensions_dynamic,
-                    const unsigned int NUM_BLOCK_DIMENSIONS_DYNAMIC,
-                    std::vector<cudaStream_t>& streams
-                    ){
+void spmvWithSystem(
+  const double* block_values, // the value of the blocks in the hessian
+  const unsigned int* block_positions, // the coordinate of each block
+  const unsigned int* block_values_start, // for each different dimension of blocks, where in the values array does it start
+  const unsigned int* block_counts, // how many blocks in each dimension
+  const double* block_values_dynamic, // the value of the dynamic blocks in the hessian
+  const unsigned int* block_positions_dynamic, // the coordinate of each dynamic block
+  const unsigned int* block_values_start_dynamic, // for each different dimension of dynamic blocks, where in the values array does it start
+  const unsigned int* block_counts_dynamic, // how many dynamic blocks in each dimension
+  const double* x, // Ax = y
+  double* y,
+  const unsigned int* block_dimensions,
+  const unsigned int NUM_BLOCK_DIMENSIONS,
+  const unsigned int* block_dimensions_dynamic,
+  const unsigned int NUM_BLOCK_DIMENSIONS_DYNAMIC,
+  std::vector<cudaStream_t>& streams
+){
   unsigned int positions_start = 0;
   unsigned int positions_end = 0;
   for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS; i++){
@@ -204,6 +207,13 @@ void spmvWithSystem(const double* block_values, // the value of the blocks in th
   }
 }
 
+__global__ void fill(double* array, double value, unsigned int N){
+  unsigned int id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id < N){
+    array[id] = value;
+  }
+}
+
 __global__ void jacobiPreconditioner(const double* diagonal, const double* x, double* y, unsigned int N){
   unsigned int id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id < N){
@@ -211,7 +221,7 @@ __global__ void jacobiPreconditioner(const double* diagonal, const double* x, do
   }
 }
 
-__global__ void blockJacobiPreconditionerGlobal(const double* diagonalBlockInverse, const double* x, double* y, const unsigned int N, const unsigned int blockSize){
+__global__ void blockJacobiPreconditionerGlobal(const double* diagonalBlockInverse, const double* x, double* y, const unsigned int N, const unsigned int blockSize, double eigv_inv){
   unsigned int id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id < N){
     for (int i = 0; i < blockSize; i++){
@@ -219,7 +229,7 @@ __global__ void blockJacobiPreconditionerGlobal(const double* diagonalBlockInver
       for (int j = 0; j < blockSize; j++){
         tmp += diagonalBlockInverse[id * blockSize * blockSize + i * blockSize + j] * x[id * blockSize + j];
       }
-      y[id * blockSize + i] = tmp;
+      y[id * blockSize + i] = tmp * eigv_inv;
     }
   }
 }
@@ -233,8 +243,10 @@ void blockJacobiPreconditioner(
   const unsigned int* diagonalBlockSize,
   const unsigned int* gradientSegmentsStart,
   const int numAttributes,
+  double eigv,
   std::vector<cudaStream_t>& streams
 ){
+  double eigv_inv = eigv == 0 ? 1.0 : (2.0 / eigv);
   for (unsigned int i = 0; i < numAttributes; i++){
     const unsigned int blockStart = diagonalBlocksStart[i];
     const unsigned int blockCount = diagonalBlocksCount[i];
@@ -245,7 +257,8 @@ void blockJacobiPreconditioner(
       x + segmentStart,
       y + segmentStart,
       blockCount,
-      blockSize
+      blockSize,
+      eigv_inv
     );
   }
   for (unsigned int i = 0; i < numAttributes; i++) {
@@ -295,6 +308,105 @@ __global__ void vecAddWithScalar(const double *a, const double *b, double *c,
   }
 }
 
+
+double estimateMaxEigenValue(
+  const double* block_values, // the value of the blocks in the hessian
+  const unsigned int* block_positions, // the coordinate of each block
+  const unsigned int* block_values_start, // for each different dimension of blocks, where in the values array does it start
+  const unsigned int* block_counts, // how many blocks in each dimension
+  const double* block_values_dynamic, // the value of the dynamic blocks in the hessian
+  const unsigned int* block_positions_dynamic, // the coordinate of each dynamic block
+  const unsigned int* block_values_start_dynamic, // for each different dimension of dynamic blocks, where in the values array does it start
+  const unsigned int* block_counts_dynamic, // how many dynamic blocks in each dimension
+  double* tmp0,
+  double* tmp1,
+  const unsigned int* block_dimensions,
+  const unsigned int NUM_BLOCK_DIMENSIONS,
+  const unsigned int* block_dimensions_dynamic,
+  const unsigned int NUM_BLOCK_DIMENSIONS_DYNAMIC,
+  std::vector<cudaStream_t>& streams,
+  const unsigned int N
+){
+  double norm_host;
+  double* norm_device;
+  cudaMalloc(&norm_device, sizeof(double));
+  cudaMemset(norm_device, 0, sizeof(double));
+
+  const double initial_fill_value = 1.0 / sqrt((double)N);
+  fill<<<(N + 255) / 256, 256>>>(tmp0, initial_fill_value, N);
+  CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+  for (unsigned int iter = 0; iter < 10; iter++){
+    // set to 0
+    CUDA_CHECK_ERROR(cudaMemset(tmp1, 0, N * sizeof(double)));
+    // perform multiplication
+    spmvWithSystem(block_values,
+                   block_positions,
+                   block_values_start,
+                   block_counts,
+                   block_values_dynamic,
+                   block_positions_dynamic,
+                   block_values_start_dynamic,
+                   block_counts_dynamic,
+                   tmp0,
+                   tmp1,
+                   block_dimensions,
+                   NUM_BLOCK_DIMENSIONS,
+                   block_dimensions_dynamic,
+                   NUM_BLOCK_DIMENSIONS_DYNAMIC,
+                   streams);
+    // compute norm
+    cudaMemset(norm_device, 0, sizeof(double));
+    dotProduct<<<(N + 255) / 256, 256>>>(tmp1, tmp1, norm_device, N);
+    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    cudaMemcpy(&norm_host, norm_device, sizeof(double), cudaMemcpyDeviceToHost);
+    norm_host = sqrt(norm_host);
+
+    if (norm_host < 1e-20) {
+      cudaFree(norm_device);
+      return 0.0;
+    }
+
+    // normalize
+    CUDA_CHECK_ERROR(cudaMemset(tmp0, 0, N * sizeof(double)));
+    vecAddWithScalar<<<(N + 255) / 256, 256>>>(tmp0, tmp1, tmp0, 1.0 / norm_host, N);
+  }
+  // now estimate the largest eigen value
+  // the final normalized vector is in tmp0
+  cudaMemset(norm_device, 0, sizeof(double));
+  dotProduct<<<(N + 255) / 256, 256>>>(tmp0, tmp0, norm_device, N);
+  CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+  cudaMemcpy(&norm_host, norm_device, sizeof(double), cudaMemcpyDeviceToHost);
+  double vtv = norm_host;
+
+  CUDA_CHECK_ERROR(cudaMemset(tmp1, 0, N * sizeof(double)));
+  spmvWithSystem(block_values,
+                 block_positions,
+                 block_values_start,
+                 block_counts,
+                 block_values_dynamic,
+                 block_positions_dynamic,
+                 block_values_start_dynamic,
+                 block_counts_dynamic,
+                 tmp0,
+                 tmp1,
+                 block_dimensions,
+                 NUM_BLOCK_DIMENSIONS,
+                 block_dimensions_dynamic,
+                 NUM_BLOCK_DIMENSIONS_DYNAMIC,
+                 streams);
+  cudaMemset(norm_device, 0, sizeof(double));
+  dotProduct<<<(N + 255) / 256, 256>>>(tmp0, tmp1, norm_device, N);
+  CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+  cudaMemcpy(&norm_host, norm_device, sizeof(double), cudaMemcpyDeviceToHost);
+  double vAv = norm_host;
+  cudaFree(norm_device);
+  if (vtv < 1e-20) {
+    cudaFree(norm_device);
+    return 0.0;
+  }
+  return vAv / vtv;
+}
+
 int computeSolution(unsigned int maxIteration,
                             double threshold,
                             const double* block_values,
@@ -323,6 +435,8 @@ int computeSolution(unsigned int maxIteration,
                             double* d_c,
                             double* d_q,
                             double* d_s,
+                            double* tmp0,
+                            double* tmp1,
                             double* solution) {
   // Instead, retrieve the current context (if necessary)
   std::vector<cudaStream_t> streams;
@@ -349,6 +463,7 @@ int computeSolution(unsigned int maxIteration,
     diagonalBlocksSize,
     gradientSegmentsStart,
     numAttributes,
+    2.0,
     preconditioner_streams
   );
   // delta0 = b * A^-1 b
@@ -375,6 +490,7 @@ int computeSolution(unsigned int maxIteration,
     diagonalBlocksSize,
     gradientSegmentsStart,
     numAttributes,
+    2.0,
     preconditioner_streams
   );
 
@@ -409,6 +525,25 @@ int computeSolution(unsigned int maxIteration,
   double h_alpha;
   cudaMalloc(&d_alpha, sizeof(double));
   cudaMemset(d_alpha, 0, sizeof(double));
+
+  double max_eigen_value = estimateMaxEigenValue(block_values,
+                 block_positions,
+                 block_values_start,
+                 block_counts,
+                 block_values_dynamic,
+                 block_positions_dynamic,
+                 block_values_start_dynamic,
+                 block_counts_dynamic,
+                 tmp0,
+                 tmp1,
+                 block_dimensions,
+                 NUM_BLOCK_DIMENSIONS,
+                 block_dimensions_dynamic,
+                 NUM_BLOCK_DIMENSIONS_DYNAMIC,
+                 streams,
+                 MATRIX_SIZE
+  );
+  printf("Estimated max eigen value: %lf\\n", max_eigen_value);
 
   for (unsigned int iteration = 1; iteration <= maxIteration; iteration++){
     // q = A * c
@@ -472,6 +607,7 @@ int computeSolution(unsigned int maxIteration,
       diagonalBlocksSize,
       gradientSegmentsStart,
       numAttributes,
+      max_eigen_value,
       preconditioner_streams
     );
 
@@ -568,6 +704,8 @@ int computeSolution(unsigned int maxIteration,
         ctypes.c_void_p, # d_c (device pointer)
         ctypes.c_void_p, # d_q (device pointer)
         ctypes.c_void_p, # d_s (device pointer)
+        ctypes.c_void_p, # tmp_vec0 (device pointer)
+        ctypes.c_void_p, # tmp_vec1 (device pointer)
         ctypes.c_void_p  # solution (device pointer)
       ]
 
@@ -603,6 +741,8 @@ int computeSolution(unsigned int maxIteration,
     d_c: gpuarray.GPUArray,
     d_q: gpuarray.GPUArray,
     d_s: gpuarray.GPUArray,
+    tmp_vec0: gpuarray.GPUArray,
+    tmp_vec1: gpuarray.GPUArray,
     solution: gpuarray.GPUArray
   ):
     start_call = cuda.Event()
@@ -638,6 +778,8 @@ int computeSolution(unsigned int maxIteration,
       self.__to_void_p(d_c),
       self.__to_void_p(d_q),
       self.__to_void_p(d_s),
+      self.__to_void_p(tmp_vec0),
+      self.__to_void_p(tmp_vec1),
       self.__to_void_p(solution)
     )
     # Record the end event
@@ -668,6 +810,8 @@ int computeSolution(unsigned int maxIteration,
       d_c.fill(0)
       d_q.fill(0)
       d_s.fill(0)
+      tmp_vec0.fill(0)
+      tmp_vec1.fill(0)
       solution.fill(0)
       # ok i may know what's the issue, i never cut off, even when i should be because the size got shrinked
       print("Checking the block positions dynamic", block_positions_dynamic.get())
@@ -707,6 +851,8 @@ int computeSolution(unsigned int maxIteration,
       d_c.fill(0)
       d_q.fill(0)
       d_s.fill(0)
+      tmp_vec0.fill(0)
+      tmp_vec1.fill(0)
       solution.fill(0)
       self.__cg_kernel(
         maxIteration,
