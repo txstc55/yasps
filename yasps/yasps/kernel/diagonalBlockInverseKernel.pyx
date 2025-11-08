@@ -24,9 +24,9 @@ class diagonalBlockInverseKernel:
     self.__diagonal_blocks_count = np.array(diagonal_blocks_count, dtype=np.uint32)
     self.__diagonal_block_sizes = np.array(diagonal_block_sizes, dtype=np.uint32)
     self.__generateKernel()
-    print("diagonal blocks start", self.__diagonal_blocks_start)
-    print("diagonal blocks count", self.__diagonal_blocks_count)
-    print("diagonal block sizes", self.__diagonal_block_sizes)
+    # print("diagonal blocks start", self.__diagonal_blocks_start)
+    # print("diagonal blocks count", self.__diagonal_blocks_count)
+    # print("diagonal block sizes", self.__diagonal_block_sizes)
 
   def __generateKernel(self):
     # first we check if the kernel exists

@@ -403,7 +403,7 @@ int computeSolution(unsigned int maxIteration,
     cudaFree(d_delta_new);
     return 0;
   }
-  CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+  // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
   // for setting alpha
   double* d_alpha; // for device
   double h_alpha;
@@ -428,11 +428,11 @@ int computeSolution(unsigned int maxIteration,
                    block_dimensions_dynamic,
                    NUM_BLOCK_DIMENSIONS_DYNAMIC,
                    streams);
-    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     cudaMemset(d_alpha, 0, sizeof(double));
-    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     dotProduct<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_c, d_q, d_alpha, MATRIX_SIZE);
-    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(&h_alpha, d_alpha, sizeof(double), cudaMemcpyDeviceToHost);
 
     if (h_alpha < 0){
@@ -450,16 +450,16 @@ int computeSolution(unsigned int maxIteration,
       cudaFree(d_alpha);
       return -iteration - 4;
     }
-    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     h_alpha = h_delta_new / h_alpha;
 
     // deltav = deltav + alpha * c
     vecAddWithScalar<<<(MATRIX_SIZE + 255) / 256, 256>>>(solution, d_c, solution, h_alpha, MATRIX_SIZE);
-    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 
     // r = r - alpha * q
     vecAddWithScalar<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_r, d_q, d_r, -h_alpha, MATRIX_SIZE);
-    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 
     // s = P^-1 * r
     // jacobiPreconditioner<<<(MATRIX_SIZE + 255) / 256, 256>>>(diagonal, d_r, d_s, MATRIX_SIZE);
@@ -480,15 +480,15 @@ int computeSolution(unsigned int maxIteration,
     h_delta_old = h_delta_new;
     // delta_new = r * s
     cudaMemset(d_delta_new, 0, sizeof(double));
-    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     dotProduct<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_r, d_s, d_delta_new, MATRIX_SIZE);
-    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(&h_delta_new, d_delta_new, sizeof(double), cudaMemcpyDeviceToHost);
-    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 
     // c = s + (delta_new / delta_old) * c
     vecAddWithScalar<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_s, d_c, d_c, h_delta_new / h_delta_old, MATRIX_SIZE);
-    CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     if (h_delta_new <= relativeTolerance){
       printf("Converged in %d iterations with residual %lf\\n", iteration, h_delta_new);
       for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {

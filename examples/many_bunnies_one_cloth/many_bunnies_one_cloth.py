@@ -612,7 +612,7 @@ for i in range(200):
   inner_iteration = 0
   min_inner_iteration_energy = 100000000
   while True:
-    result = s0.minimizeEnergy(tolerance = 1e-6)
+    result = s0.minimizeEnergy(tolerance = 1e-3)
     gradient_gpu = s0.gradient
     max_grad = abs_max_reduce(gradient_gpu).get()  # only one scalar transfer
     energies_before = compute_total_energy()
@@ -707,7 +707,7 @@ for i in range(200):
   vertices_free_velocity.updateValue(new_velocities_free, deepCopy = True)
   plotter.render()
   plotter.update()
-  # plotter.screenshot(f"outputs/many_bunny_one_cloth_{i:04d}.jpg")
+  plotter.screenshot(f"outputs/many_bunny_one_cloth_block_jacobian_1e3_{i:04d}.jpg")
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
   # soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")

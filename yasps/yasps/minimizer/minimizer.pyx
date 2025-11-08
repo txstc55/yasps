@@ -314,9 +314,9 @@ class minimizer:
           self.__diagonal_blocks_start,
           self.__gradient_segments_start
         )
-    print("--------------------------------------------------------")
-    print("Block counts dynamic is: ", self.__blockCountsDynamic)
-    print("--------------------------------------------------------")
+    # print("--------------------------------------------------------")
+    # print("Block counts dynamic is: ", self.__blockCountsDynamic)
+    # print("--------------------------------------------------------")
 
 
     if self.__diagonalBlockInverseKernel is None:
