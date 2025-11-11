@@ -695,9 +695,12 @@ for i in range(200):
     plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
-    if max_grad < 2e-3:
-      print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
-      break
+    # if max_grad < 2e-3:
+    #   print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
+    #   break
+    if max(abs(direction_copy * step_taken).get()) < 1e-3:
+        print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
+        break
     inner_iteration += 1
   new_velocities_abd = (vertices_abd_position.compute().value - vertices_abd_last_position.value) / DT_VALUE
   new_velocities_soft = (vertices_soft_position.compute().value - vertices_soft_last_position.value) / DT_VALUE
