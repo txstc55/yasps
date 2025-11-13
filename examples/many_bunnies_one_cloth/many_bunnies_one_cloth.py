@@ -673,7 +673,9 @@ for i in range(200):
       if ee_count > 0:
         ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
       new_energies = compute_total_energy()
+      print("==================================================================")
       print(f"energy comparison: {new_energies} vs {energies_before}")
+      print("==================================================================")
       if new_energies <= energies_before:
         break
       step_taken = step_taken / 2.0
@@ -695,12 +697,12 @@ for i in range(200):
     plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
-    # if max_grad < 2e-3:
-    #   print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
-    #   break
-    if max(abs(direction_copy * step_taken).get()) < 1e-3:
-        print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
-        break
+    if max_grad < 1e-3:
+      print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
+      break
+    # if max(abs(direction_copy * step_taken).get()) < 1e-3:
+    #     print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
+    #     break
     inner_iteration += 1
   new_velocities_abd = (vertices_abd_position.compute().value - vertices_abd_last_position.value) / DT_VALUE
   new_velocities_soft = (vertices_soft_position.compute().value - vertices_soft_last_position.value) / DT_VALUE
