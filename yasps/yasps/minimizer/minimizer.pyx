@@ -367,6 +367,7 @@ class minimizer:
       self.__d_q = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       self.__d_s = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       self.__solution = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
+      self.__solution.fill(0)
       # print("Gradient shape is: ")
       # print(self.__gradient.shape)
       count = 0

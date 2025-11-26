@@ -363,6 +363,27 @@ int computeSolution(unsigned int maxIteration,
   // set residual equal to the gradient since our initial guess is 0
   CUDA_CHECK_ERROR(cudaMemcpy(d_r, gradient, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
 
+  /*
+  // residual is the last solution, so we need to compute d_r = gradient - A * solution
+  spmvWithSystem(block_values,
+                 block_positions,
+                 block_values_start,
+                 block_counts,
+                 block_values_dynamic,
+                 block_positions_dynamic,
+                 block_values_start_dynamic,
+                 block_counts_dynamic,
+                 solution,
+                 d_r,
+                 block_dimensions,
+                 NUM_BLOCK_DIMENSIONS,
+                 block_dimensions_dynamic,
+                 NUM_BLOCK_DIMENSIONS_DYNAMIC,
+                 streams);
+  vecAddWithScalar<<<(MATRIX_SIZE + 255) / 256, 256>>>(gradient, d_r, d_r, -1.0, MATRIX_SIZE);
+  */
+
+
   // c = P^-1 * r
   cudaMemset(d_c, 0, MATRIX_SIZE * sizeof(double));
   // jacobiPreconditioner<<<(MATRIX_SIZE + 255) / 256, 256>>>(diagonal, d_r, d_c, MATRIX_SIZE);
