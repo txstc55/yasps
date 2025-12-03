@@ -612,7 +612,7 @@ for i in range(200):
   inner_iteration = 0
   min_inner_iteration_energy = 100000000
   while True:
-    result = s0.minimizeEnergy(tolerance = 1e-3)
+    result = s0.minimizeEnergy(tolerance = 1e-6)
     gradient_gpu = s0.gradient
     max_grad = abs_max_reduce(gradient_gpu).get()  # only one scalar transfer
     energies_before = compute_total_energy()
