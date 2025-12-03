@@ -10,8 +10,7 @@ import pycuda.gpuarray as gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
-
-NUM_CLOTH = 3
+NUM_CLOTH = 4
 
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
@@ -139,38 +138,38 @@ for i in range(NUM_SOFT_BUNNIES):
   # for j in range(NUM_BUNNY_VERTICES):
   #   f.write(str(j + 1) + " " + str(position_softs[-1][j][0]) + " " + str(position_softs[-1][j][1]) + " " + str(position_softs[-1][j][2]) + "\n")
   # f.close()
-  with open(f"data/soft_bunny_{i}.msh", "w") as f:
-    num_nodes = position_copy.shape[0]
-    # MeshFormat section
-    f.write("$MeshFormat\n")
-    f.write("2.2 0 8\n")  # version 2.2, ascii, sizeof(double)=8
-    f.write("$EndMeshFormat\n")
+  # with open(f"data/soft_bunny_{i}.msh", "w") as f:
+  #   num_nodes = position_copy.shape[0]
+  #   # MeshFormat section
+  #   f.write("$MeshFormat\n")
+  #   f.write("2.2 0 8\n")  # version 2.2, ascii, sizeof(double)=8
+  #   f.write("$EndMeshFormat\n")
 
-    # Nodes section
-    f.write("$Nodes\n")
-    f.write(f"{num_nodes}\n")
-    for j in range(num_nodes):
-      # Gmsh node numbering is 1-based
-      x, y, z = position_softs[-1][j]
-      # y += 100000000
-      f.write(f"{j+1} {x:.16g} {y:.16g} {z:.16g}\n")
-    f.write("$EndNodes\n")
+  #   # Nodes section
+  #   f.write("$Nodes\n")
+  #   f.write(f"{num_nodes}\n")
+  #   for j in range(num_nodes):
+  #     # Gmsh node numbering is 1-based
+  #     x, y, z = position_softs[-1][j]
+  #     # y += 100000000
+  #     f.write(f"{j+1} {x:.16g} {y:.16g} {z:.16g}\n")
+  #   f.write("$EndNodes\n")
 
-    num_tets = tet_indices.shape[0]
-    # Elements section
-    f.write("$Elements\n")
-    f.write(f"{num_tets}\n")
-    # Gmsh element type 4 = 4-node tetrahedron
-    # We'll use 2 tags (physical + elementary) both = 1
-    for eid, tet in enumerate(tet_indices):
-      n1, n2, n3, n4 = tet  # these are currently 0-based from bunny.ele
-      # convert to 1-based
-      n1 += 1
-      n2 += 1
-      n3 += 1
-      n4 += 1
-      f.write(f"{eid+1} 4 2 {n1} {n2} {n3} {n4}\n")
-    f.write("$EndElements\n")
+  #   num_tets = tet_indices.shape[0]
+  #   # Elements section
+  #   f.write("$Elements\n")
+  #   f.write(f"{num_tets}\n")
+  #   # Gmsh element type 4 = 4-node tetrahedron
+  #   # We'll use 2 tags (physical + elementary) both = 1
+  #   for eid, tet in enumerate(tet_indices):
+  #     n1, n2, n3, n4 = tet  # these are currently 0-based from bunny.ele
+  #     # convert to 1-based
+  #     n1 += 1
+  #     n2 += 1
+  #     n3 += 1
+  #     n4 += 1
+  #     f.write(f"{eid+1} 4 2 {n1} {n2} {n3} {n4}\n")
+  #   f.write("$EndElements\n")
 # exit()
 
 ##################################################################
@@ -209,6 +208,8 @@ for old_i in range(num_vertices):
 
 # apply the remap to triangles
 triangle_indices_cloth = np.vectorize(lambda x: mapping[x])(triangle_indices_cloth)
+# print(triangle_indices_cloth.shape)
+# exit()
 
 # also reorder positions so indices line up
 positions_cloth_new = np.empty_like(positions_cloth)
@@ -235,13 +236,13 @@ from helpers import generate_edge_to_vertices_list
 edge_to_vertices_cloth = generate_edge_to_vertices_list(triangle_indices_cloth)
 edge_indices_cloth = extract_edges_from_triangles(triangle_indices_cloth)
 
-# get it to an obj file
-f = open("data/cloth.obj", 'w')
-for i in range(positions_cloth.shape[0]):
-  f.write("v " + str(positions_cloth[i][0]) + " " + str(positions_cloth[i][1]) + " " + str(positions_cloth[i][2]) + "\n")
-for i in range(triangle_indices_cloth.shape[0]):
-  f.write("f " + str(triangle_indices_cloth[i][0] + 1) + " " + str(triangle_indices_cloth[i][1] + 1) + " " + str(triangle_indices_cloth[i][2] + 1) + "\n")
-f.close()
+# # get it to an obj file
+# f = open("data/cloth.obj", 'w')
+# for i in range(positions_cloth.shape[0]):
+#   f.write("v " + str(positions_cloth[i][0]) + " " + str(positions_cloth[i][1]) + " " + str(positions_cloth[i][2]) + "\n")
+# for i in range(triangle_indices_cloth.shape[0]):
+#   f.write("f " + str(triangle_indices_cloth[i][0] + 1) + " " + str(triangle_indices_cloth[i][1] + 1) + " " + str(triangle_indices_cloth[i][2] + 1) + "\n")
+# f.close()
 # exit()
 
 ##################################################################
@@ -468,65 +469,78 @@ ccd.init_edges(position_gpu, position_gpu, edge_indices_gpu, edge_indices_all.sh
 ## plot the bunnies
 ##################################################################
 import pyvista as pv
-plotter = pv.Plotter(window_size=[3840, 2160])
-all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
-triangles = triangle_indices_all
-soft_triangles = triangles[0 :(NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES]
-cloth_triangles = triangles[(NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES:] - (NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES
+# plotter = pv.Plotter(window_size=[3840, 2160])
+# all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+# triangles = triangle_indices_all
+# soft_triangles = triangles[0 :(NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES]
+# cloth_triangles = triangles[(NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES:] - (NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES
 
 
-cells_soft = np.hstack([np.full((soft_triangles.shape[0], 1), 3), soft_triangles])
-cells_cloth = np.hstack([np.full((cloth_triangles.shape[0], 1), 3), cloth_triangles])
+# cells_soft = np.hstack([np.full((soft_triangles.shape[0], 1), 3), soft_triangles])
+# cells_cloth = np.hstack([np.full((cloth_triangles.shape[0], 1), 3), cloth_triangles])
 
-soft_vertices_computed = all_vertices_computed[0 : (NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+# soft_vertices_computed = all_vertices_computed[0 : (NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+# cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
 
-soft_poly = pv.PolyData(soft_vertices_computed, cells_soft)
-cloth_poly = pv.PolyData(cloth_vertices_computed, cells_cloth)
+# soft_poly = pv.PolyData(soft_vertices_computed, cells_soft)
+# cloth_poly = pv.PolyData(cloth_vertices_computed, cells_cloth)
 
-plotter.add_mesh(soft_poly, color = "lightgreen")
-plotter.add_mesh(cloth_poly, color = "pink", opacity = 0.5)
+# plotter.add_mesh(soft_poly, color = "lightgreen")
+# plotter.add_mesh(cloth_poly, color = "pink", opacity = 0.5)
 
-plotter.camera_position = [(0, 2, 6),
- (0.0, 0.0, 0.0),
- (0, 1, 0)
-]
-plotter.show(interactive_update=True, auto_close=False)
-# plotter.show()
+# plotter.camera_position = [(0, 2, 6),
+#  (0.0, 0.0, 0.0),
+#  (0, 1, 0)
+# ]
+# plotter.show(interactive_update=True, auto_close=False)
 # exit()
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
 bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
 cloth_free_position_copy = vertices_free["position"].compute().value.copy()
 
+
+import pycuda.gpuarray as gpuarray
 def compute_total_energy():
   total_energy = 0.0
-  total_energy += sum(snh_softs.compute().value.get())
-  total_energy += sum(inertia_softs.compute().value.get())
-  total_energy += sum(inertia_free.compute().value.get())
-  total_energy += sum(bending_energy.compute().value.get())
-  total_energy += sum(baraff_witkin_energy.compute().value.get())
-  total_energy += sum(pp.compute().value.get())
-  total_energy += sum(pe.compute().value.get())
-  total_energy += sum(pt.compute().value.get())
-  total_energy += sum(ee.compute().value.get())
+  total_energy += gpuarray.sum(snh_softs.compute().value).get()
+  total_energy += gpuarray.sum(inertia_softs.compute().value).get()
+  total_energy += gpuarray.sum(inertia_free.compute().value).get()
+  total_energy += gpuarray.sum(bending_energy.compute().value).get()
+  total_energy += gpuarray.sum(baraff_witkin_energy.compute().value).get()
+  if pp.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pp.compute().value).get()
+  if pe.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pe.compute().value).get()
+  if pt.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pt.compute().value).get()
+  if ee.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(ee.compute().value).get()
   return total_energy
+import time
 
+start = time.time()
 for i in range(200):
+  start_data_transfer = time.time()
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   vertices_free["last_position"].updateValue(vertices_free["position"].value, deepCopy = True)
-
+  end_data_transfer = time.time()
+  print(f"Time taken for data transfer: {end_data_transfer - start_data_transfer} seconds")
   inner_iteration = 0
-  min_inner_iteration_energy = 100000000
   while True:
     print("==================================================================")
+    start_solver = time.time()
     result = s0.minimizeEnergy(tolerance = 1e-4)
+    end_solver = time.time()
+    print(f"Time taken for solver: {end_solver - start_solver} seconds")
     print("==================================================================")
-    gradient_gpu = s0.gradient
-    max_grad = abs_max_reduce(gradient_gpu).get()  # only one scalar transfer
+
+    start_compute = time.time()
     energies_before = compute_total_energy()
-    print(f"max gradient at outer iteration {i}, inner iteration {inner_iteration} is {max_grad}")
+    end_compute = time.time()
+    print(f"Time taken for computation: {end_compute - start_compute} seconds")
     # we perform CCD here
     # first we get the rotation and translation
+    start_data_transfer = time.time()
     d_pos_soft_bunny = result[0]
     d_pos_cloth_free = result[1]
     step_taken = 1.0
@@ -542,25 +556,47 @@ for i in range(200):
     # compute the new positions for the entire scene
     new_positions = collision_mesh.vertices["position"].compute().value
     # now we compute the new direction, remember it's the negative we need to put in
+    end_data_transfer = time.time()
+    print(f"Time taken for data transfer: {end_data_transfer - start_data_transfer} seconds")
+    start_direction_compute = time.time()
     direction_copy = position_copy - new_positions
-    if max(abs(direction_copy).get() / DT_VALUE) < 1e-2:
-      print(f"Iteration {inner_iteration} exited with max movement: {max_grad}")
+    end_direction_compute = time.time()
+    print(f"Time taken for direction compute: {end_direction_compute - start_direction_compute} seconds")
+    start_max_movement = time.time()
+    max_movement = gpuarray.max(abs(direction_copy)).get() / DT_VALUE
+    end_max_movement = time.time()
+    print(f"Time taken for max movement: {end_max_movement - start_max_movement} seconds")
+    if max_movement < 1e-2:
+      print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
       break
     # check for the largest step size we can take
+    start_ccd = time.time()
     ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 1.0)
+    end_ccd = time.time()
+    print(f"Time taken for CCD: {end_ccd - start_ccd} seconds")
+    start_largest_step = time.time()
     largest_step = ccd.compute_largest_step_size(0.8, position_copy, direction_copy)
+    end_largest_step = time.time()
     print("largest step we can take is", largest_step)
+    print(f"Time taken for largest step: {end_largest_step - start_largest_step} seconds")
     # here we will take this step and check for the collision sets
     substep = 1
     step_taken = largest_step
     while substep <= 8:
+      start_data_transfer = time.time()
       vertices_soft_position.updateValue(bunny_soft_position_copy - d_pos_soft_bunny * step_taken, deepCopy = True)
       vertices_free["position"].updateValue(cloth_free_position_copy - d_pos_cloth_free * step_taken, deepCopy = True)
+      end_data_transfer = time.time()
+      print(f"Time taken for data transfer: {end_data_transfer - start_data_transfer} seconds")
+      start_cd = time.time()
 
   #     # perform collision detection
       ccd.cd(collision_mesh.vertices["position"].compute().value, DHAT_VALUE) # perform collision detection
+      end_cd = time.time()
+      print(f"Time taken for collision detection: {end_cd - start_cd} seconds")
       pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
       print("The separated counts are", ccd.separated_counts)
+      start_update_collision = time.time()
       collision_mesh.pp.updateNumInstances(pp_count)
       collision_mesh.pe.updateNumInstances(pe_count)
       collision_mesh.pt.updateNumInstances(pt_count)
@@ -573,7 +609,12 @@ for i in range(200):
         pt2v.updateConnectivity(ccd.pt[:4 * pt_count])
       if ee_count > 0:
         ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
+      end_update_collision = time.time()
+      print(f"Time taken for updating connectivity: {end_update_collision - start_update_collision} seconds")
+      start_compute = time.time()
       new_energies = compute_total_energy()
+      end_compute = time.time()
+      print(f"Time taken for computation: {end_compute - start_compute} seconds")
 
       print(f"energy comparison: {new_energies} vs {energies_before}")
       if new_energies <= energies_before:
@@ -597,23 +638,28 @@ for i in range(200):
     #   print(f"Iteration {inner_iteration} exited with max movement: {max_grad}")
     #   break
     inner_iteration += 1
+  start_velocity_update = time.time()
   new_velocities_soft = (vertices_soft_position.value - vertices_soft_last_position.value) / DT_VALUE
   new_velocities_free = (vertices_free["position"].value - vertices_free_last_position.value) / DT_VALUE
   vertices_soft_velocity.updateValue(new_velocities_soft, deepCopy = True)
   vertices_free_velocity.updateValue(new_velocities_free, deepCopy = True)
+  end_velocity_update = time.time()
+  print(f"Time taken for velocity update: {end_velocity_update - start_velocity_update} seconds")
 
-  all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
-  soft_vertices_computed = all_vertices_computed[0:(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-  cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
-  soft_poly.points = soft_vertices_computed
-  cloth_poly.points = cloth_vertices_computed
-  plotter.render()
-  plotter.update()
+  # all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+  # soft_vertices_computed = all_vertices_computed[0:(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+  # cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+  # soft_poly.points = soft_vertices_computed
+  # cloth_poly.points = cloth_vertices_computed
+  # plotter.render()
+  # plotter.update()
   # plotter.screenshot(f"outputs/many_bunny_one_cloth_block_jacobian_1e3_{i:04d}.jpg")
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
-  # soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")
-  # cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
+  # soft_poly.save(f"meshes/bunny_soft_3_cloth_{i:04d}.obj")
+  # cloth_poly.save(f"meshes/cloth_3_cloth_{i:04d}.obj")
   # # save the mesh obj file
   # bunny_poly0.save(f"outputs/bunny_abd_soft0_{i:04d}.obj")
   # bunny_poly1.save(f"outputs/bunny_abd_soft1_{i:04d}.obj")
+end = time.time()
+print("Total time: ", end - start)
