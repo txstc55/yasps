@@ -62,3 +62,6 @@ yasps/fcm_token
 **/*.o
 **/*.jpg
 **/*.html
+
+examples/one_bummy_many_cloths/meshes/*
+examples/one_bummy_many_cloths/data/*
