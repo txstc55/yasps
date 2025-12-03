@@ -63,5 +63,5 @@ yasps/fcm_token
 **/*.jpg
 **/*.html
 
-examples/one_bunnyy_many_cloths/meshes/*
-examples/one_bunnyy_many_cloths/data/*
+examples/one_bunny_many_cloths/meshes/*
+examples/one_bunny_many_cloths/data/*
