@@ -80,7 +80,7 @@ void calcLeafBvs(const double3* _vertexes, const element_type* _faces, AABB* _bv
     int numbers = faceNum;
     const unsigned int threadNum = default_threads;
     int blockNum = (numbers + threadNum - 1) / threadNum;
-    _calcLeafBvs << <blockNum, threadNum >> > (_vertexes, _faces, _bvs + numbers - 1, faceNum, type);
+    _calcLeafBvs <<<blockNum, threadNum >>> (_vertexes, _faces, _bvs + numbers - 1, faceNum, type);
 }
 
 template <class element_type>
@@ -1297,28 +1297,30 @@ void _selfQuery_ee_ccd(const int* _btype, const double3* _vertexes, const double
 ///////////////////////////////////////host//////////////////////////////////////////////
 
 
-AABB calcMaxBV(AABB* _leafBoxes, AABB* _tempLeafBox, const int& number) {
+AABB calcMaxBV(AABB* _leafBoxes, AABB* _tempLeafBox, const int& number)
+{
 
-    int numbers = number;
+    int                numbers   = number;
     const unsigned int threadNum = default_threads;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
+    int                blockNum  = (numbers + threadNum - 1) / threadNum;
 
     unsigned int sharedMsize = sizeof(AABB) * (threadNum >> 5);
 
     //AABB* _tempLeafBox;
     //CUDA_SAFE_CALL(cudaMalloc((void**)&_tempLeafBox, number * sizeof(AABB)));
-    CUDA_SAFE_CALL(cudaMemcpy(_tempLeafBox, _leafBoxes + number - 1, number * sizeof(AABB), cudaMemcpyDeviceToDevice));
+    CUDA_SAFE_CALL(cudaMemcpy(
+        _tempLeafBox, _leafBoxes + number - 1, number * sizeof(AABB), cudaMemcpyDeviceToDevice));
 
-    _reduct_max_box << <blockNum, threadNum, sharedMsize >> > (_tempLeafBox, numbers);
+    _reduct_max_box<<<blockNum, threadNum, sharedMsize>>>(_tempLeafBox, numbers);
 
-    numbers = blockNum;
+    numbers  = blockNum;
     blockNum = (numbers + threadNum - 1) / threadNum;
 
-    while (numbers > 1) {
-        _reduct_max_box << <blockNum, threadNum, sharedMsize >> > (_tempLeafBox, numbers);
-        numbers = blockNum;
+    while(numbers > 1)
+    {
+        _reduct_max_box<<<blockNum, threadNum, sharedMsize>>>(_tempLeafBox, numbers);
+        numbers  = blockNum;
         blockNum = (numbers + threadNum - 1) / threadNum;
-
     }
     cudaMemcpy(_leafBoxes, _tempLeafBox, sizeof(AABB), cudaMemcpyDeviceToDevice);
     AABB h_bv;
@@ -1618,6 +1620,23 @@ void destroy_lbvh_f(lbvh_f* obj){
 void destroy_lbvh_e(lbvh_e* obj){
   delete obj;
 }
+
+double scene_size_f(lbvh_f *obj){
+  obj->getSceneSize();
+  double bboxDiagSize2 = __GEIGEN__::__squaredNorm3(
+      __GEIGEN__::__minus(obj->scene.upper, obj->scene.lower));
+  // printf("Upper is %lf, %lf, %lf\n", obj->scene.upper.x, obj->scene.upper.y, obj->scene.upper.z);
+  // printf("Lower is %lf, %lf, %lf\n", obj->scene.lower.x, obj->scene.lower.y, obj->scene.lower.z);
+  // printf("Diag size is: %lf\n", bboxDiagSize2);
+  return bboxDiagSize2;
+}
+
+double scene_size_e(lbvh_e *obj){
+  double bboxDiagSize2 = __GEIGEN__::__squaredNorm3(
+      __GEIGEN__::__minus(obj->scene.upper, obj->scene.lower));
+  return bboxDiagSize2;
+}
+
 
 __global__ void separate_cases_faces(const int4* indices, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, const uint32_t* cp_num, uint32_t* cp_num_count){
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;

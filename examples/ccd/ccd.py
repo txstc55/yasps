@@ -236,6 +236,20 @@ class CCD:
       ctypes.c_void_p, # separated counts
     ]
 
+    self.__lbvh_f_scene_size = self.__mlbvh.scene_size_f
+    # return type is double
+    self.__lbvh_f_scene_size.argtypes = [
+      ctypes.c_void_p, # the object
+    ]
+    self.__lbvh_f_scene_size.restype = ctypes.c_double
+
+    self.__lbvh_e_scene_size = self.__mlbvh.scene_size_e
+    # return type is double
+    self.__lbvh_e_scene_size.argtypes = [
+      ctypes.c_void_p, # the object
+    ]
+    self.__lbvh_e_scene_size.restype = ctypes.c_double
+
   @property
   def collision_pairs(self) -> gpuarray.GPUArray:
     return self.__collision_pairs
@@ -469,6 +483,11 @@ class CCD:
     print(f"Computing largest step size took {(time_end - time_start) * 1000:.2f} ms")
     return step
 
+  def get_scene_size_faces(self) -> float:
+    return self.__lbvh_f_scene_size(self.__bvh_f)
+
+  def get_scene_size_edges(self) -> float:
+    return self.__lbvh_e_scene_size(self.__bvh_e)
 
 
 

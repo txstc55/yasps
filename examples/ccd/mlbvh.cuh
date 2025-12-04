@@ -110,6 +110,8 @@ void lbvh_f_self_collision_full_detect(lbvh_f* obj, double dHat, const double3* 
 void lbvh_e_self_collision_full_detect(lbvh_e* obj, double dHat, const double3* moveDir, const double& alpha);
 void destroy_lbvh_f(lbvh_f* obj);
 void destroy_lbvh_e(lbvh_e* obj);
+double scene_size_f(lbvh_f* obj);
+double scene_size_e(lbvh_e* obj);
 
 
 void lbvh_f_separate_cases_ccd(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count);
