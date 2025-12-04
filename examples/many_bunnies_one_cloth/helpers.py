@@ -260,6 +260,8 @@ def baraff_witkin(x_init, x, stretchS, shearS, thickness, dt):
   I5v = (F * anisotropic_b.transpose()).norm()
   ucoeff = 1.0
   vcoeff = 1.0
+  ucoeff = attribute.select(I5u < attribute(float_value = 1.0), attribute(float_value = 0.01), attribute(float_value = 1.0))
+  vcoeff = attribute.select(I5v < attribute(float_value = 1.0), attribute(float_value = 0.01), attribute(float_value = 1.0))
   stretch_energy = ucoeff * (I5u - 1.0) * (I5u - 1.0) + vcoeff * (I5v - 1.0) * (I5v - 1.0)
   v01 = x_init.row(1) - x_init.row(0)
   v02 = x_init.row(2) - x_init.row(0)

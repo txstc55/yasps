@@ -1,7 +1,7 @@
 from yasps import scene
 from yasps import attribute
 from helpers import extract_surface_triangles, inertia, extract_edges_from_triangles, abs_max_reduce
-
+import math
 import numpy as np
 import sys
 sys.path.append('../ccd')  # or an absolute path
@@ -12,7 +12,7 @@ random.seed(1313)
 np.random.seed(13)      # for numpy
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
-KAPPA_VALUE = 10000.0 # for collision
+KAPPA_VALUE = 1000.0 # for collision
 
 
 NUM_ABD_BUNNIES = 5
@@ -47,9 +47,9 @@ for i in range(NUM_SOFT_BUNNIES):
   f.write(str(YOUNG_VALUE) + "\n")
 f.close()
 
-BENDING_STIFFNESS = 1.0
-STRETCH_STIFFNESS = 100000000.0
-SHEAR_STIFFNESS = 10000000.0
+BENDING_STIFFNESS = 0.55
+STRETCH_STIFFNESS = 335570.469799
+SHEAR_STIFFNESS = 100607.114094
 THICKNESS = 0.001
 f = open("data/cloth_bending_stretch_shear_thickness.txt", 'w')
 f.write(str(BENDING_STIFFNESS) + "\n")
@@ -414,7 +414,7 @@ vertices_free_position.updateValue(positions_cloth[4:].flatten())
 vertices_free_rest_position.updateValue(positions_cloth[4:].flatten())
 vertices_free_last_position.updateValue(positions_cloth[4:].flatten())
 vertices_free_velocity.updateValue(np.zeros((positions_cloth.shape[0] - 4) * 3, dtype = np.float64))
-vertices_free_mass.updateValue(np.full((positions_cloth.shape[0] - 4), 0.1 / positions_cloth.shape[0], dtype = np.float64))
+vertices_free_mass.updateValue(np.full((positions_cloth.shape[0] - 4), 1.0 / positions_cloth.shape[0], dtype = np.float64))
 
 # create the union
 vertices_cloth = cloth.addPrimitiveUnion("vertices_cloth", [vertices_fixed, vertices_free])
@@ -493,18 +493,18 @@ collision_mesh.pt.addAttribute("point_triangle", computed_attribute = pt)
 ee = edge_edge(ee_positions, dhat, kappa)
 collision_mesh.ee.addAttribute("edge_edge", computed_attribute = ee)
 
-s0.addEnergy(snh_abds, projection_method = 1)
-s0.addEnergy(snh_softs, projection_method = 1)
-s0.addEnergy(affine, projection_method = 1)
+s0.addEnergy(snh_abds, projection_method = 2)
+s0.addEnergy(snh_softs, projection_method = 2)
+s0.addEnergy(affine, projection_method = 2)
 s0.addEnergy(inertia_abds, projection_method = 0)
 s0.addEnergy(inertia_softs, projection_method = 0)
 s0.addEnergy(inertia_free, projection_method = 0)
 s0.addEnergy(bending_energy, projection_method = 2)
 s0.addEnergy(baraff_witkin_energy, projection_method = 2)
-s0.addEnergy(pp, dynamic_instances = True, projection_method = 1)
-s0.addEnergy(pe, dynamic_instances = True, projection_method = 1)
-s0.addEnergy(pt, dynamic_instances = True, projection_method = 1)
-s0.addEnergy(ee, dynamic_instances = True, projection_method = 1)
+s0.addEnergy(pp, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(pe, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(pt, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(ee, dynamic_instances = True, projection_method = 2)
 s0.addMinimizeTarget([abds_abd_matrices, abds_translations, vertices_soft_position, vertices_free_position])
 
 ##################################################################
@@ -552,7 +552,6 @@ position_gpu = gpuarray.to_gpu(collision_mesh.vertices["position"].compute().val
 ccd.init_faces(position_gpu, triangle_indices_gpu, surface_indices_gpu, triangle_indices_all.shape[0])
 ccd.init_edges(position_gpu, position_gpu, edge_indices_gpu, edge_indices_all.shape[0])
 
-
 ##################################################################
 ## plot the bunnies
 ##################################################################
@@ -590,33 +589,43 @@ bunny_abd_position_copy = vertices_abd_position.compute().value.copy()
 bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
 cloth_free_position_copy = vertices_free["position"].compute().value.copy()
 
+# do a tmp one to initialize the bounding box size
+ccd.cd(position_copy, DHAT_VALUE)
+scene_diag_sqrt = math.sqrt(ccd.get_scene_size_faces())
+
 def compute_total_energy():
   total_energy = 0.0
-  total_energy += sum(snh_abds.compute().value.get())
-  total_energy += sum(snh_softs.compute().value.get())
-  total_energy += sum(affine.compute().value.get())
-  total_energy += sum(inertia_abds.compute().value.get())
-  total_energy += sum(inertia_softs.compute().value.get())
-  total_energy += sum(inertia_free.compute().value.get())
-  total_energy += sum(bending_energy.compute().value.get())
-  total_energy += sum(baraff_witkin_energy.compute().value.get())
-  total_energy += sum(pp.compute().value.get())
-  total_energy += sum(pe.compute().value.get())
-  total_energy += sum(pt.compute().value.get())
-  total_energy += sum(ee.compute().value.get())
+  total_energy += gpuarray.sum(snh_abds.compute().value).get()
+  total_energy += gpuarray.sum(snh_softs.compute().value).get()
+  total_energy += gpuarray.sum(affine.compute().value).get()
+  total_energy += gpuarray.sum(inertia_abds.compute().value).get()
+  total_energy += gpuarray.sum(inertia_softs.compute().value).get()
+  total_energy += gpuarray.sum(inertia_free.compute().value).get()
+  total_energy += gpuarray.sum(bending_energy.compute().value).get()
+  total_energy += gpuarray.sum(baraff_witkin_energy.compute().value).get()
+  if pp.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pp.compute().value).get()
+  if pe.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pe.compute().value).get()
+  if pt.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pt.compute().value).get()
+  if ee.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(ee.compute().value).get()
   return total_energy
+
 
 for i in range(200):
   bunnies_abd.vertices_abd["last_position"].updateValue(bunnies_abd.vertices_abd["position"].compute().value, deepCopy = True)
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
+  cloth.vertices_free["last_position"].updateValue(cloth.vertices_free["position"].value, deepCopy = True)
   inner_iteration = 0
   min_inner_iteration_energy = 100000000
   while True:
-    result = s0.minimizeEnergy(tolerance = 1e-6)
-    gradient_gpu = s0.gradient
-    max_grad = abs_max_reduce(gradient_gpu).get()  # only one scalar transfer
+    print("==================================================================")
+    print(f"At iteration {i}, inner iteration {inner_iteration}")
+    result = s0.minimizeEnergy(tolerance = 1e-4)
+    print("==================================================================")
     energies_before = compute_total_energy()
-    print(f"max gradient at outer iteration {i}, inner iteration {inner_iteration} is {max_grad}")
     # we perform CCD here
     # first we get the rotation and translation
     d_rot = result[0]
@@ -642,6 +651,12 @@ for i in range(200):
     new_positions = collision_mesh.vertices["position"].compute().value
     # now we compute the new direction, remember it's the negative we need to put in
     direction_copy = position_copy - new_positions
+    max_movement = gpuarray.max(abs(direction_copy)).get()
+    target_movement = 1e-2 * DT_VALUE * scene_diag_sqrt
+    print("max movement is:", max_movement, ", target movement is:", target_movement)
+    if max_movement < target_movement:
+      print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
+      break
 
     # check for the largest step size we can take
     ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 1.0)
@@ -696,10 +711,6 @@ for i in range(200):
     plotter.render()
     plotter.update()
 
-    # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
-    if max_grad < 1e-3:
-      print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
-      break
     # if max(abs(direction_copy * step_taken).get()) < 1e-3:
     #     print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
     #     break
@@ -712,11 +723,10 @@ for i in range(200):
   vertices_free_velocity.updateValue(new_velocities_free, deepCopy = True)
   plotter.render()
   plotter.update()
-  plotter.screenshot(f"outputs/many_bunny_one_cloth_block_jacobian_1e3_{i:04d}.jpg")
   # save the mesh obj file
-  # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
-  # soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")
-  # cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
+  abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
+  soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")
+  cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
   # # save the mesh obj file
   # bunny_poly0.save(f"outputs/bunny_abd_soft0_{i:04d}.obj")
   # bunny_poly1.save(f"outputs/bunny_abd_soft1_{i:04d}.obj")
