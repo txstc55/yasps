@@ -501,6 +501,34 @@ __device__ void {attributeName}_device_function(
     # we know the children must be a named attribute for the joining operator
     children_attribute = current.children[0] # should only have one child
     children_attribute_name: str = ""
+    if children_attribute.deviceKernel is None:
+      # print("Error: child attribute has no device kernel")
+      # print(str(children_attribute))
+      # exit(1)
+      # this is actually a very special case
+      # we are joining a number
+      # this can happen inside the hessian
+      float_values = []
+      for i in range(children_attribute.size):
+        float_values.append(str(children_attribute[i].float_value))
+      float_values = float_values * current.through.dimension
+      float_values_string = ", ".join(float_values)
+      self.__code_strings.append(f'''
+  double {current.fullName}_local_data_temp[{current.size}] = {{{float_values_string}}};
+''')
+
+      if current.size > 1:
+        self.__code_strings.append(f'''
+  // we now need to put it into the matrix
+  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
+
+''')
+      else:
+        self.__code_strings.append(f'''
+  // we put it back to just a single value
+  double {current.fullName}_local_data = {current.fullName}_local_data_temp[0];
+  ''')
+      return
     if children_attribute.name == "":
       children_attribute_name = children_attribute.fullName
     else:
