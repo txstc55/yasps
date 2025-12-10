@@ -832,7 +832,8 @@ class attribute:
     # check dimension of true and false attribute
     if true_attribute.rows != false_attribute.rows or true_attribute.cols != false_attribute.cols:
       raise ValueError("attribute.select: true and false attributes must have the same dimension.")
-    return attribute(children = [condition, true_attribute, false_attribute], operator = SELECT, correspondance = attribute.__check_heritage(true_attribute, false_attribute).correspondance, rows = true_attribute.rows, cols = true_attribute.cols)
+    correspondance = attribute.__check_heritage(condition, attribute.__check_heritage(true_attribute, false_attribute)).correspondance
+    return attribute(children = [condition, true_attribute, false_attribute], operator = SELECT, correspondance = correspondance, rows = true_attribute.rows, cols = true_attribute.cols)
 
 
 
