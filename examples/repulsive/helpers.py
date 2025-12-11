@@ -75,11 +75,17 @@ def smooth_energy(x, weights, penalty, dt):
 
   return dt * dt * penalty * diff * diff
 
-def length_energy(x, target, penalty, dt):
+def length_energy(x, target, penalty, mass, dt, mass_scale):
   p0 = x.row(0)
   p1 = x.row(1)
-  length_inverse = 1.0 / (p0 - p1).dot(p0 - p1)
-  return dt * dt * penalty * length_inverse
+  length = (p0 - p1).dot(p0 - p1)
+  m0 = mass.row(0)
+  m1 = mass.row(1)
+
+  target_length = target / ((m0 + m1) / (2.0 * mass_scale))
+  target_length *= target_length
+
+  return dt * dt * penalty * (length - target_length) * (length - target_length)
 
 def repulsive(points, alpha, beta, weight, dt):
   p0 = points.row(0)

@@ -42,7 +42,7 @@ for i in range(sphere_vertices.shape[0]):
 ################################################
 curve_vertices = []
 curve_edges = []
-f = open("./outputs/loop_000000.obj", 'r')
+f = open("./outputs/loop_collision_density_new_000600.obj", 'r')
 for line in f:
   if line.startswith('v '):
     curve_vertices.append([float(x) for x in line.strip().split()[1:]])
@@ -236,5 +236,5 @@ plotter = pv.Plotter(window_size = [3840, 2160])
 cells_loop = np.hstack([np.full((curve_edges.shape[0], 1), 2), curve_edges])
 loop_poly = pv.PolyData(mapped_curve_vertices, lines = cells_loop)
 plotter.add_mesh(loop_poly, color='red', line_width=3)
-loop_poly.save("./final_mapped_curve_000.obj")
+loop_poly.save("./final_mapped_curve_density_new_600.obj")
 plotter.show()

@@ -91,6 +91,7 @@ class autodiff:
 
   def __diff_abs(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     dA = self.__diff(current.children[0], wrt)
+    return dA.abs()
     return ya.attribute.to_array([dA[i].abs() for i in range(dA.size)], rows = dA.rows, cols = dA.cols)
 
   def __diff_mul(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:

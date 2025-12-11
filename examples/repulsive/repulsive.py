@@ -4,19 +4,20 @@ from helpers import inertia, point_point, point_edge, point_triangle, edge_edge,
 import pycuda.gpuarray as gpuarray
 
 DT_VALUE = 0.01
-DHAT_VALUE = 10.0
+DHAT_VALUE = 15.0
 
 TARGET_RADIUS = 100.0
 NUM_LINE_POINTS = 40000
-TARGET_LENGTH = 2.0 / 200 * TARGET_RADIUS / NUM_LINE_POINTS
+TARGET_LENGTH = 100000.0
 SMOOTH_WEIGHTS = [0.1, 0.2, 0.4, 0.2, 0.1]
-EDGE_LENGTH_PENALTY = 100000000.0
+EDGE_LENGTH_PENALTY = 10.0
 SMOOTH_PENALTY = 100.0
-KAPPA = 100.0
+KAPPA = 20000000.0
 ALPHA = 3.0
 BETA = 6.0
 REPULSIVE_WEIGHT = 0.0
-RADIUS_PENALTY = 100000000.0
+RADIUS_PENALTY = 100000000000.0
+MASS_SCALE = 0.000001
 
 
 bunny_vertices = []
@@ -78,7 +79,20 @@ for i in range(bunny_faces.shape[0]):
   mass[bunny_faces[i, 1]] += area / 3.0
   mass[bunny_faces[i, 2]] += area / 3.0
 
-mass /= np.max(mass)
+mass_on_sphere = np.zeros(sphere_vertices.shape[0], dtype=np.float64)
+for i in range(bunny_faces.shape[0]):
+  v0 = sphere_vertices[bunny_faces[i, 0], :]
+  v1 = sphere_vertices[bunny_faces[i, 1], :]
+  v2 = sphere_vertices[bunny_faces[i, 2], :]
+  area = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0))
+  mass_on_sphere[bunny_faces[i, 0]] += area / 3.0
+  mass_on_sphere[bunny_faces[i, 1]] += area / 3.0
+  mass_on_sphere[bunny_faces[i, 2]] += area / 3.0
+
+fraction = mass / mass_on_sphere
+
+mass = fraction / np.max(fraction)
+mass = mass ** 0.1
 
 print("Total mass of bunny:", np.sum(mass))
 print("Max mass: ", np.max(mass))
@@ -248,7 +262,10 @@ def sample_weights_bilinear(points, weight_tex):
 
   return w
 
-# weights = sample_weights_bilinear(bunny_vertices, arr)
+weights = sample_weights_bilinear(sphere_vertices, arr)
+print(weights)
+print(mass)
+# exit()
 
 #####################################################
 # Create lines
@@ -260,7 +277,7 @@ line_edges = []
 line_2_neighbors = []
 
 # Parameters controlling curvature
-wave_cycles = 30        # number of wiggles around the loop
+wave_cycles = 40        # number of wiggles around the loop
 amp         = 0.8     # small deviation (~5.7 degrees)
 for i in range(NUM_LINE_POINTS):
   # t in [0,1)
@@ -303,7 +320,7 @@ print(f"There are {edge_pairs.shape[0]} edge pairs in the loop")
 
 # get initial masses
 line_masses = sample_weights_bilinear(line_points, arr)
-line_masses = line_masses * line_masses * 10.01
+line_masses = (line_masses + 0.5) ** 25 * 910.01
 
 
 #####################################################
@@ -335,6 +352,8 @@ repulsive_weight = s0.addConstant("repulsive_weight", rows = 1, cols = 1)
 repulsive_weight.updateValue([REPULSIVE_WEIGHT])
 radius_penalty = s0.addConstant("radius_penalty", rows = 1, cols = 1)
 radius_penalty.updateValue([RADIUS_PENALTY])
+mass_scale = s0.addConstant("mass_scale", rows = 1, cols = 1)
+mass_scale.updateValue([MASS_SCALE])
 
 lv = lines.addPrimitive("vertices", numInstances = NUM_LINE_POINTS)
 lvp = lv.addAttribute("position", rows = 3, cols = 1)
@@ -353,6 +372,8 @@ le = lines.addPrimitive("edges", numInstances = line_edges.shape[0])
 le2v = le.addConnectivity("le2v", lv, line_edges, 2)
 lep = le.addAttribute("positions", through = le2v, source = lvp)
 lep.resize(2, 3)
+lem = le.addAttribute("masses", through = le2v, source = lvm)
+lem.resize(2, 1)
 
 #####################################################
 # Create edges 2 neighbors
@@ -400,7 +421,7 @@ inertia_energy = inertia(lvlp, lvv, dt, lvp, lvm)
 lv.addAttribute("inertia_energy", computed_attribute = inertia_energy)
 
 # add target length
-length_energy_compute = length_energy(lep, target_length, edge_length_penalty, dt)
+length_energy_compute = length_energy(lep, target_length, edge_length_penalty, lem, dt, mass_scale)
 le.addAttribute("length_energy", computed_attribute = length_energy_compute)
 
 # add smoothing energy
@@ -489,6 +510,10 @@ cells_loop = np.hstack([np.full((line_edges.shape[0], 1), 2), line_edges])
 loop_poly = pv.PolyData(line_points, lines = cells_loop)
 plotter.add_mesh(loop_poly, color='red', line_width=3)
 
+cells_sphere = np.hstack([np.full((bunny_faces.shape[0], 1), 3), bunny_faces])
+sphere_poly = pv.PolyData(sphere_vertices, cells_sphere)
+plotter.add_mesh(sphere_poly, color='white', opacity=0.5)
+
 plotter.show(interactive_update=True)
 position_copy = lvp.compute().value.copy()
 direction = gpuarray.to_gpu(np.zeros(line_points.flatten().shape, dtype=np.float64))
@@ -498,9 +523,10 @@ for i in range(200):
   lvlp.updateValue(lvp.compute().value, deepCopy = True)
   inner_iteration = 0
   while True:
+    lvlp.updateValue(lvp.compute().value, deepCopy = True)
     print("==================================================================")
     print(f"At iteration {i}, inner iteration {inner_iteration}")
-    result = s0.minimizeEnergy(tolerance = 1e-4)
+    result = s0.minimizeEnergy(tolerance = 1e-6)
     print("==================================================================")
     energy_before = compute_total_energy()
     d_p = result[0].get().reshape(-1, 3)
@@ -548,16 +574,16 @@ for i in range(200):
 
     loop_points = lvp.compute().value.get().reshape((-1, 3))
     updated_value = (
-      0.9 * loop_points +
-      0.05 * np.roll(loop_points, shift=-1, axis=0) +  # Next point in the same loop
-      0.05 * np.roll(loop_points, shift=1, axis=0)     # Previous point in the same loop
+      0.8 * loop_points +
+      0.1 * np.roll(loop_points, shift=-1, axis=0) +  # Next point in the same loop
+      0.1 * np.roll(loop_points, shift=1, axis=0)     # Previous point in the same loop
     )
     # loop_points = updated_value / np.linalg.norm(updated_value, axis=1, keepdims=True) * TARGET_RADIUS
     lvp.updateValue(updated_value.flatten(), deepCopy = True)
     line_masses = sample_weights_bilinear(updated_value, arr)
-    line_masses = line_masses * line_masses
+    line_masses = (line_masses + 0.5) ** 25
     print(line_masses)
-    lvm.updateValue(line_masses.flatten() * 10.01)
+    lvm.updateValue(line_masses.flatten() * 910.01)
     loop_poly.points = lvp.compute().value.get().reshape((-1, 3))
 
 
@@ -565,7 +591,7 @@ for i in range(200):
     plotter.render()
     inner_iteration += 1
     max_movement = gpuarray.max(abs(direction)).get()
-    if max_movement < 1e-4 or inner_iteration >= 20:
+    if max_movement < 1e-4 or inner_iteration >= 200:
       break
 
   # re normalize points to sphere
@@ -573,7 +599,7 @@ for i in range(200):
   # loop_points = loop_points / np.linalg.norm(loop_points, axis=1, keepdims=True) * TARGET_RADIUS
   # lvp.updateValue(loop_points.flatten(), deepCopy = True)
   # DHAT_VALUE += 0.000000
-  TARGET_LENGTH += 1.0 / 200 * TARGET_RADIUS / NUM_LINE_POINTS
+  # TARGET_LENGTH += 1.0 / 200 * TARGET_RADIUS / NUM_LINE_POINTS
   # dhat.updateValue([DHAT_VALUE])
-  target_length.updateValue([TARGET_LENGTH])
-  loop_poly.save(f"outputs/loop_collision_{i:06d}.obj")
+  # target_length.updateValue([TARGET_LENGTH])
+  loop_poly.save(f"outputs/loop_collision_density_new_{i:06d}.obj")

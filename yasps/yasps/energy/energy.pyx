@@ -419,6 +419,13 @@ class energy:
       hessian_rows = int(math.sqrt(hessian_size))
       assert hessian_rows * hessian_rows == hessian_size, f"energy.__gennerateGlobalHessianForEnergy: hessian rows {hessian_rows} * hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
       hessian_cols = hessian_rows # since its a square matrix
+      # print("Global hessian size is", hessian_rows, hessian_cols)
+      # print("Second part hessian size is", global_jacobian.cols, global_jacobian.cols)
+      # print("Child size is", child_size)
+      # print("Local gradient size is", local_gradient.rows, local_gradient.cols)
+      # print("Global jacobian size is", global_jacobian.rows, global_jacobian.cols)
+      # print("Child global hessian size is", child_global_hessian.rows, child_global_hessian.cols)
+      # print("Child is", child.fullName)
       for i in range(hessian_rows):
         for j in range(hessian_cols):
           for k in range(child_size):
