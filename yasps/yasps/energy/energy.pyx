@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 
 class energy:
-  def __init__(self, energy: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False):
+  def __init__(self, energy: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, separate_hessian_jacobian = False):
     if energy.size != 1:
       raise ValueError("energy.__init__: energy must be size 1.")
     self.__energy: attribute = energy
@@ -46,6 +46,11 @@ class energy:
     self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = {} # because of the way our path is constructed, the direct unioned attribute doesnt show up in the path. So we need to record its children in the path
     _, self.__paths = self.getRoots(energy, [energy]) # get the root attributes
     self.__local_targets = targets # the local targets for this energy, if its not empty, we will only minimize the energy wrt the targets
+
+    # for when we only project the inner part, and the global hessian is too large to store
+    self.__global_jacobian: Optional[attribute] = None
+    self.__global_inner_hessian: Optional[attribute] = None
+    self.__separate_hessian_jacobian = separate_hessian_jacobian
 
   # @property
   # def roots(self) -> List[attribute]:
@@ -366,6 +371,7 @@ class energy:
     next_jacobian: attribute
     if children_global_jacobian_name in current.correspondance.attributes:
       next_jacobian = current.correspondance[children_global_jacobian_name]
+      self.__global_jacobian = next_jacobian
     else:
       children_jacobian: List[attribute] = []
       for child in children:
@@ -387,12 +393,14 @@ class energy:
       next_jacobian = attribute.to_array(next_jacobian_children, rows = next_jacobian_rows, cols = next_jacobian_cols)
       if children_global_jacobian_name not in current.correspondance.attributes:
         current.correspondance.addAttribute(children_global_jacobian_name, computed_attribute = next_jacobian)
+        # next_jacobian.generate_code = False
+        self.__global_jacobian = next_jacobian
     full_gradient = current_gradient.mul_explicit(next_jacobian)
     # full_gradient.generate_code = False
     current.correspondance.addAttribute(gradient_attribute_name, computed_attribute = full_gradient)
     return full_gradient
 
-  def __gennerateGlobalHessianForEnergy(self, current: attribute, wrt: List[attribute]) -> attribute:
+  def __generateGlobalHessianForEnergy(self, current: attribute, wrt: List[attribute]) -> attribute:
     # here we go, we will start computing the global hessian for the energy
     global_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
     if global_hessian_name in current.correspondance.attributes:
@@ -415,9 +423,9 @@ class energy:
       # now the child global hessian is size of child.size x hessian_size x hessian_size
       child_size = child.size # this marks the number of global hessian we have
       hessian_size = child_global_hessian.size // child_size # this is the size of the hessian for each child
-      assert hessian_size * child_size == child_global_hessian.size, f"energy.__gennerateGlobalHessianForEnergy: hessian size {hessian_size} * child size {child_size} is not equal to child global hessian size {child_global_hessian.size}"
+      assert hessian_size * child_size == child_global_hessian.size, f"energy.__generateGlobalHessianForEnergy: hessian size {hessian_size} * child size {child_size} is not equal to child global hessian size {child_global_hessian.size}"
       hessian_rows = int(math.sqrt(hessian_size))
-      assert hessian_rows * hessian_rows == hessian_size, f"energy.__gennerateGlobalHessianForEnergy: hessian rows {hessian_rows} * hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
+      assert hessian_rows * hessian_rows == hessian_size, f"energy.__generateGlobalHessianForEnergy: hessian rows {hessian_rows} * hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
       hessian_cols = hessian_rows # since its a square matrix
       # print("Global hessian size is", hessian_rows, hessian_cols)
       # print("Second part hessian size is", global_jacobian.cols, global_jacobian.cols)
@@ -444,6 +452,7 @@ class energy:
     local_hessian = current.correspondance[local_hessian_name]
     if second_part_hessian.isZero > 0:
       local_hessian = local_hessian.spd(self.__projection_method)
+      self.__global_inner_hessian = local_hessian
       self.__project_entire_hessian = False
     else:
       self.__project_entire_hessian = True
@@ -457,6 +466,7 @@ class energy:
     children_jacobian_name = f'd_{"__".join([x.fullName for x in children])}_d_{"__".join([x.fullName for x in wrt])}'
     # it is guaranteed that we have this since the children jacobian is computed before the global hessian
     children_global_jacobian = current.correspondance[children_jacobian_name]
+    self.__global_jacobian = children_global_jacobian
 
     final_hessian = children_global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(children_global_jacobian)).add_explicit(second_part_hessian)
     # print("------------------------------------------------------------------------------------")
@@ -1122,7 +1132,7 @@ class energy:
     if hessian_attribute_name in current.correspondance.attributes:
       return current.correspondance[hessian_attribute_name]
     if current.operator != JOIN and current.operator != UNION:
-      return self.__gennerateGlobalHessianForEnergy(current, wrt)
+      return self.__generateGlobalHessianForEnergy(current, wrt)
     elif current.operator == JOIN:
       result = self.__generateGlobalHessianForJoin(current, wrt)
       # if self.__save_intermediate and result.isZero == 0:
@@ -1205,10 +1215,29 @@ class energy:
       # we know the graidient sizes square is the hessian size
       merged_hessian_and_gradient = []
       if not self.__gradient_only: # we need the hessian
-        assert self.__hessian is not None
-        for i in range(self.__hessian.rows):
-          for j in range(self.__hessian.cols):
-            merged_hessian_and_gradient.append(self.__hessian[i, j])
+        # two cases
+        # the first case, we separate the jacobian and hessian
+        # then we need to store them separately
+        if self.__separate_hessian_jacobian and not self.__project_entire_hessian:
+          assert self.__global_jacobian is not None
+          assert self.__global_inner_hessian is not None
+          # first we store the jacobian
+          for i in range(self.__global_jacobian.rows):
+            for j in range(self.__global_jacobian.cols):
+              merged_hessian_and_gradient.append(self.__global_jacobian[i, j])
+          # then we store the inner hessian
+          for i in range(self.__global_inner_hessian.rows):
+            for j in range(self.__global_inner_hessian.cols):
+              merged_hessian_and_gradient.append(self.__global_inner_hessian[i, j])
+          # check leftover space
+          left_over = self.__global_jacobian.cols - (self.__global_inner_hessian.rows * self.__global_inner_hessian.cols) % self.__global_jacobian.cols
+          for _ in range(left_over):
+            merged_hessian_and_gradient.append(0.0)
+        else:
+          assert self.__hessian is not None
+          for i in range(self.__hessian.rows):
+            for j in range(self.__hessian.cols):
+              merged_hessian_and_gradient.append(self.__hessian[i, j])
       for i in range(self.__gradient.size):
         merged_hessian_and_gradient.append(self.__gradient[i])
       # create the attribute for the merged hessian and gradient
@@ -1217,7 +1246,9 @@ class energy:
         merged_hessian_rows = 1
       else:
         assert self.__hessian is not None
-        merged_hessian_rows = self.__hessian.rows + 1
+        print("Merged hessian length is", len(merged_hessian_and_gradient))
+        print("Gradient size is", self.__gradient.size)
+        merged_hessian_rows = len(merged_hessian_and_gradient) // self.__gradient.size
       self.__merged_hessian_and_gradient_attribute = self.__energy.correspondance.addAttribute(f'hessian_and_gradient_d2_{self.__energy.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = attribute.to_array(merged_hessian_and_gradient, rows = merged_hessian_rows, cols = self.__gradient.size))
 
 
@@ -1225,7 +1256,7 @@ class energy:
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
       codegen.generateCode() # this will give us the local kernel strings
       # now add the global kernel
-      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__project_entire_hessian, self.__projection_method, self.__gradient_only)
+      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__project_entire_hessian, self.__projection_method, self.__gradient_only, (self.__separate_hessian_jacobian and not self.__project_entire_hessian), self.__global_jacobian.rows if self.__global_jacobian is not None else 0, self.__global_jacobian.cols if self.__global_jacobian is not None else 0, self.__global_inner_hessian.rows if self.__global_inner_hessian is not None else 0)
     assert self.__hessianAndGradientKernel is not None
     assert self.__indices_kernel is not None
     self.__hessianAndGradientKernel.generateKernel(self.__indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
@@ -1236,6 +1267,13 @@ class energy:
       value[0].compute()
       value[1].updateValue(value[0].value)
       # print(f"Computed intermediate attribute with name {name}, hash: {value[0].hash}")
+
+    # if self.__separate_hessian_jacobian:
+    #   assert self.__global_jacobian is not None
+    #   assert self.__global_inner_hessian is not None
+    #   print("Checking separate hessian and jacobian computation")
+    #   self.__global_jacobian.compute()
+    #   self.__global_inner_hessian.compute()
 
     # assertion here
     # assert self.__hessianAndGradientKernel is not None

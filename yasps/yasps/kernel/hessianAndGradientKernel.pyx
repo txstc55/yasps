@@ -18,7 +18,7 @@ class hessianAndGradientKernel:
   att_name_to_kernel: dict[str, hessianAndGradientKernel] = {}  # maps attribute names to their hessian and gradient kernel instances, this way we can just return the previous existing kernel
 
 
-  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False):
+  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0):
     self.__kernelString: str = ""
     self.__headerFileString: str = ""
     self.__kernel = None # the kernel for computhing the gradient and hessians
@@ -27,6 +27,10 @@ class hessianAndGradientKernel:
     self.__projection_method = projection_method
     self.__gradient_only = gradeient_only
     self.__att = att
+    self.__clear_separation = clear_separation
+    self.__jacobian_rows = jacobian_rows
+    self.__jacobian_cols = jacobian_cols
+    self.__hessian_row_size = hessian_row_size
     # self.__generateKernel(att)
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -295,7 +299,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int instance = groupedIndicesInner[index]; // this will tell us which instance of the hessian we are computing
 // determine if we are computing both the hessian and gradient
 #if {int(not self.__gradient_only)} // are we computing both the hessian and gradient
-  Eigen::Matrix<double, {self.__att.cols + 1}, {self.__att.cols}{", Eigen::RowMajor" if self.__att.cols > 1 else ""}> hg_mat = Eigen::Matrix<double, {self.__att.cols + 1}, {self.__att.cols}, Eigen::RowMajor>::Zero(); // get the merged gradient and hessian
+  Eigen::Matrix<double, {self.__att.rows}, {self.__att.cols}{", Eigen::RowMajor" if self.__att.cols > 1 else ""}> hg_mat = Eigen::Matrix<double, {self.__att.rows}, {self.__att.cols}, Eigen::RowMajor>::Zero(); // get the merged gradient and hessian
 #else // we are only computing the gradient
   Eigen::Matrix<double, 1, {self.__att.cols}> hg_mat = Eigen::Matrix<double, 1, {self.__att.cols}>::Zero(); // get the gradient
 #endif
@@ -328,7 +332,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
 #if {int(not self.__gradient_only)} // did we compute the hessian
-      atomicAdd(&gradient[segment_placement + j], hg_mat({self.__att.cols}, gradient_offset + j));
+      atomicAdd(&gradient[segment_placement + j], hg_mat({self.__att.rows - 1}, gradient_offset + j));
 #else
       atomicAdd(&gradient[segment_placement + j], hg_mat(0, gradient_offset + j));
 #endif
@@ -338,11 +342,16 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 
   // ok now we have the gradient, we need to compress the hessian locally
   // we have the local_permutations, and we know the size of the matrix
-#if {int(not self.__gradient_only)}
+#if {int(not self.__gradient_only)} // gradient only
   // we will only start this part if we are not just doing gradient
   // first of all, allocate a matrix
   Eigen::Matrix<double, N, N> compressed_hessian = Eigen::Matrix<double, N, N>::Zero();
   unsigned int row_offset = 0;
+#if {int(self.__clear_separation)} // there's a clear separation between hessian and jacobian, we utilize this fact and do assembly here
+  auto jacobian_matrix = hg_mat.block(0, 0, {self.__jacobian_rows}, {self.__jacobian_cols});
+  Eigen::Map<const Eigen::Matrix<double, {self.__hessian_row_size}, {self.__hessian_row_size}>> inner_hessian(hg_mat.data() + {self.__jacobian_rows} * {self.__jacobian_cols}, {self.__hessian_row_size}, {self.__hessian_row_size});
+  Eigen::Matrix<double, {self.__hessian_row_size}, {self.__jacobian_cols}> HJ_mat = inner_hessian * jacobian_matrix;
+#endif
   for (unsigned int i = 0; i < max_num_indices; i++){{
     unsigned int col_offset = 0;
     // we first determine what's the correct position to put in the compressed hessian
@@ -373,7 +382,11 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
       for (unsigned int k = 0; k < segment_size_i; k++){{
         for (unsigned int l = 0; l < segment_size_j; l++){{
           // we put the block into the compressed hessian
+#if {int(self.__clear_separation)} // clear separation between hessian and jacobian
+          compressed_hessian(permutation_i + k, permutation_j + l) += jacobian_matrix.col(row_offset + k).dot(HJ_mat.col(col_offset + l));
+#else
           compressed_hessian(permutation_i + k, permutation_j + l) += hg_mat(row_offset + k, col_offset + l);
+#endif
         }}
       }}
       col_offset += segment_size_j;
@@ -553,7 +566,7 @@ int compute_hessian_and_gradient_with_compression(
         if size != 0:
           self.__kernelString += f'''
       case {size}:
-        compute_hessian_and_gradient_global_function_final_gradient_size_{size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0, streams[i]>>>(
+        compute_hessian_and_gradient_global_function_final_gradient_size_{size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0>>>(
           {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
           {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
           {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}

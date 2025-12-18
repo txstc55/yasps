@@ -107,13 +107,13 @@ class minimizer:
         raise ValueError("minimizer.addEnergies: energies has duplicate energies.")
     self.__energies.extend(energies)
 
-  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False) -> None:
+  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False) -> None:
     if e.name == "":
       raise ValueError("scene.addEnergy: energy attribute must have a name.")
     from yasps.energy import energy
     for t in targets:
       self.__seen_pre_targets_full_names.add(t.fullName)
-    newEnergy = energy(e, targets, projection_method, save_intermediate, gradient_only)
+    newEnergy = energy(e, targets, projection_method, save_intermediate, gradient_only, separate_hessian_jacobian)
     if newEnergy.hash in [energy.hash for energy in self.__energies]:
       raise ValueError("minimizer.addEnergy: energy already exists.")
     if not dynamic_instances:
