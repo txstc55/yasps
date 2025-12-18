@@ -15,12 +15,11 @@ DHAT_VALUE = 1e-6 # for collision detection
 KAPPA_VALUE = 1000.0 # for collision
 
 
-NUM_ABD_BUNNIES = 5
-NUM_SOFT_BUNNIES = 5
+NUM_ABD_BUNNIES = 1
+NUM_SOFT_BUNNIES = 1
 
 MU_VALUE_ABDS = []
 LAMBDA_VALUE_ABDS = []
-f = open("data/abd_bunny_elasticity.txt", 'w')
 for i in range(NUM_ABD_BUNNIES):
   POISSON_VALUE = 0.45 + random.random() * 0.04
   YOUNG_VALUE = 9000000.0 + random.random() * 1000000
@@ -28,14 +27,10 @@ for i in range(NUM_ABD_BUNNIES):
   LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
   MU_VALUE_ABDS.append(4.0 * MU_LAME_VALUE / 3.0)
   LAMBDA_VALUE_ABDS.append(LAMBDA_LAME_VALUE + 5.0 * MU_LAME_VALUE / 6.0)
-  f.write(str(POISSON_VALUE) + "\n")
-  f.write(str(YOUNG_VALUE) + "\n")
-f.close()
 
 
 MU_VALUE_SOFTS = []
 LAMBDA_VALUE_SOFTS = []
-f = open("data/soft_bunny_elasticity.txt", 'w')
 for i in range(NUM_SOFT_BUNNIES):
   POISSON_VALUE = 0.10 + random.random() * 0.29
   YOUNG_VALUE = 5000.0 + random.random() * 40000
@@ -43,21 +38,11 @@ for i in range(NUM_SOFT_BUNNIES):
   LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
   MU_VALUE_SOFTS.append(4.0 * MU_LAME_VALUE / 3.0)
   LAMBDA_VALUE_SOFTS.append(LAMBDA_LAME_VALUE + 5.0 * MU_LAME_VALUE / 6.0)
-  f.write(str(POISSON_VALUE) + "\n")
-  f.write(str(YOUNG_VALUE) + "\n")
-f.close()
 
 BENDING_STIFFNESS = 0.55
-STRETCH_STIFFNESS = 335570.469799
-SHEAR_STIFFNESS = 100607.114094
+STRETCH_STIFFNESS = 35570.469799
+SHEAR_STIFFNESS = 10607.114094
 THICKNESS = 0.001
-f = open("data/cloth_bending_stretch_shear_thickness.txt", 'w')
-f.write(str(BENDING_STIFFNESS) + "\n")
-f.write(str(STRETCH_STIFFNESS) + "\n")
-f.write(str(SHEAR_STIFFNESS) + "\n")
-f.write(str(THICKNESS) + "\n")
-f.close()
-# exit()
 
 ##################################################################
 ## Load the bunny mesh
@@ -146,11 +131,6 @@ for i in range(NUM_SOFT_BUNNIES):
     ])
   position_copy = np.copy(position)
   position_softs.append(np.dot(position_copy * (random.random() * 0.5 + 0.6), rotation_matrix) + translation)
-  f = open("data/soft_bunny_" + str(i) + ".node", 'w')
-  f.write(str(NUM_BUNNY_VERTICES) + " 3 0 0\n")
-  for j in range(NUM_BUNNY_VERTICES):
-    f.write(str(j + 1) + " " + str(position_softs[-1][j][0]) + " " + str(position_softs[-1][j][1]) + " " + str(position_softs[-1][j][2]) + "\n")
-  f.close()
 
 
 tet_indices_abds = []
@@ -198,14 +178,8 @@ for i in range(NUM_ABD_BUNNIES):
       np.cos(theta)]
     ])
   rotation_matrices.append(rotation_matrix)
-  f = open("data/abd_bunny_" + str(i) + ".node", 'w')
-  f.write(str(NUM_BUNNY_VERTICES) + " 3 0 0\n")
   actual_position = np.dot(position_abds[-1], rotation_matrix.T) + translations[-1]
-  for j in range(NUM_BUNNY_VERTICES):
-    f.write(str(j + 1) + " " + str(actual_position[j][0]) + " " + str(actual_position[j][1]) + " " + str(actual_position[j][2]) + "\n")
-  f.close()
   actual_positions.append(actual_position)
-# exit()
 actual_positions = np.array(actual_positions)
 
 
@@ -254,14 +228,6 @@ from helpers import generate_edge_to_vertices_list
 edge_to_vertices_cloth = generate_edge_to_vertices_list(triangle_indices_cloth)
 edge_indices_cloth = extract_edges_from_triangles(triangle_indices_cloth)
 
-# get it to an obj file
-f = open("data/cloth.obj", 'w')
-for i in range(positions_cloth.shape[0]):
-  f.write("v " + str(positions_cloth[i][0]) + " " + str(positions_cloth[i][1]) + " " + str(positions_cloth[i][2]) + "\n")
-for i in range(triangle_indices_cloth.shape[0]):
-  f.write("f " + str(triangle_indices_cloth[i][0] + 1) + " " + str(triangle_indices_cloth[i][1] + 1) + " " + str(triangle_indices_cloth[i][2] + 1) + "\n")
-f.close()
-# exit()
 
 ##################################################################
 ## construct the abd meshes
@@ -309,9 +275,6 @@ vertices_abd_position = vertices_abd.addAttribute("position", computed_attribute
 vertices_abd_last_position.updateValue(vertices_abd_position.compute().value.get())
 vertices_abd_position_computed = vertices_abd_position.value.get()
 actual_positions = actual_positions.flatten()
-# print("Diff")
-# print(np.linalg.norm(vertices_abd_position_computed - actual_positions))
-# exit()
 
 # now that we are done with vertices, we can do the tets
 # each tet will have its corresponding mu and lambda values
@@ -518,7 +481,8 @@ for i in range(NUM_SOFT_BUNNIES):
 mesh_indices += [0] * positions_cloth.shape[0]
 ccd = CCD(NUM_BUNNY_SURFACE_INDICES * (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) + positions_cloth.shape[0], # the number of surface points
   NUM_BUNNY_VERTICES * (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) + positions_cloth.shape[0], # the number of total points
-  max_ccd_pairs = 200000000,
+  max_ccd_pairs = 1000000,
+  max_cd_pairs = 1000000,
   mesh_indices = mesh_indices
 )
 
@@ -580,8 +544,6 @@ plotter.camera_position = [(0, 2, 6),
  (0, 1, 0)
 ]
 plotter.show(interactive_update=True, auto_close=False)
-# plotter.show()
-# exit()
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
 rot_copy = gpuarray.zeros(NUM_ABD_BUNNIES * 9, dtype=np.float64)
 trans_copy = gpuarray.zeros(NUM_ABD_BUNNIES * 3, dtype=np.float64)
@@ -619,7 +581,6 @@ for i in range(200):
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   cloth.vertices_free["last_position"].updateValue(cloth.vertices_free["position"].value, deepCopy = True)
   inner_iteration = 0
-  min_inner_iteration_energy = 100000000
   while True:
     print("==================================================================")
     print(f"At iteration {i}, inner iteration {inner_iteration}")
@@ -671,7 +632,7 @@ for i in range(200):
       vertices_soft_position.updateValue(bunny_soft_position_copy - d_pos_soft_bunny * step_taken, deepCopy = True)
       vertices_free["position"].updateValue(cloth_free_position_copy - d_pos_cloth_free * step_taken, deepCopy = True)
 
-  #     # perform collision detection
+      # perform collision detection
       ccd.cd(collision_mesh.vertices["position"].compute().value, DHAT_VALUE) # perform collision detection
       pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
       print("The separated counts are", ccd.separated_counts)
@@ -695,9 +656,6 @@ for i in range(200):
         break
       step_taken = step_taken / 2.0
       substep += 1
-  #   if substep > 8:
-  #     print("failed")
-  #     exit(1)
     print("step taken is", step_taken)
     print("substep is", substep)
     all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
@@ -711,9 +669,6 @@ for i in range(200):
     plotter.render()
     plotter.update()
 
-    # if max(abs(direction_copy * step_taken).get()) < 1e-3:
-    #     print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
-    #     break
     inner_iteration += 1
   new_velocities_abd = (vertices_abd_position.compute().value - vertices_abd_last_position.value) / DT_VALUE
   new_velocities_soft = (vertices_soft_position.compute().value - vertices_soft_last_position.value) / DT_VALUE
@@ -727,6 +682,3 @@ for i in range(200):
   abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
   soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")
   cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
-  # # save the mesh obj file
-  # bunny_poly0.save(f"outputs/bunny_abd_soft0_{i:04d}.obj")
-  # bunny_poly1.save(f"outputs/bunny_abd_soft1_{i:04d}.obj")
