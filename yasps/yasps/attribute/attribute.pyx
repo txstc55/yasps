@@ -104,6 +104,7 @@ class attribute:
     self.__globalKernel: Optional[globalKernel] = None
     self.__isFloatMat = None
     self.__generate_code: bool = generate_code
+    self.__disable_array_access: bool = False
     # self.__is_dynamic = is_dynamic
 
 
@@ -374,6 +375,14 @@ class attribute:
   def generate_code(self, value: bool):
       self.__generate_code = bool(value)
 
+  @property
+  def disable_array_access(self) -> bool:
+    return self.__disable_array_access
+
+  @disable_array_access.setter
+  def disable_array_access(self, value: bool):
+    self.__disable_array_access = bool(value)
+
   ################################################
   ################################################
   #     SOME METHODS
@@ -454,7 +463,7 @@ class attribute:
         return self.children[0][col, row]
       if self.isFloatMat:
         return self.children[index]
-      if self.operator == ARRAY:
+      if self.operator == ARRAY and not self.__disable_array_access:
         return self.children[index]
       if self.operator == SELECT:
         # for select, if the two values are the same
