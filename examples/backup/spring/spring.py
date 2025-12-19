@@ -4,20 +4,20 @@ import numpy as np
 import math
 s0 = scene("scene0")
 spring_system = s0.addMesh("spring_system")
-spring_system.addAttribute("block_mass", rows = 1, cols = 1)
+spring_system.addConstant("block_mass", rows = 1, cols = 1)
 
 # we first add the top spring, which hangs from the ceiling
 top_spring = spring_system.addPrimitive("top_spring", numInstances = 1)
 top_spring.addAttribute("angle", rows = 1, cols = 1) # angle between each segment for the top most spring
-top_spring.addAttribute("segment_length", rows = 1, cols = 1)
-top_spring.addAttribute("segment_count", rows = 1, cols = 1)
+top_spring.addConstant("segment_length", rows = 1, cols = 1)
+top_spring.addConstant("segment_count", rows = 1, cols = 1)
 top_spring.addAttribute("top_spring_end_point_y", computed_attribute = -0.5 - top_spring["angle"].sin() * top_spring["segment_length"] *  (top_spring["segment_count"] - 1.0) - 0.5) # the first -0.5 is distance from ceiling, the second -0.5 is from the end of the spring to the middle of the level
 
 # we now add the lever
 lever = spring_system.addPrimitive("lever", numInstances = 1)
 lever_to_top_spring = lever.addConnectivity("lever_to_top_spring", top_spring, [0], 1) # define the relationship from the lever to the top spring
 lever.addAttribute("middle_point_y", through = lever_to_top_spring, source = top_spring["top_spring_end_point_y"])
-lever.addAttribute("length", rows = 1, cols = 1)
+lever.addConstant("length", rows = 1, cols = 1)
 lever.addAttribute("angle", rows = 1, cols = 1)
 lever.addAttribute("right_end_y", computed_attribute = lever["middle_point_y"] - 0.5 * lever["length"] * lever["angle"].sin())
 lever.addAttribute("left_end_y", computed_attribute = lever["middle_point_y"] + 0.5 * lever["length"] * lever["angle"].sin())
@@ -28,25 +28,25 @@ lever.addAttribute("left_end_x", computed_attribute = -0.5 * lever["length"] * l
 right_spring = spring_system.addPrimitive("right_spring", numInstances = 1)
 right_spring_to_lever = right_spring.addConnectivity("right_spring_to_lever", lever, [0], 1)
 right_spring.addAttribute("angle", rows = 1, cols = 1) # angle between each segment for the right most spring
-right_spring.addAttribute("segment_length", rows = 1, cols = 1)
-right_spring.addAttribute("segment_count", rows = 1, cols = 1)
+right_spring.addConstant("segment_length", rows = 1, cols = 1)
+right_spring.addConstant("segment_count", rows = 1, cols = 1)
 right_spring.addAttribute("end_x", through = right_spring_to_lever, source = lever["right_end_x"])
 right_spring.addAttribute("top_y", through = right_spring_to_lever, source = lever["right_end_y"])
 right_spring.addAttribute("end_y", computed_attribute = right_spring["top_y"] - right_spring["segment_length"] * (right_spring["segment_count"] - 1.0) * right_spring["angle"].sin())
-right_spring.addAttribute("velocity", rows = 2, cols = 1) # for inertia
-right_spring.addAttribute("last_position", rows = 2, cols = 1) # for inertia
+right_spring.addConstant("velocity", rows = 2, cols = 1) # for inertia
+right_spring.addConstant("last_position", rows = 2, cols = 1) # for inertia
 
 # we now add the spring on the left side
 left_spring = spring_system.addPrimitive("left_spring", numInstances = 1)
 left_spring_to_lever = left_spring.addConnectivity("left_spring_to_lever", lever, [0], 1)
 left_spring.addAttribute("angle", rows = 1, cols = 1) # angle between each segment for the left most spring
-left_spring.addAttribute("segment_length", rows = 1, cols = 1)
-left_spring.addAttribute("segment_count", rows = 1, cols = 1)
+left_spring.addConstant("segment_length", rows = 1, cols = 1)
+left_spring.addConstant("segment_count", rows = 1, cols = 1)
 left_spring.addAttribute("end_x", through = left_spring_to_lever, source = lever["left_end_x"])
 left_spring.addAttribute("top_y", through = left_spring_to_lever, source = lever["left_end_y"])
 left_spring.addAttribute("end_y", computed_attribute = left_spring["top_y"] - left_spring["segment_length"] * (left_spring["segment_count"] - 1.0) * left_spring["angle"].sin())
-left_spring.addAttribute("velocity", rows = 2, cols = 1) # for inertia
-left_spring.addAttribute("last_position", rows = 2, cols = 1) # for inertia
+left_spring.addConstant("velocity", rows = 2, cols = 1) # for inertia
+left_spring.addConstant("last_position", rows = 2, cols = 1) # for inertia
 
 def inertia(v0, vel, dt, x, mass):
   # v0 is the position we got before

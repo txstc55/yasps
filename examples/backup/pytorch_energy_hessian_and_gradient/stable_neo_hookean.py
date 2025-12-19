@@ -1,15 +1,16 @@
 import torch
-import torch.autograd.functional as F_autograd
 import numpy as np
-import time
 
-# Check if CUDA is available
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+# ============================
+# Setup
+# ============================
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
+torch.set_default_dtype(torch.float64)
 
-########################################
-# Step 1: initialize data
-########################################
+# ============================
+# Input (one tet)
+# ============================
 rest_position_np = np.array([
     [0.8168341,  -0.57334204, -0.28303627],
     [0.9386871,  -0.60033335, -0.10815139],
@@ -24,108 +25,145 @@ current_position_np = np.array([
     [1.00758576, -0.53429907,  0.43997285]
 ], dtype=np.float64)
 
-tet_indices = np.array([[0, 1, 2, 3]])
+rest_tet = torch.tensor(rest_position_np, device=device)      # (4,3)
+curr_tet = torch.tensor(current_position_np, device=device)   # (4,3)
 
-########################################
-# Initialize Tensors on GPU
-########################################
-rest_position = torch.tensor(rest_position_np, dtype=torch.float64, device=device, requires_grad=False)
-current_position = torch.tensor(current_position_np, dtype=torch.float64, device=device, requires_grad=True)
-tets = torch.tensor(tet_indices, dtype=torch.int64, device=device)
+mu  = torch.tensor(2000.0, device=device)
+lam = torch.tensor(1000.0, device=device)
 
-rest_tet_pos = rest_position[tets]       # Shape: (T, 4, 3)
-current_tet_pos = current_position[tets] # Shape: (T, 4, 3)
-
-########################################
-# Stable Neo-Hookean Energy
-########################################
-def stable_neo_hookean_energy(current_tet_pos, rest_tet_pos, mu, lam):
-    x0 = rest_tet_pos[:, 0, :]
-    x1 = rest_tet_pos[:, 1, :]
-    x2 = rest_tet_pos[:, 2, :]
-    x3 = rest_tet_pos[:, 3, :]
+# ============================
+# Rest precompute (B^-1 and volume)
+# ============================
+def precompute_rest_invariants(r):
+    """
+    r: (T,4,3)
+    returns:
+      IB:  (T,3,3)  inverse rest matrix
+      vol: (T,)     rest volume
+    """
+    x0, x1, x2, x3 = r[:, 0, :], r[:, 1, :], r[:, 2, :], r[:, 3, :]
     X0 = x1 - x0
     X1 = x2 - x0
     X2 = x3 - x0
-    B = torch.stack([X0, X1, X2], dim=2)
+    B  = torch.stack([X0, X1, X2], dim=2)            # (T,3,3)
     detB = torch.linalg.det(B)
-    vol = detB / 6.0
-    IB = torch.linalg.inv(B)
+    vol  = detB / 6.0                                # (T,)
+    IB   = torch.linalg.inv(B)                       # (T,3,3)
+    return IB, vol
 
-    y0 = current_tet_pos[:, 0, :]
-    y1 = current_tet_pos[:, 1, :]
-    y2 = current_tet_pos[:, 2, :]
-    y3 = current_tet_pos[:, 3, :]
+# ============================
+# Stable Neo-Hookean using precomputed rest invariants
+# ============================
+def stable_neo_hookean_energy_precomp(x, IB, vol, mu, lam):
+    """
+    x:   (T,4,3)    (requires_grad=True)
+    IB:  (T,3,3)    (constant, detached)
+    vol: (T,)       (constant, detached)
+    returns: (T,)
+    """
+    y0, y1, y2, y3 = x[:, 0, :], x[:, 1, :], x[:, 2, :], x[:, 3, :]
     Y0 = y1 - y0
     Y1 = y2 - y0
     Y2 = y3 - y0
-    F = torch.stack([Y0, Y1, Y2], dim=2)
+    F  = torch.stack([Y0, Y1, Y2], dim=2)            # (T,3,3)
 
     FI = torch.bmm(F, IB)
-    J = torch.linalg.det(FI)
-    IC = torch.sum(FI * FI, dim=[1, 2])
+    J  = torch.linalg.det(FI)
+    IC = torch.sum(FI * FI, dim=(1, 2))
     I3 = IC + 1.0
+
     shift = 1.0 + 0.75 * (mu / lam)
+    return vol * (0.5 * mu * (IC - 3.0) - 0.5 * mu * torch.log(I3) + 0.5 * lam * (J - shift) ** 2)
 
-    energy = vol * (0.5 * mu * (IC - 3.0) - 0.5 * mu * torch.log(I3) + 0.5 * lam * (J - shift) ** 2)
-    return energy
+# ============================
+# Benchmark sizes
+# ============================
+N  = 79_935
+Nh = 79_935     # keep Hessians smaller; (79,935,12,12) is huge + slow
 
-########################################
-# Batch Energy Function
-########################################
-def batch_tet_energy(current_tet_pos, rest_tet_pos, mu, lam, num_iterations=1):
-    x = current_tet_pos.repeat(num_iterations, 1, 1)
-    rest = rest_tet_pos.repeat(num_iterations, 1, 1)
-    multipliers = torch.arange(1, num_iterations + 1, dtype=torch.float64, device=device)
-    energies = stable_neo_hookean_energy(x, rest, mu, lam) * multipliers
-    print("Energy check")
-    print(energies[0])
-    return energies.sum()
+# ============================
+# Build independent batches
+# ============================
+r_batch = rest_tet.unsqueeze(0).expand(N, -1, -1).contiguous()
 
-########################################
-# Prepare Inputs for Gradient/Hessian
-########################################
-mu = torch.tensor(2000.0, dtype=torch.float64, device=device)
-lam = torch.tensor(1000.0, dtype=torch.float64, device=device)
+gen = torch.Generator(device=device)
+gen.manual_seed(0)
+noise = 1e-3 * torch.randn((N, 4, 3), device=device, generator=gen)
+x_batch = (curr_tet.unsqueeze(0).expand(N, -1, -1).contiguous() + noise).requires_grad_(True)
 
-rest_single_tet = rest_tet_pos[0:1]
-current_single_tet = current_tet_pos[0:1].clone().detach().requires_grad_(True)
-NUM_TETS = 1
+# Precompute + detach rest invariants (IMPORTANT)
+with torch.no_grad():
+    IB_batch, vol_batch = precompute_rest_invariants(r_batch)
+IB_batch = IB_batch.detach()
+vol_batch = vol_batch.detach()
 
-########################################
-# Gradient Computation
-########################################
-torch.cuda.synchronize()
-start_time = time.time()
+# Hessian subset
+x_h = x_batch[:Nh].contiguous()
+IB_h = IB_batch[:Nh].contiguous()
+vol_h = vol_batch[:Nh].contiguous()
+x_flat_h = x_h.reshape(Nh, 12)
 
-for _ in range(1):
-    grad = torch.autograd.grad(
-        batch_tet_energy(current_single_tet, rest_single_tet, mu, lam, num_iterations=NUM_TETS),
-        current_single_tet,
-        create_graph=True
+# ============================
+# Timing helper (CUDA events)
+# ============================
+def cuda_time_ms(fn, iters=50):
+    out = fn()
+    torch.cuda.synchronize()
+    start = torch.cuda.Event(enable_timing=True)
+    end   = torch.cuda.Event(enable_timing=True)
+    start.record()
+    for _ in range(iters):
+        out = fn()
+    end.record()
+    torch.cuda.synchronize()
+    return start.elapsed_time(end) / iters, out
+
+# ============================
+# Energy benchmark (N)
+# ============================
+def energy_call():
+    return stable_neo_hookean_energy_precomp(x_batch, IB_batch, vol_batch, mu, lam)
+
+energy_ms, E = cuda_time_ms(energy_call, iters=50)
+print(f"Energy: {energy_ms:.3f} ms/call, E shape={tuple(E.shape)}")
+
+# ============================
+# Gradient benchmark (N)
+# ============================
+def grad_call():
+    total = stable_neo_hookean_energy_precomp(x_batch, IB_batch, vol_batch, mu, lam).sum()
+    g = torch.autograd.grad(total, x_batch, create_graph=False)[0]
+    return g
+
+grad_ms, G = cuda_time_ms(grad_call, iters=50)
+print(f"Grad:   {grad_ms:.3f} ms/call, G shape={tuple(G.shape)}")
+
+# ============================
+# Hessian benchmark (Nh) - per-instance 12x12 blocks
+# ============================
+from torch.func import vmap, hessian
+
+def single_energy_flat(IB_single, vol_single, x_flat):
+    """
+    IB_single:  (3,3)
+    vol_single: () or (1,) scalar
+    x_flat:     (12,)
+    returns scalar energy
+    """
+    x = x_flat.reshape(4, 3)
+    e = stable_neo_hookean_energy_precomp(
+        x.unsqueeze(0),
+        IB_single.unsqueeze(0),
+        vol_single.reshape(1),
+        mu, lam
     )
+    return e[0]
 
-torch.cuda.synchronize()
-end_time = time.time()
+single_hess = hessian(single_energy_flat, argnums=2)  # Hessian wrt x_flat -> (12,12)
+batched_hess = vmap(single_hess, in_dims=(0, 0, 0))   # (Nh,12,12)
 
-print(f"Gradient computation time for {NUM_TETS} tets: {(end_time - start_time) * 1000 / 100:.5f} ms")
-print("Gradient:", grad[0].detach().cpu().numpy())
+def hess_call():
+    return batched_hess(IB_h, vol_h, x_flat_h)
 
-########################################
-# Hessian Computation
-########################################
-def energy_wrapper(x_flat):
-    x_reshaped = x_flat.view(1, 4, 3)
-    return batch_tet_energy(x_reshaped, rest_single_tet, mu, lam, num_iterations=NUM_TETS)
-
-x_flat = current_single_tet.view(-1).clone().detach().to(device).requires_grad_(True)
-
-torch.cuda.synchronize()
-start_time = time.time()
-hessian = F_autograd.hessian(energy_wrapper, x_flat)
-torch.cuda.synchronize()
-end_time = time.time()
-
-print(f"Hessian computation time for {NUM_TETS} tets: {(end_time - start_time) * 1000:.5f} ms")
-print("Hessian shape:", hessian.shape)
-print(hessian.detach().cpu().numpy())
+hess_ms, H = cuda_time_ms(hess_call, iters=10)
+print(f"Hess:   {hess_ms:.3f} ms/call, H shape={tuple(H.shape)}")

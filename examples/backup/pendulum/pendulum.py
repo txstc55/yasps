@@ -22,7 +22,7 @@ for i in range(SEGMENT_COUNT):
   # local quaternion
   segment.addAttribute("w", rows = 1, cols = 1)
   segment.addAttribute("z", rows = 1, cols = 1)
-  segment.addAttribute("length", rows = 1, cols = 1)
+  segment.addConstant("length", rows = 1, cols = 1)
   segment["w"].updateValue([math.cos(0)])
   segment["z"].updateValue([math.sin(0)])
   segment["length"].updateValue([1.0])
@@ -37,7 +37,7 @@ segments[2]["z"].updateValue([math.sin(-math.pi / 6)])
 
 # the rest position of segment 0
 segments[0].addAttribute("global_rotation", computed_attribute = quaternion_to_rotation(segments[0]["w"], segments[0]["z"]))
-segments[0].addAttribute("previous_end_position", rows = 2, cols = 1)
+segments[0].addConstant("previous_end_position", rows = 2, cols = 1)
 segments[0]["previous_end_position"].updateValue([0.0, 0.0])
 segments[0].addAttribute("end_point_position", computed_attribute = segments[0]["global_rotation"] * attribute.to_array([attribute(float_value = 0.0), -segments[0]["length"]], rows = 2, cols = 1))
 
@@ -73,7 +73,7 @@ distance_vector = segments[-1]["end_point_position"] - segments[-1]["target_posi
 segments[-1].addAttribute("position_penalty", computed_attribute = (distance_vector.norm() * 1000.0))
 
 
-s0.addEnergy(segments[-1]["position_penalty"], save_intermediate = True)
+s0.addEnergy(segments[-1]["position_penalty"], save_intermediate = False)
 
 def repulsive_energy(p0, p1, o, alpha, beta):
   SE = p1 - p0
