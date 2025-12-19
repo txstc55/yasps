@@ -716,8 +716,8 @@ class attribute:
       reconstructed_mat = evc @ np.diag(ev) @ evc.T
       m = [attribute(float_value = float(x)) for x in reconstructed_mat.flatten()]
       return attribute.to_array(m, self.rows, self.cols)
-    # if spd_method == 0:
-    #   return self
+    if spd_method == 0:
+      return self
     return attribute(children = [self, attribute(index_value = spd_method)], operator = SPD, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
 
 

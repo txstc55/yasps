@@ -144,6 +144,7 @@ def triangle_sphere_collision(v0, v1, v2, center, radius, dHat, kappa):
 vertices, faces = generate_cloth_mesh(6.0, NUM_SEGMENTS)
 vertices = np.array(vertices) + np.array([0.0, 3.0, 0.0])
 faces = np.array(faces)
+print("Num faces:", faces.shape[0])
 edge_to_triangle = {}
 for i in range(faces.shape[0]):
   v0 = faces[i, 0]
@@ -186,9 +187,9 @@ s0 = scene("scene0")
 cloth = s0.addMesh("cloth")
 DT = 0.1
 # add the sphere center and radius
-cloth.addAttribute("sphere_center", rows = 3, cols = 1)
+cloth.addConstant("sphere_center", rows = 3, cols = 1)
 cloth["sphere_center"].updateValue([0.0, 0.0, 0.0])
-cloth.addAttribute("sphere_radius", rows = 1, cols = 1)
+cloth.addConstant("sphere_radius", rows = 1, cols = 1)
 cloth["sphere_radius"].updateValue([1.0])
 
 v = cloth.addPrimitive("vertices", numInstances = vertices.shape[0])
@@ -198,15 +199,15 @@ e = cloth.addPrimitive("edge_pairs", numInstances = len(edge_to_triangle_vertice
 face_connect_vertex = f.addConnectivity("face_to_vertex", v, faces, 3)
 edge_connect_vertex = e.addConnectivity("edge_to_vertex", v, edge_to_triangle_vertices, 4)
 # add position attribute to vertices
-vrp = v.addAttribute("rest_position", rows = 3, cols = 1)
+vrp = v.addConstant("rest_position", rows = 3, cols = 1)
 vrp.updateValue(vertices)
 vp = v.addAttribute("position", rows = 3, cols = 1)
 vp.updateValue(vertices)
-vm = v.addAttribute("mass", rows = 1, cols = 1)
+vm = v.addConstant("mass", rows = 1, cols = 1)
 vm.updateValue(np.ones(vertices.shape[0]) * 10.0 / vertices.shape[0])
-vv = v.addAttribute("velocity", rows = 3, cols = 1)
+vv = v.addConstant("velocity", rows = 3, cols = 1)
 vv.updateValue(np.zeros(vertices.shape))
-vlp = v.addAttribute("last_position", rows = 3, cols = 1)
+vlp = v.addConstant("last_position", rows = 3, cols = 1)
 vlp.updateValue(vp.value.get())
 
 # join values to each triangle
@@ -218,9 +219,9 @@ erp = e.addAttribute("rest_position", through = edge_connect_vertex, source = vr
 ep = e.addAttribute("position", through = edge_connect_vertex, source = vp)
 
 # add attribute to faces
-stretch = f.addAttribute("stretch", rows = 1, cols = 1)
+stretch = f.addConstant("stretch", rows = 1, cols = 1)
 stretch.updateValue(np.ones(len(faces)) * 10000.0)
-shear = f.addAttribute("shear", rows = 1, cols = 1)
+shear = f.addConstant("shear", rows = 1, cols = 1)
 shear.updateValue(np.ones(len(faces)) * 1000.0)
 
 ###################################################
@@ -231,11 +232,11 @@ triangle_collision = f.addAttribute("triangle_collision", computed_attribute = t
 point_collision = v.addAttribute("point_collision", computed_attribute = point_sphere_collision(vp, cloth["sphere_center"], cloth["sphere_radius"], 0.1, 1.0))
 inertia_energy = v.addAttribute("inertia", computed_attribute = inertia(vlp, vv, DT, vp, vm))
 bending_energy = e.addAttribute("bending_energy", computed_attribute = bending(ep, erp, 0.001))
-s0.addEnergy(point_collision)
-s0.addEnergy(triangle_collision)
-s0.addEnergy(bw)
-s0.addEnergy(inertia_energy)
-s0.addEnergy(bending_energy)
+# s0.addEnergy(point_collision)
+# s0.addEnergy(triangle_collision)
+s0.addEnergy(bw, projection_method = 0)
+# s0.addEnergy(inertia_energy)
+# s0.addEnergy(bending_energy)
 s0.addMinimizeTarget([vp])
 
 ###################################################
