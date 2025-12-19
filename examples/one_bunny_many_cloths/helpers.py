@@ -38,6 +38,66 @@ def safe_gpu_sum(arr: gpuarray.GPUArray) -> float:
       return 0.0
   return gpuarray.sum(arr).get()
 
+def generate_cloth_mesh(length_of_square, num_segments):
+  num_vertices_per_side = num_segments + 1
+  # Compute step size along one edge
+  step = length_of_square / num_segments
+  # Generate vertex positions
+  vertices = []
+  for j in range(num_vertices_per_side):
+    for i in range(num_vertices_per_side):
+      x = i * step - length_of_square / 2
+      y = 0.0
+      z = j * step - length_of_square / 2
+      vertices.append((x, y, z))
+  faces = []
+  for j in range(num_segments):
+    for i in range(num_segments):
+      # Calculate the vertex indices
+      v0 = j * num_vertices_per_side + i
+      v1 = v0 + 1
+      v2 = (j + 1) * num_vertices_per_side + i
+      v3 = v2 + 1
+      faces.append((v2, v1, v0))
+      faces.append((v3, v1, v2))
+  return np.array(vertices, dtype = np.float64), np.array(faces, dtype = np.uint32)
+
+def generate_edge_to_vertices_list(faces):
+  edge_to_triangle = {}
+  for i in range(faces.shape[0]):
+    v0 = faces[i, 0]
+    v1 = faces[i, 1]
+    v2 = faces[i, 2]
+    for edge in [(v0, v1), (v1, v2), (v2, v0)]:
+      starting_index = edge[0]
+      ending_index = edge[1]
+      flipped = False
+      if starting_index > ending_index:
+        starting_index, ending_index = ending_index, starting_index
+        flipped = True
+      if (starting_index, ending_index) not in edge_to_triangle:
+        edge_to_triangle[(starting_index, ending_index)] = []
+      edge_to_triangle[(starting_index, ending_index)].append(-i - 1 if flipped else i)
+  edge_to_triangle_vertices = []
+  for item in edge_to_triangle:
+    if len(edge_to_triangle[item]) == 2:
+      indices = [item[0], item[1], -1, -1]
+      for triangle_ind in edge_to_triangle[item]:
+        # determine the third vertex
+        true_ind = triangle_ind
+        if triangle_ind < 0:
+          true_ind = -triangle_ind - 1
+        new_ind = -1
+        for i in range(3):
+          if faces[true_ind, i] != item[0] and faces[true_ind, i] != item[1]:
+            new_ind = faces[true_ind, i]
+            break
+        if triangle_ind < 0:
+          indices[3] = new_ind
+        else:
+          indices[2] = new_ind
+      edge_to_triangle_vertices.append(indices)
+  return np.array(edge_to_triangle_vertices, dtype = np.uint32)
 
 def stable_neo_hookean(tet_position_rest, tet_position, mu, lam, dt):
   # here we compute the rest position deformation gradient
@@ -139,66 +199,7 @@ def affine_energy(rotation):
   return energy
 
 
-def generate_cloth_mesh(length_of_square, num_segments):
-  num_vertices_per_side = num_segments + 1
-  # Compute step size along one edge
-  step = length_of_square / num_segments
-  # Generate vertex positions
-  vertices = []
-  for j in range(num_vertices_per_side):
-    for i in range(num_vertices_per_side):
-      x = i * step - length_of_square / 2
-      y = 0.0
-      z = j * step - length_of_square / 2
-      vertices.append((x, y, z))
-  faces = []
-  for j in range(num_segments):
-    for i in range(num_segments):
-      # Calculate the vertex indices
-      v0 = j * num_vertices_per_side + i
-      v1 = v0 + 1
-      v2 = (j + 1) * num_vertices_per_side + i
-      v3 = v2 + 1
-      faces.append((v2, v1, v0))
-      faces.append((v3, v1, v2))
-  return np.array(vertices, dtype = np.float64), np.array(faces, dtype = np.uint32)
 
-def generate_edge_to_vertices_list(faces):
-  edge_to_triangle = {}
-  for i in range(faces.shape[0]):
-    v0 = faces[i, 0]
-    v1 = faces[i, 1]
-    v2 = faces[i, 2]
-    for edge in [(v0, v1), (v1, v2), (v2, v0)]:
-      starting_index = edge[0]
-      ending_index = edge[1]
-      flipped = False
-      if starting_index > ending_index:
-        starting_index, ending_index = ending_index, starting_index
-        flipped = True
-      if (starting_index, ending_index) not in edge_to_triangle:
-        edge_to_triangle[(starting_index, ending_index)] = []
-      edge_to_triangle[(starting_index, ending_index)].append(-i - 1 if flipped else i)
-  edge_to_triangle_vertices = []
-  for item in edge_to_triangle:
-    if len(edge_to_triangle[item]) == 2:
-      indices = [item[0], item[1], -1, -1]
-      for triangle_ind in edge_to_triangle[item]:
-        # determine the third vertex
-        true_ind = triangle_ind
-        if triangle_ind < 0:
-          true_ind = -triangle_ind - 1
-        new_ind = -1
-        for i in range(3):
-          if faces[true_ind, i] != item[0] and faces[true_ind, i] != item[1]:
-            new_ind = faces[true_ind, i]
-            break
-        if triangle_ind < 0:
-          indices[3] = new_ind
-        else:
-          indices[2] = new_ind
-      edge_to_triangle_vertices.append(indices)
-  return np.array(edge_to_triangle_vertices, dtype = np.uint32)
 
 def angle(v, w, axis):
   theta = 2.0 * (v.cross(w).dot(axis) / axis.norm()).atan2(v.dot(w) + v.norm() * w.norm())

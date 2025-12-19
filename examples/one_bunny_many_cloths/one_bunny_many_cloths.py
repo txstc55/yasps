@@ -133,44 +133,6 @@ for i in range(NUM_SOFT_BUNNIES):
     ])
   position_copy = np.copy(position)
   position_softs.append(np.dot(position_copy * (random.random() * 0.5 + 0.6), rotation_matrix) + translation)
-  # f = open("data/soft_bunny_" + str(i) + ".node", 'w')
-  # f.write(str(NUM_BUNNY_VERTICES) + " 3 0 0\n")
-  # for j in range(NUM_BUNNY_VERTICES):
-  #   f.write(str(j + 1) + " " + str(position_softs[-1][j][0]) + " " + str(position_softs[-1][j][1]) + " " + str(position_softs[-1][j][2]) + "\n")
-  # f.close()
-  # with open(f"data/soft_bunny_{i}.msh", "w") as f:
-  #   num_nodes = position_copy.shape[0]
-  #   # MeshFormat section
-  #   f.write("$MeshFormat\n")
-  #   f.write("2.2 0 8\n")  # version 2.2, ascii, sizeof(double)=8
-  #   f.write("$EndMeshFormat\n")
-
-  #   # Nodes section
-  #   f.write("$Nodes\n")
-  #   f.write(f"{num_nodes}\n")
-  #   for j in range(num_nodes):
-  #     # Gmsh node numbering is 1-based
-  #     x, y, z = position_softs[-1][j]
-  #     # y += 100000000
-  #     f.write(f"{j+1} {x:.16g} {y:.16g} {z:.16g}\n")
-  #   f.write("$EndNodes\n")
-
-  #   num_tets = tet_indices.shape[0]
-  #   # Elements section
-  #   f.write("$Elements\n")
-  #   f.write(f"{num_tets}\n")
-  #   # Gmsh element type 4 = 4-node tetrahedron
-  #   # We'll use 2 tags (physical + elementary) both = 1
-  #   for eid, tet in enumerate(tet_indices):
-  #     n1, n2, n3, n4 = tet  # these are currently 0-based from bunny.ele
-  #     # convert to 1-based
-  #     n1 += 1
-  #     n2 += 1
-  #     n3 += 1
-  #     n4 += 1
-  #     f.write(f"{eid+1} 4 2 {n1} {n2} {n3} {n4}\n")
-  #   f.write("$EndElements\n")
-# exit()
 
 ##################################################################
 ## We will now construct the cloth
@@ -228,22 +190,11 @@ for i in range(NUM_CLOTH - 1):
 
 positions_cloth = np.vstack([positions_cloth] + positions_cloth_copies)
 triangle_indices_cloth = np.vstack([triangle_indices_cloth] + triangle_indices_cloth_copies)
-# print(positions_cloth.shape)
-# print(triangle_indices_cloth.shape)
 
 
 from helpers import generate_edge_to_vertices_list
 edge_to_vertices_cloth = generate_edge_to_vertices_list(triangle_indices_cloth)
 edge_indices_cloth = extract_edges_from_triangles(triangle_indices_cloth)
-
-# # get it to an obj file
-# f = open("data/cloth.obj", 'w')
-# for i in range(positions_cloth.shape[0]):
-#   f.write("v " + str(positions_cloth[i][0]) + " " + str(positions_cloth[i][1]) + " " + str(positions_cloth[i][2]) + "\n")
-# for i in range(triangle_indices_cloth.shape[0]):
-#   f.write("f " + str(triangle_indices_cloth[i][0] + 1) + " " + str(triangle_indices_cloth[i][1] + 1) + " " + str(triangle_indices_cloth[i][2] + 1) + "\n")
-# f.close()
-# exit()
 
 ##################################################################
 ## construct the scene
@@ -291,18 +242,6 @@ tets_softs2_vertices = tets_softs.addConnectivity("tets_softs2_vertices", vertic
 tets_softs_positions = tets_softs.addAttribute("positions", through = tets_softs2_vertices, source = vertices_soft_position)
 tets_softs_rest_positions = tets_softs.addAttribute("rest_positions", through = tets_softs2_vertices, source = vertices_soft_rest_position)
 
-# # compute volume from tet positions
-# row0 = tets_softs_rest_positions.row(0)
-# row1 = tets_softs_rest_positions.row(1)
-# row2 = tets_softs_rest_positions.row(2)
-# row3 = tets_softs_rest_positions.row(3)
-# x0 = row1 - row0
-# x1 = row2 - row0
-# x2 = row3 - row0
-# TB = attribute.to_array([x0[0], x0[1], x0[2], x1[0], x1[1], x1[2], x2[0], x2[1], x2[2]], rows = 3, cols = 3)
-# vol = TB.transpose().determinant() / 6.0
-# print("volume: ", sum(vol.compute().value.get()))
-# exit()
 
 tets_softs["mu_softs"].updateValue(np.array([[MU_VALUE_SOFTS[i]] * NUM_BUNNY_TETS for i in range(NUM_SOFT_BUNNIES)], dtype = np.float64).flatten())
 tets_softs["lambda_softs"].updateValue(np.array([[LAMBDA_VALUE_SOFTS[i]] * NUM_BUNNY_TETS for i in range(NUM_SOFT_BUNNIES)], dtype = np.float64).flatten())

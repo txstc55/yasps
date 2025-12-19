@@ -98,11 +98,6 @@ NUM_BUNNY_TETS = tet_indices.shape[0]
 NUM_BUNNY_SURFACE_TRIANGLES = surface_triangle_indices_bunny.shape[0]
 NUM_BUNNY_EDGES = edge_indices_bunny.shape[0]
 NUM_BUNNY_SURFACE_INDICES = len(surface_indices_bunny)
-print("Number of bunny vertices: ", NUM_BUNNY_VERTICES)
-print("Number of bunny tets: ", NUM_BUNNY_TETS)
-print("Number of bunny surface triangles: ", NUM_BUNNY_SURFACE_TRIANGLES)
-print("Number of bunny edges: ", NUM_BUNNY_EDGES)
-print("Number of bunny surface indices: ", NUM_BUNNY_SURFACE_INDICES)
 
 
 ##################################################################
@@ -578,6 +573,28 @@ s0.addEnergy(pt, dynamic_instances = True, projection_method = 2, separate_hessi
 s0.addEnergy(ee, dynamic_instances = True, projection_method = 2, separate_hessian_jacobian = True)
 s0.addMinimizeTarget([abds_abd_matrices, abds_translations, vertices_soft_position, vertices_free_position, cvp])
 
+def compute_total_energy():
+  total_energy = 0.0
+  total_energy += gpuarray.sum(snh_abds.compute().value).get()
+  total_energy += gpuarray.sum(snh_softs.compute().value).get()
+  total_energy += gpuarray.sum(snh_cage.compute().value).get()
+  total_energy += gpuarray.sum(affine.compute().value).get()
+  total_energy += gpuarray.sum(inertia_abds.compute().value).get()
+  total_energy += gpuarray.sum(inertia_softs.compute().value).get()
+  total_energy += gpuarray.sum(inertia_cage.compute().value).get()
+  total_energy += gpuarray.sum(inertia_free.compute().value).get()
+  total_energy += gpuarray.sum(bending_energy.compute().value).get()
+  total_energy += gpuarray.sum(baraff_witkin_energy.compute().value).get()
+  if pp.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pp.compute().value).get()
+  if pe.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pe.compute().value).get()
+  if pt.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pt.compute().value).get()
+  if ee.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(ee.compute().value).get()
+  return total_energy
+
 ##################################################################
 ## add ccd
 ##################################################################
@@ -681,27 +698,7 @@ bunny_cage_position_copy = bvp.compute().value.copy()
 ccd.cd(position_copy, DHAT_VALUE)
 scene_diag_sqrt = math.sqrt(ccd.get_scene_size_faces())
 
-def compute_total_energy():
-  total_energy = 0.0
-  total_energy += gpuarray.sum(snh_abds.compute().value).get()
-  total_energy += gpuarray.sum(snh_softs.compute().value).get()
-  total_energy += gpuarray.sum(snh_cage.compute().value).get()
-  total_energy += gpuarray.sum(affine.compute().value).get()
-  total_energy += gpuarray.sum(inertia_abds.compute().value).get()
-  total_energy += gpuarray.sum(inertia_softs.compute().value).get()
-  total_energy += gpuarray.sum(inertia_cage.compute().value).get()
-  total_energy += gpuarray.sum(inertia_free.compute().value).get()
-  total_energy += gpuarray.sum(bending_energy.compute().value).get()
-  total_energy += gpuarray.sum(baraff_witkin_energy.compute().value).get()
-  if pp.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(pp.compute().value).get()
-  if pe.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(pe.compute().value).get()
-  if pt.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(pt.compute().value).get()
-  if ee.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(ee.compute().value).get()
-  return total_energy
+
 
 
 for i in range(200):

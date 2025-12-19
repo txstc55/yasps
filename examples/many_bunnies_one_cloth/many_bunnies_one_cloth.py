@@ -1,6 +1,6 @@
 from yasps import scene
 from yasps import attribute
-from helpers import extract_surface_triangles, inertia, extract_edges_from_triangles, abs_max_reduce
+from helpers import extract_surface_triangles, inertia, extract_edges_from_triangles
 import math
 import numpy as np
 import sys
@@ -364,8 +364,6 @@ vertices_fixed_position.updateValue(positions_cloth[:4].flatten())
 vertices_fixed_rest_position.updateValue(positions_cloth[:4].flatten())
 vertices_fixed_last_position.updateValue(positions_cloth[:4].flatten())
 
-
-
 vertices_free = cloth.addPrimitive("vertices_free", numInstances = positions_cloth.shape[0] - 4)
 vertices_free_position = vertices_free.addAttribute("position", rows = 3, cols = 1)
 vertices_free_rest_position = vertices_free.addConstant("rest_position", rows = 3, cols = 1)
@@ -470,6 +468,25 @@ s0.addEnergy(pt, dynamic_instances = True, projection_method = 2)
 s0.addEnergy(ee, dynamic_instances = True, projection_method = 2)
 s0.addMinimizeTarget([abds_abd_matrices, abds_translations, vertices_soft_position, vertices_free_position])
 
+def compute_total_energy():
+  total_energy = 0.0
+  total_energy += gpuarray.sum(snh_abds.compute().value).get()
+  total_energy += gpuarray.sum(snh_softs.compute().value).get()
+  total_energy += gpuarray.sum(affine.compute().value).get()
+  total_energy += gpuarray.sum(inertia_abds.compute().value).get()
+  total_energy += gpuarray.sum(inertia_softs.compute().value).get()
+  total_energy += gpuarray.sum(inertia_free.compute().value).get()
+  total_energy += gpuarray.sum(bending_energy.compute().value).get()
+  total_energy += gpuarray.sum(baraff_witkin_energy.compute().value).get()
+  if pp.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pp.compute().value).get()
+  if pe.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pe.compute().value).get()
+  if pt.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(pt.compute().value).get()
+  if ee.correspondance.numInstances > 0:
+    total_energy += gpuarray.sum(ee.compute().value).get()
+  return total_energy
 ##################################################################
 ## add ccd
 ##################################################################
@@ -544,6 +561,8 @@ plotter.camera_position = [(0, 2, 6),
  (0, 1, 0)
 ]
 plotter.show(interactive_update=True, auto_close=False)
+
+
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
 rot_copy = gpuarray.zeros(NUM_ABD_BUNNIES * 9, dtype=np.float64)
 trans_copy = gpuarray.zeros(NUM_ABD_BUNNIES * 3, dtype=np.float64)
@@ -555,25 +574,7 @@ cloth_free_position_copy = vertices_free["position"].compute().value.copy()
 ccd.cd(position_copy, DHAT_VALUE)
 scene_diag_sqrt = math.sqrt(ccd.get_scene_size_faces())
 
-def compute_total_energy():
-  total_energy = 0.0
-  total_energy += gpuarray.sum(snh_abds.compute().value).get()
-  total_energy += gpuarray.sum(snh_softs.compute().value).get()
-  total_energy += gpuarray.sum(affine.compute().value).get()
-  total_energy += gpuarray.sum(inertia_abds.compute().value).get()
-  total_energy += gpuarray.sum(inertia_softs.compute().value).get()
-  total_energy += gpuarray.sum(inertia_free.compute().value).get()
-  total_energy += gpuarray.sum(bending_energy.compute().value).get()
-  total_energy += gpuarray.sum(baraff_witkin_energy.compute().value).get()
-  if pp.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(pp.compute().value).get()
-  if pe.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(pe.compute().value).get()
-  if pt.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(pt.compute().value).get()
-  if ee.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(ee.compute().value).get()
-  return total_energy
+
 
 
 for i in range(200):
