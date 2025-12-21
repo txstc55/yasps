@@ -878,12 +878,12 @@ class attribute:
     if self.__globalKernel is None:
       from yasps.codeGenerator import codeGenerator
       from yasps.globalKernel import globalKernel
-      start_generator = time.time()
+      # start_generator = time.time()
       codegen: codeGenerator = codeGenerator(self) # this will generate the string for the device kernel and all of its descendants
       codegen.generateCode()
-      end_generator = time.time()
+      # end_generator = time.time()
       # print time in ms
-      print(f"Code generation time: {(end_generator - start_generator) * 1000.0:.5f} ms")
+      # print(f"Code generation time: {(end_generator - start_generator) * 1000.0:.5f} ms")
 
       # now add the global kernel
       self.__globalKernel = globalKernel(self)
