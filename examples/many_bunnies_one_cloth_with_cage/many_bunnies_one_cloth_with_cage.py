@@ -1,6 +1,6 @@
 from yasps import scene
 from yasps import attribute
-from helpers import extract_surface_triangles, inertia, extract_edges_from_triangles, abs_max_reduce
+from helpers import extract_surface_triangles, inertia, extract_edges_from_triangles
 import math
 import numpy as np
 import sys

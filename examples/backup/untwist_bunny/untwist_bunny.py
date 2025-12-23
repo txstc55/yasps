@@ -24,7 +24,7 @@ def extract_surface_triangles(tets):
 ##################################################
 ## read the bunny file
 ##################################################
-f = open("../data/bunny.ele", 'r')
+f = open("../../data/bunny.ele", 'r')
 f.readline()
 tet_indices = []
 for line in f:
@@ -32,7 +32,7 @@ for line in f:
 f.close()
 tet_indices = np.array(tet_indices)
 
-f = open("../data/bunny.node", 'r')
+f = open("../../data/bunny.node", 'r')
 f.readline()
 position = []
 for line in f:
@@ -42,6 +42,41 @@ position = np.array(position, dtype = np.float64)
 # center the bunny
 center = np.mean(position, axis = 0)
 position -= center
+
+##################################################
+## Gnerate N copies
+##################################################
+num_bunnies = 20
+tet_indices_total = []
+position_total = []
+for i in range(num_bunnies):
+  tet_indices_total.append(tet_indices + i * position.shape[0])
+  position_total.append(position)
+
+# now we generate permutation
+tet_indices = np.vstack(tet_indices_total)
+position = np.vstack(position_total)
+
+N = position.shape[0]
+
+# permutation_indices: old indices in the new order
+permutation_indices = np.random.permutation(N)
+
+# 1) reorder vertices
+position_reordered = position[permutation_indices]
+
+# 2) build inverse permutation: old -> new
+inv_perm = np.empty(N, dtype=np.int64)
+inv_perm[permutation_indices] = np.arange(N, dtype=np.int64)
+
+# 3) remap tet indices (each entry is an old vertex index)
+tet_indices_reordered = inv_perm[tet_indices]
+
+# (optional) overwrite originals
+position = position_reordered
+tet_indices = tet_indices_reordered
+
+
 
 ##################################################
 # rotate the position and translate it a bit
@@ -87,12 +122,12 @@ tet_to_vertex = bunny.tet.addConnectivity("tet_to_vertex", bunny.vertex, tet_ind
 ##################################################
 ## add attributes to bunny
 ##################################################
-roll = bunny.addAttribute("roll", rows = 1, cols = 1) # for rotation
-pitch = bunny.addAttribute("pitch", rows = 1, cols = 1) # for rotation
-yaw = bunny.addAttribute("yaw", rows = 1, cols = 1) # for rotation
-mu = bunny.addAttribute("mu", rows = 1, cols = 1) # for stable neo hookean
-lam = bunny.addAttribute("lam", rows = 1, cols = 1) # for stable neo hookean
-translation = bunny.addAttribute("translation", rows = 3, cols = 1) # for translation
+roll = bunny.addConstant("roll", rows = 1, cols = 1) # for rotation
+pitch = bunny.addConstant("pitch", rows = 1, cols = 1) # for rotation
+yaw = bunny.addConstant("yaw", rows = 1, cols = 1) # for rotation
+mu = bunny.addConstant("mu", rows = 1, cols = 1) # for stable neo hookean
+lam = bunny.addConstant("lam", rows = 1, cols = 1) # for stable neo hookean
+translation = bunny.addConstant("translation", rows = 3, cols = 1) # for translation
 
 roll.updateValue([0.0])
 pitch.updateValue([0.0])
@@ -120,7 +155,7 @@ rot = bunny.addAttribute("rotation_matrix", computed_attribute = rotation_matrix
 ##################################################
 ## add position to bunny
 ##################################################
-bunny.vertex.addAttribute("rest_position", rows = 3, cols = 1,)
+bunny.vertex.addConstant("rest_position", rows = 3, cols = 1,)
 bunny.vertex["rest_position"].updateValue(position)
 bunny.vertex.addAttribute("current_position", rows = 3, cols = 1)
 bunny.vertex["current_position"].updateValue(moved_position)
@@ -147,9 +182,9 @@ x2 = row3 - row0
 TB = attribute.to_array([x0[0], x0[1], x0[2], x1[0], x1[1], x1[2], x2[0], x2[1], x2[2]], rows = 3, cols = 3)
 vol = TB.transpose().determinant() / 6.0
 IB = TB.transpose().inverse()
-bunny.tet.addAttribute("vol", rows = 1, cols = 1)
+bunny.tet.addConstant("vol", rows = 1, cols = 1)
 bunny.tet["vol"].updateValue(vol.compute().value.get())
-bunny.tet.addAttribute("IB", rows = 3, cols = 3)
+bunny.tet.addConstant("IB", rows = 3, cols = 3)
 bunny.tet["IB"].updateValue(IB.compute().value.get())
 
 # add deformation gradient
@@ -188,16 +223,16 @@ def stable_neo_hookean(mu, lam, vol, IB, F):
 bunny.vertex.addAttribute("position_penalty", computed_attribute = (bunny.vertex["rotated_position"] - bunny.vertex["rest_position"]).dot(bunny.vertex["rotated_position"] - bunny.vertex["rest_position"]))
 snh = tet_deform.addAttribute("stable_neo_hookean", computed_attribute = stable_neo_hookean(bunny["mu"], bunny["lam"], vol, IB, deformation))
 
-minimizer0 = minimizer()
+# minimizer0 = minimizer()
 minimizer1 = minimizer()
 
-minimizer0.addEnergy(bunny.vertex["position_penalty"])
-minimizer1.addEnergy(snh, dynamic_instances = True)
+# minimizer0.addEnergy(bunny.vertex["position_penalty"])
+minimizer1.addEnergy(snh)
 
-minimizer0.addWrt([bunny["roll"], bunny["pitch"], bunny["yaw"], bunny["translation"]])
+# minimizer0.addWrt([bunny["roll"], bunny["pitch"], bunny["yaw"], bunny["translation"]])
 minimizer1.addWrt([bunny.vertex["current_position"]])
 
-minimizer0.generateHessianAndGradient()
+# minimizer0.generateHessianAndGradient()
 minimizer1.generateHessianAndGradient()
 
 
@@ -222,22 +257,22 @@ iteration = 0
 weight = 0.1
 def update_position():
   global total_frames
-  result0 = minimizer0.computeSolution()
+  # result0 = minimizer0.computeSolution()
   result1 = minimizer1.computeSolution()
-  d_roll = result0[0].get()
-  d_pitch = result0[1].get()
-  d_yaw = result0[2].get()
-  d_translation = result0[3].get().flatten()
+  # d_roll = result0[0].get()
+  # d_pitch = result0[1].get()
+  # d_yaw = result0[2].get()
+  # d_translation = result0[3].get().flatten()
   d_position = result1[0].get().flatten()
-  roll_new_value = bunny["roll"].value.get() - weight * d_roll
-  pitch_new_value = bunny["pitch"].value.get() - weight * d_pitch
-  yaw_new_value = bunny["yaw"].value.get() - weight * d_yaw
-  translation_new_value = bunny["translation"].value.get().flatten() - weight * d_translation
+  # roll_new_value = bunny["roll"].value.get() - weight * d_roll
+  # pitch_new_value = bunny["pitch"].value.get() - weight * d_pitch
+  # yaw_new_value = bunny["yaw"].value.get() - weight * d_yaw
+  # translation_new_value = bunny["translation"].value.get().flatten() - weight * d_translation
   position_new_value = bunny.vertex["current_position"].value.get().flatten() - 0.1 * d_position
-  bunny["pitch"].updateValue(roll_new_value)
-  bunny["roll"].updateValue(pitch_new_value)
-  bunny["yaw"].updateValue(yaw_new_value)
-  bunny["translation"].updateValue(translation_new_value)
+  # bunny["pitch"].updateValue(roll_new_value)
+  # bunny["roll"].updateValue(pitch_new_value)
+  # bunny["yaw"].updateValue(yaw_new_value)
+  # bunny["translation"].updateValue(translation_new_value)
   bunny.vertex["current_position"].updateValue(position_new_value)
   new_positions = bunny.vertex["rotated_position"].compute().value.get().flatten()
   # Update the mesh points
