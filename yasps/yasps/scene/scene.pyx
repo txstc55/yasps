@@ -194,3 +194,6 @@ class scene:
       raise ValueError(f"scene.addMinimizeTarget: target is missing attributes {missing} that are required by the energies added.")
     self.__minimizer.addWrt(target)
     self.__minimizer.generateHessianAndGradient()
+
+  def computeTotalEnergy(self) -> float:
+    return self.__minimizer.computeTotalEnergy()
