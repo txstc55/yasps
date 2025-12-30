@@ -1,16 +1,19 @@
 # cython: language_level=3
 from __future__ import annotations
-from typing import List, Tuple
+from typing import List, Tuple, Set
 import pycuda.gpuarray as gpuarray
 import ctypes
 import numpy as np
 import pycuda.driver as cuda
 import os
+import hashlib
+import json
 
 class solverKernel:
   def __init__(self, blockDimensions: List[int]):
     self.__max_row_size = 0
     self.__cg_kernel = None
+    self.__saved_block_dimensions = set([])
     self.__init_kernel(blockDimensions)
 
   def updateBlockDimensions(self, blockDimensions: List[int]):
@@ -18,44 +21,82 @@ class solverKernel:
 
 
   def __init_kernel(self, blockDimensions: List[int]):
-    max_modded_row_size = (max(blockDimensions[::2]) + 2) // 3 * 3
-    if max_modded_row_size > self.__max_row_size:
+    # convert blockDimensions to a tuple of int, int
+    blockDimensionsTuples = []
+    for i in range(len(blockDimensions) // 2):
+      blockDimensionsTuples.append((blockDimensions[i * 2], blockDimensions[i * 2 + 1]))
+    blockDimensionsTuplesSet = set(blockDimensionsTuples)
+    # print("Old block dimensions is", self.__saved_block_dimensions)
+    # print("New block dimensions is", blockDimensionsTuplesSet)
+    if blockDimensionsTuplesSet.issubset(self.__saved_block_dimensions):
+      return
+    else:
+      # we may need to create a new kernel
+      self.__saved_block_dimensions.update(blockDimensionsTuplesSet)
+      max_modded_row_size = (max(blockDimensions[::2]) + 2) // 3 * 3
       self.__max_row_size = max_modded_row_size
-      file_name = f".yasps_constant/cg_max_row_size_{self.__max_row_size}"
-      if os.path.exists(f"{file_name}.so"):
-        self.__cg_kernel = ctypes.CDLL(f"{file_name}.so").computeSolution
-        self.__cg_kernel.argtypes = [
-          ctypes.c_uint,   # maxIteration
-          ctypes.c_double, # threshold
-          ctypes.c_void_p, # block_values (device pointer to double)
-          ctypes.c_void_p, # block_positions (device pointer to unsigned int)
-          ctypes.POINTER(ctypes.c_uint), # block_values_start (unsigned int list from numpy array)
-          ctypes.POINTER(ctypes.c_uint), # block_counts (unsigned int list from numpy)
-          ctypes.POINTER(ctypes.c_uint), # block_dimensions (unsigned int list from numpy)
-          ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS
-          ctypes.c_void_p, # block_values_dynamic (device pointer to double)
-          ctypes.c_void_p, # block_positions_dynamic (device pointer to unsigned int)
-          ctypes.POINTER(ctypes.c_uint), # block_values_start_dynamic (unsigned int list from numpy array)
-          ctypes.POINTER(ctypes.c_uint), # block_counts_dynamic (unsigned int list from numpy)
-          ctypes.POINTER(ctypes.c_uint), # block_dimensions_dynamic (unsigned int list from numpy)
-          ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS_DYNAMIC
-          ctypes.c_void_p, # diagonal (device pointer to double)
-          ctypes.c_void_p, # diagonalBlockInverse (device pointer to double)
-          ctypes.POINTER(ctypes.c_uint), # diagonalBlocksStart
-          ctypes.POINTER(ctypes.c_uint), # diagonalBlocksCount
-          ctypes.POINTER(ctypes.c_uint), # diagonalBlocksSize
-          ctypes.POINTER(ctypes.c_uint), # gradientSegmentsStart
-          ctypes.c_int,   # numAttributes
-          ctypes.c_void_p, # gradient (device pointer to double)
-          ctypes.c_uint,   # MATRIX_SIZE
-          ctypes.c_void_p, # d_p1_b (device pointer)
-          ctypes.c_void_p, # d_r (device pointer)
-          ctypes.c_void_p, # d_c (device pointer)
-          ctypes.c_void_p, # d_q (device pointer)
-          ctypes.c_void_p, # d_s (device pointer)
-          ctypes.c_void_p  # solution (device pointer)
-        ]
-        return
+      dimension_to_text = [f'{dim[0]}_{dim[1]}' for dim in blockDimensionsTuplesSet]
+      dimension_to_text = '__'.join(dimension_to_text)
+      file_original_name = f".yasps_constant/cg_dims_{dimension_to_text}"
+      file_hashed_name = f".yasps_constant/cg_dims_{int(hashlib.sha256(dimension_to_text.encode('utf-8')).hexdigest(), 16)}"
+      # now we first record this information in a json file
+      if not os.path.exists(".yasps_constant/cg_dimension_to_file.json"):
+        file_to_dimensions = []
+        with open(".yasps_constant/cg_dimension_to_file.json", "w", encoding="utf-8") as f:
+          json.dump(file_to_dimensions, f, indent=2)
+
+      # now open the json file and see if this dimension_to_text already exists
+      with open(".yasps_constant/cg_dimension_to_file.json", "r", encoding="utf-8") as f:
+        items = json.load(f)
+        in_json_but_no_so = False # false means not in file, true means in file but so file not found
+        for item in items:
+          # we check if the current dimensions has been compiled to a file before
+          seen_dimensions = item["dimensions"]
+          seen_dimensions = [tuple(dim) for dim in seen_dimensions]
+          seen_dimensions = set(seen_dimensions)
+          if self.__saved_block_dimensions.issubset(seen_dimensions):
+            # now we check if the file exists
+            file_hashed_name_existing = item["file_hashed_name"]
+            if os.path.exists(f"{file_hashed_name_existing}.so"):
+              self.__saved_block_dimensions = seen_dimensions
+              self.__cg_kernel = ctypes.CDLL(f"{file_hashed_name_existing}.so").computeSolution
+              self.__cg_kernel.argtypes = [
+                ctypes.c_uint,   # maxIteration
+                ctypes.c_double, # threshold
+                ctypes.c_void_p, # block_values (device pointer to double)
+                ctypes.c_void_p, # block_positions (device pointer to unsigned int)
+                ctypes.POINTER(ctypes.c_uint), # block_values_start (unsigned int list from numpy array)
+                ctypes.POINTER(ctypes.c_uint), # block_counts (unsigned int list from numpy)
+                ctypes.POINTER(ctypes.c_uint), # block_dimensions (unsigned int list from numpy)
+                ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS
+                ctypes.c_void_p, # block_values_dynamic (device pointer to double)
+                ctypes.c_void_p, # block_positions_dynamic (device pointer to unsigned int)
+                ctypes.POINTER(ctypes.c_uint), # block_values_start_dynamic (unsigned int list from numpy array)
+                ctypes.POINTER(ctypes.c_uint), # block_counts_dynamic (unsigned int list from numpy)
+                ctypes.POINTER(ctypes.c_uint), # block_dimensions_dynamic (unsigned int list from numpy)
+                ctypes.c_uint,   # NUM_BLOCK_DIMENSIONS_DYNAMIC
+                ctypes.c_void_p, # diagonal (device pointer to double)
+                ctypes.c_void_p, # diagonalBlockInverse (device pointer to double)
+                ctypes.POINTER(ctypes.c_uint), # diagonalBlocksStart
+                ctypes.POINTER(ctypes.c_uint), # diagonalBlocksCount
+                ctypes.POINTER(ctypes.c_uint), # diagonalBlocksSize
+                ctypes.POINTER(ctypes.c_uint), # gradientSegmentsStart
+                ctypes.c_int,   # numAttributes
+                ctypes.c_void_p, # gradient (device pointer to double)
+                ctypes.c_uint,   # MATRIX_SIZE
+                ctypes.c_void_p, # d_p1_b (device pointer)
+                ctypes.c_void_p, # d_r (device pointer)
+                ctypes.c_void_p, # d_c (device pointer)
+                ctypes.c_void_p, # d_q (device pointer)
+                ctypes.c_void_p, # d_s (device pointer)
+                ctypes.c_void_p  # solution (device pointer)
+              ]
+              return
+            else:
+              in_json_but_no_so = True
+      # if we reach here, we need to compile a new kernel
+      # because either the dimension doesnt exist in the previous compiled files,
+      # or the file is not found
       kernelString: str = '''
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,12 +117,11 @@ inline void cudaAssert(cudaError_t code, const char *file, int line,
   }
 }
 
-extern "C" {
+
+template<unsigned int BLOCK_ROW_SIZE, unsigned int BLOCK_COL_SIZE>
 __device__ __forceinline__ void blockMultiply(const double *blockValues,
                                               const double *x,
-                                              double *y,
-                                              const unsigned int BLOCK_ROW_SIZE,
-                                              const unsigned int BLOCK_COL_SIZE) {
+                                              double *y) {
   // multiply a row
   for (int i = 0; i < BLOCK_ROW_SIZE; i++) {
     for (int j = 0; j < BLOCK_COL_SIZE; j++) {
@@ -89,13 +129,12 @@ __device__ __forceinline__ void blockMultiply(const double *blockValues,
     }
   }
 }
-
+template<unsigned int BLOCK_ROW_SIZE, unsigned int BLOCK_COL_SIZE>
 __device__ __forceinline__ void
 blockMultiplyTranspose(const double *blockValues,
                        const double *x,
-                       double *y,
-                       const unsigned int BLOCK_ROW_SIZE,
-                       const unsigned int BLOCK_COL_SIZE) {
+                       double *y
+                       ) {
   for (int i = 0; i < BLOCK_COL_SIZE; i++) {
     double temp = 0.0;
     for (int j = 0; j < BLOCK_ROW_SIZE; j++) {
@@ -106,23 +145,22 @@ blockMultiplyTranspose(const double *blockValues,
 }
 
 // computes Ax=y where A does not contain any diagonal blocks
+template <unsigned int BLOCK_ROW_SIZE, unsigned int BLOCK_COL_SIZE>
 __global__ void spmvOffDiagonalBlocks(const double *blockValues,
                                       const unsigned int VALUE_START, // where in the block values does this dimension's block start
                                       const unsigned int* positions, // the coordinate of this block
                                       const unsigned int POSITIONS_START, // where does the positions start for this dimension
                                       const unsigned int POSITIONS_END, // where does the positions end for this dimension
                                       const double *x, // the Ax = y
-                                      double *y,
-                                      const unsigned int BLOCK_ROW_SIZE,
-                                      const unsigned int BLOCK_COL_SIZE) {
+                                      double *y) {
   int id = blockIdx.x * blockDim.x + threadIdx.x; // we first get the id of this thread
   int tid = threadIdx.x;
 '''
       kernelString += f'''
-  __shared__ double allResults[{self.__max_row_size} * 32]; // accumulate the multiplied result
+  __shared__ double allResults[BLOCK_ROW_SIZE * 32]; // accumulate the multiplied result
   __shared__ unsigned int rows[32];
   __shared__ unsigned int cols[32];
-  for (int i = tid; i < {self.__max_row_size} * 32; i += 32) {{
+  for (int i = tid; i < BLOCK_ROW_SIZE * 32; i += 32) {{
       allResults[i] = 0.0;
   }}
 '''
@@ -131,7 +169,7 @@ __global__ void spmvOffDiagonalBlocks(const double *blockValues,
     // do the multiplication, and put the result in allresults
     rows[tid] = positions[POSITIONS_START * 2 + id * 2]; // get the coordinate of the block
     cols[tid] = positions[POSITIONS_START * 2 + id * 2 + 1]; // get the coordinate of the block
-    blockMultiply(blockValues + VALUE_START + id * BLOCK_ROW_SIZE * BLOCK_COL_SIZE, x + cols[tid], allResults + tid * BLOCK_ROW_SIZE, BLOCK_ROW_SIZE, BLOCK_COL_SIZE);
+    blockMultiply<BLOCK_ROW_SIZE, BLOCK_COL_SIZE>(blockValues + VALUE_START + id * BLOCK_ROW_SIZE * BLOCK_COL_SIZE, x + cols[tid], allResults + tid * BLOCK_ROW_SIZE);
   }else{
     rows[tid] = 1316134911; // TODO: REPLACE THIS WITH A BETTER VALUE
     cols[tid] = 1316134911;
@@ -144,7 +182,7 @@ __global__ void spmvOffDiagonalBlocks(const double *blockValues,
       // this is usually where the start of a row
 '''
       kernelString += f'''
-      double sum[{self.__max_row_size}] = {{0}}; // initialize the sum
+      double sum[BLOCK_ROW_SIZE] = {{0}}; // initialize the sum
 '''
       kernelString += '''
       for (int i = tid; i < 32 && rows[i] == rows[tid]; i++) {
@@ -163,7 +201,7 @@ __global__ void spmvOffDiagonalBlocks(const double *blockValues,
     unsigned int row = rows[tid];
     unsigned int col = cols[tid];
     if (row != col) {
-      blockMultiplyTranspose(blockValues + VALUE_START + id * BLOCK_ROW_SIZE * BLOCK_COL_SIZE, x + rows[tid], y + cols[tid], BLOCK_ROW_SIZE, BLOCK_COL_SIZE);
+      blockMultiplyTranspose<BLOCK_ROW_SIZE, BLOCK_COL_SIZE>(blockValues + VALUE_START + id * BLOCK_ROW_SIZE * BLOCK_COL_SIZE, x + rows[tid], y + cols[tid]);
     }
   }
 }
@@ -188,14 +226,38 @@ void spmvWithSystem(const double* block_values, // the value of the blocks in th
   unsigned int positions_end = 0;
   for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS; i++){
     positions_end = positions_start + block_counts[i];
-    spmvOffDiagonalBlocks<<<(block_counts[i] + 31) / 32, 32, 0, streams[i]>>>(block_values, block_values_start[i], block_positions, positions_start, positions_end, x, y, block_dimensions[i * 2], block_dimensions[i * 2 + 1]);
+    switch(block_dimensions[i * 2]<< 16 | block_dimensions[i * 2 + 1]){
+'''
+      for dim in self.__saved_block_dimensions:
+        kernelString += f'''
+      case {dim[0]} << 16 | {dim[1]}:
+        spmvOffDiagonalBlocks<{dim[0]}, {dim[1]}><<<(block_counts[i] + 31) / 32, 32, 0, streams[i]>>>(block_values, block_values_start[i], block_positions, positions_start, positions_end, x, y);
+        break;
+'''
+      kernelString += '''
+      default:
+        printf("Unsupported block dimension %d x %d\\n", block_dimensions[i * 2], block_dimensions[i * 2 + 1]);
+        break;
+    }
     positions_start = positions_end;
   }
   positions_start = 0;
   positions_end = 0;
   for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS_DYNAMIC; i++){
     positions_end = positions_start + block_counts_dynamic[i];
-    spmvOffDiagonalBlocks<<<(block_counts_dynamic[i] + 31) / 32, 32, 0, streams[i + NUM_BLOCK_DIMENSIONS]>>>(block_values_dynamic, block_values_start_dynamic[i], block_positions_dynamic, positions_start, positions_end, x, y, block_dimensions_dynamic[i * 2], block_dimensions_dynamic[i * 2 + 1]);
+    switch(block_dimensions_dynamic[i * 2]<< 16 | block_dimensions_dynamic[i * 2 + 1]){
+'''
+      for dim in self.__saved_block_dimensions:
+        kernelString += f'''
+      case {dim[0]} << 16 | {dim[1]}:
+        spmvOffDiagonalBlocks<{dim[0]}, {dim[1]}><<<(block_counts_dynamic[i] + 31) / 32, 32, 0, streams[i + NUM_BLOCK_DIMENSIONS]>>>(block_values_dynamic, block_values_start_dynamic[i], block_positions_dynamic, positions_start, positions_end, x, y);
+        break;
+'''
+      kernelString += '''
+      default:
+        printf("Unsupported dynamic block dimension %d x %d\\n", block_dimensions[i * 2], block_dimensions[i * 2 + 1]);
+        break;
+    }
     positions_start = positions_end;
   }
   // synchronize all streams
@@ -294,7 +356,7 @@ __global__ void vecAddWithScalar(const double *a, const double *b, double *c,
     c[i] = a[i] + b[i] * scalar;
   }
 }
-
+extern "C" {
 int computeSolution(unsigned int maxIteration,
                             double threshold,
                             const double* block_values,
@@ -552,14 +614,13 @@ int computeSolution(unsigned int maxIteration,
 } // close the extern "C"
 '''
       # ok now we compile the kernel by saving it to a file and then calling nvcc
-      file_name = f".yasps_constant/cg_max_row_size_{self.__max_row_size}"
-      f = open(f"{file_name}.cu", 'w')
+      f = open(f"{file_hashed_name}.cu", 'w')
       f.write(kernelString)
       f.close()
 
       # now we compile the kernel
-      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -cudart=shared -lcuda --expt-relaxed-constexpr -std=c++17")
-      self.__cg_kernel = ctypes.CDLL(f"{file_name}.so").computeSolution
+      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_hashed_name}.so {file_hashed_name}.cu -O3 -arch=sm_89 -cudart=shared -lcuda --expt-relaxed-constexpr -std=c++17")
+      self.__cg_kernel = ctypes.CDLL(f"{file_hashed_name}.so").computeSolution
       self.__cg_kernel.argtypes = [
         ctypes.c_uint,   # maxIteration
         ctypes.c_double, # threshold
@@ -591,6 +652,16 @@ int computeSolution(unsigned int maxIteration,
         ctypes.c_void_p, # d_s (device pointer)
         ctypes.c_void_p  # solution (device pointer)
       ]
+      data = []
+      with open(".yasps_constant/cg_dimension_to_file.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+      for item in data:
+        if item["file_hashed_name"] == file_hashed_name:
+          # already exists
+          return
+      data.append({"dimensions": [dim for dim in self.__saved_block_dimensions], "file_hashed_name": file_hashed_name, "file_original_name": file_original_name})
+      with open(".yasps_constant/cg_dimension_to_file.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
 
   def __to_void_p(self, x: gpuarray.GPUArray):
     if x is None or x.size == 0:

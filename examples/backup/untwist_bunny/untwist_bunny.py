@@ -46,7 +46,10 @@ position -= center
 ##################################################
 ## Gnerate N copies
 ##################################################
-num_bunnies = 20
+# set npm random seed for reproducibility
+np.random.seed(13)
+
+num_bunnies = 1
 tet_indices_total = []
 position_total = []
 for i in range(num_bunnies):

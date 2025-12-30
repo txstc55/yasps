@@ -15,7 +15,7 @@ DHAT_VALUE = 1e-6 # for collision detection
 KAPPA_VALUE = 1000.0 # for collision
 
 
-NUM_ABD_BUNNIES = 1
+NUM_ABD_BUNNIES = 2
 NUM_SOFT_BUNNIES = 1
 
 MU_VALUE_ABDS = []
@@ -498,8 +498,8 @@ for i in range(NUM_SOFT_BUNNIES):
 mesh_indices += [0] * positions_cloth.shape[0]
 ccd = CCD(NUM_BUNNY_SURFACE_INDICES * (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) + positions_cloth.shape[0], # the number of surface points
   NUM_BUNNY_VERTICES * (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) + positions_cloth.shape[0], # the number of total points
-  max_ccd_pairs = 1000000,
-  max_cd_pairs = 1000000,
+  max_ccd_pairs = 10000000,
+  max_cd_pairs = 10000000,
   mesh_indices = mesh_indices
 )
 

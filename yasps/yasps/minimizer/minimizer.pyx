@@ -317,6 +317,11 @@ class minimizer:
     # print("--------------------------------------------------------")
     # print("Block counts dynamic is: ", self.__blockCountsDynamic)
     # print("--------------------------------------------------------")
+    # # save blocks and block positions in a npz file
+    # np.savez("blocks.npz",
+    #   blocks = self.__blocksFlattened.get().flatten(),
+    #   block_positions = self.__blockPositions.get().flatten()
+    # )
 
 
     if self.__diagonalBlockInverseKernel is None:
@@ -331,30 +336,6 @@ class minimizer:
       )
     assert self.__diagonalBlockInverseKernel is not None
     self.__diagonalBlockInverseKernel.computeDiagonalBlockInverse(self.__diagonal_blocks, self.__diagonal_blocks_inverse)
-    # # let's check the result
-    # diagonal_block_cpu = self.__diagonal_blocks.get()
-    # diagonal_block_inverse_cpu = self.__diagonal_blocks_inverse.get()
-    # start = 0
-    # for i in range(len(self.__wrt)):
-    #   # first get the size
-    #   block_size = self.__wrt[i].size
-    #   # get the number of instances
-    #   num_instances = self.__wrt[i].correspondance.numInstances
-    #   for j in range(num_instances):
-    #     local_block = diagonal_block_cpu[start: start + block_size * block_size].reshape((block_size, block_size))
-    #     local_block_inverse = diagonal_block_inverse_cpu[start: start + block_size * block_size].reshape((block_size, block_size))
-    #     mul_result = local_block @ local_block_inverse
-    #     identity = np.eye(block_size)
-    #     if not np.allclose(mul_result, identity, atol=1e-6):
-    #       print(f"Warning: Diagonal block inverse verification failed for attribute {self.__wrt[i].fullName}, instance {j}.")
-    #       print("Original block:")
-    #       print(local_block)
-    #       print("Inverse block:")
-    #       print(local_block_inverse)
-    #       print("Product:")
-    #       print(mul_result)
-    #       exit()
-    #     start += block_size * block_size
 
 
     # now we have the hessian and gradient
