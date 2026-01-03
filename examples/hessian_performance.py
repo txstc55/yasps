@@ -78,7 +78,7 @@ for ax in g.axes.flatten():
 
 # Center legend inside the figure
 g._legend.set_title("")
-g._legend.set_bbox_to_anchor((0.5, 0.5))
+g._legend.set_bbox_to_anchor((0.5, 0.4))
 g._legend.set_loc("upper center")
 g._legend.set_frame_on(False)
 
@@ -90,16 +90,25 @@ for ax in g.axes.flatten():
             fmt="%.1fx",
             label_type="edge",
             padding=3,
-            fontsize=10
+            fontsize=12,
+            fontweight="bold"
         )
     sns.despine(ax=ax, left=True, bottom=True)
 
 for ax in g.axes.flatten():
     ax.set_xlabel("")
     ax.set_ylabel("")
+    ax.set_xticklabels([])
+    ax.title.set_fontweight("bold")
+    ax.title.set_fontsize(15)
+    for label in ax.get_yticklabels():
+      label.set_fontweight("bold")
 
 for ax in g.axes.flatten():
     ax.grid(False)
+
+for text in g._legend.texts:
+    text.set_fontweight("bold")
 
 # Add black outline to every bar
 for ax in g.axes.flatten():

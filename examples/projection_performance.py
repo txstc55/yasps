@@ -45,9 +45,10 @@ for i, v in enumerate(ratio):
         weight="bold"
     )
 
-ax.set_xlabel("Time relative to Hessian computation (log scale)")
+ax.set_xlabel("")
 ax.set_ylabel("")
 ax.set_xlim(0.9, ratio.max() * 1.6)
+ax.set_xticklabels([])
 
 sns.despine(left=True, bottom=True)
 fig.tight_layout(pad=0.3)

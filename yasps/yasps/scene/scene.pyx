@@ -197,3 +197,6 @@ class scene:
 
   def computeTotalEnergy(self) -> float:
     return self.__minimizer.computeTotalEnergy()
+
+  def ignoreEnergies(self, energies: List[attribute]) -> None:
+    self.__minimizer.ignoreEnergies(energies)

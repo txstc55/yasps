@@ -72,6 +72,7 @@ class minimizer:
     self.__solutionSegments: List[gpuarray.GPUArray] = []
 
     self.__diagonalBlockInverseKernel: Optional[diagonalBlockInverseKernel] = None
+    self.__ignoredEnergyHashList: List[int] = []
 
   @property
   def solutionSegments(self) -> List[gpuarray.GPUArray]:
@@ -283,6 +284,9 @@ class minimizer:
       return []
     return self.solutionSegments
 
+  def ignoreEnergies(self, energies: List[attribute]) -> None:
+    self.__ignoredEnergyHashList = [e.hash for e in energies]
+
   def computeHessianAndGradient(self, tolerance = 1e-3, maxIterations = 20000):
     # set gradient and hessian to 0
     self.__gradient.fill(0)
@@ -293,6 +297,8 @@ class minimizer:
     self.__diagonal.fill(0)
     self.__diagonal_blocks.fill(0)
     for e in self.energies:
+      if e.hash in self.__ignoredEnergyHashList:
+        continue
       e.computeHessianAndGradient(
         self.__gradient,
         self.__blocksFlattened,
@@ -306,6 +312,8 @@ class minimizer:
     self.__getSparseIndicesDynamicAgain()
     for e in self.energiesDynamic:
       if e.numTotalCoordinates > 0:
+        if e.hash in self.__ignoredEnergyHashList:
+          continue
         e.computeHessianAndGradient(
           self.__gradient,
           self.__blocksFlattenedDynamic,
@@ -402,8 +410,12 @@ class minimizer:
   def computeTotalEnergy(self) -> float:
     total_energy = 0.0
     for e in self.energies:
+      if e.hash in self.__ignoredEnergyHashList:
+        continue
       total_energy += gpuarray.sum(e.compute().value).get()
     for e in self.energiesDynamic:
       if e.correspondance.numInstances > 0:
+        if e.hash in self.__ignoredEnergyHashList:
+          continue
         total_energy += gpuarray.sum(e.compute().value).get()
     return total_energy
