@@ -63,7 +63,8 @@ Y2 = y3 - y0
 F  = sp.Matrix.hstack(Y0, Y1, Y2)     # (3,3)
 FI = F * IB
 
-J  = FI.det()
+# J  = FI.det()
+J = sum(FI)
 IC = sp.Add(*[FI[i, j] ** 2 for i in range(3) for j in range(3)])
 I3 = IC + 1.0
 
