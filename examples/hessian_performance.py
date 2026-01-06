@@ -1,7 +1,14 @@
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Helvetica", "Arial", "Liberation Sans"],
+})
+plt.rcParams.update({
+    "figure.dpi": 300,        # display dpi
+    "savefig.dpi": 300,       # saved file dpi
+})
 # -----------------------------
 # Data (TOTAL time in ms)
 # -----------------------------
@@ -47,7 +54,7 @@ df_long = pd.concat(
 # -----------------------------
 # Plot (horizontal bars, log-scale, centered legend)
 # -----------------------------
-sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)
+sns.set_theme(style="whitegrid", context="paper")
 
 g = sns.catplot(
     data=df_long,
@@ -57,8 +64,10 @@ g = sns.catplot(
     hue="Backend",
     col="Metric",
     orient="h",
-    height=3.6,
-    aspect=1.2,
+    height=2.0,          # inches per facet (vertical)
+    aspect=0.85,         # width / height → 2.0 * 0.85 ≈ 1.7 in per facet
+    width = 0.9,
+    # height=13.6,
     palette={
         "Ours": "#edae49",
         "PyTorch": "#d1495b",
@@ -76,12 +85,33 @@ g.set_titles("{col_name}")
 for ax in g.axes.flatten():
     ax.set_xscale("log")
 
-# Center legend inside the figure
-g._legend.set_title("")
-g._legend.set_bbox_to_anchor((0.5, 0.4))
-g._legend.set_loc("upper center")
-g._legend.set_frame_on(False)
+# --- Robust legend rebuild (instead of mutating g._legend internals) ---
+# Remove the auto legend created by seaborn
+if g._legend is not None:
+    g._legend.remove()
 
+# Recreate legend with tight spacing
+g.add_legend(
+    title="",
+    frameon=False,
+    ncol=1,
+    loc="upper center",
+    bbox_to_anchor=(0.5, 0.35),   # center-ish inside the figure
+    borderaxespad=0.0,
+    handlelength=1.0,
+    handletextpad=0.35,           # space between handle and text
+    labelspacing=0.15,            # vertical spacing between entries
+    columnspacing=0.6,            # only matters if ncol>1
+    borderpad=0.1,
+)
+
+# Style the legend text
+leg = g._legend
+for text in leg.get_texts():
+    text.set_fontsize(8)
+    # text.set_fontweight("bold")  # optional
+
+  # default ~5–6, smaller = tighter
 # Annotate bars
 for ax in g.axes.flatten():
     for container in ax.containers:
@@ -89,8 +119,8 @@ for ax in g.axes.flatten():
             container,
             fmt="%.1fx",
             label_type="edge",
-            padding=3,
-            fontsize=12,
+            padding=5,
+            fontsize=7,
             fontweight="bold"
         )
     sns.despine(ax=ax, left=True, bottom=True)
@@ -99,16 +129,18 @@ for ax in g.axes.flatten():
     ax.set_xlabel("")
     ax.set_ylabel("")
     ax.set_xticklabels([])
-    ax.title.set_fontweight("bold")
-    ax.title.set_fontsize(15)
-    for label in ax.get_yticklabels():
-      label.set_fontweight("bold")
+    # ax.title.set_fontweight("bold")
+    ax.title.set_fontsize(8)
+    # for label in ax.get_yticklabels():
+    #   label.set_fontweight("bold")
 
 for ax in g.axes.flatten():
     ax.grid(False)
 
-for text in g._legend.texts:
-    text.set_fontweight("bold")
+for ax in g.axes.flatten():
+    ax.tick_params(axis="y", labelsize=8)
+# for text in g._legend.texts:
+#     text.set_fontweight("bold")
 
 # Add black outline to every bar
 for ax in g.axes.flatten():
