@@ -1,7 +1,10 @@
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
-
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Helvetica", "Arial", "Liberation Sans"],
+})
 labels = [
     "No Optimization (24×24)",
     "Block Compression (15×15)",
@@ -17,9 +20,17 @@ ratio = time / baseline
 # Paper-friendly colors
 colors = ["#8c1d18", "#d95f02", "#1b9e77", "#4d4d4d"]
 
-sns.set_theme(style="white", font_scale=1.2)
+plt.rcParams.update({
+    "font.size": 7,
+    "axes.labelsize": 7,
+    "xtick.labelsize": 6.5,
+    "ytick.labelsize": 6,
+    "legend.fontsize": 6.5,
+})
 
-fig, ax = plt.subplots(figsize=(7.5, 3.6))
+sns.set_theme(style="white")
+
+fig, ax = plt.subplots(figsize=(3.75, 0.8), dpi=300, constrained_layout=True)
 sns.barplot(
     x=ratio,
     y=labels,
@@ -27,7 +38,7 @@ sns.barplot(
     palette=colors,
     width=1.0,              # <- no gap between bars
     edgecolor="black",      # <- black border
-    linewidth=1.2,
+    linewidth=0.6,
     ax=ax
 )
 
@@ -41,10 +52,10 @@ for i, v in enumerate(ratio):
         i,
         f"{v:.1f}×",
         va="center",
-        fontsize=12,
+        fontsize=6,
         weight="bold"
     )
-
+ax.tick_params(axis="y", labelsize=6)
 ax.set_xlabel("")
 ax.set_ylabel("")
 ax.set_xlim(0.9, ratio.max() * 1.6)

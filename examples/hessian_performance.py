@@ -96,13 +96,13 @@ g.add_legend(
     frameon=False,
     ncol=1,
     loc="upper center",
-    bbox_to_anchor=(0.5, 0.35),   # center-ish inside the figure
-    borderaxespad=0.0,
+    bbox_to_anchor=(0.52, 0.38),   # center-ish inside the figure
+    # borderaxespad=0.0,
     handlelength=1.0,
     handletextpad=0.35,           # space between handle and text
     labelspacing=0.15,            # vertical spacing between entries
     columnspacing=0.6,            # only matters if ncol>1
-    borderpad=0.1,
+    # borderpad=0.1,
 )
 
 # Style the legend text
@@ -111,6 +111,9 @@ for text in leg.get_texts():
     text.set_fontsize(8)
     # text.set_fontweight("bold")  # optional
 
+for handle in leg.legend_handles:
+    handle.set_edgecolor("black")
+    handle.set_linewidth(0.8)
   # default ~5–6, smaller = tighter
 # Annotate bars
 for ax in g.axes.flatten():
