@@ -1,13 +1,16 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Helvetica", "Arial", "Liberation Sans"],
+})
 # -----------------------------
 # Data
 # -----------------------------
-index_computation = [6.02, 1.2]
-index_compression = [2.99, 0.24]
-hessian_computation = [20.63, 38.28]
+index_computation = [6.85, 0.84]
+index_compression = [6.69, 0.32]
+hessian_computation = [13.08, 1.85]
 
 data = [
     [index_computation[0], index_compression[0], hessian_computation[0]],
@@ -19,7 +22,7 @@ labels = ["Index Computation", "Index Compression", "Hessian Computation"]
 # -----------------------------
 # Seaborn style
 # -----------------------------
-sns.set_theme(style="white", context="paper", font_scale=1.3)
+sns.set_theme(style="white", context="paper")
 colors = sns.color_palette("Set2", 3)
 
 # -----------------------------
@@ -58,7 +61,7 @@ def pie_with_leaders(ax, values, title):
         label_positions.append((x2, y2))
 
         percent = 100 * value / total
-        text = f"{percent:.3f}%"
+        text = f"{percent:.2f}%\n({value:.2f} ms)"
 
         # Leader line
         ax.plot([x0, x1, x2], [y0, y1, y2], lw=1)
@@ -70,18 +73,17 @@ def pie_with_leaders(ax, values, title):
             text,
             ha="left" if x2 > 0 else "right",
             va="center",
-            fontsize=12,
-            weight="bold"
+            fontsize=6,
         )
 
-    ax.set_title(title, fontsize=14, weight="bold")
-    ax.set_aspect("equal")
+    ax.set_title(title, fontsize=6)
+    # ax.set_aspect("equal")
 
 
 # -----------------------------
 # Plot
 # -----------------------------
-fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+fig, axes = plt.subplots(1, 2, figsize=(3.75, 1.5), dpi=300)
 
 pie_with_leaders(axes[0], data[0], "Static")
 pie_with_leaders(axes[1], data[1], "Dynamic")
@@ -91,8 +93,9 @@ fig.legend(
     loc="lower center",
     ncol=3,
     frameon=False,
-    fontsize=12
+    fontsize=6,
+    bbox_to_anchor=(0.5, -0.02)
 )
 
-plt.tight_layout(rect=[0, 0.08, 1, 1])
+plt.tight_layout(pad=0, w_pad=0.3)
 plt.show()

@@ -437,7 +437,11 @@ __device__ void {attributeName}_device_function(
       self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
     else:
-      self.__code_strings.append(f'''
+      if current.size == 1:
+        self.__code_strings.append(f'''
+  double {attribute_name} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
+      else:
+        self.__code_strings.append(f'''
   auto {attribute_name} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
 
 
