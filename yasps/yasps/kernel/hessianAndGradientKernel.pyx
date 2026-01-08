@@ -233,17 +233,18 @@ extern "C"{{
 {item.kernelString}
 }}
 ''')
-            compile_cmd = [
-              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
-              "-O3",
-              "-c", cu_file, "-o", obj_file,
-              "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
-              "--relocatable-device-code=true"
-            ]
-            print("Command is")
-            print(" ".join(compile_cmd))
-            job = subprocess.Popen(compile_cmd)
-            compile_jobs.append(job)
+            f.close()
+          compile_cmd = [
+            "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
+            "-O3",
+            "-c", cu_file, "-o", obj_file,
+            "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
+            "--relocatable-device-code=true"
+          ]
+          print("Command is")
+          print(" ".join(compile_cmd))
+          job = subprocess.Popen(compile_cmd)
+          compile_jobs.append(job)
         seen_obj_files.add(obj_file)
 
       # now actually generate the global kernel
@@ -485,17 +486,18 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 }}
 }}
 ''')
-            compile_cmd = [
-              "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
-              "-O3",
-              "-c", cu_file, "-o", obj_file,
-              "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
-              "--relocatable-device-code=true"
-            ]
-            print("Command is")
-            print(" ".join(compile_cmd))
-            job = subprocess.Popen(compile_cmd)
-            compile_jobs.append(job)
+            f.close()
+          compile_cmd = [
+            "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
+            "-O3",
+            "-c", cu_file, "-o", obj_file,
+            "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
+            "--relocatable-device-code=true"
+          ]
+          print("Command is")
+          print(" ".join(compile_cmd))
+          job = subprocess.Popen(compile_cmd)
+          compile_jobs.append(job)
 
       # now we add the c functions that will go over all the unique gradient sizes
       self.__kernelString = f'''
@@ -643,7 +645,6 @@ int compute_hessian_and_gradient_with_compression(
       ]
       print("Kernel compile command: ")
       print(" ".join(kernel_compile_cmd))
-      subprocess.run(kernel_compile_cmd, check=True)
       job = subprocess.Popen(kernel_compile_cmd)
       compile_jobs.append(job)
       # Wait for all compilation jobs
