@@ -69,3 +69,5 @@ examples/dropping/*
 
 **/**/**/.yasps_constant/*
 **/**/**/.yasps_tmp/*
+
+**/*.txt
