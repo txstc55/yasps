@@ -1203,6 +1203,28 @@ class energy:
     diagonal_blocks_start: gpuarray.GPUArray,
     gradient_segments_start: gpuarray.GPUArray
   ):
+    if self.__hessianAndGradientKernel is not None:
+      for name, value in self.__intermediate_compute_pairs.items():
+        value[0].compute()
+        value[1].updateValue(value[0].value)
+      # after we allocated, we invoke the kernel
+      counts_gpu = [x.children_primitive_counts_gpu for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelPrimitiveUnions] # get the children counts
+      # print(f"counts gpu: {[x.get() for x in counts_gpu]}")
+      arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + counts_gpu
+      print(f"Computing hessian and gradient for {self.__energy.fullName}")
+      self.__hessianAndGradientKernel.compute(
+        arguments,
+        self.__indices_kernel,
+        self.__block_indices_gpu,
+        gradient_array,
+        hessian_blocks,
+        diagonal,
+        diagonal_blocks,
+        diagonal_blocks_start,
+        gradient_segments_start
+      )
+      return self
+
     if self.__gradient is None:
       # the gradient is 0, return the 0 array
       return
@@ -1261,34 +1283,7 @@ class energy:
     assert self.__indices_kernel is not None
     self.__hessianAndGradientKernel.generateKernel(self.__indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
 
-    # print(f"There are {len(self.__intermediate_compute_pairs)} intermediate attributes")
-    # make sure that we also compute the intermediate values
-    for name, value in self.__intermediate_compute_pairs.items():
-      value[0].compute()
-      value[1].updateValue(value[0].value)
-      # print(f"Computed intermediate attribute with name {name}, hash: {value[0].hash}")
-
-    # if self.__separate_hessian_jacobian:
-    #   assert self.__global_jacobian is not None
-    #   assert self.__global_inner_hessian is not None
-    #   print("Checking separate hessian and jacobian computation")
-    #   self.__global_jacobian.compute()
-    #   self.__global_inner_hessian.compute()
-
-    # assertion here
-    # assert self.__hessianAndGradientKernel is not None
-    assert self.__merged_hessian_and_gradient_attribute is not None
-    # assert self.__indices_kernel is not None
-
-    # after we allocated, we invoke the kernel
-    counts_gpu = [x.children_primitive_counts_gpu for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelPrimitiveUnions] # get the children counts
-    # print(f"counts gpu: {[x.get() for x in counts_gpu]}")
-    arguments: List[gpuarray.GPUArray] = [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelDatas] + [x.value for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity] + [x.compressedRows for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelConnectivity if x.dimension == 0] + counts_gpu
-    print(f"Computing hessian and gradient for {self.__energy.fullName}")
-    self.__hessianAndGradientKernel.compute(
-      arguments,
-      self.__indices_kernel,
-      self.__block_indices_gpu,
+    self.computeHessianAndGradient(
       gradient_array,
       hessian_blocks,
       diagonal,
@@ -1296,6 +1291,7 @@ class energy:
       diagonal_blocks_start,
       gradient_segments_start
     )
+
     return self
 
   def __hash__(self) -> int:
