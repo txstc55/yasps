@@ -10,7 +10,7 @@ import pycuda.gpuarray as gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
-NUM_CLOTH = 2
+NUM_CLOTH = 4
 
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
@@ -374,7 +374,7 @@ for i in range(NUM_SOFT_BUNNIES):
 mesh_indices += [0] * positions_cloth.shape[0]
 ccd = CCD(NUM_BUNNY_SURFACE_INDICES * (NUM_SOFT_BUNNIES) + positions_cloth.shape[0], # the number of surface points
   NUM_BUNNY_VERTICES * (NUM_SOFT_BUNNIES) + positions_cloth.shape[0], # the number of total points
-  max_ccd_pairs = 200000000,
+  max_ccd_pairs = 100000000,
   mesh_indices = mesh_indices
 )
 
@@ -566,6 +566,11 @@ for i in range(200):
     print("step taken is", step_taken)
     print("substep is", substep)
 
+    # all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+    # soft_vertices_computed = all_vertices_computed[0:(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+    # cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+    # soft_poly.points = soft_vertices_computed
+    # cloth_poly.points = cloth_vertices_computed
     # plotter.render()
     # plotter.update()
 

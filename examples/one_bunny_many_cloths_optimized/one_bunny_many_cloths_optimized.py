@@ -10,7 +10,7 @@ import pycuda.gpuarray as gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
-NUM_CLOTH = 3
+NUM_CLOTH = 4
 
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection

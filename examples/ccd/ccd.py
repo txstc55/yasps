@@ -428,14 +428,15 @@ class CCD:
     # )
 
   def reset(self):
-    self.__pp.fill(0)
-    self.__pe.fill(0)
-    self.__pt.fill(0)
-    self.__ee.fill(0)
+    # separated_counts_cpu = self.__separated_counts.get()
+    # self.__pp[:2 * separated_counts_cpu[0]].fill(0)
+    # self.__pe[:3 * separated_counts_cpu[1]].fill(0)
+    # self.__pt[:4 * separated_counts_cpu[2]].fill(0)
+    # self.__ee[:4 * separated_counts_cpu[3]].fill(0)
     self.__separated_counts.fill(0)
     self.__cp_num.fill(0)
-    self.__collision_pairs.fill(0)
-    self.__collision_pairs_ccd.fill(0)
+    # self.__collision_pairs.fill(0)
+    # self.__collision_pairs_ccd.fill(0)
     self.__mqueue.fill(0)
 
 
@@ -445,7 +446,7 @@ class CCD:
     self.cd_faces(vertices, dhat)
     self.__collision_pairs.fill(0)
     self.__cp_num.fill(0)
-    self.__collision_pairs_ccd.fill(0)
+    # self.__collision_pairs_ccd.fill(0)
     self.cd_edges(vertices, dhat)
     time_end = time.time()
     # print time in milliseconds

@@ -40,7 +40,9 @@ def extract_time(file):
       index_time += time
   f.close()
   print("Total Hessian time:", total_hessian_time / 1000.0)
+  print("Average Hessian time:", total_hessian_time / total_newton)
   print("Total CG time:", total_cg_time / 1000.0)
+  print("Average CG time:", total_cg_time / total_cg)
   print("Total Newton iterations:", total_newton)
   print("Total CG iterations:", total_cg)
   print("Total compute time:", misc_time / 1000.0)
@@ -94,6 +96,8 @@ def extract_time(file):
     print(f"Total time sum   = {total_runtime:.6f} s")
     print(f"Total time count = {total_runtime_count}")
     print(f"Average total    = {total_runtime / total_runtime_count:.6f} s")
+    print()
+    print()
 
   totals["Hessian"] = total_hessian_time / 1000.0
   totals["CG"] = total_cg_time / 1000.0
