@@ -89,7 +89,8 @@ class solverKernel:
                 ctypes.c_void_p, # d_c (device pointer)
                 ctypes.c_void_p, # d_q (device pointer)
                 ctypes.c_void_p, # d_s (device pointer)
-                ctypes.c_void_p  # solution (device pointer)
+                ctypes.c_void_p, # solution (device pointer)
+                ctypes.c_void_p  # last 5 solution (device pointer)
               ]
               return
             else:
@@ -385,7 +386,9 @@ int computeSolution(unsigned int maxIteration,
                             double* d_c,
                             double* d_q,
                             double* d_s,
-                            double* solution) {
+                            double* solution,
+                            double* last_5_solution
+                            ) {
   // Instead, retrieve the current context (if necessary)
   std::vector<cudaStream_t> streams;
   streams.resize(NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC);
@@ -399,6 +402,8 @@ int computeSolution(unsigned int maxIteration,
   for (unsigned int i = 0; i < numAttributes; i++) {
     cudaStreamCreate(&preconditioner_streams[i]);
   }
+  // set the initial guess
+  CUDA_CHECK_ERROR(cudaMemcpy(solution, last_5_solution, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
 
   // now we compute P^-1 * b where P is the preconditioner
   // jacobiPreconditioner<<<MATRIX_SIZE / 32 + 1, 32>>>(diagonal, gradient, d_p1_b, MATRIX_SIZE);
@@ -423,10 +428,10 @@ int computeSolution(unsigned int maxIteration,
   CUDA_CHECK_ERROR(cudaMemcpy(&h_delta_0, d_delta0, sizeof(double), cudaMemcpyDeviceToHost));
 
   // set residual equal to the gradient since our initial guess is 0
-  CUDA_CHECK_ERROR(cudaMemcpy(d_r, gradient, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
+  // CUDA_CHECK_ERROR(cudaMemcpy(d_r, gradient, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
 
-  /*
-  // residual is the last solution, so we need to compute d_r = gradient - A * solution
+
+  // we need to compute d_r = gradient - A * last_5_solution
   spmvWithSystem(block_values,
                  block_positions,
                  block_values_start,
@@ -435,7 +440,7 @@ int computeSolution(unsigned int maxIteration,
                  block_positions_dynamic,
                  block_values_start_dynamic,
                  block_counts_dynamic,
-                 solution,
+                 last_5_solution,
                  d_r,
                  block_dimensions,
                  NUM_BLOCK_DIMENSIONS,
@@ -443,7 +448,7 @@ int computeSolution(unsigned int maxIteration,
                  NUM_BLOCK_DIMENSIONS_DYNAMIC,
                  streams);
   vecAddWithScalar<<<(MATRIX_SIZE + 255) / 256, 256>>>(gradient, d_r, d_r, -1.0, MATRIX_SIZE);
-  */
+
 
 
   // c = P^-1 * r
@@ -650,7 +655,8 @@ int computeSolution(unsigned int maxIteration,
         ctypes.c_void_p, # d_c (device pointer)
         ctypes.c_void_p, # d_q (device pointer)
         ctypes.c_void_p, # d_s (device pointer)
-        ctypes.c_void_p  # solution (device pointer)
+        ctypes.c_void_p, # solution (device pointer)
+        ctypes.c_void_p  # last 5 solution (device pointer)
       ]
       data = []
       with open(".yasps_constant/cg_dimension_to_file.json", "r", encoding="utf-8") as f:
@@ -695,7 +701,8 @@ int computeSolution(unsigned int maxIteration,
     d_c: gpuarray.GPUArray,
     d_q: gpuarray.GPUArray,
     d_s: gpuarray.GPUArray,
-    solution: gpuarray.GPUArray
+    solution: gpuarray.GPUArray,
+    last_5_solution: gpuarray.GPUArray
   ):
     start_call = cuda.Event()
     end_call = cuda.Event()
@@ -730,7 +737,8 @@ int computeSolution(unsigned int maxIteration,
       self.__to_void_p(d_c),
       self.__to_void_p(d_q),
       self.__to_void_p(d_s),
-      self.__to_void_p(solution)
+      self.__to_void_p(solution),
+      self.__to_void_p(last_5_solution)
     )
     # Record the end event
     end_call.record()
@@ -791,7 +799,8 @@ int computeSolution(unsigned int maxIteration,
         self.__to_void_p(d_c),
         self.__to_void_p(d_q),
         self.__to_void_p(d_s),
-        self.__to_void_p(solution)
+        self.__to_void_p(solution),
+        self.__to_void_p(last_5_solution)
       )
       print("Redoing the solve again")
       d_p1_b.fill(0)
@@ -823,7 +832,8 @@ int computeSolution(unsigned int maxIteration,
         self.__to_void_p(d_c),
         self.__to_void_p(d_q),
         self.__to_void_p(d_s),
-        self.__to_void_p(solution)
+        self.__to_void_p(solution),
+        self.__to_void_p(last_5_solution)
       )
       return -4
       # exit()

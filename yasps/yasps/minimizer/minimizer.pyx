@@ -74,6 +74,8 @@ class minimizer:
     self.__diagonalBlockInverseKernel: Optional[diagonalBlockInverseKernel] = None
     self.__ignoredEnergyHashList: List[int] = []
 
+    self.__last5solutions: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # for storing the last 5 solutions for dynamic energies
+
   @property
   def solutionSegments(self) -> List[gpuarray.GPUArray]:
     return self.__solutionSegments
@@ -356,7 +358,9 @@ class minimizer:
       self.__d_q = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       self.__d_s = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       self.__solution = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
+      self.__last5solutions = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
       self.__solution.fill(0)
+      self.__last5solutions.fill(0)
       # print("Gradient shape is: ")
       # print(self.__gradient.shape)
       count = 0
@@ -403,8 +407,10 @@ class minimizer:
       self.__d_c,
       self.__d_q,
       self.__d_s,
-      self.__solution
+      self.__solution,
+      self.__last5solutions
     )
+    self.__last5solutions = 0.5 * (self.__last5solutions + self.__solution)
     return error_code
 
   def computeTotalEnergy(self) -> float:
