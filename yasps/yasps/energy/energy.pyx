@@ -1207,6 +1207,7 @@ class energy:
       for name, value in self.__intermediate_compute_pairs.items():
         value[0].compute()
         value[1].updateValue(value[0].value)
+      self.__hessianAndGradientKernel.generateKernel(self.__indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
       # after we allocated, we invoke the kernel
       counts_gpu = [x.children_primitive_counts_gpu for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelPrimitiveUnions] # get the children counts
       # print(f"counts gpu: {[x.get() for x in counts_gpu]}")
