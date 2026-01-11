@@ -410,7 +410,7 @@ class minimizer:
       self.__solution,
       self.__last5solutions
     )
-    self.__last5solutions = 0.5 * (self.__last5solutions + self.__solution)
+    # self.__last5solutions = 0.5 * (self.__last5solutions + self.__solution)
     return error_code
 
   def computeTotalEnergy(self) -> float:

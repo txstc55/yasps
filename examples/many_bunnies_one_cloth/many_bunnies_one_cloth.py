@@ -12,7 +12,7 @@ random.seed(1313)
 np.random.seed(13)      # for numpy
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
-KAPPA_VALUE = 100000.0 # for collision
+KAPPA_VALUE = 1000.0 # for collision
 
 
 NUM_ABD_BUNNIES = 5
@@ -40,9 +40,9 @@ for i in range(NUM_SOFT_BUNNIES):
   LAMBDA_VALUE_SOFTS.append(LAMBDA_LAME_VALUE + 5.0 * MU_LAME_VALUE / 6.0)
 
 BENDING_STIFFNESS = 0.55
-STRETCH_STIFFNESS = 35570.469799
-SHEAR_STIFFNESS = 10607.114094
-THICKNESS = 0.01
+STRETCH_STIFFNESS = 335570.469799
+SHEAR_STIFFNESS = 100607.114094
+THICKNESS = 0.001
 
 ##################################################################
 ## Load the bunny mesh
@@ -499,7 +499,7 @@ mesh_indices += [0] * positions_cloth.shape[0]
 ccd = CCD(NUM_BUNNY_SURFACE_INDICES * (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) + positions_cloth.shape[0], # the number of surface points
   NUM_BUNNY_VERTICES * (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) + positions_cloth.shape[0], # the number of total points
   max_ccd_pairs = 20000000,
-  max_cd_pairs = 20000000,
+  # max_cd_pairs = 1000000,
   mesh_indices = mesh_indices
 )
 
