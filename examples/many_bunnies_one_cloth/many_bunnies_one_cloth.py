@@ -11,8 +11,8 @@ import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
 DT_VALUE = 0.01 # for time step
-DHAT_VALUE = 1e-6 # for collision detection
-KAPPA_VALUE = 1000.0 # for collision
+DHAT_VALUE = 2e-6 # for collision detection
+KAPPA_VALUE = 10000.0 # for collision
 
 
 NUM_ABD_BUNNIES = 5
@@ -39,10 +39,10 @@ for i in range(NUM_SOFT_BUNNIES):
   MU_VALUE_SOFTS.append(4.0 * MU_LAME_VALUE / 3.0)
   LAMBDA_VALUE_SOFTS.append(LAMBDA_LAME_VALUE + 5.0 * MU_LAME_VALUE / 6.0)
 
-BENDING_STIFFNESS = 0.55
+BENDING_STIFFNESS = 0.75
 STRETCH_STIFFNESS = 335570.469799
-SHEAR_STIFFNESS = 100607.114094
-THICKNESS = 0.001
+SHEAR_STIFFNESS = 10607.114094
+THICKNESS = 0.01
 
 ##################################################################
 ## Load the bunny mesh
@@ -259,7 +259,7 @@ vertices_abd_mass = vertices_abd.addConstant("mass", rows = 1, cols = 1)
 # update the values
 vertices_abd_rest_position.updateValue(np.array(position_abds, dtype = np.float64).flatten())
 vertices_abd_velocity.updateValue(np.zeros(NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES * 3, dtype = np.float64))
-vertices_abd_mass.updateValue(np.array([[(i + 1) * 0.5 / NUM_BUNNY_VERTICES] * NUM_BUNNY_VERTICES for i in range(NUM_ABD_BUNNIES)], dtype = np.float64).flatten())
+vertices_abd_mass.updateValue(np.array([[(i + 1) * 0.2 / NUM_BUNNY_VERTICES] * NUM_BUNNY_VERTICES for i in range(NUM_ABD_BUNNIES)], dtype = np.float64).flatten())
 
 # to actually get the current positions, we will need to first
 # get the connectivity between vertices to the affine bodies
@@ -322,7 +322,7 @@ vertices_soft_position.updateValue(np.array(position_softs, dtype = np.float64).
 vertices_soft_rest_position.updateValue(np.array(position_softs, dtype = np.float64).flatten())
 vertices_soft_last_position.updateValue(np.array(position_softs, dtype = np.float64).flatten())
 vertices_soft_velocity.updateValue(np.zeros(NUM_SOFT_BUNNIES * NUM_BUNNY_VERTICES * 3, dtype = np.float64))
-vertices_soft_mass.updateValue(np.array([[(i + 1) * 1.0 / NUM_BUNNY_VERTICES] * NUM_BUNNY_VERTICES for i in range(NUM_SOFT_BUNNIES)], dtype = np.float64).flatten())
+vertices_soft_mass.updateValue(np.array([[(i + 1) * 0.3 / NUM_BUNNY_VERTICES] * NUM_BUNNY_VERTICES for i in range(NUM_SOFT_BUNNIES)], dtype = np.float64).flatten())
 
 
 # now that we are done with vertices, we can do the tets
@@ -375,7 +375,7 @@ vertices_free_position.updateValue(positions_cloth[4:].flatten())
 vertices_free_rest_position.updateValue(positions_cloth[4:].flatten())
 vertices_free_last_position.updateValue(positions_cloth[4:].flatten())
 vertices_free_velocity.updateValue(np.zeros((positions_cloth.shape[0] - 4) * 3, dtype = np.float64))
-vertices_free_mass.updateValue(np.full((positions_cloth.shape[0] - 4), 1.0 / positions_cloth.shape[0], dtype = np.float64))
+vertices_free_mass.updateValue(np.full((positions_cloth.shape[0] - 4), 0.1 / positions_cloth.shape[0], dtype = np.float64))
 
 # create the union
 vertices_cloth = cloth.addPrimitiveUnion("vertices_cloth", [vertices_fixed, vertices_free])
@@ -400,7 +400,7 @@ edges_cloth_rest_positions = edges_cloth.addAttribute("rest_positions", through 
 ## now we need to add a collision mesh
 ##################################################################
 collision_mesh = s0.addMesh("collision_mesh")
-collision_vertices = collision_mesh.addPrimitiveUnion("vertices", [vertices_abd, vertices_soft, vertices_fixed, vertices_free])
+collision_vertices = collision_mesh.addPrimitiveUnion("vertices", [vertices_abd, vertices_soft, vertices_cloth])
 collision_vertices_position = collision_vertices.addAttribute("position")
 collision_mesh.addPrimitive("pp", numInstances = 0, isDynamic = True) # for point point collision
 collision_mesh.addPrimitive("pe", numInstances = 0, isDynamic = True) # for point edge collision

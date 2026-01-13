@@ -230,7 +230,7 @@ def plot_time_distributions(**named_dicts):
 
     # No numeric ticks
     ax.set_xticks([])
-    ax.set_yticks([])
+    # ax.set_yticks([])
 
     # Legend inside
     ax.legend(

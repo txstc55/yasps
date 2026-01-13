@@ -37,23 +37,7 @@ for i in range(sphere_vertices.shape[0]):
   direction = sphere_vertices[i, :] / np.linalg.norm(sphere_vertices[i, :])
   sphere_vertices[i, :] = direction
 
-################################################
-# Read the curve result
-################################################
-curve_vertices = []
-curve_edges = []
-f = open("./outputs/loop_collision_density_new_000600.obj", 'r')
-for line in f:
-  if line.startswith('v '):
-    curve_vertices.append([float(x) for x in line.strip().split()[1:]])
-    curve_edges.append([len(curve_vertices) - 1, len(curve_vertices)])
-f.close()
-curve_vertices = np.array(curve_vertices, dtype=np.float64)
-for i in range(curve_vertices.shape[0]):
-  direction = curve_vertices[i, :] / np.linalg.norm(curve_vertices[i, :])
-  curve_vertices[i, :] = direction
-curve_edges = np.array(curve_edges, dtype=np.int32)
-curve_edges[-1, -1] = 0  # close the loop
+
 
 ################################################
 # Do the mapping
@@ -217,24 +201,42 @@ def map_curve_to_bunny(curve_vertices, sphere_vertices, bunny_vertices, bunny_fa
 
     return mapped
 
+for iteration in range(1200, 1300):
+  ################################################
+  # Read the curve result
+  ################################################
+  curve_vertices = []
+  curve_edges = []
+  f = open(f"./outputs/loop_collision_density_new_total_{(iteration * 10):06d}.obj", 'r')
+  for line in f:
+    if line.startswith('v '):
+      curve_vertices.append([float(x) for x in line.strip().split()[1:]])
+      curve_edges.append([len(curve_vertices) - 1, len(curve_vertices)])
+  f.close()
+  curve_vertices = np.array(curve_vertices, dtype=np.float64)
+  for i in range(curve_vertices.shape[0]):
+    direction = curve_vertices[i, :] / np.linalg.norm(curve_vertices[i, :])
+    curve_vertices[i, :] = direction
+  curve_edges = np.array(curve_edges, dtype=np.int32)
+  curve_edges[-1, -1] = 0  # close the loop
 
+  mapped_curve_vertices = map_curve_to_bunny(
+    curve_vertices,
+    sphere_vertices,
+    bunny_vertices,
+    bunny_faces
+  )
 
-mapped_curve_vertices = map_curve_to_bunny(
-  curve_vertices,
-  sphere_vertices,
-  bunny_vertices,
-  bunny_faces
-)
+  #####################################################
+  # Visualization
+  #####################################################
+  import pyvista as pv
+  # first we add bunny
+  plotter = pv.Plotter()
 
-#####################################################
-# Visualization
-#####################################################
-import pyvista as pv
-# first we add bunny
-plotter = pv.Plotter(window_size = [3840, 2160])
-
-cells_loop = np.hstack([np.full((curve_edges.shape[0], 1), 2), curve_edges])
-loop_poly = pv.PolyData(mapped_curve_vertices, lines = cells_loop)
-plotter.add_mesh(loop_poly, color='red', line_width=3)
-loop_poly.save("./final_mapped_curve_density_new_600.obj")
-plotter.show()
+  cells_loop = np.hstack([np.full((curve_edges.shape[0], 1), 2), curve_edges])
+  loop_poly = pv.PolyData(mapped_curve_vertices, lines = cells_loop)
+  plotter.add_mesh(loop_poly, color='red', line_width=3)
+  loop_poly.save(f"./mapped/final_mapped_curve_density_new_total_{iteration:06d}.obj")
+  # plotter.show()
+  plotter.close()

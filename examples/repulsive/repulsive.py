@@ -518,7 +518,7 @@ plotter.show(interactive_update=True)
 position_copy = lvp.compute().value.copy()
 direction = gpuarray.to_gpu(np.zeros(line_points.flatten().shape, dtype=np.float64))
 
-
+total = 0
 for i in range(200):
   lvlp.updateValue(lvp.compute().value, deepCopy = True)
   inner_iteration = 0
@@ -585,7 +585,8 @@ for i in range(200):
     print(line_masses)
     lvm.updateValue(line_masses.flatten() * 910.01)
     loop_poly.points = lvp.compute().value.get().reshape((-1, 3))
-
+    loop_poly.save(f"outputs/loop_collision_density_new_total_{total:06d}.obj")
+    total += 1
 
     plotter.update()
     plotter.render()
@@ -602,4 +603,3 @@ for i in range(200):
   # TARGET_LENGTH += 1.0 / 200 * TARGET_RADIUS / NUM_LINE_POINTS
   # dhat.updateValue([DHAT_VALUE])
   # target_length.updateValue([TARGET_LENGTH])
-  loop_poly.save(f"outputs/loop_collision_density_new_{i:06d}.obj")

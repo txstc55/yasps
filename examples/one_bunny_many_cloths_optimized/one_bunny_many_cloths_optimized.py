@@ -127,7 +127,7 @@ for i in range(NUM_SOFT_BUNNIES):
 ## We will now construct the cloth
 ##################################################################
 from helpers import generate_cloth_mesh
-CLOTH_LENGTH = diag * 5.0
+CLOTH_LENGTH = diag * 2.0
 print("Cloth length: ", CLOTH_LENGTH)
 # exit()
 NUM_SEGMENTS = 100
@@ -469,31 +469,36 @@ ccd.init_edges(position_gpu, position_gpu, edge_indices_gpu, edge_indices_all.sh
 ##################################################################
 ## plot the bunnies
 ##################################################################
-# import pyvista as pv
-# plotter = pv.Plotter(window_size=[3840, 2160])
-# all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
-# triangles = triangle_indices_all
-# soft_triangles = triangles[0 :(NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES]
-# cloth_triangles = triangles[(NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES:] - (NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES
+import pyvista as pv
+plotter = pv.Plotter(window_size=[3840, 2160])
+all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+triangles = triangle_indices_all
+soft_triangles = triangles[0 :(NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES]
+cloth_triangles = triangles[(NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES:] - (NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES
+cloth_triangles_base = cloth_triangles[:int(cloth_triangles.shape[0] / NUM_CLOTH), ]
+cloth_triangles_top = cloth_triangles[int(cloth_triangles.shape[0] / NUM_CLOTH):, ]
 
 
-# cells_soft = np.hstack([np.full((soft_triangles.shape[0], 1), 3), soft_triangles])
-# cells_cloth = np.hstack([np.full((cloth_triangles.shape[0], 1), 3), cloth_triangles])
+cells_soft = np.hstack([np.full((soft_triangles.shape[0], 1), 3), soft_triangles])
+cells_cloth_base = np.hstack([np.full((cloth_triangles_base.shape[0], 1), 3), cloth_triangles_base])
+cells_cloth_top = np.hstack([np.full((cloth_triangles_top.shape[0], 1), 3), cloth_triangles_top])
 
-# soft_vertices_computed = all_vertices_computed[0 : (NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-# cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+soft_vertices_computed = all_vertices_computed[0 : (NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
 
-# soft_poly = pv.PolyData(soft_vertices_computed, cells_soft)
-# cloth_poly = pv.PolyData(cloth_vertices_computed, cells_cloth)
+soft_poly = pv.PolyData(soft_vertices_computed, cells_soft)
+cloth_base_poly = pv.PolyData(cloth_vertices_computed, cells_cloth_base)
+cloth_top_poly = pv.PolyData(cloth_vertices_computed, cells_cloth_top)
 
-# plotter.add_mesh(soft_poly, color = "lightgreen")
-# plotter.add_mesh(cloth_poly, color = "pink", opacity = 0.5)
+plotter.add_mesh(soft_poly, color = "lightgreen")
+plotter.add_mesh(cloth_base_poly, color = "pink", opacity = 0.5)
+plotter.add_mesh(cloth_top_poly, color = "lightblue", opacity = 0.5)
 
-# plotter.camera_position = [(0, 2, 6),
-#  (0.0, 0.0, 0.0),
-#  (0, 1, 0)
-# ]
-# plotter.show(interactive_update=True, auto_close=False)
+plotter.camera_position = [(0, 2, 6),
+ (0.0, 0.0, 0.0),
+ (0, 1, 0)
+]
+plotter.show(interactive_update = True)
 # exit()
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
 bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
@@ -627,13 +632,14 @@ for i in range(200):
   #     exit(1)
     print("step taken is", step_taken)
     print("substep is", substep)
-    # all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
-    # soft_vertices_computed = all_vertices_computed[0:(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-    # cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
-    # soft_poly.points = soft_vertices_computed
-    # cloth_poly.points = cloth_vertices_computed
-    # plotter.render()
-    # plotter.update()
+    all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+    soft_vertices_computed = all_vertices_computed[0:(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+    cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+    soft_poly.points = soft_vertices_computed
+    cloth_base_poly.points = cloth_vertices_computed
+    cloth_top_poly.points = cloth_vertices_computed
+    plotter.render()
+    plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
     # if max_grad < 1e-4:
@@ -661,8 +667,9 @@ for i in range(200):
   # plotter.screenshot(f"outputs/many_bunny_one_cloth_block_jacobian_1e3_{i:04d}.jpg")
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
-  # soft_poly.save(f"meshes/bunny_soft_3_cloth_{i:04d}.obj")
-  # cloth_poly.save(f"meshes/cloth_3_cloth_{i:04d}.obj")
+  soft_poly.save(f"meshes/bunny_{i:04d}.obj")
+  cloth_base_poly.save(f"meshes/cloth_base_{i:04d}.obj")
+  cloth_top_poly.save(f"meshes/cloth_top_{i:04d}.obj")
   # # save the mesh obj file
   # bunny_poly0.save(f"outputs/bunny_abd_soft0_{i:04d}.obj")
   # bunny_poly1.save(f"outputs/bunny_abd_soft1_{i:04d}.obj")
