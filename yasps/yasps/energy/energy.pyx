@@ -104,6 +104,10 @@ class energy:
     assert self.__indices_kernel is not None, "Indices kernel not initialized"
     return self.__indices_kernel.numTotalCoordinates
 
+  @property
+  def energy(self):
+    return self.__energy
+
 
   def getRoots(self, att: attribute, parentPath: List[attribute]) -> Tuple[List[attribute], List[List[attribute]]]:
     from yasps.attribute import JOIN, SUM, AVERAGE, DATA, UNION

@@ -4,11 +4,13 @@ import numpy as np
 import math
 s0 = scene("scene0")
 spring_system = s0.addMesh("spring_system")
-spring_system.addConstant("block_mass", rows = 1, cols = 1)
+mass_right = spring_system.addConstant("block_mass_right", rows = 1, cols = 1)
+mass_left = spring_system.addConstant("block_mass_left", rows = 1, cols = 1)
 
 # we first add the top spring, which hangs from the ceiling
 top_spring = spring_system.addPrimitive("top_spring", numInstances = 1)
 top_spring.addAttribute("angle", rows = 1, cols = 1) # angle between each segment for the top most spring
+top_spring.addConstant("rest_angle", rows = 1, cols = 1)
 top_spring.addConstant("segment_length", rows = 1, cols = 1)
 top_spring.addConstant("segment_count", rows = 1, cols = 1)
 top_spring.addAttribute("top_spring_end_point_y", computed_attribute = -0.5 - top_spring["angle"].sin() * top_spring["segment_length"] *  (top_spring["segment_count"] - 1.0) - 0.5) # the first -0.5 is distance from ceiling, the second -0.5 is from the end of the spring to the middle of the level
@@ -28,6 +30,7 @@ lever.addAttribute("left_end_x", computed_attribute = -0.5 * lever["length"] * l
 right_spring = spring_system.addPrimitive("right_spring", numInstances = 1)
 right_spring_to_lever = right_spring.addConnectivity("right_spring_to_lever", lever, [0], 1)
 right_spring.addAttribute("angle", rows = 1, cols = 1) # angle between each segment for the right most spring
+right_spring.addConstant("rest_angle", rows = 1, cols = 1)
 right_spring.addConstant("segment_length", rows = 1, cols = 1)
 right_spring.addConstant("segment_count", rows = 1, cols = 1)
 right_spring.addAttribute("end_x", through = right_spring_to_lever, source = lever["right_end_x"])
@@ -40,6 +43,7 @@ right_spring.addConstant("last_position", rows = 2, cols = 1) # for inertia
 left_spring = spring_system.addPrimitive("left_spring", numInstances = 1)
 left_spring_to_lever = left_spring.addConnectivity("left_spring_to_lever", lever, [0], 1)
 left_spring.addAttribute("angle", rows = 1, cols = 1) # angle between each segment for the left most spring
+left_spring.addConstant("rest_angle", rows = 1, cols = 1)
 left_spring.addConstant("segment_length", rows = 1, cols = 1)
 left_spring.addConstant("segment_count", rows = 1, cols = 1)
 left_spring.addAttribute("end_x", through = left_spring_to_lever, source = lever["left_end_x"])
@@ -55,29 +59,34 @@ def inertia(v0, vel, dt, x, mass):
   x_target = v0 + vel * dt - attribute.to_array([attribute(float_value = 0.0), attribute(float_value = 9.8 * dt * dt)], rows = 2, cols = 1)
   return (0.5 * (x - x_target).transpose() * mass * (x - x_target))
 
-BLOCK_MASS = 50.0
+BLOCK_MASS = 5.0
 TOP_SPRING_REST_ANGLE = np.pi / 20
 TOP_SPRING_INITIAL_ANGLE = np.pi / 4
 TOP_SPRING_SEGMENT_COUNT = 9.0
 TOP_SPRING_SEGMENT_LENGTH = 1.0
 LEVER_INITIAL_ANGLE = 0.0
 LEVER_LENGTH = 5.0
-RIGHT_SPRING_REST_ANGLE = np.pi / 20
-RIGHT_SPRING_INITIAL_ANGLE = np.pi / 2.1
+RIGHT_SPRING_REST_ANGLE = np.pi / 10
+RIGHT_SPRING_INITIAL_ANGLE = np.pi / 25
 RIGHT_SPRING_SEGMENT_COUNT = 7
 RIGHT_SPRING_SEGMENT_LENGTH = 1.0
 LEFT_SPRING_REST_ANGLE = np.pi / 10
-LEFT_SPRING_INITIAL_ANGLE = np.pi / 2.5
-LEFT_SPRING_SEGMENT_COUNT = 5
+LEFT_SPRING_INITIAL_ANGLE = np.pi / 25
+LEFT_SPRING_SEGMENT_COUNT = 15
 LEFT_SPRING_SEGMENT_LENGTH = 1.0
 DT = 0.1
 
+mass_right.updateValue([BLOCK_MASS * 150.0])
+mass_left.updateValue([BLOCK_MASS * 10.0])
+
 top_spring["angle"].updateValue([TOP_SPRING_INITIAL_ANGLE])
+top_spring["rest_angle"].updateValue([TOP_SPRING_REST_ANGLE])
 top_spring["segment_length"].updateValue([TOP_SPRING_SEGMENT_LENGTH])
 top_spring["segment_count"].updateValue([TOP_SPRING_SEGMENT_COUNT])
 lever["angle"].updateValue([LEVER_INITIAL_ANGLE])
 lever["length"].updateValue([LEVER_LENGTH])
 right_spring["angle"].updateValue([RIGHT_SPRING_INITIAL_ANGLE])
+right_spring["rest_angle"].updateValue([RIGHT_SPRING_REST_ANGLE])
 right_spring["segment_length"].updateValue([RIGHT_SPRING_SEGMENT_LENGTH])
 right_spring["segment_count"].updateValue([RIGHT_SPRING_SEGMENT_COUNT])
 # initialize condition for inertia
@@ -86,6 +95,7 @@ right_spring["last_position"].updateValue([right_spring["end_x"].compute().value
 
 
 left_spring["angle"].updateValue([LEFT_SPRING_INITIAL_ANGLE])
+left_spring["rest_angle"].updateValue([LEFT_SPRING_REST_ANGLE])
 left_spring["segment_length"].updateValue([LEFT_SPRING_SEGMENT_LENGTH])
 left_spring["segment_count"].updateValue([LEFT_SPRING_SEGMENT_COUNT])
 # initialize condition for inertia
@@ -94,13 +104,13 @@ left_spring["last_position"].updateValue([left_spring["end_x"].compute().value.g
 
 # ok now we need to add energy to the system
 # the first is on the spring, spring has a rest angle, which should be followed
-top_spring.addAttribute("top_spring_angle_energy", computed_attribute = (top_spring["angle"] - TOP_SPRING_REST_ANGLE) * (top_spring["angle"] - TOP_SPRING_REST_ANGLE) / (top_spring["angle"] * (np.pi / 2 - top_spring["angle"])) * (TOP_SPRING_SEGMENT_COUNT - 1.0) * 30.0)
-right_spring.addAttribute("right_spring_angle_energy", computed_attribute = (right_spring["angle"] - RIGHT_SPRING_REST_ANGLE) * (right_spring["angle"] - RIGHT_SPRING_REST_ANGLE) / (right_spring["angle"] * (np.pi / 2 - right_spring["angle"])) * (RIGHT_SPRING_SEGMENT_COUNT - 1.0) * 200.0)
-left_spring.addAttribute("left_spring_angle_energy", computed_attribute = (left_spring["angle"] - LEFT_SPRING_REST_ANGLE) * (left_spring["angle"] - LEFT_SPRING_REST_ANGLE) / (left_spring["angle"] * (np.pi / 2 - left_spring["angle"])) * (LEFT_SPRING_SEGMENT_COUNT - 1.0) * 50.0)
+top_spring.addAttribute("top_spring_angle_energy", computed_attribute = (top_spring["angle"] - top_spring["rest_angle"]) * (top_spring["angle"] - top_spring["rest_angle"]) / (top_spring["angle"] * (np.pi / 2 - top_spring["angle"])) * (TOP_SPRING_SEGMENT_COUNT - 1.0) * 30.0)
+right_spring.addAttribute("right_spring_angle_energy", computed_attribute = (right_spring["angle"] - right_spring["rest_angle"]) * (right_spring["angle"] - right_spring["rest_angle"]) / (right_spring["angle"] * (np.pi / 2 - right_spring["angle"])) * (right_spring["segment_count"] - 1.0) * 50.0)
+left_spring.addAttribute("left_spring_angle_energy", computed_attribute = (left_spring["angle"] - left_spring["rest_angle"]) * (left_spring["angle"] - left_spring["rest_angle"]) / (left_spring["angle"] * (np.pi / 2 - left_spring["angle"])) * (left_spring["segment_count"] - 1.0) * 50.0)
 
 # add inertia for the mass at the end of the spring_system
-right_spring.addAttribute("right_spring_inertia", computed_attribute = inertia(right_spring["last_position"], right_spring["velocity"], DT, attribute.to_array([right_spring["end_x"], right_spring["end_y"]], rows = 2, cols = 1), BLOCK_MASS))
-left_spring.addAttribute("left_spring_inertia", computed_attribute = inertia(left_spring["last_position"], left_spring["velocity"], DT, attribute.to_array([left_spring["end_x"], left_spring["end_y"]], rows = 2, cols = 1), BLOCK_MASS))
+right_spring.addAttribute("right_spring_inertia", computed_attribute = inertia(right_spring["last_position"], right_spring["velocity"], DT, attribute.to_array([right_spring["end_x"], right_spring["end_y"]], rows = 2, cols = 1), mass_right))
+left_spring.addAttribute("left_spring_inertia", computed_attribute = inertia(left_spring["last_position"], left_spring["velocity"], DT, attribute.to_array([left_spring["end_x"], left_spring["end_y"]], rows = 2, cols = 1), mass_left))
 
 s0.addEnergy(top_spring["top_spring_angle_energy"], projection_method = 1)
 s0.addEnergy(right_spring["right_spring_angle_energy"], projection_method = 1)
@@ -274,16 +284,6 @@ while(iteration < 1500):
   right_spring["last_position"].updateValue([right_spring["end_x"].compute().value.get()[0], right_spring["end_y"].compute().value.get()[0]])
   left_spring["last_position"].updateValue([left_spring["end_x"].compute().value.get()[0], left_spring["end_y"].compute().value.get()[0]])
 
-  if (True):
-    # update the velocity
-    right_spring_new_position = right_spring["last_position"].compute().value.get()
-    left_spring_new_position = left_spring["last_position"].compute().value.get()
-    right_spring_vel = (right_spring_new_position - right_spring_mass_position_last) / DT
-    left_spring_vel = (left_spring_new_position - left_spring_mass_position_last) / DT
-    right_spring["velocity"].updateValue(right_spring_vel)
-    left_spring["velocity"].updateValue(left_spring_vel)
-    right_spring_mass_position_last = right_spring_new_position
-    left_spring_mass_position_last = left_spring_new_position
 
   # we do inner newton iteration to check for total energy
   energy_before = sum(top_spring["top_spring_angle_energy"].compute().value.get()) + sum(right_spring["right_spring_angle_energy"].compute().value.get()) + sum(left_spring["left_spring_angle_energy"].compute().value.get()) + sum(right_spring["right_spring_inertia"].compute().value.get()) +  sum(left_spring["left_spring_inertia"].compute().value.get())
@@ -298,6 +298,13 @@ while(iteration < 1500):
   # if (energy_before < energy_after):
   #   print("Energy increase detected")
   #   exit(1)
+  #
+  right_spring_new_position = np.array([right_spring["end_x"].compute().value.get()[0], right_spring["end_y"].compute().value.get()[0]])
+  left_spring_new_position = np.array([left_spring["end_x"].compute().value.get()[0], left_spring["end_y"].compute().value.get()[0]])
+  right_spring_vel = (right_spring_new_position - right_spring["last_position"].value.get()) / DT
+  left_spring_vel = (left_spring_new_position - right_spring["last_position"].value.get()) / DT
+  right_spring["velocity"].updateValue(right_spring_vel)
+  left_spring["velocity"].updateValue(left_spring_vel)
 
   update_plot()
   iteration += 1

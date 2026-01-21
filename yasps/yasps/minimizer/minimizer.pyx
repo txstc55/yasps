@@ -416,12 +416,12 @@ class minimizer:
   def computeTotalEnergy(self) -> float:
     total_energy = 0.0
     for e in self.energies:
-      if e.hash in self.__ignoredEnergyHashList:
+      if e.energy.hash in self.__ignoredEnergyHashList:
         continue
-      total_energy += gpuarray.sum(e.compute().value).get()
+      total_energy += gpuarray.sum(e.energy.compute().value).get()
     for e in self.energiesDynamic:
-      if e.correspondance.numInstances > 0:
-        if e.hash in self.__ignoredEnergyHashList:
+      if e.energy.correspondance.numInstances > 0:
+        if e.energy.hash in self.__ignoredEnergyHashList:
           continue
-        total_energy += gpuarray.sum(e.compute().value).get()
+        total_energy += gpuarray.sum(e.energy.compute().value).get()
     return total_energy

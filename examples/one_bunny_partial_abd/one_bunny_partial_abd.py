@@ -7,12 +7,12 @@ sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
 import pycuda.gpuarray as gpuarray
 DT_VALUE = 0.01 # for time step
-DHAT_VALUE = 1e-4 # for collision detection
-NUM_FIXED_POINTS = 20
+DHAT_VALUE = 1e-8 # for collision detection
+
 NUM_RIGID_POINTS = 1500
 KAPPA_VALUE = 10000.0 # for collision
-POISSON_VALUE = 0.4
-YOUNG_VALUE = 1000000.0
+POISSON_VALUE = 0.28
+YOUNG_VALUE = 300000.0
 MU_LAME_VALUE = YOUNG_VALUE / (2 * (1 + POISSON_VALUE))
 LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
 MU_VALUE = 4.0 * MU_LAME_VALUE / 3.0
@@ -37,6 +37,59 @@ for line in f:
   position.append([float(x) for x in line.split()[1:]])
 f.close()
 position = np.array(position, dtype = np.float64)
+center = position.mean(axis=0)
+position -= center
+
+
+N = position.shape[0]
+
+all_idx = np.arange(N)
+x = position[:, 0]
+y = position[:, 1]
+# 1) force these to be first, in this exact order
+fixed = all_idx[(abs(x) < 0.01) & (y <= 0.8)]
+# sanity check (optional but nice)
+for v in fixed:
+  if not (0 <= v < N):
+    raise ValueError(f"fixed vertex index {v} out of range 0..{N-1}")
+
+fixed_set = set(fixed)
+
+
+mask_not_fixed = np.ones(N, dtype=bool)
+mask_not_fixed[fixed] = False
+
+
+
+g1 = all_idx[mask_not_fixed & (x <= -0.8)]
+g2 = all_idx[mask_not_fixed & (x >= 0.8)]
+g3 = all_idx[mask_not_fixed & ~( (x < -0.8) | (x >= 0.8) )]
+
+NUM_FIXED_POINTS = len(fixed)
+NUM_ABD1 = len(g1)
+NUM_ABD2 = len(g2)
+NUM_SOFT = len(g3)
+NUM_RIGID_POINTS = NUM_ABD1 + NUM_ABD2
+
+print("NUM_FIXED_POINTS =", NUM_FIXED_POINTS)
+print("NUM_ABD1 =", NUM_ABD1)
+print("NUM_ABD2 =", NUM_ABD2)
+print("NUM_SOFT =", NUM_SOFT)
+print("NUM_RIGID_POINTS =", NUM_RIGID_POINTS)
+# exit()
+# 3) final permutation: old indices in the new order
+perm = np.concatenate([np.array(fixed, dtype=int), g1, g2, g3])
+
+if perm.shape[0] != N or len(np.unique(perm)) != N:
+  raise RuntimeError("Permutation construction failed (duplicates or missing indices).")
+
+# 4) inverse map: old_index -> new_index
+inv = np.empty(N, dtype=int)
+inv[perm] = np.arange(N, dtype=int)
+# 5) apply permutation to positions
+position = position[perm]
+# 6) apply permutation to tet indices (old vertex ids -> new vertex ids)
+tet_indices = inv[tet_indices]   # same shape as tet_indices
 
 # extract surfaces and edges
 surface_triangle_indices = extract_surface_triangles(tet_indices)
@@ -57,8 +110,11 @@ kappa.updateValue([KAPPA_VALUE])
 bunny = s0.addMesh("bunny")
 
 bunny.addPrimitive("fixed_vertices", numInstances = NUM_FIXED_POINTS)
-bunny.addPrimitive("abd_vertices", numInstances = NUM_RIGID_POINTS)
-bunny.addPrimitive("moving_vertices", numInstances = position.shape[0] - NUM_FIXED_POINTS - NUM_RIGID_POINTS)
+bunny.addPrimitive("abd_vertices", numInstances = NUM_ABD1 + NUM_ABD2)
+bunny.addPrimitive("affine_body", numInstances = 2)
+bunny.addPrimitive("moving_vertices", numInstances = NUM_SOFT)
+
+
 bunny.addPrimitiveUnion("vertices", [bunny.fixed_vertices, bunny.abd_vertices, bunny.moving_vertices])
 bunny.addPrimitive("tets", numInstances = tet_indices.shape[0])
 bunny.addPrimitive("surfaceTriangles", numInstances = surface_triangle_indices.shape[0])
@@ -67,14 +123,25 @@ bunny.addPrimitive("pe", numInstances = 0, isDynamic = True) # for point edge co
 bunny.addPrimitive("pt", numInstances = 0, isDynamic = True) # for point triangle collision
 bunny.addPrimitive("ee", numInstances = 0, isDynamic = True) # for edge edge collision
 
-# add attributes for the abd vertices
-bunny.addAttribute("rotation", rows = 3, cols = 3)
-bunny["rotation"].updateValue(np.eye(3, dtype=np.float64))
-bunny.addAttribute("translation", rows = 3, cols = 1)
-bunny["translation"].updateValue(np.zeros((3, 1), dtype=np.float64))
+# add attributes for the affine body
+bunny.affine_body.addAttribute("affine_matrix", rows = 3, cols = 3)
+bunny.affine_body["affine_matrix"].updateValue(np.array([np.eye(3, dtype=np.float64), np.eye(3, dtype=np.float64)]).flatten())
+bunny.affine_body.addAttribute("translation", rows = 3, cols = 1)
+bunny.affine_body["translation"].updateValue(np.zeros((6, 1), dtype=np.float64))
+
+
+bav2ab = bunny.abd_vertices.addConnectivity("bav2ab", bunny.affine_body, [0] * NUM_ABD1 + [1] * NUM_ABD2, 1)
+bavam = bunny.abd_vertices.addAttribute("affine_matrix", through = bav2ab, source = bunny.affine_body["affine_matrix"])
+bavam = bavam.resize(3, 3)
+bavt = bunny.abd_vertices.addAttribute("translation", through = bav2ab, source = bunny.affine_body["translation"])
+bavt = bavt.resize(3, 1)
+
+
+
+
 bunny.abd_vertices.addConstant("rest_position", rows = 3, cols = 1)
 bunny.abd_vertices["rest_position"].updateValue(position[NUM_FIXED_POINTS:NUM_FIXED_POINTS + NUM_RIGID_POINTS, :])
-bunny.abd_vertices.addAttribute("position", computed_attribute = bunny["translation"] + bunny["rotation"] * bunny.abd_vertices["rest_position"])
+bunny.abd_vertices.addAttribute("position", computed_attribute = bavt + bavam * bunny.abd_vertices["rest_position"])
 abd_lp = bunny.abd_vertices.addConstant("last_position", rows = 3, cols = 1)
 bunny.abd_vertices["last_position"].updateValue(position[NUM_FIXED_POINTS:NUM_FIXED_POINTS + NUM_RIGID_POINTS, :])
 
@@ -88,7 +155,7 @@ bunny.abd_vertices.addConstant("velocity", rows = 3, cols = 1)
 velocities = np.zeros_like(position[NUM_FIXED_POINTS:NUM_FIXED_POINTS + NUM_RIGID_POINTS, :], dtype=np.float64)
 bunny.abd_vertices["velocity"].updateValue(velocities)
 bunny.abd_vertices.addConstant("mass", rows = 1, cols = 1)
-bunny.abd_vertices["mass"].updateValue(np.ones((NUM_RIGID_POINTS), dtype=np.float64) * 0.1)
+bunny.abd_vertices["mass"].updateValue([4000.0 / NUM_ABD1] * NUM_ABD1 + [4000.0 / NUM_ABD2] * NUM_ABD2)
 
 # add attributes for moving vertices
 bunny.moving_vertices.addConstant("rest_position", rows = 3, cols = 1)
@@ -101,7 +168,7 @@ bunny.moving_vertices.addConstant("velocity", rows = 3, cols = 1)
 velocities = np.zeros_like(position[NUM_FIXED_POINTS + NUM_RIGID_POINTS:, :], dtype=np.float64)
 bunny.moving_vertices["velocity"].updateValue(velocities)
 bunny.moving_vertices.addConstant("mass", rows = 1, cols = 1)
-bunny.moving_vertices["mass"].updateValue(np.ones((position.shape[0] - 1), dtype=np.float64) * 1.0)
+bunny.moving_vertices["mass"].updateValue([1 / NUM_SOFT] * NUM_SOFT)
 
 # add attributes for fixed vertices
 bunny.fixed_vertices.addAttribute("position", rows = 3, cols = 1)
@@ -144,7 +211,7 @@ ee_positions = bunny.ee.addAttribute("positions", through = ee2v, source = bunny
 ##################################################
 # construct ccd
 ##################################################
-ccd = CCD(len(surface_indices), position.shape[0], mesh_indices = [2] * NUM_FIXED_POINTS + [1] * (NUM_RIGID_POINTS) + [0] * (position.shape[0] - NUM_RIGID_POINTS - NUM_FIXED_POINTS))
+ccd = CCD(len(surface_indices), position.shape[0], mesh_indices = [2] * NUM_FIXED_POINTS + [3] * (NUM_ABD1) + [4] * NUM_ABD2 + [0] * (position.shape[0] - NUM_RIGID_POINTS - NUM_FIXED_POINTS), max_ccd_pairs = 1000000, max_cd_pairs = 1000000)
 surface_indices_gpu = gpuarray.to_gpu(np.array(surface_indices).astype(np.uint32).flatten())
 edge_indices_gpu = gpuarray.to_gpu(edge_indices.astype(np.uint32).flatten())
 triangle_indices_gpu = gpuarray.to_gpu(surface_triangle_indices.astype(np.uint32).flatten())
@@ -159,7 +226,7 @@ ccd.init_edges(position_gpu, position_gpu, edge_indices_gpu, edge_indices.shape[
 snh = stable_neo_hookean(tet_rest_positions, tet_positions, mu, lam, dt)
 snh_energy = bunny.tets.addAttribute("stable_neo_hookean", computed_attribute = snh)
 
-affine = affine_energy(bunny["rotation"])
+affine = affine_energy(bunny.affine_body["affine_matrix"])
 affine_energy = bunny.addAttribute("affine_energy", computed_attribute = affine)
 
 inertia_abd = inertia(bunny.abd_vertices["last_position"], bunny.abd_vertices["velocity"], dt, bunny.abd_vertices["position"], bunny.abd_vertices["mass"])
@@ -182,13 +249,13 @@ ee_energy = bunny.ee.addAttribute("edge_edge", computed_attribute = ee)
 
 s0.addEnergy(snh_energy, projection_method = 2)
 s0.addEnergy(affine_energy, projection_method = 2)
-s0.addEnergy(inertia_energy_abd, projection_method = 2)
-s0.addEnergy(inertia_energy_moving, projection_method = 2)
+s0.addEnergy(inertia_energy_abd, projection_method = 0)
+s0.addEnergy(inertia_energy_moving, projection_method = 0)
 s0.addEnergy(pp_energy, dynamic_instances = True, projection_method = 2)
 s0.addEnergy(pe_energy, dynamic_instances = True, projection_method = 2)
 s0.addEnergy(pt_energy, dynamic_instances = True, projection_method = 2)
 s0.addEnergy(ee_energy, dynamic_instances = True, projection_method = 2)
-s0.addMinimizeTarget([bunny.moving_vertices["position"], bunny["rotation"], bunny["translation"]])
+s0.addMinimizeTarget([bunny.moving_vertices["position"], bunny.affine_body["affine_matrix"], bunny.affine_body["translation"]])
 
 ##################################################
 ## plot the scene
@@ -202,55 +269,44 @@ bunny_poly.point_data["colors"] = colors
 plotter = pv.Plotter(window_size=(3840, 2160))
 plotter.add_mesh(bunny_poly, scalars="colors", rgba=True)
 plotter.camera_position = [(0, 0, 20), (0, 0, 0), (0, 1, 0)]
-plotter.show(interactive_update=True)
+# plotter.show(interactive_update=True)
 
-
+bunny_poly.save(f"outputs/bunny1_base.obj")
 
 position_copy = gpuarray.zeros_like(bunny.vertices["position"].compute().value)
 position_copy.set(bunny.vertices["position"].compute().value)
 direction_copy = gpuarray.zeros_like(bunny.vertices["position"].compute().value)
-rotation_copy = bunny["rotation"].value.copy()
-translation_copy = bunny["translation"].value.copy()
-for i in range(2000):
+rotation_copy = bunny.affine_body["affine_matrix"].value.copy()
+translation_copy = bunny.affine_body["translation"].value.copy()
+for i in range(500):
   # for all the moving vertices we will copy the position to last_position
   bunny.abd_vertices["last_position"].updateValue(bunny.abd_vertices["position"].compute().value, deepCopy = True)
   bunny.moving_vertices["last_position"].updateValue(bunny.moving_vertices["position"].value, deepCopy = True)
   inner_iteration = 0
-  min_inner_iteration_energy = 100000000
   while True:
-    result = s0.minimizeEnergy(tolerance = 1e-14, maxIterations = 100000)
+    result = s0.minimizeEnergy(tolerance = 1e-4, maxIterations = 100000)
     gradient_gpu = s0.gradient
     max_grad = abs_max_reduce(gradient_gpu).get()  # only one scalar transfer
-    snh_energy_sum = sum(snh_energy.compute().value.get())
-    affine_energy_sum = sum(affine_energy.compute().value.get())
-    inertia_energy_sum = sum(inertia_energy_abd.compute().value.get()) + sum(inertia_energy_moving.compute().value.get())
-    # inertia_energy_sum = 0.0
-    pp_energy_sum = sum(pp_energy.compute().value.get())
-    pe_energy_sum = sum(pe_energy.compute().value.get())
-    pt_energy_sum = sum(pt_energy.compute().value.get())
-    ee_energy_sum = sum(ee_energy.compute().value.get())
-    energies_before = snh_energy_sum + inertia_energy_sum + pp_energy_sum + pe_energy_sum + pt_energy_sum + ee_energy_sum
-    if energies_before < min_inner_iteration_energy:
-      min_inner_iteration_energy = energies_before
-    print(f"energy before {energies_before} vs minimum energy in newton: {min_inner_iteration_energy}")
+    energies_before = s0.computeTotalEnergy()
     print(f"max gradient at outer iteration {i}, inner iteration {inner_iteration} is {max_grad}")
 
     # we perform CCD here
     d_position = result[0]
     d_rotation = result[1]
     d_translation = result[2]
+    print(d_rotation.get().reshape(6, 3))
     step_taken = 1.0
     # copy the position and direction
-    rotation_copy.set(bunny["rotation"].value)
-    translation_copy.set(bunny["translation"].value)
+    rotation_copy.set(bunny.affine_body["affine_matrix"].value)
+    translation_copy.set(bunny.affine_body["translation"].value)
     position_copy[3 * (NUM_FIXED_POINTS + NUM_RIGID_POINTS):].set(bunny.moving_vertices["position"].value)
     direction_copy[3 * (NUM_FIXED_POINTS + NUM_RIGID_POINTS):].set(d_position)
 
     # now we also need to compute the direction for the abd points
     abd_positions = bunny.abd_vertices["position"].compute().value.copy()
     position_copy[3 * NUM_FIXED_POINTS : 3 * (NUM_FIXED_POINTS + NUM_RIGID_POINTS)].set(abd_positions)
-    bunny["rotation"].updateValue(rotation_copy - d_rotation) # update the rotation
-    bunny["translation"].updateValue(translation_copy - d_translation) # update the translation
+    bunny.affine_body["affine_matrix"].updateValue(rotation_copy - d_rotation) # update the affine_matrix
+    bunny.affine_body["translation"].updateValue(translation_copy - d_translation) # update the translation
     abd_positions_new = bunny.abd_vertices["position"].compute().value # compute the new positions
     direction_copy[3 * NUM_FIXED_POINTS : 3 * (NUM_FIXED_POINTS + NUM_RIGID_POINTS)].set(abd_positions - abd_positions_new)
 
@@ -266,8 +322,8 @@ for i in range(2000):
     while substep <= 8:
       computed_position = position_copy - direction_copy * step_taken
       bunny.moving_vertices["position"].updateValue(computed_position[3 * (NUM_FIXED_POINTS + NUM_RIGID_POINTS):], deepCopy = True)
-      bunny["rotation"].updateValue(rotation_copy - d_rotation * step_taken) # update the rotation
-      bunny["translation"].updateValue(translation_copy - d_translation * step_taken) # update the translation
+      bunny.affine_body["affine_matrix"].updateValue(rotation_copy - d_rotation * step_taken) # update the affine_matrix
+      bunny.affine_body["translation"].updateValue(translation_copy - d_translation * step_taken) # update the translation
       computed_position[3 * NUM_FIXED_POINTS : 3 * (NUM_FIXED_POINTS + NUM_RIGID_POINTS)].set(bunny.abd_vertices["position"].compute().value)
 
 
@@ -287,15 +343,7 @@ for i in range(2000):
         pt2v.updateConnectivity(ccd.pt[:4 * pt_count])
       if ee_count > 0:
         ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
-
-      snh_energy_sum = sum(snh_energy.compute().value.get())
-      affine_energy_sum = sum(affine_energy.compute().value.get())
-      inertia_energy_sum = sum(inertia_energy_abd.compute().value.get()) + sum(inertia_energy_moving.compute().value.get())
-      pp_energy_sum = sum(pp_energy.compute().value.get())
-      pe_energy_sum = sum(pe_energy.compute().value.get())
-      pt_energy_sum = sum(pt_energy.compute().value.get())
-      ee_energy_sum = sum(ee_energy.compute().value.get())
-      new_energies = snh_energy_sum + inertia_energy_sum + pp_energy_sum + pe_energy_sum + pt_energy_sum + ee_energy_sum
+      new_energies = s0.computeTotalEnergy()
       print(f"energy comparison: {new_energies} vs {energies_before}")
       if new_energies <= energies_before:
         break
@@ -314,7 +362,7 @@ for i in range(2000):
     # plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
-    if max_grad < 1e-1:
+    if max_grad < 1e-4:
       print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
       break
     inner_iteration += 1
@@ -328,6 +376,6 @@ for i in range(2000):
   bunny_poly.points = new_positions
   # # export the current positions to obj
   bunny_poly.save(f"outputs/bunny1_{i:04d}.obj")
-  plotter.render()
-  plotter.update()
-  plotter.screenshot(f"outputs/bunny1_partial_abd_{i:04d}.jpg")
+  # plotter.render()
+  # plotter.update()
+  # plotter.screenshot(f"outputs/bunny1_partial_abd_{i:04d}.jpg")
