@@ -71,3 +71,5 @@ examples/dropping/*
 **/**/**/.yasps_tmp/*
 
 **/*.txt
+
+**.pdf
