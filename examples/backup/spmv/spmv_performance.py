@@ -148,5 +148,12 @@ ax.set_facecolor("white")
 for spine in ax.spines.values():
     spine.set_visible(False)
 plt.tight_layout()
-plt.savefig("spmv_all_methods_seaborn.png", bbox_inches="tight")
-plt.show()
+# plt.savefig("spmv_all_methods_seaborn.png", bbox_inches="tight")
+# plt.show()
+plt.savefig(
+  "../../plotting/spmv_all_methods_seaborn..pdf",
+  format="pdf",
+  bbox_inches="tight",
+  pad_inches=0.00
+)
+plt.close()

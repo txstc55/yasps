@@ -63,4 +63,11 @@ ax.set_xticklabels([])
 
 sns.despine(left=True, bottom=True)
 fig.tight_layout(pad=0.3)
-plt.show()
+# plt.show()
+plt.savefig(
+  "projection_performance.pdf",
+  format="pdf",
+  bbox_inches="tight",
+  pad_inches=0.00
+)
+plt.close()

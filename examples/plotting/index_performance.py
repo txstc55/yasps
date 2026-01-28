@@ -97,5 +97,12 @@ fig.legend(
     bbox_to_anchor=(0.5, -0.02)
 )
 
-plt.tight_layout(pad=0, w_pad=0.3)
-plt.show()
+plt.tight_layout(pad=0)
+# plt.show()
+plt.savefig(
+  "index_performance.pdf",
+  format="pdf",
+  bbox_inches="tight",
+  pad_inches=0.00
+)
+plt.close()

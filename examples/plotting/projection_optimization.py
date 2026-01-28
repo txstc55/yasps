@@ -169,4 +169,11 @@ for xi, energy in zip(x, energies):
         fontsize=6,
     )
 
-plt.show()
+# plt.show()
+plt.savefig(
+  "projection_optimization.pdf",
+  format="pdf",
+  bbox_inches="tight",
+  pad_inches=0.00
+)
+plt.close()

@@ -152,4 +152,11 @@ for ax in g.axes.flatten():
         patch.set_linewidth(0.8)
 
 plt.tight_layout()
-plt.show()
+# plt.show()
+plt.savefig(
+  "hessian_performance.pdf",
+  format="pdf",
+  bbox_inches="tight",
+  pad_inches=0.00
+)
+plt.close()

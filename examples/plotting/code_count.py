@@ -150,4 +150,11 @@ ax.legend(
 )
 
 plt.tight_layout()
-plt.show()
+# plt.show()
+plt.savefig(
+  "code_count.pdf",
+  format="pdf",
+  bbox_inches="tight",
+  pad_inches=0.00
+)
+plt.close()

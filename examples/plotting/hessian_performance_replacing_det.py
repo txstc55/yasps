@@ -128,4 +128,11 @@ ax.tick_params(axis="x", length=0)
 ax.set_xticklabels([])
 ax.tick_params(axis="x", which="both", length=0)
 
-plt.show()
+# plt.show()
+plt.savefig(
+  "hessian_computation_replaced.pdf",
+  format="pdf",
+  bbox_inches="tight",
+  pad_inches=0.00
+)
+plt.close()

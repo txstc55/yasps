@@ -230,7 +230,7 @@ def plot_time_distributions(**named_dicts):
 
     # No numeric ticks
     ax.set_xticks([])
-    # ax.set_yticks([])
+    ax.set_yticks([])
 
     # Legend inside
     ax.legend(
@@ -242,7 +242,14 @@ def plot_time_distributions(**named_dicts):
     )
 
     plt.tight_layout()
-    plt.show()
+    # plt.show()
+    plt.savefig(
+      "../plotting/time_distribution_bunny_on_cloth.pdf",
+      format="pdf",
+      bbox_inches="tight",
+      pad_inches=0.00
+    )
+    plt.close()
 
 
 
