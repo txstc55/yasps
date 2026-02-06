@@ -46,6 +46,7 @@ FLOAT = operator("float", 3, False) # for float numbers
 ARRAY_ACCESS = operator("access", 3, False) # for accessing an element in the array
 DATA = operator("data", 3, False) # for directly accessing data
 CONSTANT = operator("constant", 3, False) # for constant values, constant values are mostly like data values, but they are never used for differentiation
+ASCONSTANT = operator("asconstant", 3, False)
 ARRAY = operator("array", 3, False) # for constructing an array
 
 TRANSPOSE = operator("transpose", 3, False) # for transposing a matrix
@@ -844,7 +845,14 @@ class attribute:
     correspondance = attribute.__check_heritage(condition, attribute.__check_heritage(true_attribute, false_attribute)).correspondance
     return attribute(children = [condition, true_attribute, false_attribute], operator = SELECT, correspondance = correspondance, rows = true_attribute.rows, cols = true_attribute.cols)
 
-
+  # making an attribute a constant
+  # such that the differentiation wrt this attribute
+  # will become zero
+  def asConstant(self) -> attribute:
+    if self.operator == FLOAT:
+      return self
+    else:
+      return attribute(children = [self], operator = ASCONSTANT, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
 
   ################################################
   ################################################

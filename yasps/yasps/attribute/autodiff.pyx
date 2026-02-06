@@ -73,6 +73,8 @@ class autodiff:
       result = self.__diff_inv(current, wrt)
     elif current.operator == ya.RESIZE:
       result = self.__diff_resize(current, wrt)
+    elif current.operator == ya.ASCONSTANT:
+      result = self.__diff_asconstant(current, wrt)
     else:
       raise ValueError(f"autodiff: The operator is not supported: {current.operator}")
     self.__seen_differentiations[(current, wrt)] = result
@@ -253,6 +255,12 @@ class autodiff:
 
   def __diff_constant(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     if current.fullName == wrt.fullName:
+      return ya.attribute.identity(current.size)
+    else:
+      return ya.attribute.zeros(current.size, wrt.size)
+
+  def __diff_asconstant(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
+    if current.fullName == wrt.fullName or current.children[0].fullName == wrt.fullName:
       return ya.attribute.identity(current.size)
     else:
       return ya.attribute.zeros(current.size, wrt.size)
