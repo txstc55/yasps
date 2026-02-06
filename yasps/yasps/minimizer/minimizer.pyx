@@ -116,7 +116,7 @@ class minimizer:
     from yasps.energy import energy
     for t in targets:
       self.__seen_pre_targets_full_names.add(t.fullName)
-    newEnergy = energy(e, targets, projection_method, save_intermediate, gradient_only, separate_hessian_jacobian)
+    newEnergy = energy(e, targets, projection_method, save_intermediate, gradient_only, separate_hessian_jacobian, dynamic_instances)
     if newEnergy.hash in [energy.hash for energy in self.__energies]:
       raise ValueError("minimizer.addEnergy: energy already exists.")
     if not dynamic_instances:

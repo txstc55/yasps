@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 
 class energy:
-  def __init__(self, energy: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, separate_hessian_jacobian = False):
+  def __init__(self, energy: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, separate_hessian_jacobian = False, dynamic_instances = False):
     if energy.size != 1:
       raise ValueError("energy.__init__: energy must be size 1.")
     self.__energy: attribute = energy
@@ -51,6 +51,7 @@ class energy:
     self.__global_jacobian: Optional[attribute] = None
     self.__global_inner_hessian: Optional[attribute] = None
     self.__separate_hessian_jacobian = separate_hessian_jacobian
+    self.__dynamic_instances = dynamic_instances
 
   # @property
   # def roots(self) -> List[attribute]:
@@ -1211,7 +1212,8 @@ class energy:
       for name, value in self.__intermediate_compute_pairs.items():
         value[0].compute()
         value[1].updateValue(value[0].value)
-      self.__hessianAndGradientKernel.generateKernel(self.__indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
+      if self.__dynamic_instances:
+        self.__hessianAndGradientKernel.generateKernel(self.__indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
       # after we allocated, we invoke the kernel
       counts_gpu = [x.children_primitive_counts_gpu for x in self.__merged_hessian_and_gradient_attribute.deviceKernel.kernelPrimitiveUnions] # get the children counts
       # print(f"counts gpu: {[x.get() for x in counts_gpu]}")
