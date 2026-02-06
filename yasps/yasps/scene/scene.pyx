@@ -168,7 +168,7 @@ class scene:
     error_code = self.__minimizer.computeHessianAndGradient(tolerance = tolerance, maxIterations = maxIterations)
     if error_code < 0:
       print("scene.minimizeEnergy: got error code", error_code)
-      return []
+      # return []
     return self.__minimizer.solutionSegments
 
   @property

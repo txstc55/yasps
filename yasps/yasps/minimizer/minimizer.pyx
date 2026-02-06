@@ -283,7 +283,9 @@ class minimizer:
   def computeSolution(self, tolerance = 1e-3) -> List[gpuarray.GPUArray]:
     error_code = self.computeHessianAndGradient(tolerance = tolerance)
     if error_code < 0:
-      return []
+      # return []
+      # raise warning but do not exit
+      print(f"Warning: solver did not converge. Returning the best solution found.")
     return self.solutionSegments
 
   def ignoreEnergies(self, energies: List[attribute]) -> None:
@@ -410,7 +412,7 @@ class minimizer:
       self.__solution,
       self.__last5solutions
     )
-    # self.__last5solutions = 0.5 * (self.__last5solutions + self.__solution)
+    # self.__last5solutions = 0.5 * self.__last5solutions + 0.5 * self.__solution
     return error_code
 
   def computeTotalEnergy(self) -> float:
