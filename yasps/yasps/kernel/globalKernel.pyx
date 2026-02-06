@@ -121,15 +121,17 @@ __device__ void spd_projection(const double *A, double* output, int choice) {
 
 template <unsigned int N>
 __device__ void spd_projection_inplace(double *A, int choice) {
+  if (choice == 0){
+    return;
+  }
   // Map A to an N x N Eigen matrix without copying
   Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
   const auto& B = eigenSolver.eigenvectors();
   Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
-
   for (int i = 0; i < N; i++) {
     if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1e-6;
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }
   }
 

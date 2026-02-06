@@ -361,7 +361,11 @@ __device__ void {attributeName}_device_function(
     if attribute.operator == ya.FLOAT:
       return str(attribute.float_value)
     # return the name of the intermediate value
+
     attribute_hash = attribute.hash
+    if attribute.operator == ya.SPD:
+      # for spd, let's do inplace projection
+      attribute_hash = attribute.children[0].hash
     if attribute_hash not in self.__attribute_replacements:
       raise ValueError(f"codeGenerator.getIntermediateName: attribute hash not found in self.__attribute_replacements. {str(attribute)} hash is: {attribute_hash}")
     if self.__attribute_replacements[attribute_hash][1] == -1:
@@ -739,6 +743,10 @@ __device__ void {attributeName}_device_function(
     self.__code_strings.append(f'''
   {attribute_initialization}({attribute_name}_before_resize.data());''')
 
+  # MARK ISSUE
+  # When the projection is 0, there is absolutely no need to allocate a matrix
+  # but there's not a good workaround for this right now, since the compiler requires static memory allocation
+  # We can always fall back to projection inplace, but that still requires some allocation
   def __generate_code_for_spd(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     an = self.getIntermediateName(current.children[0]) # attribute being projected
@@ -750,18 +758,18 @@ __device__ void {attributeName}_device_function(
       if current.rows <= 3:
         self.__seen_evd_projection_sizes.add(current.rows)
         self.__code_strings.append(f'''
-  {attribute_initialization} = {mn} == 0 ? Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>({an}.data()) : Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
+  // {attribute_initialization} = {mn} == 0 ? Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>({an}.data()) : Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
   if ({mn} != 0) {{
-    spd_projection_small<{current.children[0].rows}>({an}.data(), {attribute_name}.data(), int({mn}));
+    spd_projection_small<{current.children[0].rows}>({an}.data(), {an}.data(), int({mn}));
   }}
   ''')
       else:
         # we do the normal projection
         self.__seen_evd_projection_sizes.add(current.rows)
         self.__code_strings.append(f'''
-  {attribute_initialization} = {mn} == 0 ? Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>({an}.data()) : Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
+  // {attribute_initialization} = {mn} == 0 ? Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>({an}.data()) : Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
   if ({mn} != 0) {{
-    spd_projection<{current.children[0].rows}>({an}.data(), {attribute_name}.data(), int({mn}));
+    spd_projection_inplace<{current.children[0].rows}>({an}.data(), int({mn}));
   }}
 ''')
 
