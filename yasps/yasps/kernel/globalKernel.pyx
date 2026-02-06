@@ -51,7 +51,7 @@ class globalKernel:
 // For small matrix < 4
 template <unsigned int N>
 __device__ void spd_projection_small(const double *A, double* output, int choice) {
-  if (chilce == 0){
+  if (choice == 0){
     for (int i = 0; i < N * N; i++) {
       output[i] = A[i];
     }
