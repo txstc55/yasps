@@ -750,15 +750,19 @@ __device__ void {attributeName}_device_function(
       if current.rows <= 3:
         self.__seen_evd_projection_sizes.add(current.rows)
         self.__code_strings.append(f'''
-    {attribute_initialization} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
+  {attribute_initialization} = {mn} == 0 ? Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>({an}.data()) : Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
+  if ({mn} != 0) {{
     spd_projection_small<{current.children[0].rows}>({an}.data(), {attribute_name}.data(), int({mn}));
+  }}
   ''')
       else:
         # we do the normal projection
         self.__seen_evd_projection_sizes.add(current.rows)
         self.__code_strings.append(f'''
-  {attribute_initialization} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
-  spd_projection<{current.children[0].rows}>({an}.data(), {attribute_name}.data(), int({mn}));
+  {attribute_initialization} = {mn} == 0 ? Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>({an}.data()) : Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
+  if ({mn} != 0) {{
+    spd_projection<{current.children[0].rows}>({an}.data(), {attribute_name}.data(), int({mn}));
+  }}
 ''')
 
   def __generate_code_for_union(self, current: ya.attribute) -> None:

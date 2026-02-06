@@ -79,9 +79,6 @@ class hessianAndGradientKernel:
 template <unsigned int N>
 __device__ void spd_projection_small(const double *A, double* output, int choice) {
   if (choice == 0){
-    for (unsigned int i = 0; i < N * N; i++){
-      output[i] = A[i];
-    }
     return;
   }
   const int M = 4;
