@@ -691,35 +691,46 @@ class attribute:
       result += self[i, i]
     return result
 
-  def spd(self, spd_method: int = 1) -> attribute:
-    import numpy as np
+  def spd(self, spd_method: Union[int, attribute] = 1) -> attribute:
+    if isinstance(spd_method, attribute):
+      attribute.__check_heritage(self, spd_method)
+      return attribute(children = [self, spd_method], operator = SPD, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+
     # 0 for no projection
     # 1 for project negative eigen value to absolute value
     # 2 for project negative eigen value to 0
     if self.rows != self.cols:
       raise ValueError("attribute.spd: cannot compute spd projection of a non-square matrix.")
-    if self.size == 1 and self.operator == FLOAT:
-      if spd_method == 1:
-        return attribute(float_value = abs(self.float_value))
-      elif spd_method == 2:
-        return attribute(float_value = max([0, self.float_value]))
-    if self.isFloatMat:
-      print("We are directly constructing positive definite matrix since input is constant value")
-      # reconstruct the matrix in numpy
-      mat = np.array([x.float_value for x in self.children], dtype = np.float64).reshape(self.rows, self.cols)
-      # print("Directly projecting a float matrix")
-      # print(mat)
-      ev, evc = np.linalg.eig(mat)
-      if spd_method == 1:
-        ev = np.abs(ev)
-      elif spd_method == 2:
-        ev[ev < 0] = 0
-      reconstructed_mat = evc @ np.diag(ev) @ evc.T
-      m = [attribute(float_value = float(x)) for x in reconstructed_mat.flatten()]
-      return attribute.to_array(m, self.rows, self.cols)
-    if spd_method == 0:
-      return self
-    return attribute(children = [self, attribute(index_value = spd_method)], operator = SPD, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
+    # if self.size == 1 and self.operator == FLOAT:
+    #   if spd_method == 1:
+    #     return attribute(float_value = abs(self.float_value))
+    #   elif spd_method == 2:
+    #     return attribute(float_value = max([0, self.float_value]))
+    # if self.isFloatMat:
+    #   print("We are directly constructing positive definite matrix since input is constant value")
+    #   # reconstruct the matrix in numpy
+    #   mat = np.array([x.float_value for x in self.children], dtype = np.float64).reshape(self.rows, self.cols)
+    #   # print("Directly projecting a float matrix")
+    #   # print(mat)
+    #   ev, evc = np.linalg.eig(mat)
+    #   if spd_method == 1:
+    #     ev = np.abs(ev)
+    #   elif spd_method == 2:
+    #     ev[ev < 0] = 0
+    #   reconstructed_mat = evc @ np.diag(ev) @ evc.T
+    #   m = [attribute(float_value = float(x)) for x in reconstructed_mat.flatten()]
+    #   return attribute.to_array(m, self.rows, self.cols)
+    # if spd_method == 0:
+    #   return self
+    # we first check if the spd method is a data attribute with the same correspondance, or at least the same linearge
+
+    assert self.correspondance.scene is not None
+    # let's create a new attribute for spd projection
+    attribute_scene = self.correspondance.scene
+    spd_method_attribute = attribute_scene.addAttribute(self.fullName + "_spd_method", rows = 1, cols = 1)
+    spd_method_attribute.updateValue([spd_method])
+
+    return attribute(children = [self, spd_method_attribute], operator = SPD, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
 
 
 

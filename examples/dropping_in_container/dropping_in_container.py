@@ -265,12 +265,12 @@ collision_mesh.pt.addAttribute("point_triangle", computed_attribute = pt)
 ee = edge_edge(ee_positions, dhat, kappa)
 collision_mesh.ee.addAttribute("edge_edge", computed_attribute = ee)
 
-s0.addEnergy(snh_softs, projection_method = 1)
+s0.addEnergy(snh_softs, projection_method = 2)
 s0.addEnergy(inertia_softs, projection_method = 0)
-s0.addEnergy(pp, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(pe, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(pt, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(ee, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(pp, dynamic_instances = True, projection_method = 1)
+s0.addEnergy(pe, dynamic_instances = True, projection_method = 1)
+s0.addEnergy(pt, dynamic_instances = True, projection_method = 1)
+s0.addEnergy(ee, dynamic_instances = True, projection_method = 1)
 s0.addMinimizeTarget([vertices_soft_position])
 
 ##################################################################
@@ -470,10 +470,10 @@ for i in range(400):
   # container_poly.points = container_vertices_computed
   # plotter.render()
   # plotter.update()
-  plotter.screenshot(f"outputs/bunny_drop_in_container_{i:04d}.jpg")
+  # plotter.screenshot(f"outputs/bunny_drop_in_container_{i:04d}.jpg")
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
-  soft_poly.save(f"meshes/bunny_drop_in_container_{i:04d}.obj")
+  # soft_poly.save(f"meshes/bunny_drop_in_container_{i:04d}.obj")
   # container_poly.save(f"meshes/cloth_3_cloth_{i:04d}.obj")
   # # save the mesh obj file
   # bunny_poly0.save(f"outputs/bunny_abd_soft0_{i:04d}.obj")

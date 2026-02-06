@@ -51,6 +51,12 @@ class globalKernel:
 // For small matrix < 4
 template <unsigned int N>
 __device__ void spd_projection_small(const double *A, double* output, int choice) {
+  if (chilce == 0){
+    for (int i = 0; i < N * N; i++) {
+      output[i] = A[i];
+    }
+    return;
+  }
   const int M = 4;
   // Initialize an M x M matrix with zeros
   Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Identity();
@@ -86,6 +92,13 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
 
 template <unsigned int N>
 __device__ void spd_projection(const double *A, double* output, int choice) {
+  if (choice == 0){
+    for (int i = 0; i < N * N; i++) {
+      output[i] = A[i];
+    }
+    return;
+  }
+
   // Map A to an N x N Eigen matrix without copying
   Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);

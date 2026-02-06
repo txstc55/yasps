@@ -741,27 +741,24 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_spd(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    an = self.getIntermediateName(current.children[0]) # attribute being projected
+    mn = self.getIntermediateName(current.children[1]) # attribute being used for projection method
     if current.size == 1:
-      spd_method = current.children[1].index_value
-      if spd_method == 1:
-        self.__code_strings.append(f'''
-  {attribute_initialization} = abs({self.getIntermediateName(current.children[0])});''')
-      elif spd_method == 2:
-        self.__code_strings.append(f'''
-  {attribute_initialization} = max(0.0, {self.getIntermediateName(current.children[0])});''')
+      self.__code_strings.append(f'''
+         {attribute_initialization} = {mn} == 0 ? {an} : ({mn} == 1 ? abs({an}) : max(0.0, {an}));''')
     else:
       if current.rows <= 3:
         self.__seen_evd_projection_sizes.add(current.rows)
         self.__code_strings.append(f'''
     {attribute_initialization} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
-    spd_projection_small<{current.children[0].rows}>({self.getIntermediateName(current.children[0])}.data(), {attribute_name}.data(), {current.children[1].index_value});
+    spd_projection_small<{current.children[0].rows}>({an}.data(), {attribute_name}.data(), int({mn}));
   ''')
       else:
         # we do the normal projection
         self.__seen_evd_projection_sizes.add(current.rows)
         self.__code_strings.append(f'''
   {attribute_initialization} = Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
-  spd_projection<{current.children[0].rows}>({self.getIntermediateName(current.children[0])}.data(), {attribute_name}.data(), {current.children[1].index_value});
+  spd_projection<{current.children[0].rows}>({an}.data(), {attribute_name}.data(), int({mn}));
 ''')
 
   def __generate_code_for_union(self, current: ya.attribute) -> None:
