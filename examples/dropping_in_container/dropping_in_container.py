@@ -273,6 +273,7 @@ s0.addEnergy(pt, dynamic_instances = True, projection_method = 2)
 s0.addEnergy(ee, dynamic_instances = True, projection_method = 2)
 s0.addMinimizeTarget([vertices_soft_position])
 
+
 ##################################################################
 ## add ccd
 ##################################################################

@@ -1,5 +1,6 @@
 # cython: language_level=3
 from __future__ import annotations
+from enum import IntFlag
 import yasps.attribute as ya
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
@@ -25,7 +26,25 @@ class codeGenerator:
     self.__repeated_intermediates: Set[int] = set()
     self.__seen_elements: Set[int] = set()
     self.__seen_evd_projection_sizes: Set[int] = set() # used to track the projection size for evd
+    self.__attribute_last_appear: Dict[int, int] = {} # when is this attribute last used
+    self.__current_order_index = -1 # this is basically the pointer to which node we are generating code currently
+    self.__intermediate_dimensions: Dict[int, List[int]] = {} # store for each dimension, the list of intermediate attribute numbers
+    self.__intermediate_last_appear_index: Dict[int, int] = {} # store for each intermediate number, its last appear index in the order
+    self.__total_saved_registers = 0
+    self.__total_initialized_registers = 0
+    self.__seen_attribute_names: Dict[int, str] = {}
 
+  # storing when is the last time an attribute appear in the order array
+  # this is done by checking the parent and children
+  def __store_last_appear_time(self, att: ya.attribute) -> None:
+    if att.operator == ya.ARRAY_ACCESS:
+      # in this case, we should store the last appear time for the actual array, instead of this specific element
+      self.__attribute_last_appear[att.children[0].hash] = len(self.__order)
+    else:
+      if att.hash not in self.__attribute_last_appear:
+        self.__attribute_last_appear[att.hash] = len(self.__order) # this is the time where all the children are free
+      else:
+        self.__attribute_last_appear[att.hash] = max(self.__attribute_last_appear[att.hash], len(self.__order)) # we take the max because we want to make sure we cover all the uses of this attribute
 
   def __generateCodeOrderDFS(self, current):
     # print("Generating code for attribute:", current.fullName)
@@ -36,8 +55,10 @@ class codeGenerator:
     if current.hash in self.__seen_elements:
       return
     if current.operator == ya.FLOAT or current.operator == ya.INDEX:
+      self.__attribute_last_appear[current.hash] = int(1e9)
       return
     elif current.isFloatMat:
+      self.__attribute_last_appear[current.hash] = int(1e9)
       if current.correspondance is None:
         if current.operator == ya.TRANSPOSE:
           self.__generateCodeOrderDFS(current.children[0])
@@ -61,17 +82,9 @@ class codeGenerator:
       self.__generateCodeOrderDFS(current.children[1])
       self.__generateCodeOrderDFS(current.children[2])
       self.__order.append(current)
-    # elif current.correspondance is None:
-    # # we need to check what this is
-    #   print("No correspondance check")
-    #   print("The operator is", current.operator.name)
-    #   print("Select right choice correspondance is", current.children[1].correspondance if current.children[1].correspondance is not None else "None")
-    #   print("Select left choice correspondance is", current.children[2].correspondance if current.children[2].correspondance is not None else "None")
-    #   print(str(current.children[1]))
-    #   print(str(current.children[2]))
-    #   # exit()
-    #   # print(current.fullName)
-    #   # print(str(current))
+      # mark last appearance
+      for item in current.children:
+        self.__store_last_appear_time(item)
     elif current.correspondance.fullName == self.__input.correspondance.fullName:
       if current.name != "" and current.generate_code:
         # this is a named attribute, lets use the generated kernel for it
@@ -83,7 +96,6 @@ class codeGenerator:
           childCodeGenerator.generateCode()
           self.__childrenAttributeKernels[current.hash] = current
         else:
-
           # there's a kernel generated that does exactly the same thing
           # we add a macro to handle this
           if current.fullName != self.__childrenAttributeKernels[current.hash].fullName:
@@ -99,6 +111,9 @@ class codeGenerator:
         if current.hash not in self.__seen_elements:
           self.__seen_elements.add(current.hash)
           self.__order.append(current)
+          for item in current.children:
+            self.__store_last_appear_time(item)
+
     else:
       # when correspondance is different
       # there are couple of scenarios
@@ -118,6 +133,8 @@ class codeGenerator:
           if current.hash not in self.__seen_elements:
             self.__seen_elements.add(current.hash)
             self.__order.append(current)
+            for item in current.children:
+              self.__store_last_appear_time(item)
       else:
         # this is an operation on other primitive attributes probably
         # this is done through join or union
@@ -159,7 +176,14 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
     for item in self.__input.children:
       self.__generateCodeOrderDFS(item)
     self.__order.append(self.__input)
+    for item in self.__input.children:
+      self.__store_last_appear_time(item)
+    self.__attribute_last_appear[self.__input.hash] = len(self.__order) + 100 + len(self.__input.children)
+
+    self.__current_order_index = -1 # this is basically the pointer to which node we are generating code currently
+    # now generate the code
     for current in self.__order:
+      self.__current_order_index += 1
       if current.hash in self.__attribute_replacements:
         # we don't need to do anything about it
         pass
@@ -251,9 +275,6 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
         else:
           # we found the same kernel
           # we need to replace the kernel calls
-          # if str(current.hash) == "73073881234865546943141648636381669944003170022450331731243882876784723308431":
-          #   print("Found bad hash")
-          #   print(str(current))
           replacement = self.__childrenAttributeKernels[current.hash]
           self.__code_strings.append(f'''
   {current.fullName}_device_function(
@@ -351,14 +372,17 @@ __device__ void {attributeName}_device_function(
 
     # now we generate the device kernel
     self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allPrimitiveUnions, allDependencies, allEvdSizes, self.__input.fullNameWithHash)
-    # print(f"Device kernel generated for {self.__input.fullName}")
-    # print(f"All intermediate count: {len(self.__attribute_replacements)}")
-    # print(f"num intermediates: {self.__num_intermediates}")
-
+    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    print(f"We initialized {self.__total_initialized_registers} registers")
+    print(f"We saved {self.__total_saved_registers} registers")
+    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
   # get the name of the intermediate variables
   def getIntermediateName(self, attribute: ya.attribute) -> str:
+    if attribute.hash in self.__seen_attribute_names:
+      return self.__seen_attribute_names[attribute.hash]
     if attribute.operator == ya.FLOAT:
+      self.__seen_attribute_names[attribute.hash] = str(attribute.float_value)
       return str(attribute.float_value)
     # return the name of the intermediate value
 
@@ -368,9 +392,26 @@ __device__ void {attributeName}_device_function(
       attribute_hash = attribute.children[0].hash
     if attribute_hash not in self.__attribute_replacements:
       raise ValueError(f"codeGenerator.getIntermediateName: attribute hash not found in self.__attribute_replacements. {str(attribute)} hash is: {attribute_hash}")
+    if attribute.operator == ya.ARRAY_ACCESS:
+      # for array access, we return the name of the actual array
+      index_value = attribute.children[1].index_value
+      row_num = index_value // attribute.children[0].cols
+      col_num = index_value % attribute.children[0].cols
+      child_rows = attribute.children[0].rows
+      child_cols = attribute.children[0].cols
+      mat_name = self.getIntermediateName(attribute.children[0])
+      if child_rows == 1 and child_cols == 1:
+        # this is a direct access to a scalar
+        self.__seen_attribute_names[attribute.hash] = mat_name
+        return mat_name
+      else:
+        self.__seen_attribute_names[attribute.hash] = f'{mat_name}({row_num}, {col_num})'
+        return f'{mat_name}({row_num}, {col_num})'
     if self.__attribute_replacements[attribute_hash][1] == -1:
+      self.__seen_attribute_names[attribute.hash] = f"{self.__attribute_replacements[attribute_hash][0].fullName}_local_data"
       return f"{self.__attribute_replacements[attribute_hash][0].fullName}_local_data"
     else:
+      self.__seen_attribute_names[attribute.hash] = f"INTERMEDIATE_{self.__attribute_replacements[attribute_hash][1]}"
       return f"INTERMEDIATE_{self.__attribute_replacements[attribute_hash][1]}"
 
 
@@ -388,43 +429,96 @@ __device__ void {attributeName}_device_function(
   ################################################
   ################################################
 
-
+  def __check_available_intermediate_number(self, att: ya.attribute):
+    dimension = att.rows * att.cols
+    if dimension not in self.__intermediate_dimensions:
+      self.__intermediate_dimensions[dimension] = [self.__attribute_replacements[att.hash][1]]
+      self.__intermediate_last_appear_index[self.__attribute_replacements[att.hash][1]] = self.__attribute_last_appear[att.hash]
+      self.__total_initialized_registers += att.size
+      return -self.__attribute_replacements[att.hash][1] - 1
+    else:
+      if att.operator != ya.RESIZE:
+        for ind in self.__intermediate_dimensions[dimension]:
+          if self.__intermediate_last_appear_index[ind] <= self.__current_order_index:
+            # we can reuse this intermediate variable
+            if dimension == 1:
+              self.__attribute_replacements[att.hash] = (att, ind) # we will directly use that singular register
+              # note that we don't do this when dimension is not equal to 1
+              # we only need to reuse the storage space
+              # but we can still give it a new name
+            if att.hash not in self.__attribute_last_appear:
+              print(str(att))
+            self.__intermediate_last_appear_index[ind] = self.__attribute_last_appear[att.hash]
+            self.__total_saved_registers += att.size
+            return ind
+      # if we cannot find any available intermediate variable, we need to create a new one
+      self.__intermediate_dimensions[dimension].append(self.__attribute_replacements[att.hash][1])
+      if att.hash not in self.__attribute_last_appear:
+        print(str(att))
+      self.__intermediate_last_appear_index[self.__attribute_replacements[att.hash][1]] = self.__attribute_last_appear[att.hash]
+      self.__total_initialized_registers += att.size
+      return -self.__attribute_replacements[att.hash][1] - 1
 
   def __generate_attribute_name_and_initialization(self, current: ya.attribute) -> Tuple[str, str]:
-    # we need to generate the code accordingly
     attribute_initialization: str = ""
     attribute_name: str = ""
     if current.name != "":
       attribute_name = current.fullName + "_local_data"
       self.__attribute_replacements[current.hash] = (current, -1)
-    else:
-      ind: int = self.__attribute_replacements[current.hash][1]
-      attribute_name = f"INTERMEDIATE_{ind}"
-
-    if current.size == 1:
-      attribute_initialization = f"double {attribute_name}"
-    else:
-      if current.rows == 1 or current.cols == 1:
-        attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}"
+      if current.size == 1:
+        attribute_initialization = f"double {attribute_name}"
       else:
-        attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}"
-    return attribute_name, attribute_initialization
+        if current.rows == 1 or current.cols == 1:
+          attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}"
+        else:
+          attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}"
+      return attribute_name, attribute_initialization
+
+    # ok we will do two cases
+    # the first one is the current size is just 1
+    if current.size == 1:
+      # what we will do is we check if there's any available intermediate variables that we can reuse, if not we will just create the new one
+      # otherwise we reuse
+      free_register_result = self.__check_available_intermediate_number(current)
+      if free_register_result < 0:
+        # if the result is negative, it means we need to create a new intermediate variable
+        ind: int = self.__attribute_replacements[current.hash][1]
+        attribute_name = f"INTERMEDIATE_{ind}"
+        attribute_initialization = f"double {attribute_name}"
+      else:
+        # if the result is non-negative, it means we can reuse an existing intermediate variable
+        attribute_name = f"INTERMEDIATE_{free_register_result}"
+        attribute_initialization = attribute_name
+      return attribute_name, attribute_initialization
+    else:
+      # this is the case where the current size is larger than 1
+      # we first check if there's any available intermediate variables that we can reuse for storage
+      free_register_result = self.__check_available_intermediate_number(current)
+      if free_register_result < 0:
+        ind: int = self.__attribute_replacements[current.hash][1]
+        attribute_name = f"INTERMEDIATE_{ind}"
+        if current.rows == 1 or current.cols == 1:
+          attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}"
+        else:
+          attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}"
+      else:
+        # here's the part where we need to reuse an existing intermediate matrix's storage
+        ind: int = self.__attribute_replacements[current.hash][1]
+        attribute_name = f"INTERMEDIATE_{ind}"
+        matrix_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}>" if (current.rows == 1 or current.cols == 1) else f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>"
+        # we initialize the matrix here by reusing the storage of the existing intermediate matrix
+        self.__code_strings.append(f'''
+  Eigen::Map<{matrix_initialization}> {attribute_name}(INTERMEDIATE_{free_register_result}.data());
+''')
+        attribute_initialization = attribute_name
+      return attribute_name, attribute_initialization
 
 
   def __generate_code_for_type_0(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
-#     if current.hash not in self.__repeated_intermediates and current.hash != self.__input.hash:
-#       if current.size == 1:
-#         self.__code_strings.append(f'''
-# # define {attribute_name} ({current.operator.name}({self.getIntermediateName(current.children[0])}))''')
-#       else:
-#         self.__code_strings.append(f'''
-# # define {attribute_name} ({self.getIntermediateName(current.children[0])}.array().{current.operator.name}())''')
-#       return
-    # different code generation for scalar and double
     if current.size == 1:
       self.__code_strings.append(f'''
-  double {attribute_name} = {current.operator.name}({self.getIntermediateName(current.children[0])});''')
+  {attribute_initialization} = {current.operator.name}({self.getIntermediateName(current.children[0])});''')
     else:
       self.__code_strings.append(f'''
   // allocate the space since this operation is most likely going to be expansive
@@ -433,20 +527,16 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_type_1(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
-#     if current.hash not in self.__repeated_intermediates and current.hash != self.__input.hash:
-#       self.__code_strings.append(f'''
-# # define {attribute_name} ({self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])})''')
-#       return
     if current.operator == ya.MUL or current.operator == ya.DIV:
       self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
     else:
       if current.size == 1:
         self.__code_strings.append(f'''
-  double {attribute_name} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
       else:
         self.__code_strings.append(f'''
-  auto {attribute_name} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
 
 
   def __generate_code_for_type_2(self, current: ya.attribute) -> None:
@@ -471,7 +561,7 @@ __device__ void {attributeName}_device_function(
   def __generate_code_for_neg(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     self.__code_strings.append(f'''
-    {attribute_initialization} = -{self.getIntermediateName(current.children[0])};''')
+  {attribute_initialization} = -{self.getIntermediateName(current.children[0])};''')
 
   def __generate_code_for_float(self, current: ya.attribute) -> None:
     # the float attribute can only happen if it is a root node
@@ -480,20 +570,22 @@ __device__ void {attributeName}_device_function(
   result[0] = {current.float_value};''')
 
   def __generate_code_for_array_access(self, current: ya.attribute) -> None:
-    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
-    # generate code for array access
-    index_value = current.children[1].index_value
-    row_num = index_value // current.children[0].cols
-    col_num = index_value % current.children[0].cols
-    child_rows = current.children[0].rows
-    child_cols = current.children[0].cols
-    if child_rows == 1 and child_cols == 1:
-      # this is a direct access to a scalar
-      self.__code_strings.append(f'''
-  {attribute_initialization} = {self.getIntermediateName(current.children[0])};''')
-    else:
-      self.__code_strings.append(f'''
-  {attribute_initialization} = {self.getIntermediateName(current.children[0])}({row_num}, {col_num});''')
+  #   attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+  #   # generate code for array access
+  #   index_value = current.children[1].index_value
+  #   row_num = index_value // current.children[0].cols
+  #   col_num = index_value % current.children[0].cols
+  #   child_rows = current.children[0].rows
+  #   child_cols = current.children[0].cols
+  #   if child_rows == 1 and child_cols == 1:
+  #     # this is a direct access to a scalar
+  #     self.__code_strings.append(f'''
+  # {attribute_initialization} = {self.getIntermediateName(current.children[0])};''')
+  #   else:
+  #     self.__code_strings.append(f'''
+  # {attribute_initialization} = {self.getIntermediateName(current.children[0])}({row_num}, {col_num});''')
+  # for array access we do nothing
+    pass
 
   def __generate_code_for_array(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
@@ -502,6 +594,15 @@ __device__ void {attributeName}_device_function(
   {attribute_initialization};
   {attribute_name} << {", ".join([self.getIntermediateName(x) for x in current.children])};
 ''')
+    if len(current.children) == 9 and current.children[1].operator == ya.NEG and current.children[7].operator == ya.NEG:
+      if self.getIntermediateName(current.children[5]) == "INTERMEDIATE_40":
+        print("Checking array operator with intermediate 40")
+        print(current.children[5].operator)
+        print(current.children[5].children[0].operator)
+        print(current.correspondance.fullName)
+        print(current.children[5].correspondance.fullName)
+        print(current.children[5].isFloatMat)
+        print(current.children[5] in self.__attribute_replacements)
 
 
   def __generate_code_for_join(self, current: ya.attribute) -> None:
@@ -648,50 +749,49 @@ __device__ void {attributeName}_device_function(
 
 
   def __generate_code_for_transpose(self, current: ya.attribute) -> None:
-    attribute_name, _ = self.__generate_attribute_name_and_initialization(current)
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     # if current.children[0] not in self.__attribute_replacements:
     self.__code_strings.append(f'''
-  // make transpose expression rather than a copy
-  auto {attribute_name} = {self.getIntermediateName(current.children[0])}.transpose();''')
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}.transpose();''')
 
   def __generate_code_for_broadcast_add(self, current: ya.attribute) -> None:
-    attribute_name, _ = self.__generate_attribute_name_and_initialization(current)
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     self.__code_strings.append(f'''
   // broadcast addition
-  auto {attribute_name} = {self.getIntermediateName(current.children[0])}.array() + {self.getIntermediateName(current.children[1])};''')
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}.array() + {self.getIntermediateName(current.children[1])};''')
 
   def __generate_code_for_broadcast_sub(self, current: ya.attribute) -> None:
-    attribute_name, _ = self.__generate_attribute_name_and_initialization(current)
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     self.__code_strings.append(f'''
   // broadcast subtraction
-  auto {attribute_name} = {self.getIntermediateName(current.children[0])}.array() - {self.getIntermediateName(current.children[1])};''')
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}.array() - {self.getIntermediateName(current.children[1])};''')
 
   def __generate_code_for_row(self, current: ya.attribute) -> None:
-    attribute_name, _ = self.__generate_attribute_name_and_initialization(current)
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     if current.children[0].cols == 1:
       # this is a singular value
       #
       self.__code_strings.append(f'''
   // getting row to a singular value
-  double {attribute_name} = {self.getIntermediateName(current.children[0])}.row({current.children[1].index_value}).value();''')
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}.row({current.children[1].index_value}).value();''')
     else:
       self.__code_strings.append(f'''
   // getting row by expression template
-  auto {attribute_name} = {self.getIntermediateName(current.children[0])}.row({current.children[1].index_value});''')
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}.row({current.children[1].index_value});''')
 
   def __generate_code_for_col(self, current: ya.attribute) -> None:
-    attribute_name, _ = self.__generate_attribute_name_and_initialization(current)
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     if current.children[0].rows == 1:
       # this is a singular value
       self.__code_strings.append(f'''
   // getting column to a singular value
-  double {attribute_name} = {self.getIntermediateName(current.children[0])}.col({current.children[1].index_value}).value();''')
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}.col({current.children[1].index_value}).value();''')
     else:
       # this is a column vector
       # we can use the expression template
       self.__code_strings.append(f'''
   // getting column by expression template
-  auto {attribute_name} = {self.getIntermediateName(current.children[0])}.col({current.children[1].index_value});''')
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])}.col({current.children[1].index_value});''')
 
   def __generate_code_for_cross(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
@@ -719,26 +819,15 @@ __device__ void {attributeName}_device_function(
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.dot({self.getIntermediateName(current.children[1])});''')
 
   def __generate_code_for_resize(self, current: ya.attribute) -> None:
+    attribute_name, attribute_initialization_original = self.__generate_attribute_name_and_initialization(current)
     # we need to generate the code accordingly
     origin_mat = current.children[0]
-    attribute_initialization: str = ""
-    attribute_name: str = ""
-    if current.name != "":
-      attribute_name = current.fullName + "_local_data"
-      self.__attribute_replacements[current.hash] = (current, -1)
-
-    else:
-      ind: int = self.__attribute_replacements[current.hash][1]
-      attribute_name = f"INTERMEDIATE_{ind}"
 
     if origin_mat.rows == 1 or origin_mat.cols == 1:
       attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
     else:
       attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}, Eigen::RowMajor> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
-    if current.rows == 1 or current.cols == 1:
-      attribute_initialization += f'''Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}'''
-    else:
-      attribute_initialization += f'''Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}'''
+    attribute_initialization += f'''{attribute_initialization_original}'''
     # copy the data and resize
     self.__code_strings.append(f'''
   {attribute_initialization}({attribute_name}_before_resize.data());''')

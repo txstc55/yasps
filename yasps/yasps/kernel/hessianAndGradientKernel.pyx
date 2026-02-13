@@ -70,6 +70,7 @@ class hessianAndGradientKernel:
 #include <math.h>
 #include <cuda.h>
 #define EIGEN_USE_GPU
+#define EIGEN_DEFAULT_TO_ROW_MAJOR
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 #include <vector>
