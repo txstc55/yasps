@@ -14,6 +14,10 @@ from .hessianAndGradientKernel import hessianAndGradientKernel
 from .coordinateCompressionKernel import coordinateCompressionKernel
 from .diagonalBlockInverseKernel import diagonalBlockInverseKernel
 from .solverKernel import solverKernel
+from .vector import vector
+from .matrix import matrix
+from .gradient import gradient
+from .hessian import hessian
 from .energy import energy
 from .minimizer import minimizer
 from .autodiff import autodiff

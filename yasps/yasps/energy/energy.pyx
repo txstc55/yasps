@@ -78,13 +78,6 @@ class energy:
   def block_indices_gpu(self, block_indices_gpu: gpuarray.GPUArray):
     self.__block_indices_gpu = block_indices_gpu
 
-  @property
-  def hessian_blocks_where_to_check(self) -> gpuarray.GPUArray:
-    return self.__hessian_blocks_where_to_check
-
-  @hessian_blocks_where_to_check.setter
-  def hessian_blocks_where_to_check(self, hessian_blocks_where_to_check: gpuarray.GPUArray):
-    self.__hessian_blocks_where_to_check = hessian_blocks_where_to_check
 
   @property
   def gradient_only(self) -> bool:
