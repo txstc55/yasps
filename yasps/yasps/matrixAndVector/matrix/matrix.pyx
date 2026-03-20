@@ -4,7 +4,8 @@ import numpy as np
 import pycuda.gpuarray as gpuarray
 from typing import List
 
-from yasps.gradient import gradient
+
+from yasps.vector import vector
 
 
 class matrix:
