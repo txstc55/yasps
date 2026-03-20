@@ -265,12 +265,12 @@ collision_mesh.pt.addAttribute("point_triangle", computed_attribute = pt)
 ee = edge_edge(ee_positions, dhat, kappa)
 collision_mesh.ee.addAttribute("edge_edge", computed_attribute = ee)
 
-s0.addEnergy(snh_softs, projection_method = 0)
-# s0.addEnergy(inertia_softs, projection_method = 0)
-# s0.addEnergy(pp, dynamic_instances = True, projection_method = 2)
-# s0.addEnergy(pe, dynamic_instances = True, projection_method = 2)
-# s0.addEnergy(pt, dynamic_instances = True, projection_method = 2)
-# s0.addEnergy(ee, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(snh_softs, projection_method = 1)
+s0.addEnergy(inertia_softs, projection_method = 0)
+s0.addEnergy(pp, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(pe, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(pt, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(ee, dynamic_instances = True, projection_method = 2)
 s0.addMinimizeTarget([vertices_soft_position])
 
 ##################################################################

@@ -227,13 +227,8 @@ class energy:
 
   def __generateGradientThroughPathDict(self, wrt: List[attribute], differentiater: autodiff) -> None:
     from yasps.attribute import JOIN, UNION
-    # # we are generating the symbolic gradient through the path dict
-    # # the path dict already contains only the used paths
-    # gradients: List[attribute] = []
-    # if len(self.__path_dict) == 0:
-    #   # there is nothing to do
-    #   gradients.append(attribute.zeros(1, sum([x.size for x in wrt])))
-    #   return
+    # we are generating the symbolic gradient through the path dict
+    # the path dict already contains only the used paths
     if f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}' in self.__energy.correspondance.attributes:
       # nothing we need to do, the gradient is already computed
       self.__gradient = self.__energy.correspondance.attributes[f'd_{self.__energy.fullName}_d_{"__".join([x.fullName for x in wrt])}']
@@ -281,30 +276,8 @@ class energy:
     if current.operator != JOIN and current.operator != UNION:
       return self.__gennerateGlobalJacobianForEnergy(current, wrt)
     elif current.operator == JOIN:
-      result = self.__generateGlobalJacobianForJoin(current, wrt)
-      # if self.__save_intermediate:
-      #   if result.fullName not in self.__intermediate_compute_pairs:
-      #     # we save the intermediate result as an evaluated data pair
-      #     new_name = result.name + "_evaluated"
-      #     evaluated_result = current.correspondance.addAttribute(new_name, rows = result.rows, cols = result.cols)
-      #     self.__intermediate_compute_pairs[result.fullName] = (result, evaluated_result)
-      #     return evaluated_result
-      #   else:
-      #     # we already have the intermediate result, we just return the evaluated result
-      #     return self.__intermediate_compute_pairs[result.fullName][1]
       return self.__generateGlobalJacobianForJoin(current, wrt)
     elif current.operator == UNION:
-      result = self.__generateGlobalJacobianForUnion(current, wrt)
-      # if self.__save_intermediate:
-      #   if result.fullName not in self.__intermediate_compute_pairs:
-      #     # we save the intermediate result as an evaluated data pair
-      #     new_name = result.name + "_evaluated"
-      #     evaluated_result = current.correspondance.addAttribute(new_name, rows = result.rows, cols = result.cols)
-      #     self.__intermediate_compute_pairs[result.fullName] = (result, evaluated_result)
-      #     return evaluated_result
-      #   else:
-      #     # we already have the intermediate result, we just return the evaluated result
-      #     return self.__intermediate_compute_pairs[result.fullName][1]
       return self.__generateGlobalJacobianForUnion(current, wrt)
     else:
       raise ValueError(f"energy.__generateGradientThroughRecursion: operator {current.operator} is not supported in path dict.")
@@ -351,13 +324,7 @@ class energy:
             parent.correspondance.addAttribute(new_name, computed_attribute = local_hessian)
             self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (local_hessian, hessian_data_attribute)
       else:
-        # print("------------------------------------------------------------------------------------")
-        # print("Local hessian name in local energy hessian is", local_hessian_name)
-        # print("------------------------------------------------------------------------------------")
         parent.correspondance.addAttribute(local_hessian_name, computed_attribute = local_hessian)
-        # print("Energy local hessian check")
-        # print(local_hessian.compute().value.get()[:(local_hessian.rows * local_hessian.cols)].reshape((local_hessian.rows, local_hessian.cols)))
-        # exit()
     return
 
   def __gennerateGlobalJacobianForEnergy(self, current: attribute, wrt: List[attribute]):
@@ -450,9 +417,6 @@ class energy:
 
     # ok then we construct the first part of the hessian
     local_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in children])}'
-    # print("------------------------------------------------------------------------------------")
-    # print("Local hessian name in global energy hessian is", local_hessian_name)
-    # print("------------------------------------------------------------------------------------")
 
     local_hessian = current.correspondance[local_hessian_name]
     if second_part_hessian.isZero > 0:
@@ -461,11 +425,6 @@ class energy:
       self.__project_entire_hessian = False
     else:
       self.__project_entire_hessian = True
-    # print("------------------------------------------------------------------------------------")
-    # print("need to project entire hessian", self.__project_entire_hessian)
-    # print(str(second_part_hessian))
-    # print("------------------------------------------------------------------------------------")
-    # exit(0)
 
     # now we assemble the children jacobian
     children_jacobian_name = f'd_{"__".join([x.fullName for x in children])}_d_{"__".join([x.fullName for x in wrt])}'
@@ -474,15 +433,6 @@ class energy:
     self.__global_jacobian = children_global_jacobian
 
     final_hessian = children_global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(children_global_jacobian)).add_explicit(second_part_hessian)
-    # print("------------------------------------------------------------------------------------")
-    # print("Checking the local hessian")
-    # print(local_hessian.compute().value.get()[:(local_hessian.rows * local_hessian.cols)].reshape((local_hessian.rows, local_hessian.cols)))
-    # print("Checking the jacobian")
-    # print(children_global_jacobian.compute().value.get()[:(children_global_jacobian.rows * children_global_jacobian.cols)].reshape((children_global_jacobian.rows, children_global_jacobian.cols)))
-    # print("Hessian checking")
-    # print(final_hessian.compute().value.get()[:(final_hessian.rows * final_hessian.cols)].reshape((final_hessian.rows, final_hessian.cols)))
-    # # exit()
-    # print("------------------------------------------------------------------------------------")
     current.correspondance.addAttribute(global_hessian_name, computed_attribute = final_hessian)
     return final_hessian
 

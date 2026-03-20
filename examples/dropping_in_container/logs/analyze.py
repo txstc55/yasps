@@ -109,7 +109,7 @@ def extract_time(file, verbose=False):
   totals["total"] = total_runtime
 
   if verbose:
-    print("Total Hessian time (s):", totals["Hessian"])
+    print("Total Hessian time (s):", totals["Differentiation+Assembly"])
     print("Total CG time (s):", totals["CG"])
     print("Total CCD+CD+LargestStep (s):", totals["CCD+CD+LargestStep"])
     if total_runtime_count > 0:
@@ -120,126 +120,128 @@ def extract_time(file, verbose=False):
 
 if __name__ == "__main__":
   rows = []
-  for i in range(25):
-    bunny_id = i + 1
-    t = extract_time(f"bunny_{bunny_id}.log", verbose=False)
-    rows.append({
-      "bunnies": bunny_id,
-      "Differentiation+Assembly": t["Differentiation+Assembly"],
-      "CG": t["CG"],
-      "CCD+CD+LargestStep": t["CCD+CD+LargestStep"],
+  extract_time(f"bunny_5.log", verbose=True)
+  extract_time(f"bunny_5_new.log", verbose=True)
+  # for i in range(25):
+  #   bunny_id = i + 1
+  #   t = extract_time(f"bunny_{bunny_id}.log", verbose=False)
+  #   rows.append({
+  #     "bunnies": bunny_id,
+  #     "Differentiation+Assembly": t["Differentiation+Assembly"],
+  #     "CG": t["CG"],
+  #     "CCD+CD+LargestStep": t["CCD+CD+LargestStep"],
 
-      "point-point": t["point-point"],
-      "point-edge": t["point-edge"],
-      "point-triangle": t["point-triangle"],
-      "edge-edge": t["edge-edge"],
-    })
+  #     "point-point": t["point-point"],
+  #     "point-edge": t["point-edge"],
+  #     "point-triangle": t["point-triangle"],
+  #     "edge-edge": t["edge-edge"],
+  #   })
 
-  df = pd.DataFrame(rows).sort_values("bunnies")
+  # df = pd.DataFrame(rows).sort_values("bunnies")
 
-  # =============================
-  # Two plots: top (runtime), bottom (collision counts)
-  # =============================
-  fig, (ax1, ax2) = plt.subplots(
-      2, 1,
-      figsize=(3.75, 3.0),   # double height
-      dpi=300,
-      # sharex=True,
-      gridspec_kw={"hspace": 0.1},
-      constrained_layout=True
-  )
+  # # =============================
+  # # Two plots: top (runtime), bottom (collision counts)
+  # # =============================
+  # fig, (ax1, ax2) = plt.subplots(
+  #     2, 1,
+  #     figsize=(3.75, 3.0),   # double height
+  #     dpi=300,
+  #     # sharex=True,
+  #     gridspec_kw={"hspace": 0.1},
+  #     constrained_layout=True
+  # )
 
-  plt.rcParams.update({
-      "font.size": 6,
-      "axes.labelsize": 6,
-      "axes.titlesize": 6,
-      "xtick.labelsize": 6,
-      "ytick.labelsize": 6,
-      "legend.fontsize": 6,
-  })
+  # plt.rcParams.update({
+  #     "font.size": 6,
+  #     "axes.labelsize": 6,
+  #     "axes.titlesize": 6,
+  #     "xtick.labelsize": 6,
+  #     "ytick.labelsize": 6,
+  #     "legend.fontsize": 6,
+  # })
 
-  # -----------------------------
-  # Top plot: runtime
-  # -----------------------------
-  ax1.plot(df["bunnies"], df["Differentiation+Assembly"],
-           label="Differentiation+Assembly",
-           color=COLORS["Differentiation+Assembly"], linewidth=1)
-  ax1.plot(df["bunnies"], df["CG"],
-           label="CG", color=COLORS["CG"], linewidth=1)
-  ax1.plot(df["bunnies"], df["CCD+CD+LargestStep"],
-           label="CCD+CD+LargestStep",
-           color=COLORS["CCD+CD+LargestStep"], linewidth=1)
+  # # -----------------------------
+  # # Top plot: runtime
+  # # -----------------------------
+  # ax1.plot(df["bunnies"], df["Differentiation+Assembly"],
+  #          label="Differentiation+Assembly",
+  #          color=COLORS["Differentiation+Assembly"], linewidth=1)
+  # ax1.plot(df["bunnies"], df["CG"],
+  #          label="CG", color=COLORS["CG"], linewidth=1)
+  # ax1.plot(df["bunnies"], df["CCD+CD+LargestStep"],
+  #          label="CCD+CD+LargestStep",
+  #          color=COLORS["CCD+CD+LargestStep"], linewidth=1)
 
-  ax1.set_ylabel("Time (s)", labelpad=1, fontsize=6)
-  ax1.yaxis.set_major_locator(plt.MaxNLocator(nbins=4))
-  ax1.set_xticks([5, 10, 15, 20, 25])
-  ax1.tick_params(axis="x", labelsize=6)
-  ax1.tick_params(axis="y", labelsize=6)
-  ax1.legend(
-      frameon=False,
-      borderaxespad=0.1,
-      handlelength=1.2,
-      handletextpad=0.4,
-      labelspacing=0.2,
-      columnspacing=0.6,
-      loc="upper left", fontsize=6
-  )
+  # ax1.set_ylabel("Time (s)", labelpad=1, fontsize=6)
+  # ax1.yaxis.set_major_locator(plt.MaxNLocator(nbins=4))
+  # ax1.set_xticks([5, 10, 15, 20, 25])
+  # ax1.tick_params(axis="x", labelsize=6)
+  # ax1.tick_params(axis="y", labelsize=6)
+  # ax1.legend(
+  #     frameon=False,
+  #     borderaxespad=0.1,
+  #     handlelength=1.2,
+  #     handletextpad=0.4,
+  #     labelspacing=0.2,
+  #     columnspacing=0.6,
+  #     loc="upper left", fontsize=6
+  # )
 
-  # -----------------------------
-  # Bottom plot: collision counts
-  # -----------------------------
-  COUNT_COLORS = {
-      "point-point": "#26547c",
-      "point-edge": "#ef476f",
-      "point-triangle": "#ffd166",
-      "edge-edge": "#06d6a0",
-  }
+  # # -----------------------------
+  # # Bottom plot: collision counts
+  # # -----------------------------
+  # COUNT_COLORS = {
+  #     "point-point": "#26547c",
+  #     "point-edge": "#ef476f",
+  #     "point-triangle": "#ffd166",
+  #     "edge-edge": "#06d6a0",
+  # }
 
-  ax2.plot(df["bunnies"], df["point-point"],
-           label="point-point", color=COUNT_COLORS["point-point"], linewidth=1)
-  ax2.plot(df["bunnies"], df["point-edge"],
-           label="point-edge", color=COUNT_COLORS["point-edge"], linewidth=1)
-  ax2.plot(df["bunnies"], df["point-triangle"],
-           label="point-triangle", color=COUNT_COLORS["point-triangle"], linewidth=1)
-  ax2.plot(df["bunnies"], df["edge-edge"],
-           label="edge-edge", color=COUNT_COLORS["edge-edge"], linewidth=1)
+  # ax2.plot(df["bunnies"], df["point-point"],
+  #          label="point-point", color=COUNT_COLORS["point-point"], linewidth=1)
+  # ax2.plot(df["bunnies"], df["point-edge"],
+  #          label="point-edge", color=COUNT_COLORS["point-edge"], linewidth=1)
+  # ax2.plot(df["bunnies"], df["point-triangle"],
+  #          label="point-triangle", color=COUNT_COLORS["point-triangle"], linewidth=1)
+  # ax2.plot(df["bunnies"], df["edge-edge"],
+  #          label="edge-edge", color=COUNT_COLORS["edge-edge"], linewidth=1)
 
-  ax2.set_xlabel("Number of bunnies", labelpad=1, fontsize=6)
-  ax2.set_ylabel("Count", labelpad=1, fontsize=6)
-  ax2.yaxis.set_major_locator(plt.MaxNLocator(nbins=4))
-  ax2.yaxis.get_offset_text().set_fontsize(6)
+  # ax2.set_xlabel("Number of bunnies", labelpad=1, fontsize=6)
+  # ax2.set_ylabel("Count", labelpad=1, fontsize=6)
+  # ax2.yaxis.set_major_locator(plt.MaxNLocator(nbins=4))
+  # ax2.yaxis.get_offset_text().set_fontsize(6)
 
 
-  ax2.set_xticks([5, 10, 15, 20, 25])
-  ax2.tick_params(axis="x", labelsize=6)
-  ax2.tick_params(axis="y", labelsize=6)
+  # ax2.set_xticks([5, 10, 15, 20, 25])
+  # ax2.tick_params(axis="x", labelsize=6)
+  # ax2.tick_params(axis="y", labelsize=6)
 
-  ax2.legend(
-      frameon=False,
-      borderaxespad=0.1,
-      handlelength=1.2,
-      handletextpad=0.4,
-      labelspacing=0.2,
-      columnspacing=0.6,
-      loc="upper left", fontsize=6
-  )
+  # ax2.legend(
+  #     frameon=False,
+  #     borderaxespad=0.1,
+  #     handlelength=1.2,
+  #     handletextpad=0.4,
+  #     labelspacing=0.2,
+  #     columnspacing=0.6,
+  #     loc="upper left", fontsize=6
+  # )
 
-  # -----------------------------
-  # Shared formatting
-  # -----------------------------
-  for ax in (ax1, ax2):
-      ax.set_xlim(1, 25)
-      ax.set_xticks([5, 10, 15, 20, 25])
-      ax.tick_params(axis="both", which="major", pad=1, length=2)
-      ax.grid(False)
-      ax.spines["top"].set_visible(False)
-      ax.spines["right"].set_visible(False)
+  # # -----------------------------
+  # # Shared formatting
+  # # -----------------------------
+  # for ax in (ax1, ax2):
+  #     ax.set_xlim(1, 25)
+  #     ax.set_xticks([5, 10, 15, 20, 25])
+  #     ax.tick_params(axis="both", which="major", pad=1, length=2)
+  #     ax.grid(False)
+  #     ax.spines["top"].set_visible(False)
+  #     ax.spines["right"].set_visible(False)
 
-  # plt.show()
-  plt.savefig(
-    "../plotting/scalability.pdf",
-    format="pdf",
-    bbox_inches="tight",
-    pad_inches=0.00
-  )
-  plt.close()
+  # # plt.show()
+  # plt.savefig(
+  #   "../plotting/scalability.pdf",
+  #   format="pdf",
+  #   bbox_inches="tight",
+  #   pad_inches=0.00
+  # )
+  # plt.close()

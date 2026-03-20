@@ -262,8 +262,8 @@ for i in range(200):
   bunny_poly1.points = new_positions[:position.shape[0] // 2, :]
   bunny_poly2.points = new_positions[position.shape[0] // 2:, :]
   # export the current positions to obj
-  # bunny_poly1.save(f"outputs/bunny1_{i:04d}.obj")
-  # bunny_poly2.save(f"outputs/bunny2_{i:04d}.obj")
+  bunny_poly1.save(f"outputs/bunny1_{i:04d}.obj")
+  bunny_poly2.save(f"outputs/bunny2_{i:04d}.obj")
   plotter.render()
   plotter.update()
   plotter.screenshot(f"outputs/bunny1_{i:04d}.jpg")
