@@ -26,7 +26,9 @@ extensions = [
     Extension("yasps.autodiff", ["yasps/attribute/autodiff.pyx"]),
     Extension("yasps.helper", ["yasps/helper.pyx"]),
     Extension("yasps.attributeHelper", ["yasps/attribute/attributeHelper.pyx"]),
-    Extension("yasps.attributeOperations", ["yasps/attribute/attributeOperations.pyx"])
+    Extension("yasps.attributeOperations", ["yasps/attribute/attributeOperations.pyx"]),
+    Extension("yasps.path", ["yasps/differentiator/path.pyx"]),
+    Extension("yasps.differentiator", ["yasps/differentiator/differentiator.pyx"])
 ]
 setup(
     name='yasps',  # This is the name of your package
@@ -41,7 +43,7 @@ setup(
     package_data={'yasps': ['*.txt', '*.cuh', '*.cu']},
     ext_modules=cythonize(
       extensions,
-      annotate=True,        # Generates the HTML .html annotation files
+      annotate=False,        # Generates the HTML .html annotation files
       compiler_directives={"language_level": "3"},
       nthreads=16,       # optional, parallel compile
       force=False       # important! only rebuild changed files

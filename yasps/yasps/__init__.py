@@ -24,3 +24,5 @@ from .autodiff import autodiff
 from .helper import *
 from .attributeHelper import *
 from .attributeOperations import *
+from .path import path
+from .differentiator import differentiator

@@ -66,8 +66,8 @@ __global__ void computePermutation(
     int gradient_offset = 0;
     unsigned short int total_gradient_size = 0;
     unsigned int compressed_index_size = 0;
-    total_gradient_sizes[tid] = 0;
-    compressed_index_sizes[tid] = 0;
+    total_gradient_sizes[tid] = 0; // the actual total gradient sizes after compression
+    compressed_index_sizes[tid] = 0; // the total number of indices we need after compression
     for (unsigned short int i = 0; i < K; ++i) {
       // first we check if the index already exists in this local array
       const unsigned int idx_i = indices[tid * K + i];
