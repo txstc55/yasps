@@ -11,11 +11,11 @@ class differentiator:
     # diff1 is used for gradient or first order jacobian
     pass
 
-  def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False):
+  def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
     # diff2 is used for hessian
     pass
 
-  def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False):
+  def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
     pass
 
 
@@ -27,7 +27,7 @@ class differentiator:
   ## Hessian differentiation, each differentiation
   ## will return us a Hessian matrix object
   #########################################################
-  def __diff2_hessian_single(self, source: attribute, global_targets: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False) -> hessian:
+  def __diff2_hessian_single(self, source: attribute, global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False) -> hessian:
     hessian_local = hessian(global_targets, local_targets, dynamic_instances)
     wrt_start_indices = hessian_local.wrt_start_indices # this is computed when hessian is initialized
     paths = path(global_targets, local_targets)

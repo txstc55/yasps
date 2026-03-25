@@ -53,14 +53,6 @@ class energy:
     self.__separate_hessian_jacobian = separate_hessian_jacobian
     self.__dynamic_instances = dynamic_instances
 
-  # @property
-  # def roots(self) -> List[attribute]:
-  #   return self.__roots
-
-  # @property
-  # def gradient_sizes_cpu(self) -> List[int]:
-  #   return self.__gradient_sizes_cpu
-
   @property
   def indices(self) -> np.ndarray:
     return self.__indices_cpu
