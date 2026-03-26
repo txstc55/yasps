@@ -1,80 +1,104 @@
 # cython: language_level=3
 from __future__ import annotations
+import time
+from typing import List, Set, Optional, Tuple
+
 import pycuda.autoinit
 import numpy as np
 import pycuda.gpuarray as gpuarray
-from typing import List, Tuple, Set, Optional
-from yasps.energy import energy
-from yasps.attribute import attribute
+
+from yasps.attribute import attribute, DATA
+from yasps.differentiator import differentiator
+from yasps.gradient import gradient
+from yasps.hessian import hessian
 from yasps.solverKernel import solverKernel
-from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 from yasps.diagonalBlockInverseKernel import diagonalBlockInverseKernel
-import time
-import ctypes
 from yasps.helper import timed
-# def unique_row_view(data):
-#   b = np.ascontiguousarray(data).view(
-#     np.dtype((np.void, data.dtype.itemsize * data.shape[1]))
-#   )
-#   u = np.unique(b).view(data.dtype).reshape(-1, data.shape[1])
-#   return u
+
+
+class energyRequest:
+  """
+  Stores one symbolic differentiation request until wrt is known.
+  """
+
+  def __init__(
+    self,
+    energy: attribute,
+    targets: List[attribute] = [],
+    projection_method = 1,
+    save_intermediate = False,
+    gradient_only = False,
+    dynamic_instances = False,
+    separate_hessian_jacobian = False
+  ):
+    self.__energy: attribute = energy
+    self.__targets: List[attribute] = list(targets)
+    self.__projection_method: int = projection_method
+    self.__save_intermediate: bool = save_intermediate
+    self.__gradient_only: bool = gradient_only
+    self.__dynamic_instances: bool = dynamic_instances
+    self.__separate_hessian_jacobian: bool = separate_hessian_jacobian
+
+  @property
+  def energy(self) -> attribute:
+    return self.__energy
+
+  @property
+  def targets(self) -> List[attribute]:
+    return self.__targets
+
+  @property
+  def projection_method(self) -> int:
+    return self.__projection_method
+
+  @property
+  def save_intermediate(self) -> bool:
+    return self.__save_intermediate
+
+  @property
+  def gradient_only(self) -> bool:
+    return self.__gradient_only
+
+  @property
+  def dynamic_instances(self) -> bool:
+    return self.__dynamic_instances
+
+  @property
+  def separate_hessian_jacobian(self) -> bool:
+    return self.__separate_hessian_jacobian
+
+  @property
+  def hash(self) -> int:
+    return self.__energy.hash
+
 
 class minimizer:
   def __init__(self):
-    self.__energies: List[energy] = []
+    # We first store energy requests symbolically, then differentiate them after wrt is known.
+    self.__energy_requests: List[energyRequest] = []
+    self.__energy_requests_dynamic: List[energyRequest] = []
+    self.__differentiated_hessians: List[hessian] = []
+    self.__differentiated_hessians_dynamic: List[hessian] = []
+    self.__active_hessian: Optional[hessian] = None
+    self.__active_hessian_ignore_hashes: Tuple[int, ...] = tuple()
+    self.__needs_differentiation: bool = True
+
     self.__wrt: List[attribute] = []
-    self.__gradient: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
-    self.__diagonal: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # only store the diagonal elements
-    self.__diagonal_blocks: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store the block diagonal
-    self.__diagonal_blocks_inverse: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store the inverse of the diagonal blocks
-    self.__diagonal_blocks_start: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store for each attribute, where does the accumulated diagonal block start
-    self.__diagonal_blocks_start_cpu: List[int] = []
-    self.__gradient_segments_start: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store for each attribute, where does the gradient segment start
-    self.__gradient_segments_start_cpu: List[int] = []
-
-    self.__blockDimensions: List[int] = [] # record the dimension of blocks
-    # self.__blocks: List[gpuarray.GPUArray] = [] # for each different block dimensions, the datas
-    self.__blocksFlattened: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # the flattened blocks
-    self.__blocksStartIndices: List[int] = [] # for each different block dimensions, where do they start, this is to navigate through the flattened blocks
-    # self.__blocksStartIndicesGPU: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32) # for each block, where do they start, this is to navigate through the flattened blocks
-    self.__blockPositions: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32) # for each block, what's its coordinate, we will use it for spmv
-    # self.__blockPositionsList: List[gpuarray.GPUArray] = [] # for each different block sizes, for each block, what's its coordinate, we will use it for spmv, this is just segmented from blockPositions
-    self.__blockCounts: List[int] = [] # record for each size of block, the number of blocks
-
-    ## here we have all the same items, but for dynamic energy
-    self.__energiesDynamic: List[energy] = [] # for energies with dynamic instances
-    self.__blockDimensionsDynamic: List[int] = [] # record the dimension of blocks for dynamic energies
-    self.__blocksFlattenedDynamic: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # the flattened blocks for dynamic energies
-    self.__blocksStartIndicesDynamic: List[int] = [] # for each different block dimensions, where do they start, this is to navigate through the flattened blocks for dynamic energies
-    self.__blockPositionsDynamic: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.uint32) # for each block, what's its coordinate, we will use it for spmv for dynamic energies
-    self.__blockCountsDynamic: List[int] = [] # record for each size of block, the number of blocks for dynamic energies
-    self.__compressionKernelDynamic = None # for compressing the indices for dynamic energies
-
-    # those are the attributes associated with the gradient
-    # they are fixed
-    self.__gradientSizes: List[int] = []
-    self.__gradientSegments: List[gpuarray.GPUArray] = []
-    self.__wrtStartIndices: List[int] = []
-    self.__compressionKernel = None # for compressing the indices
-
-    self.__seen_pre_targets_full_names: Set[str] = set() # for recording partial tagets for any energy added, because maybe for some energy it doesnt want to optimize wrt all the targets supported in the end
-
-
+    self.__gradient_object: Optional[gradient] = None
+    self.__seen_pre_targets_full_names: Set[str] = set()
 
     self.__solver: Optional[solverKernel] = None
-    ## auxilary variables for solver
-    self.__d_p1_b: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
-    self.__d_r: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
-    self.__d_c: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
-    self.__d_q: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
-    self.__d_s: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
-    self.__solution: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64)
+    self.__d_p1_b: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__d_r: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__d_c: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__d_q: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__d_s: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__solution: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
     self.__solutionSegments: List[gpuarray.GPUArray] = []
+    self.__last5solutions: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
 
     self.__diagonalBlockInverseKernel: Optional[diagonalBlockInverseKernel] = None
     self.__ignoredEnergyHashList: List[int] = []
-
-    self.__last5solutions: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # for storing the last 5 solutions for dynamic energies
 
   @property
   def solutionSegments(self) -> List[gpuarray.GPUArray]:
@@ -82,19 +106,23 @@ class minimizer:
 
   @property
   def gradient(self) -> gpuarray.GPUArray:
-    return self.__gradient
+    if self.__gradient_object is None:
+      return gpuarray.empty(0, dtype=np.float64)
+    return self.__gradient_object.value
 
   @property
   def gradientSegments(self) -> List[gpuarray.GPUArray]:
-    return self.__gradientSegments
+    if self.__gradient_object is None:
+      return []
+    return self.__gradient_object.gradient_segments
 
   @property
-  def energies(self) -> List[energy]:
-    return self.__energies
+  def energies(self) -> List[energyRequest]:
+    return self.__energy_requests
 
   @property
-  def energiesDynamic(self) -> List[energy]:
-    return self.__energiesDynamic
+  def energiesDynamic(self) -> List[energyRequest]:
+    return self.__energy_requests_dynamic
 
   @property
   def wrt(self) -> List[attribute]:
@@ -102,279 +130,231 @@ class minimizer:
 
   @property
   def diagonal(self) -> gpuarray.GPUArray:
-    return self.__diagonal
+    if self.__active_hessian is None:
+      return gpuarray.empty(0, dtype=np.float64)
+    return self.__active_hessian.diagonal
 
-  def addEnergies(self, energies: List[energy]) -> None:
+  def __markDifferentiationDirty(self) -> None:
+    self.__needs_differentiation = True
+    self.__active_hessian = None
+    self.__active_hessian_ignore_hashes = tuple()
+
+  def __resetSolutionBuffers(self) -> None:
+    self.__solver = None
+    self.__d_p1_b = gpuarray.empty(0, dtype=np.float64)
+    self.__d_r = gpuarray.empty(0, dtype=np.float64)
+    self.__d_c = gpuarray.empty(0, dtype=np.float64)
+    self.__d_q = gpuarray.empty(0, dtype=np.float64)
+    self.__d_s = gpuarray.empty(0, dtype=np.float64)
+    self.__solution = gpuarray.empty(0, dtype=np.float64)
+    self.__solutionSegments = []
+    self.__last5solutions = gpuarray.empty(0, dtype=np.float64)
+    self.__diagonalBlockInverseKernel = None
+
+  def __initializeGradientLayout(self) -> None:
+    self.__gradient_object = gradient(self.__wrt)
+    self.__resetSolutionBuffers()
+
+  def addEnergies(self, energies: List[attribute]) -> None:
     for item in energies:
-      if item.hash in [energy.hash for energy in self.__energies]:
-        raise ValueError("minimizer.addEnergies: energies has duplicate energies.")
-    self.__energies.extend(energies)
+      self.addEnergy(item)
 
   def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False) -> None:
     if e.name == "":
-      raise ValueError("scene.addEnergy: energy attribute must have a name.")
-    from yasps.energy import energy
+      raise ValueError("minimizer.addEnergy: energy attribute must have a name.")
+    if gradient_only:
+      raise NotImplementedError("minimizer.addEnergy: gradient_only is not supported in the Hessian-based minimizer yet.")
+
     for t in targets:
       self.__seen_pre_targets_full_names.add(t.fullName)
-    newEnergy = energy(e, targets, projection_method, save_intermediate, gradient_only, separate_hessian_jacobian, dynamic_instances)
-    if newEnergy.hash in [energy.hash for energy in self.__energies]:
-      raise ValueError("minimizer.addEnergy: energy already exists.")
-    if not dynamic_instances:
-      self.__energies.append(newEnergy)
-    else:
-      self.__energiesDynamic.append(newEnergy)
 
+    new_request = energyRequest(
+      e,
+      targets=targets,
+      projection_method=projection_method,
+      save_intermediate=save_intermediate,
+      gradient_only=gradient_only,
+      dynamic_instances=dynamic_instances,
+      separate_hessian_jacobian=separate_hessian_jacobian
+    )
+    existing_hashes = [item.hash for item in self.__energy_requests + self.__energy_requests_dynamic]
+    if new_request.hash in existing_hashes:
+      raise ValueError("minimizer.addEnergy: energy already exists.")
+
+    if not dynamic_instances:
+      self.__energy_requests.append(new_request)
+    else:
+      self.__energy_requests_dynamic.append(new_request)
+    self.__markDifferentiationDirty()
 
   def addWrt(self, wrt: List[attribute]) -> None:
-    start = time.time()
-    seenAttributeHashes: Set[int] = set()
-    from yasps.attribute import DATA
+    seen_attribute_hashes: Set[int] = set()
     for att in wrt:
-      if att.hash in seenAttributeHashes:
+      if att.hash in seen_attribute_hashes:
         raise ValueError(f"minimizer.addWrt: wrt {att.fullName} is duplicate attribute.")
       if att.operator is not DATA:
         raise ValueError(f"minimizer.addWrt: wrt {att.fullName} is non-data attribute.")
       if att.isDynamic:
         raise ValueError(f"minimizer.addWrt: wrt {att.fullName} is dynamic attribute.")
-      seenAttributeHashes.add(attribute.hash)
+      seen_attribute_hashes.add(att.hash)
 
-    # we check if the target matches the pre_targets_full_names set
     target_full_name_set = set([t.fullName for t in wrt])
-    # check if the target full name set contains all the pre_targets_full_names
     if not self.__seen_pre_targets_full_names.issubset(target_full_name_set):
       missing = self.__seen_pre_targets_full_names - target_full_name_set
       raise ValueError(f"minimizer.addWrt: target is missing attributes {missing} that are required by the energies added.")
 
-    self.__wrt.extend(wrt)
-    self.__getGradientSize() # get the size of the gradient
-    start = time.time()
-    self.__getSparseIndices() # get the sparse indices
-    self.__getSparseIndicesDynamic()
-    end = time.time()
-    print(f"Sparse indices generation: {1000.0 * (end - start)} ms")
-    # exit()
+    self.__wrt = list(wrt)
+    self.__initializeGradientLayout()
+    self.__markDifferentiationDirty()
+    # self.__differentiateRequests()
 
-
-  def __getGradientSize(self) -> None:
-    for item in self.wrt:
-      if item.isDynamic:
-        # for wrt let's disallow dynamic attributes
-        raise ValueError("minimizer.__getGradientSize: wrt is a dynamic attributes.")
-      self.__gradientSizes.append(item.size * item.correspondance.numInstances)
-    # allocate the array
-    self.__gradient = gpuarray.zeros(sum(self.__gradientSizes), dtype = np.float64)
-    self.__diagonal = gpuarray.zeros(sum(self.__gradientSizes), dtype = np.float64)
-    diagonal_block_sizes = [item.size * item.size * item.correspondance.numInstances for item in self.wrt]
-    # do a prefix sum on the diagonal block sizes
-    diagonal_block_start = [0 for _ in diagonal_block_sizes]
-    gradient_segment_start = [0 for _ in diagonal_block_sizes]
-    for i in range(1, len(diagonal_block_start)):
-      diagonal_block_start[i] = diagonal_block_sizes[i - 1] + diagonal_block_start[i - 1]
-      gradient_segment_start[i] = gradient_segment_start[i - 1] + self.__gradientSizes[i - 1]
-    diagonal_block_start.append(diagonal_block_start[-1] + diagonal_block_sizes[-1])
-    gradient_segment_start.append(gradient_segment_start[-1] + self.__gradientSizes[-1])
-    self.__diagonal_blocks = gpuarray.zeros(sum(diagonal_block_sizes), dtype = np.float64)
-    self.__diagonal_blocks_inverse = gpuarray.zeros(sum(diagonal_block_sizes), dtype = np.float64)
-    self.__diagonal_blocks_start = gpuarray.to_gpu(np.array(diagonal_block_start, dtype = np.uint32))
-    self.__diagonal_blocks_start_cpu = diagonal_block_start
-    self.__gradient_segments_start = gpuarray.to_gpu(np.array(gradient_segment_start, dtype = np.uint32))
-    self.__gradient_segments_start_cpu = gradient_segment_start
-    # assign the gradient segments by reference
-    start = 0
-    self.__wrtStartIndices.append(start) # get where each data element starts
-    # here we compute for each data, where does it reside in the fianl solution arrays
-    for size in self.__gradientSizes:
-      self.__gradientSegments.append(self.__gradient[start:start + size])
-      start += size
-      self.__wrtStartIndices.append(start)
-    print(f"The size of the gradient is: {sum(self.__gradientSizes)}")
-    # print(f"The gradient segments sizes are: {self.__gradientSizes}")
-
-  def __getblockSizes(self):
-    pass
-
-  def __getSparseIndicesGPU(self):
-    pass
-
-  def __getSparseIndices(self):
-    if len(self.__energies) == 0:
+  def __differentiateRequests(self) -> None:
+    if not self.__needs_differentiation:
       return
-    for local_energy in self.__energies:
-      local_energy.getSparseIndices(self.wrt, self.__wrtStartIndices)
-    self.__compressionKernel = coordinateCompressionKernel([x.outputCoordinates for x in self.energies], [x.outputBlockDimensions for x in self.energies], [x.numTotalCoordinates for x in self.energies], self.wrt)
-    self.__compressionKernel.compressCoordinatesAndDimensions()
-    # set for each energy, for where does the block reside for each coordinate
-    lookupArrays = self.__compressionKernel.lookupArrays
-    for i in range(len(self.energies)):
-      self.__energies[i].block_indices_gpu = lookupArrays[i]
-    # we also initialize the space for blocks flattened
-    totalBlockSize = self.__compressionKernel.totalBlockSize
-    self.__blocksFlattened = gpuarray.empty(totalBlockSize, dtype=np.float64)
-    num_unique_dimensions = self.__compressionKernel.numUniqueDimensions # get how many unique block dimensions there are
-    self.__blocksStartIndices = self.__compressionKernel.uniqueDimensionsOuterIndices.get().tolist()[: self.__compressionKernel.numUniqueDimensions + 1]
-    self.__blockPositions = self.__compressionKernel.uniqueCoordinates
-    self.__blockCounts = self.__compressionKernel.uniqueDimensionsBlockCounts.get().tolist()
-
-    # here we set the unique dimensions to generate the code
-    self.__blockDimensions = self.__compressionKernel.uniqueDimensions.get().tolist()[: num_unique_dimensions * 2]
-
-  @timed("minimizer.__getSparseIndicesDynamic")
-  def __getSparseIndicesDynamic(self):
-    if len(self.__energiesDynamic) == 0:
+    if len(self.__wrt) == 0:
       return
-    for local_energy in self.__energiesDynamic:
-      local_energy.getSparseIndices(self.wrt, self.__wrtStartIndices)
-    self.__compressionKernelDynamic = coordinateCompressionKernel([x.outputCoordinates for x in self.__energiesDynamic], [x.outputBlockDimensions for x in self.__energiesDynamic], [x.numTotalCoordinates for x in self.__energiesDynamic], self.wrt)
-    self.__compressionKernelDynamic.compressCoordinatesAndDimensions()
-    # set for each energy, for where does the block reside for each coordinate
-    lookupArrays = self.__compressionKernelDynamic.lookupArrays
-    tmp_count = 0
-    for i in range(len(self.__energiesDynamic)):
-      if self.__energiesDynamic[i].numTotalCoordinates > 0:
-        self.__energiesDynamic[i].block_indices_gpu = lookupArrays[tmp_count]
-        tmp_count += 1
-    # we also initialize the space for blocks flattened
-    totalBlockSize = self.__compressionKernelDynamic.totalBlockSize
-    self.__blocksFlattenedDynamic = gpuarray.empty(totalBlockSize, dtype=np.float64)
-    num_unique_dimensions = self.__compressionKernelDynamic.numUniqueDimensions # get how many unique block dimensions there are
-    self.__blocksStartIndicesDynamic = self.__compressionKernelDynamic.uniqueDimensionsOuterIndices.get().tolist()[: self.__compressionKernelDynamic.numUniqueDimensions + 1]
-    self.__blockPositionsDynamic = self.__compressionKernelDynamic.uniqueCoordinates
-    self.__blockCountsDynamic = self.__compressionKernelDynamic.uniqueDimensionsBlockCounts.get().tolist()
-    # here we set the unique dimensions to generate the code
-    self.__blockDimensionsDynamic = self.__compressionKernelDynamic.uniqueDimensions.get().tolist()[: num_unique_dimensions * 2]
 
-  @timed("minimizer.__getSparseIndicesDynamicAgain")
-  def __getSparseIndicesDynamicAgain(self):
-    if len(self.__energiesDynamic) == 0:
-      return
-    for local_energy in self.__energiesDynamic:
-      local_energy.getSparseIndicesAgain()
-    assert self.__compressionKernelDynamic is not None, "minimizer.__getSparseIndicesDynamicAgain: compression kernel for dynamic energies is not initialized."
-    self.__compressionKernelDynamic.updateCoordinates([x.outputCoordinates for x in self.__energiesDynamic], [x.outputBlockDimensions for x in self.__energiesDynamic], [x.numTotalCoordinates for x in self.__energiesDynamic])
-    print("Updated num total coordinates are: ", [x.numTotalCoordinates for x in self.__energiesDynamic])
-    self.__compressionKernelDynamic.compressCoordinatesAndDimensions()
-    # set for each energy, for where does the block reside for each coordinate
-    lookupArrays = self.__compressionKernelDynamic.lookupArrays
-    tmp_count = 0
-    for i in range(len(self.__energiesDynamic)):
-      if self.__energiesDynamic[i].numTotalCoordinates > 0:
-        self.__energiesDynamic[i].block_indices_gpu = lookupArrays[tmp_count]
-        tmp_count += 1
-    # we also initialize the space for blocks flattened
-    totalBlockSize = self.__compressionKernelDynamic.totalBlockSize
-    if self.__blocksFlattenedDynamic.size < totalBlockSize:
-      # if the size is not enough, we need to reallocate
-      self.__blocksFlattenedDynamic = gpuarray.zeros(totalBlockSize, dtype=np.float64)
-    num_unique_dimensions = self.__compressionKernelDynamic.numUniqueDimensions # get how many unique block dimensions there are
-    self.__blocksStartIndicesDynamic = self.__compressionKernelDynamic.uniqueDimensionsOuterIndices.get().tolist()[: self.__compressionKernelDynamic.numUniqueDimensions + 1]
-    self.__blockPositionsDynamic = self.__compressionKernelDynamic.uniqueCoordinates
-    self.__blockCountsDynamic = self.__compressionKernelDynamic.uniqueDimensionsBlockCounts.get().tolist()
-    # here we set the unique dimensions to generate the code
-    self.__blockDimensionsDynamic = self.__compressionKernelDynamic.uniqueDimensions.get().tolist()[: num_unique_dimensions * 2]
+    differentiator_local = differentiator()
+    self.__differentiated_hessians = []
+    self.__differentiated_hessians_dynamic = []
 
+    for request in self.__energy_requests:
+      self.__differentiated_hessians.append(
+        differentiator_local.diff2(
+          [request.energy],
+          self.__wrt,
+          self.__wrt,
+          local_targets=request.targets,
+          projection_method=request.projection_method,
+          save_intermediate=request.save_intermediate,
+          separate_hessian_jacobian=request.separate_hessian_jacobian,
+          dynamic_instances=False
+        )
+      )
+
+    for request in self.__energy_requests_dynamic:
+      self.__differentiated_hessians_dynamic.append(
+        differentiator_local.diff2(
+          [request.energy],
+          self.__wrt,
+          self.__wrt,
+          local_targets=request.targets,
+          projection_method=request.projection_method,
+          save_intermediate=request.save_intermediate,
+          separate_hessian_jacobian=request.separate_hessian_jacobian,
+          dynamic_instances=True
+        )
+      )
+
+    self.__needs_differentiation = False
+    self.__active_hessian = None
+    self.__active_hessian_ignore_hashes = tuple()
+
+  @timed("minimizer.generateHessianAndGradient")
   def generateHessianAndGradient(self):
+    if not self.__needs_differentiation:
+      return
     start = time.time()
-    for e in (self.__energies + self.__energiesDynamic):
-      e.generateHessianAndGradient()
+    self.__differentiateRequests()
     end = time.time()
     print(f"Autodiff computation: {1000.0 * (end - start)} ms")
 
-  @timed("minimizer.computeSolution")
-  def computeSolution(self, tolerance = 1e-3) -> List[gpuarray.GPUArray]:
-    error_code = self.computeHessianAndGradient(tolerance = tolerance)
-    if error_code < 0:
-      # return []
-      # raise warning but do not exit
-      print(f"Warning: solver did not converge. Returning the best solution found.")
-    return self.solutionSegments
+  def __getActiveHessian(self) -> Optional[hessian]:
+    self.__differentiateRequests()
+    ignored_hashes = tuple(sorted(self.__ignoredEnergyHashList))
+    if self.__active_hessian is not None and self.__active_hessian_ignore_hashes == ignored_hashes:
+      return self.__active_hessian
 
-  def ignoreEnergies(self, energies: List[attribute]) -> None:
-    self.__ignoredEnergyHashList = [e.hash for e in energies]
-
-  def computeHessianAndGradient(self, tolerance = 1e-3, maxIterations = 20000):
-    # set gradient and hessian to 0
-    self.__gradient.fill(0)
-    if self.__blocksFlattened.shape[0] > 0:
-      self.__blocksFlattened.fill(0)
-    if self.__blocksFlattenedDynamic.shape[0] > 0:
-      self.__blocksFlattenedDynamic.fill(0)
-    self.__diagonal.fill(0)
-    self.__diagonal_blocks.fill(0)
-    for e in self.energies:
-      if e.hash in self.__ignoredEnergyHashList:
+    active_hessian: Optional[hessian] = None
+    for request, current_hessian in zip(self.__energy_requests, self.__differentiated_hessians):
+      if request.hash in self.__ignoredEnergyHashList:
         continue
-      e.computeHessianAndGradient(
-        self.__gradient,
-        self.__blocksFlattened,
-        self.__diagonal,
-        self.__diagonal_blocks,
-        self.__diagonal_blocks_start,
-        self.__gradient_segments_start
-      )
+      if active_hessian is None:
+        active_hessian = current_hessian
+      else:
+        active_hessian = active_hessian + current_hessian
 
-    # for dynamic energies we need to get the sparse indices again
-    self.__getSparseIndicesDynamicAgain()
-    for e in self.energiesDynamic:
-      if e.numTotalCoordinates > 0:
-        if e.hash in self.__ignoredEnergyHashList:
-          continue
-        e.computeHessianAndGradient(
-          self.__gradient,
-          self.__blocksFlattenedDynamic,
-          self.__diagonal,
-          self.__diagonal_blocks,
-          self.__diagonal_blocks_start,
-          self.__gradient_segments_start
-        )
-    # print("--------------------------------------------------------")
-    # print("Block counts dynamic is: ", self.__blockCountsDynamic)
-    # print("--------------------------------------------------------")
-    # # save blocks and block positions in a npz file
-    # np.savez("blocks.npz",
-    #   blocks = self.__blocksFlattened.get().flatten(),
-    #   block_positions = self.__blockPositions.get().flatten()
-    # )
+    for request, current_hessian in zip(self.__energy_requests_dynamic, self.__differentiated_hessians_dynamic):
+      if request.hash in self.__ignoredEnergyHashList:
+        continue
+      if active_hessian is None:
+        active_hessian = current_hessian
+      else:
+        active_hessian = active_hessian + current_hessian
 
+    self.__active_hessian = active_hessian
+    self.__active_hessian_ignore_hashes = ignored_hashes
+    return self.__active_hessian
+
+  @timed("minimizer.computeNumericValue")
+  def computeNumericValue(self) -> Optional[hessian]:
+    if len(self.__wrt) == 0:
+      raise ValueError("minimizer.computeNumericValue: wrt is not initialized. Please call addWrt first.")
+    if self.__gradient_object is None:
+      self.__initializeGradientLayout()
+
+    active_hessian = self.__getActiveHessian()
+    if active_hessian is None:
+      self.gradient.fill(0)
+      self.__active_hessian = None
+      return None
+
+    active_hessian.compute(self.__gradient_object)
+    self.__active_hessian = active_hessian
+    self.__gradient_object = active_hessian.gradient
 
     if self.__diagonalBlockInverseKernel is None:
-      # initialize the diagonal block inverse kernel
-      self.__diagonal_blocks_start_cpu = self.__diagonal_blocks_start.get().tolist()
       self.__diagonalBlockInverseKernel = diagonalBlockInverseKernel(
         set([item.size for item in self.wrt]),
-        self.__diagonal_blocks_start_cpu,
+        active_hessian.diagonal_blocks_start_cpu,
         [item.correspondance.numInstances for item in self.__wrt],
         [item.size for item in self.__wrt],
         len(self.__wrt)
       )
     assert self.__diagonalBlockInverseKernel is not None
-    self.__diagonalBlockInverseKernel.computeDiagonalBlockInverse(self.__diagonal_blocks, self.__diagonal_blocks_inverse)
+    if active_hessian.diagonal_blocks.size > 0:
+      self.__diagonalBlockInverseKernel.computeDiagonalBlockInverse(active_hessian.diagonal_blocks, active_hessian.diagonal_blocks_inverse)
+    return active_hessian
 
+  def __ensureSolverBuffers(self) -> None:
+    if self.gradient.size == 0:
+      return
+    if self.__solution.size == self.gradient.size and self.__solver is not None:
+      return
 
-    # now we have the hessian and gradient
-    # we need to solve the system
-    if self.__solver is None:
-      self.__solver = solverKernel(self.__blockDimensions + self.__blockDimensionsDynamic)
-      self.__d_p1_b = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
-      self.__d_r = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
-      self.__d_c = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
-      self.__d_q = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
-      self.__d_s = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
-      self.__solution = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
-      self.__last5solutions = gpuarray.empty(self.__gradient.shape, dtype = np.float64)
-      self.__solution.fill(0)
-      self.__last5solutions.fill(0)
-      # print("Gradient shape is: ")
-      # print(self.__gradient.shape)
-      count = 0
-      for i in range(len(self.__gradientSegments)):
-        self.__solutionSegments.append(self.__solution[count: count + self.__gradientSegments[i].shape[0]])
-        count += self.__gradientSegments[i].shape[0]
+    if self.__active_hessian is None:
+      return
 
-    # if needed, we will also need to update the kernel with the latest blcok dimensions
+    self.__solver = solverKernel(self.__active_hessian.block_dimensions + self.__active_hessian.block_dimensions_dynamic)
+    self.__d_p1_b = gpuarray.empty(self.gradient.shape, dtype=np.float64)
+    self.__d_r = gpuarray.empty(self.gradient.shape, dtype=np.float64)
+    self.__d_c = gpuarray.empty(self.gradient.shape, dtype=np.float64)
+    self.__d_q = gpuarray.empty(self.gradient.shape, dtype=np.float64)
+    self.__d_s = gpuarray.empty(self.gradient.shape, dtype=np.float64)
+    self.__solution = gpuarray.empty(self.gradient.shape, dtype=np.float64)
+    self.__last5solutions = gpuarray.empty(self.gradient.shape, dtype=np.float64)
+    self.__solution.fill(0)
+    self.__last5solutions.fill(0)
+    self.__solutionSegments = []
+
+    count = 0
+    for segment in self.gradientSegments:
+      self.__solutionSegments.append(self.__solution[count: count + segment.shape[0]])
+      count += segment.shape[0]
+
+  def __solveLinearSystem(self, tolerance = 1e-3, maxIterations = 20000):
+    if self.gradient.size == 0:
+      return 0
+    if self.__active_hessian is None:
+      self.__ensureSolverBuffers()
+      if self.__solution.size > 0:
+        self.__solution.fill(0)
+      return 0
+
+    self.__ensureSolverBuffers()
     assert self.__solver is not None
-    self.__solver.updateBlockDimensions(self.__blockDimensions + self.__blockDimensionsDynamic)
+    self.__solver.updateBlockDimensions(self.__active_hessian.block_dimensions + self.__active_hessian.block_dimensions_dynamic)
 
-    # setting zeros
     self.__d_p1_b.fill(0)
     self.__d_r.fill(0)
     self.__d_c.fill(0)
@@ -382,28 +362,27 @@ class minimizer:
     self.__d_s.fill(0)
     self.__solution.fill(0)
 
-
     error_code = self.__solver.computeSolution(
       maxIterations,
       tolerance,
-      self.__blocksFlattened,
-      self.__blockPositions,
-      self.__blocksStartIndices,
-      self.__blockCounts,
-      self.__blockDimensions,
-      self.__blocksFlattenedDynamic,
-      self.__blockPositionsDynamic,
-      self.__blocksStartIndicesDynamic,
-      self.__blockCountsDynamic,
-      self.__blockDimensionsDynamic,
-      self.__diagonal,
-      self.__diagonal_blocks_inverse,
-      self.__diagonal_blocks_start_cpu,
+      self.__active_hessian.blocks_flattened,
+      self.__active_hessian.block_positions,
+      self.__active_hessian.blocks_start_indices,
+      self.__active_hessian.block_counts,
+      self.__active_hessian.block_dimensions,
+      self.__active_hessian.blocks_flattened_dynamic,
+      self.__active_hessian.block_positions_dynamic,
+      self.__active_hessian.blocks_start_indices_dynamic,
+      self.__active_hessian.block_counts_dynamic,
+      self.__active_hessian.block_dimensions_dynamic,
+      self.__active_hessian.diagonal,
+      self.__active_hessian.diagonal_blocks_inverse,
+      self.__active_hessian.diagonal_blocks_start_cpu,
       [item.correspondance.numInstances for item in self.__wrt],
       [item.size for item in self.__wrt],
-      self.__gradient_segments_start_cpu,
+      self.__gradient_object.gradient_segments_start_cpu,
       len(self.__wrt),
-      self.__gradient,
+      self.gradient,
       self.__d_p1_b,
       self.__d_r,
       self.__d_c,
@@ -412,18 +391,33 @@ class minimizer:
       self.__solution,
       self.__last5solutions
     )
-    # self.__last5solutions = 0.5 * self.__last5solutions + 0.5 * self.__solution
     return error_code
+
+  @timed("minimizer.computeSolution")
+  def computeSolution(self, tolerance = 1e-3, maxIterations = 20000) -> List[gpuarray.GPUArray]:
+    error_code = self.computeHessianAndGradient(tolerance=tolerance, maxIterations=maxIterations)
+    if error_code < 0:
+      print("Warning: solver did not converge. Returning the best solution found.")
+    return self.solutionSegments
+
+  def ignoreEnergies(self, energies: List[attribute]) -> None:
+    self.__ignoredEnergyHashList = [e.hash for e in energies]
+    self.__active_hessian = None
+    self.__active_hessian_ignore_hashes = tuple()
+
+  def computeHessianAndGradient(self, tolerance = 1e-3, maxIterations = 20000):
+    self.computeNumericValue()
+    return self.__solveLinearSystem(tolerance=tolerance, maxIterations=maxIterations)
 
   def computeTotalEnergy(self) -> float:
     total_energy = 0.0
-    for e in self.energies:
-      if e.energy.hash in self.__ignoredEnergyHashList:
+    for request in self.__energy_requests:
+      if request.hash in self.__ignoredEnergyHashList:
         continue
-      total_energy += gpuarray.sum(e.energy.compute().value).get()
-    for e in self.energiesDynamic:
-      if e.energy.correspondance.numInstances > 0:
-        if e.energy.hash in self.__ignoredEnergyHashList:
+      total_energy += gpuarray.sum(request.energy.compute().value).get()
+    for request in self.__energy_requests_dynamic:
+      if request.energy.correspondance.numInstances > 0:
+        if request.hash in self.__ignoredEnergyHashList:
           continue
-        total_energy += gpuarray.sum(e.energy.compute().value).get()
+        total_energy += gpuarray.sum(request.energy.compute().value).get()
     return total_energy

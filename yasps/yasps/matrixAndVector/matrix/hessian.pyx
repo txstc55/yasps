@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, List
+from typing import Optional, List, Dict, Tuple
 
 from yasps.matrix import matrix
 from yasps.gradient import gradient
@@ -7,24 +7,26 @@ from yasps.hessianAndGradientKernel import hessianAndGradientKernel
 from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 from yasps.attribute import attribute
 from yasps.gradientIndicesKernel import gradientIndicesKernel
+from yasps.codeGenerator import codeGenerator
 import numpy as np
 import pycuda.autoinit
 import pycuda.gpuarray as gpuarray
-from yasps.helper import timed # for timing
+from yasps.helper import timed
 
 
 class hessian(matrix):
   """
-  The hessian matrix initialize with a list of wrt
-  This will determine the size of the matrix
-  As well as becoming an identity for matrix.
-  The matrices witht the same wrt can be added up
+  Hessian stores how to assemble one or more symbolic second-order terms.
+  The actual numeric gradient/vector buffers are only created when compute() runs.
   """
+
   def __init__(self, wrt: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False):
-    # Hessian is symmetric so it is represented by a single size (square matrix).
-    # we will first determine the size of the matrix
     total_size = 0
+    self.__wrt: List[attribute] = []
     for item in wrt:
+      if item.isDynamic:
+        raise ValueError("hessian.__init__: wrt can not contain dynamic attributes.")
+      self.__wrt.append(item)
       total_size += item.correspondance.numInstances * item.size
 
     if total_size <= 0:
@@ -32,78 +34,69 @@ class hessian(matrix):
 
     super().__init__(total_size, total_size)
 
-    self.__dynamic_instances = dynamic_instances # if this hessian is dynamic
-    self.__gradient: Optional[gradient] = None # we will later on initialize a gradient, because when computing hessian, gradient is free
-    self.__wrt: List[attribute] = wrt
-    self.__local_targets: List[List[attribute]] = [local_targets]
+    self.__dynamic_instances: bool = dynamic_instances
+    self.__gradient: Optional[gradient] = None
+    self.__local_targets: List[List[attribute]] = [list(local_targets)]
     self.__wrt_start_indices: List[int] = []
+    self.__gradient_segments_start_cpu: List[int] = []
+    self.__gradient_segments_start: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32)
+    self.__is_setup: bool = False
 
-    ##########################################################################
-    ## This part will be fixed as long as the wrt is set
-    ##########################################################################
-
-    # for diagonal blocks, no matter how you change the Hessian, if the wrt is set, then the diagonal blocks are set
-    self.__diagonal_blocks: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store the block diagonal
-    self.__diagonal_blocks_inverse: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store the inverse of the diagonal blocks
-    self.__diagonal_blocks_start: gpuarray.GPUArray = gpuarray.empty(0, dtype = np.float64) # store for each attribute, where does the accumulated diagonal block start
+    # Numeric buffers are allocated lazily because many symbolic Hessians are never computed.
+    self.__diagonal: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__diagonal_blocks: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__diagonal_blocks_inverse: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__diagonal_blocks_start: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32)
     self.__diagonal_blocks_start_cpu: List[int] = []
     self.__diagonal_blocks_local_sizes: List[int] = []
-    self.__compute_wrt_start_indices() # allocate some static properties on cpu side
+    self.__compute_wrt_start_indices()
 
-    ##########################################################################
-    ## For every hessian, there's a kernel for computing
-    ## For every hessian, there's the symbolic information that tells us
-    ## how this hessian is computed symbolically
-    ## Whenever we do addition, we merge the lists
-    ##########################################################################
-    # the hessian and gradient kernel is a list, for the same reason that hessians can be added together
-    self.__hessian_and_gradient_kernels: List[hessianAndGradientKernel] = []
-    self.__hessian_and_gradient_kernels_dynamic: List[hessianAndGradientKernel] = []
-
-    # the symbolic hessian related stuffs
+    # Each list entry corresponds to one symbolic contribution before Hessian addition.
+    self.__global_gradients: List[attribute] = []
     self.__global_hessians: List[attribute] = []
-    self.__global_jacobians: List[attribute] = []
-    self.__global_inner_hessians: List[attribute] = []
+    self.__global_jacobians: List[Optional[attribute]] = []
+    self.__global_inner_hessians: List[Optional[attribute]] = []
     self.__project_entire_hessian: List[bool] = []
-    self.__projection_methods: List[bool] = []
+    self.__projection_methods: List[int] = []
+    self.__separate_hessian_jacobian: List[bool] = []
+    self.__intermediate_compute_pairs: List[Dict[str, Tuple[attribute, attribute]]] = []
+    self.__merged_hessian_and_gradient_attributes: List[Optional[attribute]] = []
+    self.__hessian_and_gradient_kernels: List[Optional[hessianAndGradientKernel]] = []
 
-    # we do the same for the dynamic parts
+    self.__global_gradients_dynamic: List[attribute] = []
     self.__global_hessians_dynamic: List[attribute] = []
-    self.__global_jacobians_dynamic: List[attribute] = []
-    self.__global_inner_hessians_dynamic: List[attribute] = []
+    self.__global_jacobians_dynamic: List[Optional[attribute]] = []
+    self.__global_inner_hessians_dynamic: List[Optional[attribute]] = []
     self.__project_entire_hessian_dynamic: List[bool] = []
-    self.__projection_methods_dynamic: List[bool] = []
+    self.__projection_methods_dynamic: List[int] = []
+    self.__separate_hessian_jacobian_dynamic: List[bool] = []
+    self.__intermediate_compute_pairs_dynamic: List[Dict[str, Tuple[attribute, attribute]]] = []
+    self.__merged_hessian_and_gradient_attributes_dynamic: List[Optional[attribute]] = []
+    self.__hessian_and_gradient_kernels_dynamic: List[Optional[hessianAndGradientKernel]] = []
 
-    # for computing the indices
     self.__indices_kernels: List[gradientIndicesKernel] = []
     self.__indices_kernels_dynamic: List[gradientIndicesKernel] = []
+    self.__block_indices_gpu: List[gpuarray.GPUArray] = []
+    self.__block_indices_gpu_dynamic: List[gpuarray.GPUArray] = []
 
-    # This is the lookup array, where we check for each block for the energy, how to place it back into the global matrix
-    self.__block_indices_gpu: List[gpuarray.GPUArray] = [] # the lookup array for the blocks. We initialize this as an array because we can add up hessians together, and for each hessian there's the lookup array
-    self.__block_indices_gpu_dynamic: List[gpuarray.GPUArray] = [] # also a lookup array, but this is for the dynamic hessian part
-
-    ##########################################################################
-    ## For compressing the indices
-    ##########################################################################
-    self.__compression_kernel: Optional[coordinateCompressionKernel] = None # for compressing the indices for dynamic energies
+    self.__compression_kernel: Optional[coordinateCompressionKernel] = None
     self.__compression_kernel_dynamic: Optional[coordinateCompressionKernel] = None
 
   def __compute_wrt_start_indices(self):
-    for item in self.__wrt:
-      if item.isDynamic:
-        # for wrt let's disallow dynamic attributes
-        raise ValueError("hessian.__compute_wrt_start_indices: wrt is a dynamic attributes.")
-
     gradient_sizes = [item.size * item.correspondance.numInstances for item in self.__wrt]
     diagonal_block_sizes = [item.size * item.size * item.correspondance.numInstances for item in self.__wrt]
-    diagonal_block_start = [0]
+
     gradient_segment_start = [0]
-    for i in range(1, len(diagonal_block_start)):
-      diagonal_block_start.append(diagonal_block_sizes[i - 1] + diagonal_block_start[i - 1])
+    diagonal_block_start = [0]
+    for i in range(1, len(gradient_sizes)):
       gradient_segment_start.append(gradient_segment_start[i - 1] + gradient_sizes[i - 1])
-    diagonal_block_start.append(diagonal_block_start[-1] + diagonal_block_sizes[-1])
-    gradient_segment_start.append(gradient_segment_start[-1] + gradient_sizes[-1])
+      diagonal_block_start.append(diagonal_block_start[i - 1] + diagonal_block_sizes[i - 1])
+    if len(gradient_sizes) > 0:
+      gradient_segment_start.append(gradient_segment_start[-1] + gradient_sizes[-1])
+      diagonal_block_start.append(diagonal_block_start[-1] + diagonal_block_sizes[-1])
+
     self.__wrt_start_indices = gradient_segment_start
+    self.__gradient_segments_start_cpu = gradient_segment_start
     self.__diagonal_blocks_start_cpu = diagonal_block_start
     self.__diagonal_blocks_local_sizes = diagonal_block_sizes
 
@@ -113,87 +106,89 @@ class hessian(matrix):
 
   @property
   def wrt(self) -> List[attribute]:
-    """Variables this Hessian is defined over."""
     return self.__wrt
 
   @property
-  def dynamic_instances(self) -> bool:
-    """Whether this Hessian tracks dynamic instance terms."""
-    return self.__dynamic_instances
+  def local_targets(self) -> List[List[attribute]]:
+    return self.__local_targets
 
-  def __add__(self, other: hessian):
-    # Addition is only supported between hessian objects with identical wrt signatures.
-    if not isinstance(other, hessian):
-      raise TypeError(f"hessian.__add__: unsupported operand type(s) for +: '{type(self).__name__}' and '{type(other).__name__}'")
-
-    # Check wrt compatibility by hash, because wrt identity and order determine matrix layout.
-    if len(self.__wrt) != len(other.__wrt):
-      raise ValueError("hessian.__add__: wrt length mismatch.")
-    for left, right in zip(self.__wrt, other.__wrt):
-      if left.hash != right.hash:
-        raise ValueError("hessian.__add__: wrt mismatch (hash check failed).")
-
-    result = hessian(self.__wrt)
-
-    # Merge all cached symbolic/structural containers from this and the other child Hessians.
-    result.__local_targets = self.__local_targets + other.local_targets
-    result.__hessian_and_gradient_kernels = self.__hessian_and_gradient_kernels + other.__hessian_and_gradient_kernels
-    result.__hessian_and_gradient_kernels_dynamic = self.__hessian_and_gradient_kernels_dynamic + other.__hessian_and_gradient_kernels_dynamic
-    result.__global_hessians = self.__global_hessians + other.__global_hessians
-    result.__global_jacobians = self.__global_jacobians + other.__global_jacobians
-    result.__global_inner_hessians = self.__global_inner_hessians + other.__global_inner_hessians
-    result.__project_entire_hessian = self.__project_entire_hessian + other.__project_entire_hessian
-    result.__projection_methods = self.__projection_methods + other.__projection_methods
-    result.__global_hessians_dynamic = self.__global_hessians_dynamic + other.__global_hessians_dynamic
-    result.__global_jacobians_dynamic = self.__global_jacobians_dynamic + other.__global_jacobians_dynamic
-    result.__global_inner_hessians_dynamic = self.__global_inner_hessians_dynamic + other.__global_inner_hessians_dynamic
-    result.__project_entire_hessian_dynamic = self.__project_entire_hessian_dynamic + other.__project_entire_hessian_dynamic
-    result.__projection_methods_dynamic = self.__projection_methods_dynamic + other.__projection_methods_dynamic
-    result.__indices_kernels = self.__indices_kernels + other.__indices_kernels
-    result.__indices_kernels_dynamic = self.__indices_kernels_dynamic + other.__indices_kernels_dynamic
-    result.__block_indices_gpu = self.__block_indices_gpu + other.__block_indices_gpu
-    result.__block_indices_gpu_dynamic = self.__block_indices_gpu_dynamic + other.__block_indices_gpu_dynamic
-    return result
+  @local_targets.setter
+  def local_targets(self, value: List[List[attribute]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.local_targets: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.local_targets: each item must be a list.")
+      if any(not isinstance(att, attribute) for att in item):
+        raise TypeError("hessian.local_targets: all nested items must be yasps.attribute.attribute.")
+    self.__local_targets = value
 
   @property
-  def gradient(self) -> gradient:
+  def dynamic_instances(self) -> bool:
+    return self.__dynamic_instances
+
+  @property
+  def gradient(self) -> Optional[gradient]:
     return self.__gradient
 
   @gradient.setter
-  def gradient(self, value: gradient) -> None:
+  def gradient(self, value: Optional[gradient]) -> None:
+    if value is None:
+      self.__gradient = None
+      return
+    if not isinstance(value, gradient):
+      raise TypeError("hessian.gradient: value must be yasps.gradient.gradient.")
     if value.size != self.cols:
-      raise ValueError(f"hessian.gradient: gradient size {value.size} does not match hessian size {self.cols}")
+      raise ValueError(f"hessian.gradient: gradient size {value.size} does not match hessian size {self.cols}.")
+    value.hessian = self
     self.__gradient = value
 
   @property
-  def hessian_and_gradient_kernels(self) -> List[hessianAndGradientKernel]:
-    """Cached symbolic+numeric kernels for each accumulated Hessian term."""
-    return self.__hessian_and_gradient_kernels
-
-  @hessian_and_gradient_kernels.setter
-  def hessian_and_gradient_kernels(self, value: List[hessianAndGradientKernel]) -> None:
-    if not isinstance(value, list):
-      raise TypeError("hessian.hessian_and_gradient_kernels: value must be a list.")
-    if any(not isinstance(item, hessianAndGradientKernel) for item in value):
-      raise TypeError("hessian.hessian_and_gradient_kernels: all items must be hessianAndGradientKernel.")
-    self.__hessian_and_gradient_kernels = value
+  def diagonal(self) -> gpuarray.GPUArray:
+    return self.__diagonal
 
   @property
-  def hessian_and_gradient_kernels_dynamic(self) -> List[hessianAndGradientKernel]:
-    """Cached kernels for the dynamic subset of hessian terms."""
-    return self.__hessian_and_gradient_kernels_dynamic
+  def diagonal_blocks(self) -> gpuarray.GPUArray:
+    return self.__diagonal_blocks
 
-  @hessian_and_gradient_kernels_dynamic.setter
-  def hessian_and_gradient_kernels_dynamic(self, value: List[hessianAndGradientKernel]) -> None:
+  @property
+  def diagonal_blocks_inverse(self) -> gpuarray.GPUArray:
+    return self.__diagonal_blocks_inverse
+
+  @property
+  def diagonal_blocks_start(self) -> gpuarray.GPUArray:
+    return self.__diagonal_blocks_start
+
+  @property
+  def diagonal_blocks_start_cpu(self) -> List[int]:
+    return self.__diagonal_blocks_start_cpu
+
+  @property
+  def diagonal_blocks_local_sizes(self) -> List[int]:
+    return self.__diagonal_blocks_local_sizes
+
+  @property
+  def gradient_segments_start(self) -> gpuarray.GPUArray:
+    return self.__gradient_segments_start
+
+  @property
+  def gradient_segments_start_cpu(self) -> List[int]:
+    return self.__gradient_segments_start_cpu
+
+  @property
+  def global_gradients(self) -> List[attribute]:
+    return self.__global_gradients
+
+  @global_gradients.setter
+  def global_gradients(self, value: List[attribute]) -> None:
     if not isinstance(value, list):
-      raise TypeError("hessian.hessian_and_gradient_kernels_dynamic: value must be a list.")
-    if any(not isinstance(item, hessianAndGradientKernel) for item in value):
-      raise TypeError("hessian.hessian_and_gradient_kernels_dynamic: all items must be hessianAndGradientKernel.")
-    self.__hessian_and_gradient_kernels_dynamic = value
+      raise TypeError("hessian.global_gradients: value must be a list.")
+    if any(not isinstance(item, attribute) for item in value):
+      raise TypeError("hessian.global_gradients: all items must be yasps.attribute.attribute.")
+    self.__global_gradients = value
 
   @property
   def global_hessians(self) -> List[attribute]:
-    """Global merged Hessian symbolic attributes for each energy contribution."""
     return self.__global_hessians
 
   @global_hessians.setter
@@ -205,34 +200,33 @@ class hessian(matrix):
     self.__global_hessians = value
 
   @property
-  def global_jacobians(self) -> List[attribute]:
-    """Global Jacobian symbolic attributes for each tracked energy."""
+  def global_jacobians(self) -> List[Optional[attribute]]:
     return self.__global_jacobians
 
   @global_jacobians.setter
-  def global_jacobians(self, value: List[attribute]) -> None:
+  def global_jacobians(self, value: List[Optional[attribute]]) -> None:
     if not isinstance(value, list):
       raise TypeError("hessian.global_jacobians: value must be a list.")
-    if any(not isinstance(item, attribute) for item in value):
-      raise TypeError("hessian.global_jacobians: all items must be yasps.attribute.attribute.")
+    for item in value:
+      if item is not None and not isinstance(item, attribute):
+        raise TypeError("hessian.global_jacobians: items must be attributes or None.")
     self.__global_jacobians = value
 
   @property
-  def global_inner_hessians(self) -> List[attribute]:
-    """Global inner-Hessian symbolic attributes (projected Hessian mode)."""
+  def global_inner_hessians(self) -> List[Optional[attribute]]:
     return self.__global_inner_hessians
 
   @global_inner_hessians.setter
-  def global_inner_hessians(self, value: List[attribute]) -> None:
+  def global_inner_hessians(self, value: List[Optional[attribute]]) -> None:
     if not isinstance(value, list):
       raise TypeError("hessian.global_inner_hessians: value must be a list.")
-    if any(not isinstance(item, attribute) for item in value):
-      raise TypeError("hessian.global_inner_hessians: all items must be yasps.attribute.attribute.")
+    for item in value:
+      if item is not None and not isinstance(item, attribute):
+        raise TypeError("hessian.global_inner_hessians: items must be attributes or None.")
     self.__global_inner_hessians = value
 
   @property
   def project_entire_hessian(self) -> List[bool]:
-    """Per-term flag for whether each Hessian term is fully projected."""
     return self.__project_entire_hessian
 
   @project_entire_hessian.setter
@@ -244,21 +238,79 @@ class hessian(matrix):
     self.__project_entire_hessian = value
 
   @property
-  def projection_methods(self) -> List[bool]:
-    """Per-term projection mode index/method for assembled Hessian blocks."""
+  def projection_methods(self) -> List[int]:
     return self.__projection_methods
 
   @projection_methods.setter
-  def projection_methods(self, value: List[bool]) -> None:
+  def projection_methods(self, value: List[int]) -> None:
     if not isinstance(value, list):
       raise TypeError("hessian.projection_methods: value must be a list.")
-    if any(not isinstance(item, bool) for item in value):
-      raise TypeError("hessian.projection_methods: all items must be bool.")
+    if any(not isinstance(item, int) for item in value):
+      raise TypeError("hessian.projection_methods: all items must be int.")
     self.__projection_methods = value
 
   @property
+  def separate_hessian_jacobian(self) -> List[bool]:
+    return self.__separate_hessian_jacobian
+
+  @separate_hessian_jacobian.setter
+  def separate_hessian_jacobian(self, value: List[bool]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.separate_hessian_jacobian: value must be a list.")
+    if any(not isinstance(item, bool) for item in value):
+      raise TypeError("hessian.separate_hessian_jacobian: all items must be bool.")
+    self.__separate_hessian_jacobian = value
+
+  @property
+  def intermediate_compute_pairs(self) -> List[Dict[str, Tuple[attribute, attribute]]]:
+    return self.__intermediate_compute_pairs
+
+  @intermediate_compute_pairs.setter
+  def intermediate_compute_pairs(self, value: List[Dict[str, Tuple[attribute, attribute]]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.intermediate_compute_pairs: value must be a list.")
+    self.__intermediate_compute_pairs = value
+
+  @property
+  def merged_hessian_and_gradient_attributes(self) -> List[Optional[attribute]]:
+    return self.__merged_hessian_and_gradient_attributes
+
+  @merged_hessian_and_gradient_attributes.setter
+  def merged_hessian_and_gradient_attributes(self, value: List[Optional[attribute]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.merged_hessian_and_gradient_attributes: value must be a list.")
+    for item in value:
+      if item is not None and not isinstance(item, attribute):
+        raise TypeError("hessian.merged_hessian_and_gradient_attributes: items must be attributes or None.")
+    self.__merged_hessian_and_gradient_attributes = value
+
+  @property
+  def hessian_and_gradient_kernels(self) -> List[Optional[hessianAndGradientKernel]]:
+    return self.__hessian_and_gradient_kernels
+
+  @hessian_and_gradient_kernels.setter
+  def hessian_and_gradient_kernels(self, value: List[Optional[hessianAndGradientKernel]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.hessian_and_gradient_kernels: value must be a list.")
+    for item in value:
+      if item is not None and not isinstance(item, hessianAndGradientKernel):
+        raise TypeError("hessian.hessian_and_gradient_kernels: items must be hessianAndGradientKernel or None.")
+    self.__hessian_and_gradient_kernels = value
+
+  @property
+  def global_gradients_dynamic(self) -> List[attribute]:
+    return self.__global_gradients_dynamic
+
+  @global_gradients_dynamic.setter
+  def global_gradients_dynamic(self, value: List[attribute]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.global_gradients_dynamic: value must be a list.")
+    if any(not isinstance(item, attribute) for item in value):
+      raise TypeError("hessian.global_gradients_dynamic: all items must be yasps.attribute.attribute.")
+    self.__global_gradients_dynamic = value
+
+  @property
   def global_hessians_dynamic(self) -> List[attribute]:
-    """Global merged Hessian symbolic attributes for dynamic instances."""
     return self.__global_hessians_dynamic
 
   @global_hessians_dynamic.setter
@@ -270,34 +322,33 @@ class hessian(matrix):
     self.__global_hessians_dynamic = value
 
   @property
-  def global_jacobians_dynamic(self) -> List[attribute]:
-    """Dynamic global Jacobian symbolic attributes."""
+  def global_jacobians_dynamic(self) -> List[Optional[attribute]]:
     return self.__global_jacobians_dynamic
 
   @global_jacobians_dynamic.setter
-  def global_jacobians_dynamic(self, value: List[attribute]) -> None:
+  def global_jacobians_dynamic(self, value: List[Optional[attribute]]) -> None:
     if not isinstance(value, list):
       raise TypeError("hessian.global_jacobians_dynamic: value must be a list.")
-    if any(not isinstance(item, attribute) for item in value):
-      raise TypeError("hessian.global_jacobians_dynamic: all items must be yasps.attribute.attribute.")
+    for item in value:
+      if item is not None and not isinstance(item, attribute):
+        raise TypeError("hessian.global_jacobians_dynamic: items must be attributes or None.")
     self.__global_jacobians_dynamic = value
 
   @property
-  def global_inner_hessians_dynamic(self) -> List[attribute]:
-    """Dynamic inner-Hessian symbolic attributes."""
+  def global_inner_hessians_dynamic(self) -> List[Optional[attribute]]:
     return self.__global_inner_hessians_dynamic
 
   @global_inner_hessians_dynamic.setter
-  def global_inner_hessians_dynamic(self, value: List[attribute]) -> None:
+  def global_inner_hessians_dynamic(self, value: List[Optional[attribute]]) -> None:
     if not isinstance(value, list):
       raise TypeError("hessian.global_inner_hessians_dynamic: value must be a list.")
-    if any(not isinstance(item, attribute) for item in value):
-      raise TypeError("hessian.global_inner_hessians_dynamic: all items must be yasps.attribute.attribute.")
+    for item in value:
+      if item is not None and not isinstance(item, attribute):
+        raise TypeError("hessian.global_inner_hessians_dynamic: items must be attributes or None.")
     self.__global_inner_hessians_dynamic = value
 
   @property
   def project_entire_hessian_dynamic(self) -> List[bool]:
-    """Per-dynamic-term flag for full Hessian projection."""
     return self.__project_entire_hessian_dynamic
 
   @project_entire_hessian_dynamic.setter
@@ -309,21 +360,67 @@ class hessian(matrix):
     self.__project_entire_hessian_dynamic = value
 
   @property
-  def projection_methods_dynamic(self) -> List[bool]:
-    """Projection mode used for each dynamic term."""
+  def projection_methods_dynamic(self) -> List[int]:
     return self.__projection_methods_dynamic
 
   @projection_methods_dynamic.setter
-  def projection_methods_dynamic(self, value: List[bool]) -> None:
+  def projection_methods_dynamic(self, value: List[int]) -> None:
     if not isinstance(value, list):
       raise TypeError("hessian.projection_methods_dynamic: value must be a list.")
-    if any(not isinstance(item, bool) for item in value):
-      raise TypeError("hessian.projection_methods_dynamic: all items must be bool.")
+    if any(not isinstance(item, int) for item in value):
+      raise TypeError("hessian.projection_methods_dynamic: all items must be int.")
     self.__projection_methods_dynamic = value
 
   @property
+  def separate_hessian_jacobian_dynamic(self) -> List[bool]:
+    return self.__separate_hessian_jacobian_dynamic
+
+  @separate_hessian_jacobian_dynamic.setter
+  def separate_hessian_jacobian_dynamic(self, value: List[bool]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.separate_hessian_jacobian_dynamic: value must be a list.")
+    if any(not isinstance(item, bool) for item in value):
+      raise TypeError("hessian.separate_hessian_jacobian_dynamic: all items must be bool.")
+    self.__separate_hessian_jacobian_dynamic = value
+
+  @property
+  def intermediate_compute_pairs_dynamic(self) -> List[Dict[str, Tuple[attribute, attribute]]]:
+    return self.__intermediate_compute_pairs_dynamic
+
+  @intermediate_compute_pairs_dynamic.setter
+  def intermediate_compute_pairs_dynamic(self, value: List[Dict[str, Tuple[attribute, attribute]]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.intermediate_compute_pairs_dynamic: value must be a list.")
+    self.__intermediate_compute_pairs_dynamic = value
+
+  @property
+  def merged_hessian_and_gradient_attributes_dynamic(self) -> List[Optional[attribute]]:
+    return self.__merged_hessian_and_gradient_attributes_dynamic
+
+  @merged_hessian_and_gradient_attributes_dynamic.setter
+  def merged_hessian_and_gradient_attributes_dynamic(self, value: List[Optional[attribute]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.merged_hessian_and_gradient_attributes_dynamic: value must be a list.")
+    for item in value:
+      if item is not None and not isinstance(item, attribute):
+        raise TypeError("hessian.merged_hessian_and_gradient_attributes_dynamic: items must be attributes or None.")
+    self.__merged_hessian_and_gradient_attributes_dynamic = value
+
+  @property
+  def hessian_and_gradient_kernels_dynamic(self) -> List[Optional[hessianAndGradientKernel]]:
+    return self.__hessian_and_gradient_kernels_dynamic
+
+  @hessian_and_gradient_kernels_dynamic.setter
+  def hessian_and_gradient_kernels_dynamic(self, value: List[Optional[hessianAndGradientKernel]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.hessian_and_gradient_kernels_dynamic: value must be a list.")
+    for item in value:
+      if item is not None and not isinstance(item, hessianAndGradientKernel):
+        raise TypeError("hessian.hessian_and_gradient_kernels_dynamic: items must be hessianAndGradientKernel or None.")
+    self.__hessian_and_gradient_kernels_dynamic = value
+
+  @property
   def indices_kernels(self) -> List[gradientIndicesKernel]:
-    """Gradient-index kernels for static Hessian contributions."""
     return self.__indices_kernels
 
   @indices_kernels.setter
@@ -336,7 +433,6 @@ class hessian(matrix):
 
   @property
   def indices_kernels_dynamic(self) -> List[gradientIndicesKernel]:
-    """Gradient-index kernels for dynamic Hessian contributions."""
     return self.__indices_kernels_dynamic
 
   @indices_kernels_dynamic.setter
@@ -349,7 +445,6 @@ class hessian(matrix):
 
   @property
   def block_indices_gpu(self) -> List[gpuarray.GPUArray]:
-    """Block lookup arrays that map local block-local coordinates into global matrix storage."""
     return self.__block_indices_gpu
 
   @block_indices_gpu.setter
@@ -357,12 +452,11 @@ class hessian(matrix):
     if not isinstance(value, list):
       raise TypeError("hessian.block_indices_gpu: value must be a list.")
     if any(not isinstance(item, gpuarray.GPUArray) for item in value):
-      raise TypeError("hessian.block_indices_gpu: all items must be pycuda.gpuarray.GPUArray.")
+      raise TypeError("hessian.block_indices_gpu: all items must be GPUArray.")
     self.__block_indices_gpu = value
 
   @property
   def block_indices_gpu_dynamic(self) -> List[gpuarray.GPUArray]:
-    """Dynamic block lookup arrays for dynamic Hessian term placement."""
     return self.__block_indices_gpu_dynamic
 
   @block_indices_gpu_dynamic.setter
@@ -370,86 +464,118 @@ class hessian(matrix):
     if not isinstance(value, list):
       raise TypeError("hessian.block_indices_gpu_dynamic: value must be a list.")
     if any(not isinstance(item, gpuarray.GPUArray) for item in value):
-      raise TypeError("hessian.block_indices_gpu_dynamic: all items must be pycuda.gpuarray.GPUArray.")
+      raise TypeError("hessian.block_indices_gpu_dynamic: all items must be GPUArray.")
     self.__block_indices_gpu_dynamic = value
+
+  def __add__(self, other: hessian):
+    if not isinstance(other, hessian):
+      raise TypeError(f"hessian.__add__: unsupported operand type(s) for +: 'hessian' and '{type(other).__name__}'")
+    if len(self.__wrt) != len(other.wrt):
+      raise ValueError("hessian.__add__: wrt length mismatch.")
+    for left, right in zip(self.__wrt, other.wrt):
+      if left.hash != right.hash:
+        raise ValueError("hessian.__add__: wrt mismatch.")
+
+    result = hessian(self.__wrt, [], self.__dynamic_instances or other.dynamic_instances)
+    result.local_targets = self.__local_targets + other.local_targets
+    result.global_gradients = self.__global_gradients + other.global_gradients
+    result.global_hessians = self.__global_hessians + other.global_hessians
+    result.global_jacobians = self.__global_jacobians + other.global_jacobians
+    result.global_inner_hessians = self.__global_inner_hessians + other.global_inner_hessians
+    result.project_entire_hessian = self.__project_entire_hessian + other.project_entire_hessian
+    result.projection_methods = self.__projection_methods + other.projection_methods
+    result.separate_hessian_jacobian = self.__separate_hessian_jacobian + other.separate_hessian_jacobian
+    result.intermediate_compute_pairs = self.__intermediate_compute_pairs + other.intermediate_compute_pairs
+    result.merged_hessian_and_gradient_attributes = self.__merged_hessian_and_gradient_attributes + other.merged_hessian_and_gradient_attributes
+    result.hessian_and_gradient_kernels = self.__hessian_and_gradient_kernels + other.hessian_and_gradient_kernels
+
+    result.global_gradients_dynamic = self.__global_gradients_dynamic + other.global_gradients_dynamic
+    result.global_hessians_dynamic = self.__global_hessians_dynamic + other.global_hessians_dynamic
+    result.global_jacobians_dynamic = self.__global_jacobians_dynamic + other.global_jacobians_dynamic
+    result.global_inner_hessians_dynamic = self.__global_inner_hessians_dynamic + other.global_inner_hessians_dynamic
+    result.project_entire_hessian_dynamic = self.__project_entire_hessian_dynamic + other.project_entire_hessian_dynamic
+    result.projection_methods_dynamic = self.__projection_methods_dynamic + other.projection_methods_dynamic
+    result.separate_hessian_jacobian_dynamic = self.__separate_hessian_jacobian_dynamic + other.separate_hessian_jacobian_dynamic
+    result.intermediate_compute_pairs_dynamic = self.__intermediate_compute_pairs_dynamic + other.intermediate_compute_pairs_dynamic
+    result.merged_hessian_and_gradient_attributes_dynamic = self.__merged_hessian_and_gradient_attributes_dynamic + other.merged_hessian_and_gradient_attributes_dynamic
+    result.hessian_and_gradient_kernels_dynamic = self.__hessian_and_gradient_kernels_dynamic + other.hessian_and_gradient_kernels_dynamic
+
+    result.indices_kernels = self.__indices_kernels + other.indices_kernels
+    result.indices_kernels_dynamic = self.__indices_kernels_dynamic + other.indices_kernels_dynamic
+    result.block_indices_gpu = self.__block_indices_gpu + other.block_indices_gpu
+    result.block_indices_gpu_dynamic = self.__block_indices_gpu_dynamic + other.block_indices_gpu_dynamic
+    return result
 
   @timed("hessian.getSparseIndices")
   def getSparseIndices(self):
+    if len(self.__indices_kernels) == 0:
+      return
+
     for item in self.__indices_kernels:
       item.computeIndices(self.__wrt_start_indices)
 
-    # after the index are computed, we can start compressing them
     self.__compression_kernel = coordinateCompressionKernel(
       [x.outputCoordinates for x in self.__indices_kernels],
       [x.outputBlockDimensions for x in self.__indices_kernels],
       [x.numTotalCoordinates for x in self.__indices_kernels],
       self.__wrt
     )
-    # perform the compression
-    assert self.__compression_kernel is not None
     self.__compression_kernel.compressCoordinatesAndDimensions()
-    lookup_arrays = self.__compression_kernel.lookupArrays
-    self.__block_indices_gpu = lookup_arrays
+    self.__block_indices_gpu = self.__compression_kernel.lookupArrays
 
     total_block_size = self.__compression_kernel.totalBlockSize
-    self.__blocks_flattened = gpuarray.empty(total_block_size, dtype = np.float64)
+    if self.blocks_flattened.size < total_block_size:
+      self.blocks_flattened = gpuarray.zeros(total_block_size, dtype=np.float64)
 
-    num_unique_dimensions = self.__compressionKernel.numUniqueDimensions # get how many unique block dimensions there are
-
-    self.__blocks_start_indices = self.__compressionKernel.uniqueDimensionsOuterIndices.get().tolist()[: self.__compressionKernel.numUniqueDimensions + 1]
-
-    self.__block_positions = self.__compressionKernel.uniqueCoordinates
-
-    self.__block_counts = self.__compressionKernel.uniqueDimensionsBlockCounts.get().tolist()
-
-    # here we set the unique dimensions to generate the code
-    self.__block_dimensions = self.__compressionKernel.uniqueDimensions.get().tolist()[: num_unique_dimensions * 2]
-
-
+    num_unique_dimensions = self.__compression_kernel.numUniqueDimensions
+    self.blocks_start_indices = self.__compression_kernel.uniqueDimensionsOuterIndices.get().tolist()[:num_unique_dimensions + 1]
+    self.block_positions = self.__compression_kernel.uniqueCoordinates
+    self.block_counts = self.__compression_kernel.uniqueDimensionsBlockCounts.get().tolist()
+    self.block_dimensions = self.__compression_kernel.uniqueDimensions.get().tolist()[:num_unique_dimensions * 2]
 
   @timed("hessian.getSparseIndicesDynamic")
   def getSparseIndicesDynamic(self):
     if len(self.__indices_kernels_dynamic) == 0:
       return
 
-    # Each dynamic index kernel computes the local block coordinates for the current dynamic instances.
     for item in self.__indices_kernels_dynamic:
       item.computeIndices(self.__wrt_start_indices)
 
-    # Build and run a compression kernel that deduplicates dynamic coordinates across all terms.
     self.__compression_kernel_dynamic = coordinateCompressionKernel(
       [x.outputCoordinates for x in self.__indices_kernels_dynamic],
       [x.outputBlockDimensions for x in self.__indices_kernels_dynamic],
       [x.numTotalCoordinates for x in self.__indices_kernels_dynamic],
       self.__wrt
     )
-    assert self.__compression_kernel_dynamic is not None
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
 
-    # Map each dynamic term's local blocks back to the global packed dynamic storage.
     lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
     self.__block_indices_gpu_dynamic = []
     tmp_count = 0
-    for i in range(len(self.__indices_kernels_dynamic)):
-      if self.__indices_kernels_dynamic[i].numTotalCoordinates > 0:
+    for item in self.__indices_kernels_dynamic:
+      if item.numTotalCoordinates > 0:
         self.__block_indices_gpu_dynamic.append(lookup_arrays[tmp_count])
         tmp_count += 1
+      else:
+        self.__block_indices_gpu_dynamic.append(gpuarray.empty(0, dtype=np.uint32))
 
-    # Allocate compressed dynamic storage and cache compressed metadata.
     total_block_size = self.__compression_kernel_dynamic.totalBlockSize
-    self.__blocks_flattened_dynamic = gpuarray.empty(total_block_size, dtype=np.float64)
+    if self.blocks_flattened_dynamic.size < total_block_size:
+      self.blocks_flattened_dynamic = gpuarray.zeros(total_block_size, dtype=np.float64)
+
     num_unique_dimensions = self.__compression_kernel_dynamic.numUniqueDimensions
-    self.__blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get().tolist()[: self.__compression_kernel_dynamic.numUniqueDimensions + 1]
-    self.__block_positions_dynamic = self.__compression_kernel_dynamic.uniqueCoordinates
-    self.__block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get().tolist()
-    self.__block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[: num_unique_dimensions * 2]
+    self.blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get().tolist()[:num_unique_dimensions + 1]
+    self.block_positions_dynamic = self.__compression_kernel_dynamic.uniqueCoordinates
+    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get().tolist()
+    self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[:num_unique_dimensions * 2]
 
   @timed("hessian.getSparseIndicesDynamicAgain")
   def getSparseIndicesDynamicAgain(self):
-    # Recompute dynamic coordinates and reuse the existing compression kernel object.
     if len(self.__indices_kernels_dynamic) == 0:
       return
-    assert self.__compression_kernel_dynamic is not None, "hessian.getSparseIndicesDynamicAgain: compression kernel for dynamic part is not initialized."
+    if self.__compression_kernel_dynamic is None:
+      self.getSparseIndicesDynamic()
+      return
 
     for item in self.__indices_kernels_dynamic:
       item.computeIndices(self.__wrt_start_indices)
@@ -461,22 +587,245 @@ class hessian(matrix):
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
 
-    # Refresh per-term lookup arrays for the updated compressed layout.
     lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
     self.__block_indices_gpu_dynamic = []
     tmp_count = 0
-    for i in range(len(self.__indices_kernels_dynamic)):
-      if self.__indices_kernels_dynamic[i].numTotalCoordinates > 0:
+    for item in self.__indices_kernels_dynamic:
+      if item.numTotalCoordinates > 0:
         self.__block_indices_gpu_dynamic.append(lookup_arrays[tmp_count])
         tmp_count += 1
+      else:
+        self.__block_indices_gpu_dynamic.append(gpuarray.empty(0, dtype=np.uint32))
 
-    # Ensure dynamic block storage is large enough for the new compressed structure.
     total_block_size = self.__compression_kernel_dynamic.totalBlockSize
-    if self.__blocks_flattened_dynamic.size < total_block_size:
-      self.__blocks_flattened_dynamic = gpuarray.zeros(total_block_size, dtype=np.float64)
+    if self.blocks_flattened_dynamic.size < total_block_size:
+      self.blocks_flattened_dynamic = gpuarray.zeros(total_block_size, dtype=np.float64)
 
     num_unique_dimensions = self.__compression_kernel_dynamic.numUniqueDimensions
-    self.__blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get().tolist()[: self.__compression_kernel_dynamic.numUniqueDimensions + 1]
-    self.__block_positions_dynamic = self.__compression_kernel_dynamic.uniqueCoordinates
-    self.__block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get().tolist()
-    self.__block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[: num_unique_dimensions * 2]
+    self.blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get().tolist()[:num_unique_dimensions + 1]
+    self.block_positions_dynamic = self.__compression_kernel_dynamic.uniqueCoordinates
+    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get().tolist()
+    self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[:num_unique_dimensions * 2]
+
+  def __buildMergedHessianAndGradientAttribute(
+    self,
+    global_gradient: attribute,
+    global_hessian: attribute,
+    global_jacobian: Optional[attribute],
+    global_inner_hessian: Optional[attribute],
+    project_entire_hessian: bool,
+    separate_hessian_jacobian: bool
+  ) -> attribute:
+    merged_hessian_and_gradient = []
+
+    if separate_hessian_jacobian and not project_entire_hessian:
+      assert global_jacobian is not None
+      assert global_inner_hessian is not None
+      for i in range(global_jacobian.rows):
+        for j in range(global_jacobian.cols):
+          merged_hessian_and_gradient.append(global_jacobian[i, j])
+      for i in range(global_inner_hessian.rows):
+        for j in range(global_inner_hessian.cols):
+          merged_hessian_and_gradient.append(global_inner_hessian[i, j])
+      left_over = global_jacobian.cols - (global_inner_hessian.rows * global_inner_hessian.cols) % global_jacobian.cols
+      for _ in range(left_over):
+        merged_hessian_and_gradient.append(0.0)
+    else:
+      for i in range(global_hessian.rows):
+        for j in range(global_hessian.cols):
+          merged_hessian_and_gradient.append(global_hessian[i, j])
+
+    for i in range(global_gradient.size):
+      merged_hessian_and_gradient.append(global_gradient[i])
+
+    merged_hessian_rows = len(merged_hessian_and_gradient) // global_gradient.size
+    return attribute.to_array(merged_hessian_and_gradient, rows=merged_hessian_rows, cols=global_gradient.size)
+
+  def __ensureTermKernel(self, index: int, dynamic_term = False) -> None:
+    if not dynamic_term:
+      global_gradients = self.__global_gradients
+      global_hessians = self.__global_hessians
+      global_jacobians = self.__global_jacobians
+      global_inner_hessians = self.__global_inner_hessians
+      project_entire_hessian = self.__project_entire_hessian
+      projection_methods = self.__projection_methods
+      separate_hessian_jacobian = self.__separate_hessian_jacobian
+      merged_attributes = self.__merged_hessian_and_gradient_attributes
+      kernels = self.__hessian_and_gradient_kernels
+    else:
+      global_gradients = self.__global_gradients_dynamic
+      global_hessians = self.__global_hessians_dynamic
+      global_jacobians = self.__global_jacobians_dynamic
+      global_inner_hessians = self.__global_inner_hessians_dynamic
+      project_entire_hessian = self.__project_entire_hessian_dynamic
+      projection_methods = self.__projection_methods_dynamic
+      separate_hessian_jacobian = self.__separate_hessian_jacobian_dynamic
+      merged_attributes = self.__merged_hessian_and_gradient_attributes_dynamic
+      kernels = self.__hessian_and_gradient_kernels_dynamic
+
+    if index >= len(global_gradients) or index >= len(global_hessians):
+      raise ValueError("hessian.__ensureTermKernel: symbolic term metadata is incomplete.")
+
+    while len(merged_attributes) <= index:
+      merged_attributes.append(None)
+    while len(kernels) <= index:
+      kernels.append(None)
+
+    if merged_attributes[index] is None:
+      merged_attributes[index] = self.__buildMergedHessianAndGradientAttribute(
+        global_gradients[index],
+        global_hessians[index],
+        global_jacobians[index] if index < len(global_jacobians) else None,
+        global_inner_hessians[index] if index < len(global_inner_hessians) else None,
+        project_entire_hessian[index],
+        separate_hessian_jacobian[index]
+      )
+
+    if kernels[index] is None:
+      assert merged_attributes[index] is not None
+      codegen: codeGenerator = codeGenerator(merged_attributes[index])
+      codegen.generateCode()
+      jacobian_rows = 0
+      jacobian_cols = 0
+      inner_hessian_rows = 0
+      if index < len(global_jacobians) and global_jacobians[index] is not None:
+        jacobian_rows = global_jacobians[index].rows
+        jacobian_cols = global_jacobians[index].cols
+      if index < len(global_inner_hessians) and global_inner_hessians[index] is not None:
+        inner_hessian_rows = global_inner_hessians[index].rows
+      kernels[index] = hessianAndGradientKernel(
+        merged_attributes[index],
+        project_entire_hessian[index],
+        projection_methods[index],
+        False,
+        (separate_hessian_jacobian[index] and not project_entire_hessian[index]),
+        jacobian_rows,
+        jacobian_cols,
+        inner_hessian_rows
+      )
+
+  def __setupCompute(self) -> None:
+    if self.__is_setup:
+      return
+
+    total_diagonal_block_size = self.__diagonal_blocks_start_cpu[-1] if len(self.__diagonal_blocks_start_cpu) > 0 else 1
+    self.__gradient_segments_start = gpuarray.to_gpu(np.array(self.__gradient_segments_start_cpu, dtype=np.uint32))
+    self.__diagonal = gpuarray.zeros(self.cols, dtype=np.float64)
+    self.__diagonal_blocks_start = gpuarray.to_gpu(np.array(self.__diagonal_blocks_start_cpu, dtype=np.uint32))
+    self.__diagonal_blocks = gpuarray.zeros(total_diagonal_block_size, dtype=np.float64)
+    self.__diagonal_blocks_inverse = gpuarray.zeros(total_diagonal_block_size, dtype=np.float64)
+
+    if len(self.__indices_kernels) > 0:
+      self.getSparseIndices()
+    if len(self.__indices_kernels_dynamic) > 0:
+      self.getSparseIndicesDynamic()
+
+    # Symbolic term kernels only depend on the differentiated expressions, so we build them once.
+    for index in range(len(self.__global_gradients)):
+      self.__ensureTermKernel(index, False)
+    for index in range(len(self.__global_gradients_dynamic)):
+      self.__ensureTermKernel(index, True)
+
+    self.__is_setup = True
+
+  def __computeOneTerm(
+    self,
+    index: int,
+    indices_kernel: gradientIndicesKernel,
+    lookup: gpuarray.GPUArray,
+    hessian_blocks: gpuarray.GPUArray,
+    merged_attributes: List[Optional[attribute]],
+    kernels: List[Optional[hessianAndGradientKernel]],
+    intermediate_compute_pairs: List[Dict[str, Tuple[attribute, attribute]]],
+    is_dynamic
+  ) -> None:
+    assert self.__gradient is not None
+
+    if index < len(intermediate_compute_pairs):
+      for _, value in intermediate_compute_pairs[index].items():
+        value[0].compute()
+        value[1].updateValue(value[0].value)
+
+    merged_attribute = merged_attributes[index]
+    kernel = kernels[index]
+    assert merged_attribute is not None
+    assert kernel is not None
+
+    kernel.generateKernel(indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
+    counts_gpu = [x.children_primitive_counts_gpu for x in merged_attribute.deviceKernel.kernelPrimitiveUnions]
+    arguments: List[gpuarray.GPUArray] = [x.value for x in merged_attribute.deviceKernel.kernelDatas]
+    arguments += [x.value for x in merged_attribute.deviceKernel.kernelConnectivity]
+    arguments += [x.compressedRows for x in merged_attribute.deviceKernel.kernelConnectivity if x.dimension == 0]
+    arguments += counts_gpu
+    kernel.compute(
+      arguments,
+      indices_kernel,
+      lookup,
+      self.__gradient.value,
+      hessian_blocks,
+      self.__diagonal,
+      self.__diagonal_blocks,
+      self.__diagonal_blocks_start,
+      self.__gradient.gradient_segments_start
+    )
+
+  @timed("hessian.compute")
+  def compute(self, local_gradient: Optional[gradient] = None):
+    if local_gradient is not None:
+      self.gradient = local_gradient
+    if self.__gradient is None:
+      self.__gradient = gradient(self.__wrt, self)
+    else:
+      self.__gradient.hessian = self
+
+    if not self.__is_setup:
+      self.__setupCompute()
+    elif len(self.__indices_kernels_dynamic) > 0:
+      self.getSparseIndicesDynamicAgain()
+
+    self.__gradient.value.fill(0)
+    self.__diagonal.fill(0)
+    if self.__diagonal_blocks.size > 0:
+      self.__diagonal_blocks.fill(0)
+    if self.blocks_flattened.size > 0:
+      self.blocks_flattened.fill(0)
+    if self.blocks_flattened_dynamic.size > 0:
+      self.blocks_flattened_dynamic.fill(0)
+
+    for index, indices_kernel in enumerate(self.__indices_kernels):
+      if index >= len(self.__block_indices_gpu):
+        raise ValueError("hessian.compute: static sparse lookup is missing.")
+      self.__computeOneTerm(
+        index,
+        indices_kernel,
+        self.__block_indices_gpu[index],
+        self.blocks_flattened,
+        self.__merged_hessian_and_gradient_attributes,
+        self.__hessian_and_gradient_kernels,
+        self.__intermediate_compute_pairs,
+        False
+      )
+
+    for index, indices_kernel in enumerate(self.__indices_kernels_dynamic):
+      if indices_kernel.numTotalCoordinates == 0:
+        continue
+      if index >= len(self.__block_indices_gpu_dynamic):
+        raise ValueError("hessian.compute: dynamic sparse lookup is missing.")
+      self.__computeOneTerm(
+        index,
+        indices_kernel,
+        self.__block_indices_gpu_dynamic[index],
+        self.blocks_flattened_dynamic,
+        self.__merged_hessian_and_gradient_attributes_dynamic,
+        self.__hessian_and_gradient_kernels_dynamic,
+        self.__intermediate_compute_pairs_dynamic,
+        True
+      )
+    return self
+
+  @property
+  def hash(self) -> int:
+    return hash(tuple([item.hash for item in self.__wrt]))
+
+  def __hash__(self) -> int:
+    return self.hash
