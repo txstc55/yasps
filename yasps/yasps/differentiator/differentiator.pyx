@@ -119,6 +119,7 @@ class differentiator:
       hessian_local.intermediate_compute_pairs = [dict(self.__intermediate_compute_pairs)]
       hessian_local.merged_hessian_and_gradient_attributes = [None]
       hessian_local.hessian_and_gradient_kernels = [None]
+      hessian_local.sources = [source]
     else:
       hessian_local.indices_kernels_dynamic = [indices_kernel]
       hessian_local.global_gradients_dynamic = [self.__gradient]
@@ -131,6 +132,7 @@ class differentiator:
       hessian_local.intermediate_compute_pairs_dynamic = [dict(self.__intermediate_compute_pairs)]
       hessian_local.merged_hessian_and_gradient_attributes_dynamic = [None]
       hessian_local.hessian_and_gradient_kernels_dynamic = [None]
+      hessian_local.sources_dynamic = [source]
     return hessian_local
 
   def __generateGradientThroughPathDict(self, wrt: List[attribute], autodiff_engine: autodiff) -> None:
@@ -753,7 +755,7 @@ class differentiator:
     print(f"Hessian hash is: {self.__hessian.hash}")
     print(f"Inner hessian hash is: {self.__global_inner_hessian.hash}")
     print(f"Jacobian hash is: {self.__global_jacobian.hash}")
-    exit(0)
+    # exit(0)
 
   def __generateHessianThroughRecursion(self, current: attribute, wrt: List[attribute]) -> attribute:
     from yasps.attribute import JOIN, UNION, DATA, CONSTANT

@@ -62,6 +62,7 @@ class hessian(matrix):
     self.__intermediate_compute_pairs: List[Dict[str, Tuple[attribute, attribute]]] = []
     self.__merged_hessian_and_gradient_attributes: List[Optional[attribute]] = []
     self.__hessian_and_gradient_kernels: List[Optional[hessianAndGradientKernel]] = []
+    self.__sources: List[attribute] = []
 
     self.__global_gradients_dynamic: List[attribute] = []
     self.__global_hessians_dynamic: List[attribute] = []
@@ -73,6 +74,7 @@ class hessian(matrix):
     self.__intermediate_compute_pairs_dynamic: List[Dict[str, Tuple[attribute, attribute]]] = []
     self.__merged_hessian_and_gradient_attributes_dynamic: List[Optional[attribute]] = []
     self.__hessian_and_gradient_kernels_dynamic: List[Optional[hessianAndGradientKernel]] = []
+    self.__sources_dynamic: List[attribute] = []
 
     self.__indices_kernels: List[gradientIndicesKernel] = []
     self.__indices_kernels_dynamic: List[gradientIndicesKernel] = []
@@ -101,6 +103,14 @@ class hessian(matrix):
     self.__diagonal_blocks_local_sizes = diagonal_block_sizes
 
   @property
+  def sources(self) -> List[attribute]:
+    return self.__sources
+
+  @property
+  def sources_dynamic(self) -> List[attribute]:
+    return self.__sources_dynamic
+
+  @property
   def wrt_start_indices(self) -> List[int]:
     return self.__wrt_start_indices
 
@@ -111,6 +121,14 @@ class hessian(matrix):
   @property
   def local_targets(self) -> List[List[attribute]]:
     return self.__local_targets
+
+  @sources.setter
+  def sources(self, sources: List[attribute]) -> None:
+    self.__sources = sources
+
+  @sources_dynamic.setter
+  def sources_dynamic(self, sources: List[attribute]) -> None:
+    self.__sources_dynamic = sources
 
   @local_targets.setter
   def local_targets(self, value: List[List[attribute]]) -> None:
@@ -476,7 +494,7 @@ class hessian(matrix):
       if left.hash != right.hash:
         raise ValueError("hessian.__add__: wrt mismatch.")
 
-    result = hessian(self.__wrt, [], self.__dynamic_instances or other.dynamic_instances)
+    result = hessian(self.__wrt)
     result.local_targets = self.__local_targets + other.local_targets
     result.global_gradients = self.__global_gradients + other.global_gradients
     result.global_hessians = self.__global_hessians + other.global_hessians
@@ -488,6 +506,7 @@ class hessian(matrix):
     result.intermediate_compute_pairs = self.__intermediate_compute_pairs + other.intermediate_compute_pairs
     result.merged_hessian_and_gradient_attributes = self.__merged_hessian_and_gradient_attributes + other.merged_hessian_and_gradient_attributes
     result.hessian_and_gradient_kernels = self.__hessian_and_gradient_kernels + other.hessian_and_gradient_kernels
+    result.sources = self.__sources + other.sources
 
     result.global_gradients_dynamic = self.__global_gradients_dynamic + other.global_gradients_dynamic
     result.global_hessians_dynamic = self.__global_hessians_dynamic + other.global_hessians_dynamic
@@ -499,6 +518,10 @@ class hessian(matrix):
     result.intermediate_compute_pairs_dynamic = self.__intermediate_compute_pairs_dynamic + other.intermediate_compute_pairs_dynamic
     result.merged_hessian_and_gradient_attributes_dynamic = self.__merged_hessian_and_gradient_attributes_dynamic + other.merged_hessian_and_gradient_attributes_dynamic
     result.hessian_and_gradient_kernels_dynamic = self.__hessian_and_gradient_kernels_dynamic + other.hessian_and_gradient_kernels_dynamic
+    print("Self source dynamic size:", len(self.__sources_dynamic))
+    print("Other source dynamic size:", len(other.sources_dynamic))
+    result.sources_dynamic = self.__sources_dynamic + other.sources_dynamic
+    print("Result source dynamic size:", len(result.sources_dynamic))
 
     result.indices_kernels = self.__indices_kernels + other.indices_kernels
     result.indices_kernels_dynamic = self.__indices_kernels_dynamic + other.indices_kernels_dynamic
@@ -614,7 +637,8 @@ class hessian(matrix):
     global_jacobian: Optional[attribute],
     global_inner_hessian: Optional[attribute],
     project_entire_hessian: bool,
-    separate_hessian_jacobian: bool
+    separate_hessian_jacobian: bool,
+    source: attribute
   ) -> attribute:
     merged_hessian_and_gradient = []
 
@@ -639,7 +663,9 @@ class hessian(matrix):
       merged_hessian_and_gradient.append(global_gradient[i])
 
     merged_hessian_rows = len(merged_hessian_and_gradient) // global_gradient.size
-    return attribute.to_array(merged_hessian_and_gradient, rows=merged_hessian_rows, cols=global_gradient.size)
+    merged_attribute = attribute.to_array(merged_hessian_and_gradient, rows=merged_hessian_rows, cols=global_gradient.size)
+    source.correspondance.addAttribute(f'hessian_and_gradient_d2_{source.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = merged_attribute, rows = merged_hessian_rows, cols = global_gradient.size)
+    return merged_attribute
 
   def __ensureTermKernel(self, index: int, dynamic_term = False) -> None:
     if not dynamic_term:
@@ -652,6 +678,7 @@ class hessian(matrix):
       separate_hessian_jacobian = self.__separate_hessian_jacobian
       merged_attributes = self.__merged_hessian_and_gradient_attributes
       kernels = self.__hessian_and_gradient_kernels
+      sources = self.__sources
     else:
       global_gradients = self.__global_gradients_dynamic
       global_hessians = self.__global_hessians_dynamic
@@ -662,6 +689,7 @@ class hessian(matrix):
       separate_hessian_jacobian = self.__separate_hessian_jacobian_dynamic
       merged_attributes = self.__merged_hessian_and_gradient_attributes_dynamic
       kernels = self.__hessian_and_gradient_kernels_dynamic
+      sources = self.__sources_dynamic
 
     if index >= len(global_gradients) or index >= len(global_hessians):
       raise ValueError("hessian.__ensureTermKernel: symbolic term metadata is incomplete.")
@@ -670,6 +698,12 @@ class hessian(matrix):
       merged_attributes.append(None)
     while len(kernels) <= index:
       kernels.append(None)
+    print("is dynamic", dynamic_term)
+    print("Sources")
+    for item in sources:
+      print(item.fullName)
+    # for item in self.__sources_dynamic:
+    #   print(item.fullName)
 
     if merged_attributes[index] is None:
       merged_attributes[index] = self.__buildMergedHessianAndGradientAttribute(
@@ -678,7 +712,8 @@ class hessian(matrix):
         global_jacobians[index] if index < len(global_jacobians) else None,
         global_inner_hessians[index] if index < len(global_inner_hessians) else None,
         project_entire_hessian[index],
-        separate_hessian_jacobian[index]
+        separate_hessian_jacobian[index],
+        sources[index]
       )
 
     if kernels[index] is None:
@@ -750,8 +785,9 @@ class hessian(matrix):
     kernel = kernels[index]
     assert merged_attribute is not None
     assert kernel is not None
-
+    # TODO: This doesn't need to be done every iteration for the static parts
     kernel.generateKernel(indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
+
     counts_gpu = [x.children_primitive_counts_gpu for x in merged_attribute.deviceKernel.kernelPrimitiveUnions]
     arguments: List[gpuarray.GPUArray] = [x.value for x in merged_attribute.deviceKernel.kernelDatas]
     arguments += [x.value for x in merged_attribute.deviceKernel.kernelConnectivity]
@@ -785,12 +821,9 @@ class hessian(matrix):
 
     self.__gradient.value.fill(0)
     self.__diagonal.fill(0)
-    if self.__diagonal_blocks.size > 0:
-      self.__diagonal_blocks.fill(0)
-    if self.blocks_flattened.size > 0:
-      self.blocks_flattened.fill(0)
-    if self.blocks_flattened_dynamic.size > 0:
-      self.blocks_flattened_dynamic.fill(0)
+    self.__diagonal_blocks.fill(0)
+    self.blocks_flattened.fill(0)
+    self.blocks_flattened_dynamic.fill(0)
 
     for index, indices_kernel in enumerate(self.__indices_kernels):
       if index >= len(self.__block_indices_gpu):
