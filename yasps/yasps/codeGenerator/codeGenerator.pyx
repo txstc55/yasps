@@ -182,6 +182,21 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
 
     self.__current_order_index = -1 # this is basically the pointer to which node we are generating code currently
     # now generate the code
+    if self.__input.size > 1:
+      # pre-define this RowMat type
+      self.__code_strings.append(f'''
+#if {int(self.__input.rows == 1 or self.__input.cols == 1)}
+  using RowMat = Eigen::Matrix<double,
+                      {self.__input.rows},
+                      {self.__input.cols}>;
+#else
+  using RowMat = Eigen::Matrix<double,
+                    {self.__input.rows},
+                    {self.__input.cols},
+                    Eigen::RowMajor>;
+#endif
+  Eigen::Map<RowMat> out(result);
+''')
     for current in self.__order:
       self.__current_order_index += 1
       if current.hash in self.__attribute_replacements:
@@ -190,7 +205,9 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
       elif current.hash == self.__input.hash or current.name == "" or (current.name != "" and not current.generate_code):
         # we need to generate the code accordingly
         if current.name != "":
-          self.__attribute_replacements[current.hash] = (current, -1) # -1 means it has a name, we will use the name
+          # don't differentiate special cases, lets just use intermediate all the time
+          self.__attribute_replacements[current.hash] = (current, self.__num_intermediates)
+          self.__num_intermediates += 1
         else:
           self.__attribute_replacements[current.hash] = (current, self.__num_intermediates)
           self.__num_intermediates += 1
@@ -254,48 +271,9 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
         # it is not an output
         # and it has a name
         # so we can safely call the function
-        if current.size == 1:
-          self.__code_strings.append(f'''
-  double {current.fullName}_local_data = 0.0;
-''')
-        else:
-          self.__code_strings.append(f'''
-  double {current.fullName}_local_data_temp[{current.size}] = {{0}};
-''')
-        if current.deviceKernel is not None:
-          self.__code_strings.append(f'''
-  {current.fullName}_device_function(
-  {"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}
-  {"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}
-  {"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}
-  {"".join([f'{x.code_generation_counts_name},' for x in current.deviceKernel.kernelPrimitiveUnions])}
-  {"0" if ((current.correspondance.type == "scene" or current.correspondance.type == "mesh") and (self.__input.correspondance.fullName != current.correspondance.fullName)) else f"{current.correspondance.fullName}_index"},
-  {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
-  ''')
-        else:
-          # we found the same kernel
-          # we need to replace the kernel calls
-          replacement = self.__childrenAttributeKernels[current.hash]
-          self.__code_strings.append(f'''
-  {current.fullName}_device_function(
-    {"".join([f'{x.code_generation_data_name}, ' for x in replacement.deviceKernel.kernelDatas])}
-    {"".join([f'{x.code_generation_index_name}, ' for x in replacement.deviceKernel.kernelConnectivity])}
-    {"".join([f'{x.code_generation_csr_name}, ' for x in replacement.deviceKernel.kernelConnectivity if x.dimension == 0])}
-    {"".join([f'{x.code_generation_counts_name},' for x in replacement.deviceKernel.kernelPrimitiveUnions])}
-    {replacement.correspondance.fullName}_index,
-    {f'{current.fullName}_local_data_temp' if current.size > 1 else f'&{current.fullName}_local_data'});
-  ''')
-        if current.size > 1:
-          if current.rows == 1 or current.cols == 1:
-            self.__code_strings.append(f'''
-  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
-''')
-          else:
-            self.__code_strings.append(f'''
-  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
-''')
-        # add to intermediate names
-        self.__attribute_replacements[current.hash] = (current, -1)
+        self.__attribute_replacements[current.hash] = (current, self.__num_intermediates)
+        self.__num_intermediates += 1
+        self.__generate_code_for_named_attribute(current)
 
     # now we are done with the computation
     # need to put back the result
@@ -304,29 +282,16 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
       attributeName = self.__input.fullName
     else:
       attributeName = self.__input.fullName
-    # we have finished the computation, add a line to store the result
-    if self.__input.size == 1:
-      self.__code_strings.append(f'''
-  result[0] = {self.getIntermediateName(self.__input)};
-''')
-    else:
-      self.__code_strings.append(f'''
-  // put the result back
-  // Eigen::Matrix<double, {self.__input.rows}, {self.__input.cols}{'' if self.__input.rows == 1 or self.__input.cols == 1 else ', Eigen::RowMajor'}> {self.getIntermediateName(self.__input)}_materialized({self.getIntermediateName(self.__input)});
-
-#if {int(self.__input.rows == 1 or self.__input.cols == 1)}
-  using RowMat = Eigen::Matrix<double,
-                        {self.__input.rows},
-                        {self.__input.cols}>;
-#else
-  using RowMat = Eigen::Matrix<double,
-                      {self.__input.rows},
-                      {self.__input.cols},
-                      Eigen::RowMajor>;
-#endif
-  Eigen::Map<RowMat> out(result);
-  out.noalias() = {self.getIntermediateName(self.__input)}.derived();   // Eigen decides whether a temp is needed
-''')
+#     # we have finished the computation, add a line to store the result
+#     if self.__input.size == 1:
+#       # for size 1 elements we can always compute then put it back
+#       self.__code_strings.append(f'''
+#   result[0] = {self.getIntermediateName(self.__input)};
+# ''')
+#     else:
+#       self.__code_strings.append(f'''
+#   out.noalias() = {self.getIntermediateName(self.__input)}.derived();   // Eigen decides whether a temp is needed
+# ''')
     # now we need to get the datas for generating this kernel
     allNamedAttributeChildren = self.__childrenAttributeKernels.values()
     # get the datas they need
@@ -372,10 +337,10 @@ __device__ void {attributeName}_device_function(
 
     # now we generate the device kernel
     self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allPrimitiveUnions, allDependencies, allEvdSizes, self.__input.fullNameWithHash)
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    print(f"We initialized {self.__total_initialized_registers} registers")
-    print(f"We saved {self.__total_saved_registers} registers")
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    # print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    # print(f"We initialized {self.__total_initialized_registers} registers")
+    # print(f"We saved {self.__total_saved_registers} registers")
+    # print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
   # get the name of the intermediate variables
   def getIntermediateName(self, attribute: ya.attribute) -> str:
@@ -446,8 +411,8 @@ __device__ void {attributeName}_device_function(
               # note that we don't do this when dimension is not equal to 1
               # we only need to reuse the storage space
               # but we can still give it a new name
-            if att.hash not in self.__attribute_last_appear:
-              print(str(att))
+            # if att.hash not in self.__attribute_last_appear:
+            #   print(str(att))
             self.__intermediate_last_appear_index[ind] = self.__attribute_last_appear[att.hash]
             self.__total_saved_registers += att.size
             return ind
@@ -462,17 +427,17 @@ __device__ void {attributeName}_device_function(
   def __generate_attribute_name_and_initialization(self, current: ya.attribute) -> Tuple[str, str]:
     attribute_initialization: str = ""
     attribute_name: str = ""
-    if current.name != "":
-      attribute_name = current.fullName + "_local_data"
-      self.__attribute_replacements[current.hash] = (current, -1)
-      if current.size == 1:
-        attribute_initialization = f"double {attribute_name}"
-      else:
-        if current.rows == 1 or current.cols == 1:
-          attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}"
-        else:
-          attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}"
-      return attribute_name, attribute_initialization
+    # if current.name != "":
+    #   attribute_name = current.fullName + "_local_data"
+    #   self.__attribute_replacements[current.hash] = (current, -1)
+    #   if current.size == 1:
+    #     attribute_initialization = f"double {attribute_name}"
+    #   else:
+    #     if current.rows == 1 or current.cols == 1:
+    #       attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}> {attribute_name}"
+    #     else:
+    #       attribute_initialization = f"Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor> {attribute_name}"
+    #   return attribute_name, attribute_initialization
 
     # ok we will do two cases
     # the first one is the current size is just 1
@@ -516,6 +481,8 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_type_0(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out.noalias()"
     if current.size == 1:
       self.__code_strings.append(f'''
   {attribute_initialization} = {current.operator.name}({self.getIntermediateName(current.children[0])});''')
@@ -527,15 +494,9 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_type_1(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
-    if current.operator == ya.MUL or current.operator == ya.DIV:
-      self.__code_strings.append(f'''
-  {attribute_initialization} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
-    else:
-      if current.size == 1:
-        self.__code_strings.append(f'''
-  {attribute_initialization} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
-      else:
-        self.__code_strings.append(f'''
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out.noalias()"
+    self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])} {current.operator.name} {self.getIntermediateName(current.children[1])};''')
 
 
@@ -545,6 +506,8 @@ __device__ void {attributeName}_device_function(
     # currently we have select or power
     # and power is forbidden on matrix
     # so we can always do it this way as op(a, b, c, d, ...)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out.noalias()"
     if current.operator == ya.SELECT:
       self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])} ? {self.getIntermediateName(current.children[1])} : {self.getIntermediateName(current.children[2])};''')
@@ -560,6 +523,8 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_neg(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out.noalias()"
     self.__code_strings.append(f'''
   {attribute_initialization} = -{self.getIntermediateName(current.children[0])};''')
 
@@ -570,50 +535,36 @@ __device__ void {attributeName}_device_function(
   result[0] = {current.float_value};''')
 
   def __generate_code_for_array_access(self, current: ya.attribute) -> None:
-  #   attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
-  #   # generate code for array access
-  #   index_value = current.children[1].index_value
-  #   row_num = index_value // current.children[0].cols
-  #   col_num = index_value % current.children[0].cols
-  #   child_rows = current.children[0].rows
-  #   child_cols = current.children[0].cols
-  #   if child_rows == 1 and child_cols == 1:
-  #     # this is a direct access to a scalar
-  #     self.__code_strings.append(f'''
-  # {attribute_initialization} = {self.getIntermediateName(current.children[0])};''')
-  #   else:
-  #     self.__code_strings.append(f'''
-  # {attribute_initialization} = {self.getIntermediateName(current.children[0])}({row_num}, {col_num});''')
-  # for array access we do nothing
-    pass
+  # for array access we do nothing unless it is an output
+    if current == self.__input:
+      attribute_initialization = "result[0]"
+      self.__code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current)};''')
+
 
   def __generate_code_for_array(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "out"
+      attribute_name = attribute_initialization
     # generate code for array
     self.__code_strings.append(f'''
   {attribute_initialization};
+  // appending value for array operation
   {attribute_name} << {", ".join([self.getIntermediateName(x) for x in current.children])};
 ''')
-    if len(current.children) == 9 and current.children[1].operator == ya.NEG and current.children[7].operator == ya.NEG:
-      if self.getIntermediateName(current.children[5]) == "INTERMEDIATE_40":
-        print("Checking array operator with intermediate 40")
-        print(current.children[5].operator)
-        print(current.children[5].children[0].operator)
-        print(current.correspondance.fullName)
-        print(current.children[5].correspondance.fullName)
-        print(current.children[5].isFloatMat)
-        print(current.children[5] in self.__attribute_replacements)
 
 
   def __generate_code_for_join(self, current: ya.attribute) -> None:
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
+      attribute_name = attribute_initialization
     # need to generate the code for the joining operation
     # we know the children must be a named attribute for the joining operator
     children_attribute = current.children[0] # should only have one child
     children_attribute_name: str = ""
     if children_attribute.deviceKernel is None:
-      # print("Error: child attribute has no device kernel")
-      # print(str(children_attribute))
-      # exit(1)
       # this is actually a very special case
       # we are joining a number
       # this can happen inside the hessian
@@ -622,28 +573,23 @@ __device__ void {attributeName}_device_function(
         float_values.append(str(children_attribute[i].float_value))
       float_values = float_values * current.through.dimension
       float_values_string = ", ".join(float_values)
-      self.__code_strings.append(f'''
-  double {current.fullName}_local_data_temp[{current.size}] = {{{float_values_string}}};
-''')
-
-      if current.size > 1:
+      if current.size == 1:
         self.__code_strings.append(f'''
-  // we now need to put it into the matrix
-  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
-
+  {attribute_initialization} = {float_values_string};
 ''')
       else:
         self.__code_strings.append(f'''
-  // we put it back to just a single value
-  double {current.fullName}_local_data = {current.fullName}_local_data_temp[0];
-  ''')
+  {attribute_initialization};
+  // appending value for JOIN operation with float values
+  {attribute_name} << {float_values_string};
+''')
       return
     if children_attribute.name == "":
       children_attribute_name = children_attribute.fullName
     else:
       children_attribute_name = children_attribute.fullName
     self.__code_strings.append(f'''
-  double {current.fullName}_local_data_temp[{current.size}] = {{0}};
+  {attribute_initialization};
   for (unsigned int i = 0; i < {current.through.dimension}; i++){{
   // grab the index for the through attribute
     unsigned int {current.through.fullName}_index = {current.through.code_generation_index_name}[{current.through.fromPrimitive.fullName}_index * {current.through.dimension} + i];
@@ -655,31 +601,27 @@ __device__ void {attributeName}_device_function(
       {"".join([f'{x.code_generation_csr_name}, ' for x in children_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}
       {"".join([f'{x.code_generation_counts_name},' for x in sorted(children_attribute.deviceKernel.kernelPrimitiveUnions, key = lambda y: y.fullName)])}
       {current.through.fullName}_index,
-      {current.fullName}_local_data_row_temp
+      {f'&{attribute_name}' if current.size == 1 else attribute_name + f".data() + i * {int(children_attribute.size)}"}
     );
-    #pragma unroll
-    for (unsigned int j = 0; j < {children_attribute.size}; j++){{ // copy the data
-      {current.fullName}_local_data_temp[i * {int(children_attribute.size)} + j] = {current.fullName}_local_data_row_temp[j];
-    }}
   }}
 ''')
-    # put it back according to size
-    if current.size > 1:
-      if current.rows == 1 or current.cols == 1:
-        self.__code_strings.append(f'''
-    // we now need to put it into the matrix
-    Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
-  ''')
-      else:
-        self.__code_strings.append(f'''
-  // we now need to put it into the matrix
-  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
-''')
-    else:
-      self.__code_strings.append(f'''
-  // we put it back to just a single value
-  double {current.fullName}_local_data = {current.fullName}_local_data_temp[0];
-''')
+#     # put it back according to size
+#     if current.size > 1:
+#       if current.rows == 1 or current.cols == 1:
+#         self.__code_strings.append(f'''
+#     // we now need to put it into the matrix
+#     Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
+#   ''')
+#       else:
+#         self.__code_strings.append(f'''
+#   // we now need to put it into the matrix
+#   Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
+# ''')
+#     else:
+#       self.__code_strings.append(f'''
+#   // we put it back to just a single value
+#   double {current.fullName}_local_data = {current.fullName}_local_data_temp[0];
+# ''')
 
   def __generate_code_for_sum_and_average(self, current: ya.attribute) -> None:
     # get the children attribute
@@ -750,27 +692,34 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_transpose(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
     # if current.children[0] not in self.__attribute_replacements:
     self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.transpose();''')
 
   def __generate_code_for_broadcast_add(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
     self.__code_strings.append(f'''
   // broadcast addition
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.array() + {self.getIntermediateName(current.children[1])};''')
 
   def __generate_code_for_broadcast_sub(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
     self.__code_strings.append(f'''
   // broadcast subtraction
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.array() - {self.getIntermediateName(current.children[1])};''')
 
   def __generate_code_for_row(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
     if current.children[0].cols == 1:
       # this is a singular value
-      #
       self.__code_strings.append(f'''
   // getting row to a singular value
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.row({current.children[1].index_value}).value();''')
@@ -781,6 +730,8 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_col(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
     if current.children[0].rows == 1:
       # this is a singular value
       self.__code_strings.append(f'''
@@ -795,42 +746,63 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_cross(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
     self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.cross({self.getIntermediateName(current.children[1])});''')
 
   def __generate_code_for_norm(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
     self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.norm();''')
 
   def __generate_code_for_det(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
     self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.determinant();''')
 
   def __generate_code_for_inverse(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
     self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.inverse();''')
 
   def __generate_code_for_dot(self, current: ya.attribute) -> None:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
     self.__code_strings.append(f'''
   {attribute_initialization} = {self.getIntermediateName(current.children[0])}.dot({self.getIntermediateName(current.children[1])});''')
 
   def __generate_code_for_resize(self, current: ya.attribute) -> None:
-    attribute_name, attribute_initialization_original = self.__generate_attribute_name_and_initialization(current)
-    # we need to generate the code accordingly
-    origin_mat = current.children[0]
+    # if this is an output, then we just need to put the data back
+    if current == self.__input:
+      # attribute_initialization_original = "result[0]" if current.size == 1 else "out"
+      if current.size == 1:
+        self.__code_strings.append(f'''
+  result[0] = {self.getIntermediateName(current.children[0])};''')
+      else:
+        self.__code_strings.append(f'''
+  out.noalias() = {self.getIntermediateName(current.children[0])};''')
 
-    if origin_mat.rows == 1 or origin_mat.cols == 1:
-      attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
-    else:
-      attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}, Eigen::RowMajor> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
-    attribute_initialization += f'''{attribute_initialization_original}'''
-    # copy the data and resize
+    # # we need to generate the code accordingly
+    # origin_mat = current.children[0]
+    attribute_name, attribute_initialization_original = self.__generate_attribute_name_and_initialization(current)
+    # if origin_mat.rows == 1 or origin_mat.cols == 1:
+    #   attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
+    # else:
+    #   attribute_initialization = f"Eigen::Matrix<double, {origin_mat.rows}, {origin_mat.cols}, Eigen::RowMajor> {attribute_name}_before_resize = {self.getIntermediateName(current.children[0])};\n  "
+    # attribute_initialization += f'''{attribute_initialization_original}'''
+    # let's assume that after resize it always replace the previous one
+    # or at least they share the data regardless
     self.__code_strings.append(f'''
-  {attribute_initialization}({attribute_name}_before_resize.data());''')
+  // resize operation
+  {attribute_initialization_original}({self.getIntermediateName(current.children[0])}.data());''')
 
   # MARK ISSUE
   # When the projection is 0, there is absolutely no need to allocate a matrix
@@ -861,14 +833,23 @@ __device__ void {attributeName}_device_function(
     spd_projection_inplace<{current.children[0].rows}>({an}.data(), int({mn}));
   }}
 ''')
+    if current == self.__input:
+      if current.size == 1:
+        self.__code_strings.append(f'''
+  result[0] = {attribute_initialization};''')
+      else:
+        self.__code_strings.append(f'''
+  out.noalias() = {an};''')
 
   def __generate_code_for_union(self, current: ya.attribute) -> None:
-    # need to generate the code for the joining operation
-    # we know the children must be a named attribute for the joining operator
-    # print("We are now generating code for union")
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current == self.__input:
+      attribute_initialization = "result[0]" if current.size == 1 else "out"
+      attribute_name = attribute_initialization
+    # for union operator, we just need to pick the correct path
     code_string = ""
     code_string += f'''
-  double {current.fullName}_local_data_temp[{current.size}] = {{0}};
+  {attribute_initialization};
   // we need to determine which primitive it's calling from
   {{
     unsigned int {current.fullName}_primitive_index = 0;
@@ -886,31 +867,27 @@ __device__ void {attributeName}_device_function(
     // now that we know the exact primitive index, we invoke the attribute function
     switch({current.fullName}_primitive_index){{
 '''
-    # print("Before for loop")
-    # print(f"Current fullname is {current.fullName}")
-    # print(f"Union has {len(current.children)} children")
-    # print("Union parent correspondance checking")
-    # print(current.correspondance.fullName)
     for i in range(len(current.children)):
       child_attribute = current.children[i]
-      # print(f"Generating code for child attribute: {child_attribute.fullName} with size {child_attribute.size}")
-      # print("Attribute correspondance checking")
-      # print(f"Child attribute correspondance: {child_attribute.correspondance.fullName}")
       code_string += f'''
       case {i}:
 '''
       if child_attribute.isFloatMat or child_attribute.operator == ya.FLOAT:
         # this is likely a constant value
         # we can just get the constant value I guess
-        for j in range(child_attribute.size):
+        if child_attribute.size == 1:
           code_string += f'''
-        {current.fullName}_local_data_temp[{j}] = {str(current.children[i][j].float_value)};'''
-        code_string += '''
+        {attribute_name} = {str(child_attribute.float_value)};
         break;
-      '''
+'''
+        else:
+          float_mat_string = ", ".join([str(child_attribute[j].float_value) for j in range(child_attribute.size)])
+          code_string += f'''
+        // appending value for UNION float mat
+        {attribute_name} << {float_mat_string};
+        break;
+'''
       else:
-
-        # print(str(child_attribute))
         code_string += f'''
         {current.children[i].fullName}_device_function(
           {"".join([f'{x.code_generation_data_name}, ' for x in sorted(child_attribute.deviceKernel.kernelDatas, key = lambda y: y.fullName)])}
@@ -918,33 +895,46 @@ __device__ void {attributeName}_device_function(
           {"".join([f'{x.code_generation_csr_name}, ' for x in child_attribute.deviceKernel.kernelConnectivity if x.dimension == 0])}
           {"".join([f'{x.code_generation_counts_name},' for x in child_attribute.deviceKernel.kernelPrimitiveUnions])}
           {current.correspondance.fullName}_index - {current.fullName}_primitive_total_counts[{current.fullName}_primitive_index],
-          {current.fullName}_local_data_temp
+          {f'&{attribute_name}' if current.size == 1 else attribute_name + ".data()"}
         );
         break;
 '''
-    # print("After for loop")
     code_string += '''
       default:
         break;
     } // close switch
   } // close the local construction
 '''
-    # put it back according to size
-    if current.size > 1:
-      if current.rows == 1 or current.cols == 1:
-        code_string += f'''
-  // we now need to put it into the matrix
-  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}>> {current.fullName}_local_data({current.fullName}_local_data_temp);
-'''
-      else:
-        code_string += f'''
-  // we now need to put it into the matrix
-  Eigen::Map<Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>> {current.fullName}_local_data({current.fullName}_local_data_temp);
-'''
-    else:
-      # it is a singular scalar data
-      code_string += f'''
-    // we put it back to just a single value
-  double {current.fullName}_local_data = {current.fullName}_local_data_temp[0];
-'''
     self.__code_strings.append(code_string)
+
+
+  def __generate_code_for_named_attribute(self, current: ya.attribute) -> None:
+    attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    self.__code_strings.append(f'''
+  {attribute_initialization};
+''')
+    if current.deviceKernel is not None:
+      self.__code_strings.append(f'''
+  {current.fullName}_device_function(
+    {"".join([f'{x.code_generation_data_name}, ' for x in current.deviceKernel.kernelDatas])}
+    {"".join([f'{x.code_generation_index_name}, ' for x in current.deviceKernel.kernelConnectivity])}
+    {"".join([f'{x.code_generation_csr_name}, ' for x in current.deviceKernel.kernelConnectivity if x.dimension == 0])}
+    {"".join([f'{x.code_generation_counts_name},' for x in current.deviceKernel.kernelPrimitiveUnions])}
+    {"0" if ((current.correspondance.type == "scene" or current.correspondance.type == "mesh") and (self.__input.correspondance.fullName != current.correspondance.fullName)) else f"{current.correspondance.fullName}_index"},
+    {f'{attribute_name}.data()' if current.size > 1 else f'&{attribute_name}'}
+  );
+''')
+    else:
+      # we found the same kernel
+      # we need to replace the kernel calls
+      replacement = self.__childrenAttributeKernels[current.hash]
+      self.__code_strings.append(f'''
+  {current.fullName}_device_function(
+    {"".join([f'{x.code_generation_data_name}, ' for x in replacement.deviceKernel.kernelDatas])}
+    {"".join([f'{x.code_generation_index_name}, ' for x in replacement.deviceKernel.kernelConnectivity])}
+    {"".join([f'{x.code_generation_csr_name}, ' for x in replacement.deviceKernel.kernelConnectivity if x.dimension == 0])}
+    {"".join([f'{x.code_generation_counts_name},' for x in replacement.deviceKernel.kernelPrimitiveUnions])}
+    {replacement.correspondance.fullName}_index,
+    {f'{attribute_name}.data()' if current.size > 1 else f'&{attribute_name}'}
+  );
+''')

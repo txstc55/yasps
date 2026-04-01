@@ -518,10 +518,10 @@ class hessian(matrix):
     result.intermediate_compute_pairs_dynamic = self.__intermediate_compute_pairs_dynamic + other.intermediate_compute_pairs_dynamic
     result.merged_hessian_and_gradient_attributes_dynamic = self.__merged_hessian_and_gradient_attributes_dynamic + other.merged_hessian_and_gradient_attributes_dynamic
     result.hessian_and_gradient_kernels_dynamic = self.__hessian_and_gradient_kernels_dynamic + other.hessian_and_gradient_kernels_dynamic
-    print("Self source dynamic size:", len(self.__sources_dynamic))
-    print("Other source dynamic size:", len(other.sources_dynamic))
+    # print("Self source dynamic size:", len(self.__sources_dynamic))
+    # print("Other source dynamic size:", len(other.sources_dynamic))
     result.sources_dynamic = self.__sources_dynamic + other.sources_dynamic
-    print("Result source dynamic size:", len(result.sources_dynamic))
+    # print("Result source dynamic size:", len(result.sources_dynamic))
 
     result.indices_kernels = self.__indices_kernels + other.indices_kernels
     result.indices_kernels_dynamic = self.__indices_kernels_dynamic + other.indices_kernels_dynamic
@@ -679,6 +679,7 @@ class hessian(matrix):
       merged_attributes = self.__merged_hessian_and_gradient_attributes
       kernels = self.__hessian_and_gradient_kernels
       sources = self.__sources
+      indices_kernels = self.__indices_kernels
     else:
       global_gradients = self.__global_gradients_dynamic
       global_hessians = self.__global_hessians_dynamic
@@ -690,6 +691,7 @@ class hessian(matrix):
       merged_attributes = self.__merged_hessian_and_gradient_attributes_dynamic
       kernels = self.__hessian_and_gradient_kernels_dynamic
       sources = self.__sources_dynamic
+      indices_kernels = self.__indices_kernels_dynamic
 
     if index >= len(global_gradients) or index >= len(global_hessians):
       raise ValueError("hessian.__ensureTermKernel: symbolic term metadata is incomplete.")
@@ -698,10 +700,10 @@ class hessian(matrix):
       merged_attributes.append(None)
     while len(kernels) <= index:
       kernels.append(None)
-    print("is dynamic", dynamic_term)
-    print("Sources")
-    for item in sources:
-      print(item.fullName)
+    # print("is dynamic", dynamic_term)
+    # print("Sources")
+    # for item in sources:
+    #   print(item.fullName)
     # for item in self.__sources_dynamic:
     #   print(item.fullName)
 
@@ -738,6 +740,7 @@ class hessian(matrix):
         jacobian_cols,
         inner_hessian_rows
       )
+      kernels[index].generateKernel(indices_kernels[index].outputUniqueGradientSizesCPU.tolist(), self.__wrt)
 
   def __setupCompute(self) -> None:
     if self.__is_setup:
@@ -786,7 +789,8 @@ class hessian(matrix):
     assert merged_attribute is not None
     assert kernel is not None
     # TODO: This doesn't need to be done every iteration for the static parts
-    kernel.generateKernel(indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
+    if is_dynamic:
+      kernel.generateKernel(indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
 
     counts_gpu = [x.children_primitive_counts_gpu for x in merged_attribute.deviceKernel.kernelPrimitiveUnions]
     arguments: List[gpuarray.GPUArray] = [x.value for x in merged_attribute.deviceKernel.kernelDatas]

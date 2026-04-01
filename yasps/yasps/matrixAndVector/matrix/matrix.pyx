@@ -17,16 +17,16 @@ class matrix:
 
     # Block sparse representation, the static part
     self.__block_dimensions: List[int] = []  # record unique block dimensions (flattened)
-    self.__blocks_flattened: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)  # flattened block storage
+    self.__blocks_flattened: gpuarray.GPUArray = gpuarray.zeros(1, dtype=np.float64)  # flattened block storage
     self.__blocks_start_indices: List[int] = []  # start index for each block size in the flattened storage
-    self.__block_positions: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32)  # coordinates for each block
+    self.__block_positions: gpuarray.GPUArray = gpuarray.zeros(1, dtype=np.uint32)  # coordinates for each block
     self.__block_counts: List[int] = []  # count for each block-size category
 
     # block sparse representation, the dynamic part
     self.__block_dimensions_dynamic: List[int] = []  # unique dynamic block dimensions (flattened)
-    self.__blocks_flattened_dynamic: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)  # flattened dynamic block storage
+    self.__blocks_flattened_dynamic: gpuarray.GPUArray = gpuarray.zeros(1, dtype=np.float64)  # flattened dynamic block storage
     self.__blocks_start_indices_dynamic: List[int] = []  # dynamic block category start indices
-    self.__block_positions_dynamic: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32)  # coordinates for dynamic blocks
+    self.__block_positions_dynamic: gpuarray.GPUArray = gpuarray.zeros(1, dtype=np.uint32)  # coordinates for dynamic blocks
     self.__block_counts_dynamic: List[int] = []  # count for each dynamic block-size category
 
   def __mul__(self, other: vector) -> vector:

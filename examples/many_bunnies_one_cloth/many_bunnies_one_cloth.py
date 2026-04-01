@@ -15,7 +15,7 @@ DHAT_VALUE = 2e-6 # for collision detection
 KAPPA_VALUE = 10000.0 # for collision
 
 
-NUM_ABD_BUNNIES = 2
+NUM_ABD_BUNNIES = 10
 NUM_SOFT_BUNNIES = 2
 
 MU_VALUE_ABDS = []
@@ -536,31 +536,31 @@ ccd.init_edges(position_gpu, position_gpu, edge_indices_gpu, edge_indices_all.sh
 ##################################################################
 ## plot the bunnies
 ##################################################################
-# import pyvista as pv
-# plotter = pv.Plotter(window_size=[3840, 2160])
-# all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
-# triangles = triangle_indices_all
-# abd_triangles = triangles[:NUM_ABD_BUNNIES * NUM_BUNNY_SURFACE_TRIANGLES]
-# soft_triangles = triangles[NUM_ABD_BUNNIES * NUM_BUNNY_SURFACE_TRIANGLES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES] - NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES
-# cloth_triangles = triangles[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES:] - (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES
-# cells_abd = np.hstack([np.full((abd_triangles.shape[0], 1), 3), abd_triangles])
-# cells_soft = np.hstack([np.full((soft_triangles.shape[0], 1), 3), soft_triangles])
-# cells_cloth = np.hstack([np.full((cloth_triangles.shape[0], 1), 3), cloth_triangles])
-# abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
-# soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-# cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
-# abd_poly = pv.PolyData(abd_vertices_computed, cells_abd)
-# soft_poly = pv.PolyData(soft_vertices_computed, cells_soft)
-# cloth_poly = pv.PolyData(cloth_vertices_computed, cells_cloth)
-# plotter.add_mesh(abd_poly, color = "lightblue")
-# plotter.add_mesh(soft_poly, color = "lightgreen")
-# plotter.add_mesh(cloth_poly, color = "pink", opacity = 0.5)
+import pyvista as pv
+plotter = pv.Plotter(window_size=[3840, 2160])
+all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+triangles = triangle_indices_all
+abd_triangles = triangles[:NUM_ABD_BUNNIES * NUM_BUNNY_SURFACE_TRIANGLES]
+soft_triangles = triangles[NUM_ABD_BUNNIES * NUM_BUNNY_SURFACE_TRIANGLES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES] - NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES
+cloth_triangles = triangles[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES:] - (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES
+cells_abd = np.hstack([np.full((abd_triangles.shape[0], 1), 3), abd_triangles])
+cells_soft = np.hstack([np.full((soft_triangles.shape[0], 1), 3), soft_triangles])
+cells_cloth = np.hstack([np.full((cloth_triangles.shape[0], 1), 3), cloth_triangles])
+abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
+soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+abd_poly = pv.PolyData(abd_vertices_computed, cells_abd)
+soft_poly = pv.PolyData(soft_vertices_computed, cells_soft)
+cloth_poly = pv.PolyData(cloth_vertices_computed, cells_cloth)
+plotter.add_mesh(abd_poly, color = "lightblue")
+plotter.add_mesh(soft_poly, color = "lightgreen")
+plotter.add_mesh(cloth_poly, color = "pink", opacity = 0.5)
 
-# plotter.camera_position = [(0, 2, 6),
-#  (0.0, 0.0, 0.0),
-#  (0, 1, 0)
-# ]
-# plotter.show(interactive_update=True, auto_close=False)
+plotter.camera_position = [(0, 2, 6),
+ (0.0, 0.0, 0.0),
+ (0, 1, 0)
+]
+plotter.show(interactive_update=True, auto_close=False)
 
 
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
@@ -661,14 +661,14 @@ for i in range(200):
     print("substep is", substep)
     all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
 
-    # abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
-    # soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-    # cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
-    # abd_poly.points = abd_vertices_computed
-    # soft_poly.points = soft_vertices_computed
-    # cloth_poly.points = cloth_vertices_computed
-    # plotter.render()
-    # plotter.update()
+    abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
+    soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+    cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+    abd_poly.points = abd_vertices_computed
+    soft_poly.points = soft_vertices_computed
+    cloth_poly.points = cloth_vertices_computed
+    plotter.render()
+    plotter.update()
 
     inner_iteration += 1
   new_velocities_abd = (vertices_abd_position.compute().value - vertices_abd_last_position.value) / DT_VALUE
