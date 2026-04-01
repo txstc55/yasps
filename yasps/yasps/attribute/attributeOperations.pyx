@@ -142,6 +142,15 @@ def mul(att: ya.attribute, other: ya.attribute) -> ya.attribute:
     return ya.attribute.zeros(other.rows, other.cols)
   if other.isZero == 1:
     return ya.attribute.zeros(att.rows, att.cols)
+  if att.isZero == 2:
+    if other.size == 1:
+      return ya.attribute.zeros(att.rows, att.cols)
+    # this is a 0 matrix
+    return ya.attribute.zeros(att.rows, other.cols)
+  if other.isZero == 2:
+    if att.size == 1:
+      return ya.attribute.zeros(other.rows, other.cols)
+    return ya.attribute.zeros(att.rows, other.cols)
   if other.operator == ya.FLOAT and att.operator == ya.FLOAT:
     return ya.attribute(float_value = att.float_value * other.float_value)
   if att.size == 1 or other.size == 1:
@@ -161,6 +170,15 @@ def mul_explicitly(att: ya.attribute, other: ya.attribute) -> ya.attribute:
     return ya.attribute.zeros(other.rows, other.cols)
   if other.isZero == 1:
     return ya.attribute.zeros(att.rows, att.cols)
+  if att.isZero == 2:
+    if other.size == 1:
+      return ya.attribute.zeros(att.rows, att.cols)
+    # this is a 0 matrix
+    return ya.attribute.zeros(att.rows, other.cols)
+  if other.isZero == 2:
+    if att.size == 1:
+      return ya.attribute.zeros(other.rows, other.cols)
+    return ya.attribute.zeros(att.rows, other.cols)
 
   if att.operator == ya.FLOAT and other.operator == ya.FLOAT:
     return ya.attribute(float_value = att.float_value * other.float_value)
