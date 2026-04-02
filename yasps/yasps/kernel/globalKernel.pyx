@@ -20,6 +20,7 @@ class globalKernel:
     self.__headerFileString: str = ""
     self.__att = att
     self.__kernel = None
+    self.__additional_compile_flags = []  # --ptxas-options=-v,-warn-spills,-warn-lmem-usage  use this for memory checking
     self.__generateKernel()
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -180,8 +181,8 @@ extern "C"{{
           compile_cmd = [
             "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-O3", "-arch=sm_89",
             "-c", cu_file, "-o", obj_file,
-            "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings"
-          ]
+            "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
+          ] + self.__additional_compile_flags
           print("Command is")
           print(" ".join(compile_cmd))
           job = subprocess.Popen(compile_cmd)
@@ -237,6 +238,8 @@ int compute(
   double* result,
   unsigned int MAX_INDEX
 ){{
+  // cudaDeviceSynchronize();
+  // cudaDeviceSetLimit(cudaLimitStackSize, 128);
   {attributeName}_global_function<<<(MAX_INDEX + 31) / 32, 32>>>(
     {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
     {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
@@ -266,7 +269,7 @@ int compute(
         "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-O3", "-arch=sm_89",
         "-c", kernel_cu_file, "-o", kernel_obj_file,
         "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
-      ]
+      ] + self.__additional_compile_flags
       print("Kernel compile command: ")
       print(" ".join(kernel_compile_cmd))
       job = subprocess.Popen(kernel_compile_cmd)
@@ -281,8 +284,8 @@ int compute(
       device_link_obj = f"{file_name}_device_link.o"
       dlink_cmd = [
         "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_89",
-        *(obj_files + [kernel_obj_file]), "-o", device_link_obj
-      ]
+        *(obj_files + [kernel_obj_file]), "-o", device_link_obj,
+      ] + self.__additional_compile_flags
       subprocess.run(dlink_cmd, check=True)
       print("Device link command: ")
       print(" ".join(dlink_cmd))
@@ -292,8 +295,8 @@ int compute(
         "nvcc", "-shared", "-Xcompiler", "-fPIC", "-arch=sm_89",
         kernel_obj_file, device_link_obj, *obj_files,
         "-o", f"{file_name}.so",
-        "-lcudart", "-lcuda"
-      ]
+        "-lcudart", "-lcuda",
+      ] + self.__additional_compile_flags
       print("Final link command: ")
       print(" ".join(final_link_cmd))
       subprocess.run(final_link_cmd, check=True)

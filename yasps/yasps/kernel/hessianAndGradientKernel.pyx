@@ -31,6 +31,7 @@ class hessianAndGradientKernel:
     self.__jacobian_rows = jacobian_rows
     self.__jacobian_cols = jacobian_cols
     self.__hessian_row_size = hessian_row_size
+    self.__additional_compile_flags = []  # --ptxas-options=-v,-warn-spills,-warn-lmem-usage  use this for memory checking
     # self.__generateKernel(att)
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -237,8 +238,8 @@ extern "C"{{
             "-O3",
             "-c", cu_file, "-o", obj_file,
             "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
-            "--relocatable-device-code=true"
-          ]
+            "--relocatable-device-code=true",
+          ] + self.__additional_compile_flags
           print("Command is")
           print(" ".join(compile_cmd))
           job = subprocess.Popen(compile_cmd)
@@ -490,8 +491,8 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             "-O3",
             "-c", cu_file, "-o", obj_file,
             "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
-            "--relocatable-device-code=true"
-          ]
+            "--relocatable-device-code=true",
+          ] + self.__additional_compile_flags
           print("Command is")
           print(" ".join(compile_cmd))
           job = subprocess.Popen(compile_cmd)
@@ -540,6 +541,8 @@ int compute_hessian_and_gradient_with_compression(
   if (num_unique_gradient_sizes == 0){{
     return 0; // nothing to do
   }}
+  // size_t before, after;
+  // cudaDeviceGetLimit(&before, cudaLimitStackSize);
   std::vector<unsigned int> unique_gradient_sizes_instance_count;
   unique_gradient_sizes_instance_count.resize(num_unique_gradient_sizes);
   // copy the outer indices
@@ -558,8 +561,11 @@ int compute_hessian_and_gradient_with_compression(
     cudaStreamCreate(&streams[i]);
   }}
 
+  // cudaDeviceSynchronize();
+  // cudaDeviceSetLimit(cudaLimitStackSize, 128);
   for (unsigned int i = 0; i < num_unique_gradient_sizes; i++) {{
     switch(unique_gradient_sizes[i]){{
+
   '''
       # now we add the for loop to instantiate the known gradient sizes template functions
       for size in self.__unique_gradient_sizes:
@@ -610,6 +616,8 @@ int compute_hessian_and_gradient_with_compression(
         break;
     }
   }
+  // cudaDeviceSynchronize();
+  // cudaDeviceSetLimit(cudaLimitStackSize, 128);
   // close the streams
   for (unsigned int i = 0; i < num_unique_gradient_sizes; i++) {
     cudaStreamSynchronize(streams[i]);
@@ -621,6 +629,10 @@ int compute_hessian_and_gradient_with_compression(
     printf("CUDA error during kernel execution: %s\\n", cudaGetErrorString(err));
     return -1;  // Return error to Python
   }
+  // cudaDeviceGetLimit(&after, cudaLimitStackSize);
+  // printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\\n");
+  // printf("stack size: %zu -> %zu\\n", before, after);
+  // printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\\n");
   return 0; // success
 }
 '''
@@ -639,8 +651,8 @@ int compute_hessian_and_gradient_with_compression(
         "-O3",
         "-c", kernel_cu_file, "-o", kernel_obj_file,
         "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
-        "--relocatable-device-code=true"
-      ]
+        "--relocatable-device-code=true",
+      ] + self.__additional_compile_flags
       print("Kernel compile command: ")
       print(" ".join(kernel_compile_cmd))
       job = subprocess.Popen(kernel_compile_cmd)
@@ -657,20 +669,19 @@ int compute_hessian_and_gradient_with_compression(
         "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_89",
         "-O3",
         *(obj_files + [kernel_obj_file]), "-o", device_link_obj,
-        "--relocatable-device-code=true"
-      ]
-      subprocess.run(dlink_cmd, check=True)
+        "--relocatable-device-code=true",
+      ] + self.__additional_compile_flags
       print("Device link command: ")
       print(" ".join(dlink_cmd))
-
+      subprocess.run(dlink_cmd, check=True)
       # Final shared object linking
       final_link_cmd = [
         "nvcc", "-shared", "-Xcompiler", "-fPIC", "-arch=sm_89",
         "-O3",
         kernel_obj_file, device_link_obj, *obj_files,
         "-o", f"{file_name}.so",
-        "-lcudart", "-lcuda"
-      ]
+        "-lcudart", "-lcuda",
+      ] + self.__additional_compile_flags
       print("Final link command: ")
       print(" ".join(final_link_cmd))
       subprocess.run(final_link_cmd, check=True)

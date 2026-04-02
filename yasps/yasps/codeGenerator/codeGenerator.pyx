@@ -211,14 +211,6 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
         continue
 
       if current.hash == self.__input.hash or current.name == "" or (current.name != "" and not current.generate_code):
-
-        # if current.hash in self.__attribute_appear_times and self.__attribute_appear_times[current.hash] == 1 and current != self.__input:
-        #   if current.operator.type == 1 or current.operator.type == 1 or current.operator.type == 1 or current.operator in self.__can_omit_intermediate_operators:
-        #     # if this operation only appears once, we can directly generate the code for it
-        #     self.__skipped_attribute_count += 1
-        #     self.__attribute_appear_times[current.hash] = -1
-        #     continue
-
         # we need to generate the code accordingly
         if current.name != "":
           # don't differentiate special cases, lets just use intermediate all the time
@@ -228,7 +220,15 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
           self.__attribute_replacements[current.hash] = (current, self.__num_intermediates)
           self.__num_intermediates += 1
 
-
+        # if current.hash in self.__attribute_appear_times and self.__attribute_appear_times[current.hash] == 1 and current != self.__input:
+        #   if current.operator.type == -1 or current.operator.type == -1 or current.operator.type == -1 or current.operator in self.__can_omit_intermediate_operators:
+        #     # if this operation only appears once, we can directly generate the code for it
+        #     self.__skipped_attribute_count += 1
+        #     self.__attribute_appear_times[current.hash] = -1
+        #     # I know what the problem is
+        #     # previously because we store all the intermediates, so the last appear time works
+        #     # but now because we sometimes don't materialize the intermediates, so the last appear time should follow where this current "appear once" attribute is, before that attribute is deallocated, ok this is good
+        #     continue
 
         # now we generate the computation code
         if current.operator.type == 0:
@@ -598,7 +598,7 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_neg(self, current: ya.attribute, compute_only: bool = False) -> str:
     if compute_only:
-      return f'-({self.getIntermediateName(current.children[0])})'
+      return f'(-({self.getIntermediateName(current.children[0])}))'
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     if current == self.__input:
       attribute_initialization = "result[0]" if current.size == 1 else "out.noalias()"
