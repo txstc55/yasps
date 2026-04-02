@@ -28,6 +28,8 @@ def add(att: ya.attribute, other: ya.attribute) -> ya.attribute:
     return ya.attribute(children = [att, other], operator = ya.BROADCAST_ADD, correspondance = ya.attribute._attribute__check_heritage(att, other).correspondance, rows = att.rows, cols = att.cols)
   if att.size == 1:
     return ya.attribute(children = [other, att], operator = ya.BROADCAST_ADD, correspondance = ya.attribute._attribute__check_heritage(att, other).correspondance, rows = other.rows, cols = other.cols)
+  if att.operator == ya.ARRAY and other.operator == ya.ARRAY:
+    return add_explicitly(att, other)
 
   # dimension match, just do normal add
   return ya.attribute(children = [att, other], operator = ya.ADD, correspondance = ya.attribute._attribute__check_heritage(att, other).correspondance, rows = att.rows, cols = att.cols)
