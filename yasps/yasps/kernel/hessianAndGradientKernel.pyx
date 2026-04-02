@@ -594,19 +594,19 @@ int compute_hessian_and_gradient_with_compression(
           diagonal_blocks_start, // for each attribute, where does the diagonal block start
           gradient_segments_start // for each attribute, where does the gradient start
         );
-        {{
-        // Step 1: Check for launch failure
-        cudaError_t err = cudaGetLastError();
-        if (err != cudaSuccess) {{
-          printf("CUDA kernel launch error: %s\\n", cudaGetErrorString(err));
-        }}
+        // {{
+        // // Step 1: Check for launch failure
+        // cudaError_t err = cudaGetLastError();
+        // if (err != cudaSuccess) {{
+        //   printf("CUDA kernel launch error: %s\\n", cudaGetErrorString(err));
+        // }}
 
-        // Step 2: Check for runtime errors (like illegal memory access)
-        err = cudaDeviceSynchronize();
-        if (err != cudaSuccess) {{
-          printf("CUDA runtime error after kernel: %s\\n", cudaGetErrorString(err));
-        }}
-        }}
+        // // Step 2: Check for runtime errors (like illegal memory access)
+        // err = cudaDeviceSynchronize();
+        // if (err != cudaSuccess) {{
+        //   printf("CUDA runtime error after kernel: %s\\n", cudaGetErrorString(err));
+        // }}
+        // }}
 
         break;
 '''
