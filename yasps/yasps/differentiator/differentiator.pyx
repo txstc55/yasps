@@ -272,7 +272,8 @@ class differentiator:
     local_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in children])}'
     local_hessian = current.correspondance[local_hessian_name]
     if second_part_hessian.isZero > 0:
-      local_hessian = local_hessian.spd(self.__projection_method)
+      if self.__projection_method >= 0
+        local_hessian = local_hessian.spd(self.__projection_method)
       self.__global_inner_hessian = local_hessian
       self.__project_entire_hessian = False
     else:
