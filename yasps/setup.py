@@ -28,7 +28,8 @@ extensions = [
     Extension("yasps.attributeHelper", ["yasps/attribute/attributeHelper.pyx"]),
     Extension("yasps.attributeOperations", ["yasps/attribute/attributeOperations.pyx"]),
     Extension("yasps.path", ["yasps/differentiator/path.pyx"]),
-    Extension("yasps.differentiator", ["yasps/differentiator/differentiator.pyx"])
+    Extension("yasps.differentiator", ["yasps/differentiator/differentiator.pyx"]),
+    Extension("yasps.context", ["yasps/context/context.pyx"])
 ]
 setup(
     name='yasps',  # This is the name of your package

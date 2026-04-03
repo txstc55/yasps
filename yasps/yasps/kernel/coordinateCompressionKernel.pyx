@@ -8,6 +8,7 @@ import numpy as np
 from yasps.helper import timed
 import os
 import pycuda.driver as cuda
+from yasps.context import context
 
 coord_dim_dtype = np.dtype([
   ('row', np.uint32),
@@ -414,6 +415,7 @@ class coordinateCompressionKernel:
     self.__get_unique_coords_kernel = None # the kernel that gets the unique coordinates as well as the unique number of coordinates
     self.__compress_unique_coords_kernel = None # the kernel that compresses the unique coordinates and check the position in the actual data
     # invoke functions
+    self.__context = context()
 
   def updateCoordinates(self, coordinates: List[gpuarray.GPUArray], dimensions: List[gpuarray.GPUArray], num_coordinates: List[int]):
     self.__num_coordinates = []
@@ -605,4 +607,5 @@ class coordinateCompressionKernel:
       self.__uncompressedCoordinates = gpuarray.zeros(self.__total_coordinates * 2, np.uint32)
       self.__uncompressedDimensions = gpuarray.zeros(self.__total_coordinates * 2, np.uint16)
       self.__lookupArray = gpuarray.zeros(self.__total_coordinates, np.uint32)
+    self.__context.useDefaultContext()
     self.__compressCoordinatesAndDimensions()

@@ -10,6 +10,7 @@ from yasps.helper import timed
 import os
 import pycuda.driver as cuda
 from yasps.helper import prune_duplicate_functions
+from yasps.context import context
 
 ########################################################################
 # The gradient indices kernel has multiple functions
@@ -394,6 +395,7 @@ class gradientIndicesKernel:
     self.__outputUniqueGradientSizes = gpuarray.zeros(self.__gradientSizeForEachPart[energy] + 1, np.uint16) # this is the largest possible size
     self.__outputGroupedIndicesOuter = gpuarray.zeros(self.__gradientSizeForEachPart[energy] + 2, np.uint32) # this will record the offsets used to find the starting and ending points of the grouped indices
     self.__outputNumUniqueGradientSizes = gpuarray.zeros(1, np.uint16) # this will record the number of unique sizes of the attributes after compression
+    self.__context = context()
 
 
   @property
@@ -1000,6 +1002,7 @@ extern "C" int get_indices(
     self.__reallocate()
     if self.__numInstances == 0:
       return
+    self.__context.useDefaultContext()
     self.__computeIndices(wrt_start_indices)
     self.__compressIndicesLocal()
     self.__allocateSpaceForCoordinates()

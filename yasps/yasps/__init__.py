@@ -26,3 +26,4 @@ from .attributeHelper import *
 from .attributeOperations import *
 from .path import path
 from .differentiator import differentiator
+from .context import context

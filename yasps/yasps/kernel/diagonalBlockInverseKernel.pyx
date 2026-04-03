@@ -5,6 +5,7 @@ from typing import Set, List
 import ctypes
 import numpy as np
 from yasps.helper import timed
+from yasps.context import context
 
 
 # the diagonalBlockInverseKernel
@@ -27,6 +28,7 @@ class diagonalBlockInverseKernel:
     # print("diagonal blocks start", self.__diagonal_blocks_start)
     # print("diagonal blocks count", self.__diagonal_blocks_count)
     # print("diagonal block sizes", self.__diagonal_block_sizes)
+    self.__context = context()
 
   def __generateKernel(self):
     # first we check if the kernel exists
@@ -200,6 +202,7 @@ void invert_diagonal_blocks(
     diagonal_blocks: gpuarray.GPUArray,
     output_blocks: gpuarray.GPUArray,
   ):
+    self.__context.useDefaultContext()
     assert self.__kernel is not None, "diagonalBlockInverseKernel.computeDiagonalBlockInverse: Kernel not linked"
     self.__kernel(
       self.__to_void_p(diagonal_blocks),

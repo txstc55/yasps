@@ -12,13 +12,14 @@ import ctypes
 from typing import List, Set
 import hashlib
 import subprocess
+from yasps.context import context
 
 class hessianAndGradientKernel:
   att_name_to_gradient_sizes: dict[str, Set[int]] = {}  # maps attribute names to their unique gradient sizes, this way we only need to generate unique gradient sizes once
   att_name_to_kernel: dict[str, hessianAndGradientKernel] = {}  # maps attribute names to their hessian and gradient kernel instances, this way we can just return the previous existing kernel
 
 
-  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0):
+  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, dynamic_term = False):
     self.__kernelString: str = ""
     self.__headerFileString: str = ""
     self.__kernel = None # the kernel for computhing the gradient and hessians
@@ -32,6 +33,8 @@ class hessianAndGradientKernel:
     self.__jacobian_cols = jacobian_cols
     self.__hessian_row_size = hessian_row_size
     self.__additional_compile_flags = []  # --ptxas-options=-v,-warn-spills,-warn-lmem-usage  use this for memory checking
+    self.__dynamic_terms = dynamic_term
+    self.__context = context()
     # self.__generateKernel(att)
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -770,7 +773,9 @@ int compute_hessian_and_gradient_with_compression(
       # there is nothing to compute
       return
     assert self.__kernel is not None
-
+    # self.__context.useNamedContext("dynamic_hessian" if self.__dynamic_terms else "static_hessian")
+    self.__context.useDefaultContext()
+    # self.__context.useNamedContext("hessian")
     error_code = self.__kernel(
       *[self.__to_void_p(x) for x in attributeArgs],
       self.__to_void_p(giKernel.outputIndices),

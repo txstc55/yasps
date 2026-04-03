@@ -8,13 +8,15 @@ import pycuda.driver as cuda
 import os
 import hashlib
 import json
+from yasps.helper import timed
+from yasps.context import context
 
 class solverKernel:
   def __init__(self, blockDimensions: List[int]):
     self.__max_row_size = 0
     self.__cg_kernel = None
     self.__saved_block_dimensions = set([])
-    self.__init_kernel(blockDimensions)
+    self.__context = context()
 
   def updateBlockDimensions(self, blockDimensions: List[int]):
     self.__init_kernel(blockDimensions)
@@ -675,6 +677,7 @@ int computeSolution(unsigned int maxIteration,
       return ctypes.c_void_p(None)
     return ctypes.c_void_p(int(x.gpudata))
 
+  @timed("solverKernel.computeSolution")
   def computeSolution(self,
     maxIteration: int,
     threshold: float,
@@ -704,7 +707,11 @@ int computeSolution(unsigned int maxIteration,
     solution: gpuarray.GPUArray,
     last_5_solution: gpuarray.GPUArray
   ):
+    self.__context.useDefaultContext()
+    # self.__context.useNamedContext("solver") # 14624
+
     start_call = cuda.Event()
+
     end_call = cuda.Event()
     start_call.record()
     assert self.__cg_kernel is not None, "Kernel not initialized. Call __init_kernel first."
@@ -764,83 +771,6 @@ int computeSolution(unsigned int maxIteration,
       return result
     elif result < 0:
       return result
-      # # result = -result
-      # print("Non SPD matrix detected")
-      # print("redo without the dynamic blocks to check")
-      # d_p1_b.fill(0)
-      # d_r.fill(0)
-      # d_c.fill(0)
-      # d_q.fill(0)
-      # d_s.fill(0)
-      # solution.fill(0)
-      # # ok i may know what's the issue, i never cut off, even when i should be because the size got shrinked
-      # print("Checking the block positions dynamic", block_positions_dynamic.get())
-      # print("Checking block values dynamic", block_values_dynamic.get())
-      # print("Checking block values start dynamic", block_values_start_dynamic)
-      # print("Checking block counts dynamic", block_counts_dynamic)
-      # print("Checking block dimensions dynamic", block_dimensions_dynamic)
-      # print("Redoing the solve")
-      # self.__cg_kernel(
-      #   maxIteration,
-      #   threshold,
-      #   self.__to_void_p(block_values),
-      #   self.__to_void_p(block_positions),
-      #   np.array(block_values_start, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   np.array(block_counts, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   np.array(block_dimensions, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   len(block_dimensions) // 2,
-      #   self.__to_void_p(gpuarray.zeros_like(block_values_dynamic)),
-      #   self.__to_void_p(block_positions_dynamic),
-      #   np.array(block_values_start_dynamic, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   np.array(block_counts_dynamic, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   np.array(block_dimensions_dynamic, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   0,
-      #   self.__to_void_p(diagonal),
-      #   self.__to_void_p(gradient),
-      #   gradient.shape[0],
-      #   self.__to_void_p(d_p1_b),
-      #   self.__to_void_p(d_r),
-      #   self.__to_void_p(d_c),
-      #   self.__to_void_p(d_q),
-      #   self.__to_void_p(d_s),
-      #   self.__to_void_p(solution),
-      #   self.__to_void_p(last_5_solution)
-      # )
-      # print("Redoing the solve again")
-      # d_p1_b.fill(0)
-      # d_r.fill(0)
-      # d_c.fill(0)
-      # d_q.fill(0)
-      # d_s.fill(0)
-      # solution.fill(0)
-      # self.__cg_kernel(
-      #   maxIteration,
-      #   threshold,
-      #   self.__to_void_p(block_values),
-      #   self.__to_void_p(block_positions),
-      #   np.array(block_values_start, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   np.array(block_counts, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   np.array(block_dimensions, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   len(block_dimensions) // 2,
-      #   self.__to_void_p(block_values_dynamic),
-      #   self.__to_void_p(block_positions_dynamic),
-      #   np.array(block_values_start_dynamic, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   np.array(block_counts_dynamic, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   np.array(block_dimensions_dynamic, dtype = np.uint32).ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-      #   len(block_dimensions_dynamic) // 2,
-      #   self.__to_void_p(diagonal),
-      #   self.__to_void_p(gradient),
-      #   gradient.shape[0],
-      #   self.__to_void_p(d_p1_b),
-      #   self.__to_void_p(d_r),
-      #   self.__to_void_p(d_c),
-      #   self.__to_void_p(d_q),
-      #   self.__to_void_p(d_s),
-      #   self.__to_void_p(solution),
-      #   self.__to_void_p(last_5_solution)
-      # )
-      # return -4
-      # exit()
     # Calculate the elapsed time in milliseconds
     elapsed_time_ms = start_call.time_till(end_call)
     print(f"Solver converged in {result} iterations")

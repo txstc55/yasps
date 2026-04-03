@@ -11,7 +11,7 @@ from yasps.helper import timed
 import pycuda.gpuarray as gpuarray
 from yasps.primitiveUnion import primitiveUnion
 import subprocess
-testing_kernel = ""
+from yasps.context import context
 
 class globalKernel:
   @timed("globalKernel.__init__")
@@ -22,6 +22,7 @@ class globalKernel:
     self.__kernel = None
     self.__additional_compile_flags = []  # --ptxas-options=-v,-warn-spills,-warn-lmem-usage  use this for memory checking
     self.__generateKernel()
+    self.__context = context()
 
   def __to_void_p(self, x: gpuarray.GPUArray):
     if x is None or x.size == 0:
@@ -336,6 +337,7 @@ int compute(
     args += [self.__to_void_p(x) for x in counts_gpu]
     args += [self.__to_void_p(output)]
     args += [ctypes.c_uint32(self.__att.correspondance.numInstances)]
+    self.__context.useDefaultContext()
     error_code = self.__kernel(*args)
     if error_code != 0:
       raise RuntimeError(f"globalKernel.compute: Kernel execution failed with error code {error_code}")

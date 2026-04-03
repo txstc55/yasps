@@ -700,12 +700,6 @@ class hessian(matrix):
       merged_attributes.append(None)
     while len(kernels) <= index:
       kernels.append(None)
-    # print("is dynamic", dynamic_term)
-    # print("Sources")
-    # for item in sources:
-    #   print(item.fullName)
-    # for item in self.__sources_dynamic:
-    #   print(item.fullName)
 
     if merged_attributes[index] is None:
       merged_attributes[index] = self.__buildMergedHessianAndGradientAttribute(
@@ -738,7 +732,8 @@ class hessian(matrix):
         (separate_hessian_jacobian[index] and not project_entire_hessian[index]),
         jacobian_rows,
         jacobian_cols,
-        inner_hessian_rows
+        inner_hessian_rows,
+        dynamic_term = dynamic_term
       )
       kernels[index].generateKernel(indices_kernels[index].outputUniqueGradientSizesCPU.tolist(), self.__wrt)
 
