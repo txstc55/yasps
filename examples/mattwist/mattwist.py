@@ -11,8 +11,19 @@ import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
 
+import pycuda.driver as cuda
+
+def print_mem(tag):
+  free, total = cuda.mem_get_info()
+  print(f"{tag} | Free: {free/1e6:.2f} MB / Total: {total/1e6:.2f} MB")
+  return free, total
+
+
+
+SHOW_RENDER = True
+
 DT_VALUE = 0.01 # for time step
-DHAT_VALUE = 1e-4 # for collision detection
+DHAT_VALUE = 1e-5 # for collision detection
 KAPPA_VALUE = 1000.0 # for collision
 
 BENDING_STIFFNESS = 0.05
@@ -22,26 +33,31 @@ THICKNESS = 0.001
 FRAME = 0
 MOVING_WEIGHT = 100000.0
 
+mem_start, _ = print_mem("Start")
+
 ##################################################################
 ## We will now construct the cloth
 ##################################################################
 from helpers import generate_cloth_mesh
 CLOTH_LENGTH = 4.0
-NUM_SEGMENTS = 100
+NUM_VERTICES = 800
+DHAT_VALUE = (CLOTH_LENGTH / NUM_VERTICES) * (CLOTH_LENGTH / NUM_VERTICES) * 0.25
+NUM_SEGMENTS = NUM_VERTICES - 1
 positions_cloth, triangle_indices_cloth = generate_cloth_mesh(CLOTH_LENGTH, NUM_SEGMENTS)
-
+print(positions_cloth.shape)
 # positions_cloth = positions_cloth + np.array([0.0, -0.2, 0.0])
 from helpers import generate_edge_to_vertices_list
 edge_to_vertices = generate_edge_to_vertices_list(triangle_indices_cloth)
 edge_indices_cloth = extract_edges_from_triangles(triangle_indices_cloth)
-corners = [
-  0,
-  NUM_SEGMENTS,
-  NUM_SEGMENTS * (NUM_SEGMENTS + 1),
-  (NUM_SEGMENTS + 1) * (NUM_SEGMENTS + 1) - 1
-]
+# corners = [
+#   0,
+#   NUM_SEGMENTS,
+#   NUM_SEGMENTS * (NUM_SEGMENTS + 1),
+#   (NUM_SEGMENTS + 1) * (NUM_SEGMENTS + 1) - 1
+# ]
+corners = list(range(NUM_VERTICES)) + list(range(NUM_VERTICES * (NUM_VERTICES - 1), (NUM_VERTICES) * (NUM_VERTICES)))
 
-print(positions_cloth[corners])
+# print(positions_cloth[corners])
 # exit()
 
 ##################################################################
@@ -83,30 +99,38 @@ vertices_position.updateValue(positions_cloth.flatten())
 vertices_rest_position.updateValue(positions_cloth.flatten())
 vertices_last_position.updateValue(positions_cloth.flatten())
 vertices_velocity.updateValue(np.zeros((positions_cloth.shape[0]) * 3, dtype = np.float64))
-vertices_mass.updateValue(np.full((positions_cloth.shape[0]), 0.1 / positions_cloth.shape[0], dtype = np.float64))
+vertices_mass.updateValue(np.full((positions_cloth.shape[0]), 1.0 / positions_cloth.shape[0], dtype = np.float64))
 
-vertices_controlled = cloth.addPrimitive("vertices_controlled", numInstances = 4)
+vertices_controlled = cloth.addPrimitive("vertices_controlled", numInstances = len(corners))
 v2v = vertices_controlled.addConnectivity("v2v", vertices, corners, 1)
 vertices_controlled_position = vertices_controlled.addAttribute("position", through = v2v, source = vertices_position)
 vertices_target_position = vertices_controlled.addConstant("target_position", rows = 1, cols = 3)
 
 def compute_target(frame):
-  Rz = np.array([
-      [np.cos(frame / 20.0), -np.sin(frame / 20.0), 0],
-      [np.sin(frame / 20.0),  np.cos(frame / 20.0), 0],
-      [0,              0,             1]
-  ])
-  Rz_neg = np.array([
-      [np.cos(-frame / 20.0), -np.sin(-frame / 20.0), 0],
-      [np.sin(-frame / 20.0),  np.cos(-frame / 20.0), 0],
-      [0,              0,             1]
-  ])
+  scaling = 20.0
+  theta = frame / scaling
 
-  t0 = Rz @ positions_cloth[0]
-  t1 = Rz @ positions_cloth[NUM_SEGMENTS]
-  t2 = Rz_neg @ positions_cloth[NUM_SEGMENTS * (NUM_SEGMENTS + 1)]
-  t3 = Rz_neg @ positions_cloth[(NUM_SEGMENTS + 1) * (NUM_SEGMENTS + 1) - 1]
-  return np.array([t0, t1, t2, t3], dtype = np.float64).flatten()
+  c = np.cos(theta)
+  s = np.sin(theta)
+  Rz = np.array([
+      [c, -s, 0],
+      [s,  c, 0],
+      [0,  0, 1]
+  ], dtype=np.float64)
+  Rz_neg = np.array([
+      [c,  s, 0],
+      [-s, c, 0],
+      [0,  0, 1]
+  ], dtype=np.float64)
+
+  half = len(corners) // 2
+  pts = positions_cloth[corners]
+
+  targets = np.empty_like(pts, dtype=np.float64)
+  targets[:half] = pts[:half] @ Rz.T
+  targets[half:] = pts[half:] @ Rz_neg.T
+
+  return targets.flatten()
 
 vertices_target_position.updateValue(compute_target(FRAME))
 
@@ -167,24 +191,25 @@ cloth.ee.addAttribute("edge_edge", computed_attribute = ee)
 
 
 
-s0.addEnergy(inertia_free, projection_method = 0)
+s0.addEnergy(inertia_free, projection_method = -1)
 s0.addEnergy(bending_energy, projection_method = 2)
 s0.addEnergy(baraff_witkin_energy, projection_method = 2)
-s0.addEnergy(me, projection_method = 0)
-s0.addEnergy(pp, dynamic_instances = True, projection_method = 2, separate_hessian_jacobian = True)
-s0.addEnergy(pe, dynamic_instances = True, projection_method = 2, separate_hessian_jacobian = True)
-s0.addEnergy(pt, dynamic_instances = True, projection_method = 2, separate_hessian_jacobian = True)
-s0.addEnergy(ee, dynamic_instances = True, projection_method = 2, separate_hessian_jacobian = True)
+s0.addEnergy(me, projection_method = -1)
+s0.addEnergy(pp, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(pe, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(pt, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(ee, dynamic_instances = True, projection_method = 2)
 s0.addMinimizeTarget([vertices_position])
 ##################################################################
 ## add ccd
 ##################################################################
+before, _ = print_mem("Before")
 mesh_indices = []
 mesh_indices += [0] * positions_cloth.shape[0]
 ccd = CCD(positions_cloth.shape[0], # the number of surface points
   positions_cloth.shape[0], # the number of total points
-  max_ccd_pairs = 20000000,
-  max_cd_pairs = 20000000,
+  max_ccd_pairs = 100000000,
+  max_cd_pairs = 100000000,
   mesh_indices = mesh_indices
 )
 
@@ -207,27 +232,29 @@ position_gpu = gpuarray.to_gpu(cloth.vertices["position"].value.get()) # basical
 
 ccd.init_faces(position_gpu, triangle_indices_gpu, surface_indices_gpu, triangle_indices_all.shape[0])
 ccd.init_edges(position_gpu, position_gpu, edge_indices_gpu, edge_indices_all.shape[0])
-
+after, _ = print_mem("After")
+print(f"Memory used by CCD: {(before - after) / 1e6:.2f} MB")
 
 ##################################################################
 ## plot the bunnies
 ##################################################################
 import pyvista as pv
-plotter = pv.Plotter(window_size=[3840, 2160])
-all_vertices_computed = cloth.vertices["position"].compute().value.get().reshape((-1, 3))
-triangles = triangle_indices_all
-cloth_triangles = triangle_indices_cloth
-cells_cloth = np.hstack([np.full((cloth_triangles.shape[0], 1), 3), cloth_triangles])
-cloth_vertices_computed = all_vertices_computed
-cloth_poly = pv.PolyData(cloth_vertices_computed, cells_cloth)
-plotter.add_mesh(cloth_poly, color = "pink", opacity = 0.5)
+if SHOW_RENDER:
+  plotter = pv.Plotter(window_size=[3840, 2160])
+  all_vertices_computed = cloth.vertices["position"].compute().value.get().reshape((-1, 3))
+  triangles = triangle_indices_all
+  cloth_triangles = triangle_indices_cloth
+  cells_cloth = np.hstack([np.full((cloth_triangles.shape[0], 1), 3), cloth_triangles])
+  cloth_vertices_computed = all_vertices_computed
+  cloth_poly = pv.PolyData(cloth_vertices_computed, cells_cloth)
+  plotter.add_mesh(cloth_poly, color = "pink", opacity = 0.5)
 
 
-plotter.camera_position = [(0, 2, 6),
- (0.0, 0.0, 0.0),
- (0, 1, 0)
-]
-plotter.show(interactive_update=True)
+  plotter.camera_position = [(0, 2, 6),
+  (0.0, 0.0, 0.0),
+  (0, 1, 0)
+  ]
+  plotter.show(interactive_update=True)
 
 position_copy = cloth.vertices["position"].compute().value.copy()
 
@@ -237,14 +264,14 @@ scene_diag_sqrt = math.sqrt(ccd.get_scene_size_faces())
 print("scene_diag_sqrt", scene_diag_sqrt)
 
 
-for i in range(2000):
+for i in range(200):
   vertices_target_position.updateValue(compute_target(i))
   vertices_last_position.updateValue(cloth.vertices["position"].value, deepCopy = True)
   inner_iteration = 0
   while True:
     print("==================================================================")
     print(f"At iteration {i}, inner iteration {inner_iteration}")
-    result = s0.minimizeEnergy(tolerance = 1e-6)
+    result = s0.minimizeEnergy(tolerance = 1e-3)
     print("==================================================================")
     energies_before = s0.computeTotalEnergy()
     # we perform CCD here
@@ -262,7 +289,7 @@ for i in range(2000):
     # now we compute the new direction, remember it's the negative we need to put in
     direction_copy = position_copy - new_positions
     max_movement = gpuarray.max(abs(direction_copy)).get()
-    target_movement = 1e-2 * DT_VALUE * scene_diag_sqrt
+    target_movement = 1e-2 * DT_VALUE
     print("max movement is:", max_movement, ", target movement is:", target_movement)
     if max_movement < target_movement:
       print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
@@ -295,25 +322,31 @@ for i in range(2000):
       if ee_count > 0:
         ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
       new_energies = s0.computeTotalEnergy()
-      print("==================================================================")
-      print(f"energy comparison: {new_energies} vs {energies_before}")
-      print("==================================================================")
+      # print("==================================================================")
+      # print(f"energy comparison: {new_energies} vs {energies_before}")
+      # print("==================================================================")
+
+      mem_current, _ = print_mem("Current")
+      print(f"Memory used total: {(mem_start - mem_current) / 1e6:.2f} MB")
+
       if new_energies <= energies_before:
         break
       step_taken = step_taken / 2.0
       substep += 1
-    print("step taken is", step_taken)
-    print("substep is", substep)
-    all_vertices_computed = cloth.vertices["position"].compute().value.get().reshape((-1, 3))
-    cloth_poly.points = all_vertices_computed
-    plotter.render()
-    plotter.update()
+    # print("step taken is", step_taken)
+    # print("substep is", substep)
+    if SHOW_RENDER:
+      all_vertices_computed = cloth.vertices["position"].compute().value.get().reshape((-1, 3))
+      cloth_poly.points = all_vertices_computed
+      plotter.render()
+      plotter.update()
 
     inner_iteration += 1
   new_velocities_free = (vertices["position"].compute().value - vertices_last_position.value) / DT_VALUE
   vertices_velocity.updateValue(new_velocities_free, deepCopy = True)
-  plotter.render()
-  plotter.update()
+
+  # plotter.render()
+  # plotter.update()
   # plotter.screenshot(f"outputs/frame_{i:04d}.png")
   # save the mesh obj file
-  cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
+  # cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
