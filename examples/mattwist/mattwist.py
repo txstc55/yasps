@@ -10,6 +10,20 @@ import pycuda.gpuarray as gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
+import time
+import argparse
+
+parser = argparse.ArgumentParser(description="Mat-twist simulation")
+parser.add_argument(
+    "--num-vertices",
+    type=int,
+    default=1,
+    help="Number of Vertices"
+)
+
+args = parser.parse_args()
+NUM_VERTICES = args.num_vertices
+
 
 import pycuda.driver as cuda
 
@@ -22,14 +36,14 @@ def print_mem(tag):
 
 SHOW_RENDER = True
 
-DT_VALUE = 0.01 # for time step
+DT_VALUE = 0.001 # for time step
 DHAT_VALUE = 1e-5 # for collision detection
-KAPPA_VALUE = 1000.0 # for collision
+KAPPA_VALUE = 10000.0 # for collision
 
-BENDING_STIFFNESS = 0.05
-STRETCH_STIFFNESS = 35500007.469799
-SHEAR_STIFFNESS = 10000067.114094
-THICKNESS = 0.001
+BENDING_STIFFNESS = 0.001
+STRETCH_STIFFNESS = 355700.469799
+SHEAR_STIFFNESS = 100067.114094
+THICKNESS = 0.1
 FRAME = 0
 MOVING_WEIGHT = 100000.0
 
@@ -40,15 +54,18 @@ mem_start, _ = print_mem("Start")
 ##################################################################
 from helpers import generate_cloth_mesh
 CLOTH_LENGTH = 4.0
-NUM_VERTICES = 800
 DHAT_VALUE = (CLOTH_LENGTH / NUM_VERTICES) * (CLOTH_LENGTH / NUM_VERTICES) * 0.25
 NUM_SEGMENTS = NUM_VERTICES - 1
 positions_cloth, triangle_indices_cloth = generate_cloth_mesh(CLOTH_LENGTH, NUM_SEGMENTS)
-print(positions_cloth.shape)
+print("Number of vertices", positions_cloth.shape[0])
+print("Number of triangles", triangle_indices_cloth.shape[0])
+
 # positions_cloth = positions_cloth + np.array([0.0, -0.2, 0.0])
 from helpers import generate_edge_to_vertices_list
 edge_to_vertices = generate_edge_to_vertices_list(triangle_indices_cloth)
 edge_indices_cloth = extract_edges_from_triangles(triangle_indices_cloth)
+print("Number of edges", edge_indices_cloth.shape[0])
+exit()
 # corners = [
 #   0,
 #   NUM_SEGMENTS,
@@ -99,7 +116,7 @@ vertices_position.updateValue(positions_cloth.flatten())
 vertices_rest_position.updateValue(positions_cloth.flatten())
 vertices_last_position.updateValue(positions_cloth.flatten())
 vertices_velocity.updateValue(np.zeros((positions_cloth.shape[0]) * 3, dtype = np.float64))
-vertices_mass.updateValue(np.full((positions_cloth.shape[0]), 1.0 / positions_cloth.shape[0], dtype = np.float64))
+vertices_mass.updateValue(np.full((positions_cloth.shape[0]), 160.0 / positions_cloth.shape[0], dtype = np.float64))
 
 vertices_controlled = cloth.addPrimitive("vertices_controlled", numInstances = len(corners))
 v2v = vertices_controlled.addConnectivity("v2v", vertices, corners, 1)
@@ -107,7 +124,7 @@ vertices_controlled_position = vertices_controlled.addAttribute("position", thro
 vertices_target_position = vertices_controlled.addConstant("target_position", rows = 1, cols = 3)
 
 def compute_target(frame):
-  scaling = 20.0
+  scaling = 200.0
   theta = frame / scaling
 
   c = np.cos(theta)
@@ -251,8 +268,8 @@ if SHOW_RENDER:
 
 
   plotter.camera_position = [(0, 2, 6),
-  (0.0, 0.0, 0.0),
-  (0, 1, 0)
+    (0.0, 0.0, 0.0),
+    (0, 1, 0)
   ]
   plotter.show(interactive_update=True)
 
@@ -263,19 +280,29 @@ ccd.cd(position_copy, DHAT_VALUE)
 scene_diag_sqrt = math.sqrt(ccd.get_scene_size_faces())
 print("scene_diag_sqrt", scene_diag_sqrt)
 
-
-for i in range(200):
+start = time.time()
+for i in range(2000):
+  start_data_transfer = time.time()
   vertices_target_position.updateValue(compute_target(i))
   vertices_last_position.updateValue(cloth.vertices["position"].value, deepCopy = True)
+  end_data_transfer = time.time()
+  print(f"Time taken for data transfer: {end_data_transfer - start_data_transfer} seconds")
   inner_iteration = 0
   while True:
     print("==================================================================")
     print(f"At iteration {i}, inner iteration {inner_iteration}")
-    result = s0.minimizeEnergy(tolerance = 1e-3)
+    start_solver = time.time()
+    result = s0.minimizeEnergy(tolerance = 1e-2, maxIterations = 3000)
+    end_solver = time.time()
+    print(f"Time taken for solver: {end_solver - start_solver} seconds")
     print("==================================================================")
+    start_compute = time.time()
     energies_before = s0.computeTotalEnergy()
+    end_compute = time.time()
+    print(f"Time taken for computation: {end_compute - start_compute} seconds")
     # we perform CCD here
     # first we get the rotation and translation
+    start_data_transfer = time.time()
     d_pos = result[0]
     step_taken = 1.0
     # copy the current position and current affine matrix
@@ -287,28 +314,51 @@ for i in range(200):
     # compute the new positions for the entire scene
     new_positions = cloth.vertices["position"].compute().value
     # now we compute the new direction, remember it's the negative we need to put in
+    end_data_transfer = time.time()
+    print(f"Time taken for data transfer: {end_data_transfer - start_data_transfer} seconds")
+    start_direction_compute = time.time()
     direction_copy = position_copy - new_positions
+    end_direction_compute = time.time()
+    print(f"Time taken for direction compute: {end_direction_compute - start_direction_compute} seconds")
+    start_max_movement = time.time()
     max_movement = gpuarray.max(abs(direction_copy)).get()
-    target_movement = 1e-2 * DT_VALUE
+    target_movement = 1e-2 * DT_VALUE * scene_diag_sqrt
+    end_max_movement = time.time()
+    print(f"Time taken for max movement: {end_max_movement - start_max_movement} seconds")
     print("max movement is:", max_movement, ", target movement is:", target_movement)
     if max_movement < target_movement:
       print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
       break
 
     # check for the largest step size we can take
-    ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 1.0)
-    largest_step = ccd.compute_largest_step_size(0.8, position_copy, direction_copy)
+    start_ccd = time.time()
+    ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 0.5)
+    end_ccd = time.time()
+    pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
+    print("The separated counts are", ccd.separated_counts)
+    print(f"Time taken for CCD: {end_ccd - start_ccd} seconds")
+    start_largest_step = time.time()
+    largest_step = ccd.compute_largest_step_size(0.5, position_copy, direction_copy)
+    end_largest_step = time.time()
     print("largest step we can take is", largest_step)
+    print(f"Time taken for largest step: {end_largest_step - start_largest_step} seconds")
     # here we will take this step and check for the collision sets
     substep = 1
     step_taken = largest_step
     while substep <= 8:
+      start_data_transfer = time.time()
       vertices["position"].updateValue(position_copy - d_pos * step_taken, deepCopy = True)
+      end_data_transfer = time.time()
+      print(f"Time taken for data transfer: {end_data_transfer - start_data_transfer} seconds")
 
       # perform collision detection
+      start_cd = time.time()
       ccd.cd(cloth.vertices["position"].compute().value, DHAT_VALUE) # perform collision detection
+      end_cd = time.time()
+      print(f"Time taken for collision detection: {end_cd - start_cd} seconds")
       pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
-      print("The separated counts are", ccd.separated_counts)
+      print("The separated counts for ccd are", ccd.separated_counts)
+      start_update_collision = time.time()
       cloth.pp.updateNumInstances(pp_count)
       cloth.pe.updateNumInstances(pe_count)
       cloth.pt.updateNumInstances(pt_count)
@@ -321,10 +371,15 @@ for i in range(200):
         pt2v.updateConnectivity(ccd.pt[:4 * pt_count])
       if ee_count > 0:
         ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
+      end_update_collision = time.time()
+      print(f"Time taken for updating connectivity: {end_update_collision - start_update_collision} seconds")
+      start_compute = time.time()
       new_energies = s0.computeTotalEnergy()
+      end_compute = time.time()
       # print("==================================================================")
       # print(f"energy comparison: {new_energies} vs {energies_before}")
       # print("==================================================================")
+      print(f"Time taken for computation: {end_compute - start_compute} seconds")
 
       mem_current, _ = print_mem("Current")
       print(f"Memory used total: {(mem_start - mem_current) / 1e6:.2f} MB")
@@ -342,11 +397,17 @@ for i in range(200):
       plotter.update()
 
     inner_iteration += 1
+  start_velocity_update = time.time()
   new_velocities_free = (vertices["position"].compute().value - vertices_last_position.value) / DT_VALUE
   vertices_velocity.updateValue(new_velocities_free, deepCopy = True)
+  end_velocity_update = time.time()
+  print(f"Time taken for velocity update: {end_velocity_update - start_velocity_update} seconds")
 
   # plotter.render()
   # plotter.update()
   # plotter.screenshot(f"outputs/frame_{i:04d}.png")
   # save the mesh obj file
-  # cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
+  if SHOW_RENDER:
+    cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
+end = time.time()
+print("Total time: ", end - start)
