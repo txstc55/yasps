@@ -357,6 +357,11 @@ class attribute:
           return False
       self.__isFloatMat = True
       return True
+    # TODO:
+    # we did not handle JOIN and UNION effectively when everything is float
+    # this caused lots of problem with the multiplication that happens at the differentiation
+    # right now we materialize this whole matrix, which is completely wasteful'
+
     # # SPECIAL CASES FOR CHECKING IF A MAT IS FLOAT
     # if self.operator == FLOAT:
     #   return True
