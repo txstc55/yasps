@@ -68,6 +68,12 @@ SUM = operator("sum", 3, False) # for summation when the connectivity is unfixed
 AVERAGE = operator("average", 3, False) # for averaging when the connectivity is unfixed
 UNION = operator("union", 3, False) # for union of multiple attributes
 
+# TODO:
+# we really need a sparse local view
+# right now there are lots of matrices generated for differentiation
+# which are natively just very sparse. Materializing this matrix is wasteful
+# we really just want to materialize them only if necessary in some of the computaiton like inverse etc
+
 
 
 class attribute:
