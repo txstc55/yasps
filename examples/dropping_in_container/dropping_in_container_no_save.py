@@ -22,6 +22,13 @@ parser.add_argument(
     help="Number of bunnies (default: 25)"
 )
 
+import pycuda.driver as cuda
+
+def print_mem(tag):
+  free, total = cuda.mem_get_info()
+  print(f"{tag} | Free: {free/1e6:.2f} MB / Total: {total/1e6:.2f} MB")
+  return free, total
+
 args = parser.parse_args()
 
 NUM_BUNNIES = args.num_bunnies
@@ -35,6 +42,8 @@ POISSON_VALUE = 0.3645697005781997
 YOUNG_VALUE = 10259.25455816859
 MU_LAME_VALUE = YOUNG_VALUE / (2 * (1 + POISSON_VALUE))
 LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
+
+mem_start, _ = print_mem("Start")
 
 # exit()
 
@@ -247,7 +256,7 @@ ee_positions = collision_mesh.ee.addAttribute("positions", through = ee2v, sourc
 
 from helpers import stable_neo_hookean_modified
 snh_softs = stable_neo_hookean_modified(bdg_F, bdg_TB, bunnies_soft["mu"], bunnies_soft["lambda"], dt)
-tets_softs.addAttribute("snh_softs", computed_attribute = snh_softs)
+bdg.addAttribute("snh_softs", computed_attribute = snh_softs)
 
 
 from helpers import inertia
@@ -276,6 +285,7 @@ s0.addMinimizeTarget([vertices_soft_position])
 ##################################################################
 ## add ccd
 ##################################################################
+before, _ = print_mem("Before")
 ccd = CCD(NUM_BUNNY_SURFACE_INDICES * (NUM_BUNNIES) + container_positions.shape[0], # the number of surface points
   NUM_BUNNY_VERTICES * (NUM_BUNNIES) + container_positions.shape[0], # the number of total points
   max_ccd_pairs = 100000000,
@@ -303,7 +313,8 @@ position_gpu = gpuarray.to_gpu(collision_mesh.vertices["position"].compute().val
 
 ccd.init_faces(position_gpu, triangle_indices_gpu, surface_indices_gpu, triangle_indices_all.shape[0])
 ccd.init_edges(position_gpu, position_gpu, edge_indices_gpu, edge_indices_all.shape[0])
-
+after, _ = print_mem("After")
+print(f"Memory used by CCD: {(before - after) / 1e6:.2f} MB")
 
 ##################################################################
 ## plot the bunnies
@@ -434,6 +445,10 @@ for i in range(200):
       print(f"Time taken for computation: {end_compute - start_compute} seconds")
 
       print(f"energy comparison: {new_energies} vs {energies_before}")
+
+      mem_current, _ = print_mem("Current")
+      print(f"Memory used total: {(mem_start - mem_current) / 1e6:.2f} MB")
+
       if new_energies <= energies_before:
         break
       step_taken = step_taken / 2.0

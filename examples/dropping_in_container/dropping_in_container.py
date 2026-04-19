@@ -342,7 +342,7 @@ bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
 
 
 start = time.time()
-for i in range(400):
+for i in range(200):
   start_data_transfer = time.time()
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   end_data_transfer = time.time()

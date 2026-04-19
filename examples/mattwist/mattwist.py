@@ -65,7 +65,7 @@ from helpers import generate_edge_to_vertices_list
 edge_to_vertices = generate_edge_to_vertices_list(triangle_indices_cloth)
 edge_indices_cloth = extract_edges_from_triangles(triangle_indices_cloth)
 print("Number of edges", edge_indices_cloth.shape[0])
-exit()
+# exit()
 # corners = [
 #   0,
 #   NUM_SEGMENTS,
