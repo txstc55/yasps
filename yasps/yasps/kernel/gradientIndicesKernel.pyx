@@ -11,6 +11,7 @@ import os
 import pycuda.driver as cuda
 from yasps.helper import prune_duplicate_functions
 from yasps.context import context
+import time
 
 ########################################################################
 # The gradient indices kernel has multiple functions
@@ -460,7 +461,7 @@ class gradientIndicesKernel:
   def outputCompressedCoordinateCountsOuter(self):
     return self.__outputCompressedCoordinateCountsOuter
 
-
+  @timed("gradientIndicesKernel.__getCompressionKernel")
   def __getCompressionKernel(self):
     if self.__compression_kernel is None:
       file_name = ".yasps_constant/compression_kernel"
@@ -479,6 +480,7 @@ class gradientIndicesKernel:
         self.__compression_kernel.restype = ctypes.c_int # set the return type to None
         self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2
 
+  @timed("gradientIndicesKernel.__getCoordinateKernel")
   def __getCoordinateKernel(self):
     if self.__coordinate_kernel is None:
       file_name = ".yasps_constant/coordinate_kernel"
@@ -579,6 +581,7 @@ class gradientIndicesKernel:
           self.__used_primitive_unions.append(att.correspondance)
           self.__used_primitive_unions_names.add(att.correspondance.fullName)
 
+  @timed("gradientIndicesKernel.__generateKernel")
   def __generateKernel(self):
     # ok now we compile the kernel by saving it to a file and then calling nvcc
     file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"

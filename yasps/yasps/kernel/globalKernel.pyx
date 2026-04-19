@@ -31,7 +31,7 @@ class globalKernel:
     assert x.gpudata is not None
     return ctypes.c_void_p(int(x.gpudata))
 
-
+  @timed("globalKernel.__generateKernel")
   def __generateKernel(self) -> None:
     ## first we get all the header functions
     sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents

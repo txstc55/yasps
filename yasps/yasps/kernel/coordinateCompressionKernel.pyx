@@ -9,6 +9,7 @@ from yasps.helper import timed
 import os
 import pycuda.driver as cuda
 from yasps.context import context
+import time
 
 coord_dim_dtype = np.dtype([
   ('row', np.uint32),
@@ -495,11 +496,14 @@ class coordinateCompressionKernel:
       file_name = ".yasps_constant/get_unique_coords_kernel"
       # check if the file exists
       if not os.path.exists(f'{file_name}.so'):
+        time_start = time.time()
         # generate the kernel
         f = open(f"{file_name}.cu", 'w')
         f.write(get_unique_coords_kernel_string)
         f.close()
         os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda")
+        time_end = time.time()
+        print(f"Time taken to compile get_unique_coords kernel: {(time_end - time_start) * 1000.0} ms")
         self.__get_unique_coords_kernel = ctypes.CDLL(f"{file_name}.so").get_unique_coords # get the compiled kernel
         self.__get_unique_coords_kernel.restype = ctypes.c_int # set the return type to None
         self.__get_unique_coords_kernel.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_uint32] + [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_uint32)] * 1
@@ -534,10 +538,13 @@ class coordinateCompressionKernel:
       file_name = ".yasps_constant/compress_unique_coords_kernel"
       if not os.path.exists(f'{file_name}.so'):
         # generate the kernel
+        time_start = time.time()
         f = open(f"{file_name}.cu", 'w')
         f.write(compress_unique_coords_kernel_string)
         f.close()
         os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda --extended-lambda")
+        time_end = time.time()
+        print(f"Time taken to compile compress_unique_coords kernel: {(time_end - time_start) * 1000.0} ms")
         self.__compress_unique_coords_kernel = ctypes.CDLL(f"{file_name}.so").compress_unique_coords # get the compiled kernel
         self.__compress_unique_coords_kernel.restype = ctypes.c_int # set the return type to None
         self.__compress_unique_coords_kernel.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_uint32] + [ctypes.c_void_p] + [ctypes.c_uint32] +[ctypes.c_void_p] * 5 + [ctypes.POINTER(ctypes.c_uint32)] * 1

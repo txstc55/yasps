@@ -21,7 +21,7 @@ class solverKernel:
   def updateBlockDimensions(self, blockDimensions: List[int]):
     self.__init_kernel(blockDimensions)
 
-
+  @timed("solverKernel.__init_kernel")
   def __init_kernel(self, blockDimensions: List[int]):
     # convert blockDimensions to a tuple of int, int
     blockDimensionsTuples = []

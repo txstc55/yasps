@@ -10,6 +10,14 @@ import pycuda.gpuarray as gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
+import time
+import pycuda.driver as cuda
+def print_mem(tag):
+  free, total = cuda.mem_get_info()
+  print(f"{tag} | Free: {free/1e6:.2f} MB / Total: {total/1e6:.2f} MB")
+  return free, total
+
+mem_start, _ = print_mem("Start")
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
 KAPPA_VALUE = 10000.0 # for collision
@@ -583,8 +591,8 @@ s0.addEnergy(snh_softs, projection_method = 2)
 for i in range(8):
   s0.addEnergy(snh_cage[i], projection_method = 2, separate_hessian_jacobian = True)
 s0.addEnergy(affine, projection_method = 2)
-s0.addEnergy(inertia_abds, projection_method = 0)
-s0.addEnergy(inertia_softs, projection_method = 0)
+s0.addEnergy(inertia_abds, projection_method = -1)
+s0.addEnergy(inertia_softs, projection_method = -1)
 s0.addEnergy(inertia_free, projection_method = -1)
 s0.addEnergy(inertia_cage, projection_method = -1)
 s0.addEnergy(bending_energy, projection_method = 2)
@@ -598,6 +606,7 @@ s0.addMinimizeTarget([abds_abd_matrices, abds_translations, vertices_soft_positi
 ##################################################################
 ## add ccd
 ##################################################################
+before, _ = print_mem("Before")
 mesh_indices = []
 for i in range(NUM_ABD_BUNNIES):
   mesh_indices += [i + 2] * NUM_BUNNY_VERTICES
@@ -607,7 +616,7 @@ mesh_indices += [0] * positions_cloth.shape[0]
 mesh_indices += [0] * bunny_vertices.shape[0]  # cage bunny vertices
 ccd = CCD(NUM_BUNNY_SURFACE_INDICES * (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) + positions_cloth.shape[0] + bunny_vertices.shape[0], # the number of surface points
   NUM_BUNNY_VERTICES * (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) + positions_cloth.shape[0] + bunny_vertices.shape[0], # the number of total points
-  max_ccd_pairs = 100000000,
+  max_ccd_pairs = 10000000,
   max_cd_pairs = 10000000,
   mesh_indices = mesh_indices
 )
@@ -647,43 +656,44 @@ position_gpu = gpuarray.to_gpu(collision_mesh.vertices["position"].compute().val
 
 ccd.init_faces(position_gpu, triangle_indices_gpu, surface_indices_gpu, triangle_indices_all.shape[0])
 ccd.init_edges(position_gpu, position_gpu, edge_indices_gpu, edge_indices_all.shape[0])
-
+after, _ = print_mem("After")
+print(f"Memory used by CCD: {(before - after) / 1e6:.2f} MB")
 ##################################################################
 ## plot the bunnies
 ##################################################################
-import pyvista as pv
-plotter = pv.Plotter(window_size=[3840, 2160])
-all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
-triangles = triangle_indices_all
-abd_triangles = triangles[:NUM_ABD_BUNNIES * NUM_BUNNY_SURFACE_TRIANGLES]
-soft_triangles = triangles[NUM_ABD_BUNNIES * NUM_BUNNY_SURFACE_TRIANGLES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES] - NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES
-cloth_triangles = triangle_indices_cloth
-cells_abd = np.hstack([np.full((abd_triangles.shape[0], 1), 3), abd_triangles])
-cells_soft = np.hstack([np.full((soft_triangles.shape[0], 1), 3), soft_triangles])
-cells_cloth = np.hstack([np.full((cloth_triangles.shape[0], 1), 3), cloth_triangles])
-abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
-soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES: (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES + positions_cloth.shape[0]]
-abd_poly = pv.PolyData(abd_vertices_computed, cells_abd)
-soft_poly = pv.PolyData(soft_vertices_computed, cells_soft)
-cloth_poly = pv.PolyData(cloth_vertices_computed, cells_cloth)
-plotter.add_mesh(abd_poly, color = "lightblue")
-plotter.add_mesh(soft_poly, color = "lightgreen")
-plotter.add_mesh(cloth_poly, color = "pink", opacity = 0.5)
+# import pyvista as pv
+# plotter = pv.Plotter(window_size=[3840, 2160])
+# all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+# triangles = triangle_indices_all
+# abd_triangles = triangles[:NUM_ABD_BUNNIES * NUM_BUNNY_SURFACE_TRIANGLES]
+# soft_triangles = triangles[NUM_ABD_BUNNIES * NUM_BUNNY_SURFACE_TRIANGLES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES] - NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES
+# cloth_triangles = triangle_indices_cloth
+# cells_abd = np.hstack([np.full((abd_triangles.shape[0], 1), 3), abd_triangles])
+# cells_soft = np.hstack([np.full((soft_triangles.shape[0], 1), 3), soft_triangles])
+# cells_cloth = np.hstack([np.full((cloth_triangles.shape[0], 1), 3), cloth_triangles])
+# abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
+# soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+# cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES: (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES + positions_cloth.shape[0]]
+# abd_poly = pv.PolyData(abd_vertices_computed, cells_abd)
+# soft_poly = pv.PolyData(soft_vertices_computed, cells_soft)
+# cloth_poly = pv.PolyData(cloth_vertices_computed, cells_cloth)
+# plotter.add_mesh(abd_poly, color = "lightblue")
+# plotter.add_mesh(soft_poly, color = "lightgreen")
+# plotter.add_mesh(cloth_poly, color = "pink", opacity = 0.5)
 
-bunny_poly = pv.PolyData(bvp.compute().value.get().reshape(-1, 3), np.hstack((np.full((bunny_faces.shape[0], 1), 3), bunny_faces)).astype(np.uint32))
-# make it transparent
-plotter.add_mesh(bunny_poly, color='blue', opacity=1)
-# plot cages
-cage_lines = np.hstack([np.full((cage_edges.shape[0], 1), 2), cage_edges])
-cage_poly = pv.PolyData(cage_points, lines = cage_lines)
-plotter.add_mesh(cage_poly, color='red', line_width=1, opacity = 0.1)
+# bunny_poly = pv.PolyData(bvp.compute().value.get().reshape(-1, 3), np.hstack((np.full((bunny_faces.shape[0], 1), 3), bunny_faces)).astype(np.uint32))
+# # make it transparent
+# plotter.add_mesh(bunny_poly, color='blue', opacity=1)
+# # plot cages
+# cage_lines = np.hstack([np.full((cage_edges.shape[0], 1), 2), cage_edges])
+# cage_poly = pv.PolyData(cage_points, lines = cage_lines)
+# plotter.add_mesh(cage_poly, color='red', line_width=1, opacity = 0.1)
 
-plotter.camera_position = [(0, 2, 6),
- (0.0, 0.0, 0.0),
- (0, 1, 0)
-]
-plotter.show(interactive_update=True)
+# plotter.camera_position = [(0, 2, 6),
+#  (0.0, 0.0, 0.0),
+#  (0, 1, 0)
+# ]
+# plotter.show(interactive_update=True)
 
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
 rot_copy = gpuarray.zeros(NUM_ABD_BUNNIES * 9, dtype=np.float64)
@@ -697,24 +707,35 @@ bunny_cage_position_copy = bvp.compute().value.copy()
 # do a tmp one to initialize the bounding box size
 ccd.cd(position_copy, DHAT_VALUE)
 scene_diag_sqrt = math.sqrt(ccd.get_scene_size_faces())
+start = time.time()
 
 
 
 
 for i in range(200):
+  start_data_transfer = time.time()
   bunnies_abd.vertices_abd["last_position"].updateValue(bunnies_abd.vertices_abd["position"].compute().value, deepCopy = True)
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   cloth.vertices_free["last_position"].updateValue(cloth.vertices_free["position"].value, deepCopy = True)
   cvlp.updateValue(cvp.value, deepCopy = True)
+  end_data_transfer = time.time()
+  print(f"Time taken for data transfer: {end_data_transfer - start_data_transfer} seconds")
   inner_iteration = 0
   while True:
     print("==================================================================")
     print(f"At iteration {i}, inner iteration {inner_iteration}")
+    start_solver = time.time()
     result = s0.minimizeEnergy(tolerance = 1e-4)
+    end_solver = time.time()
+    print(f"Time taken for solver: {end_solver - start_solver} seconds")
     print("==================================================================")
+    start_compute = time.time()
     energies_before = s0.computeTotalEnergy()
+    end_compute = time.time()
+    print(f"Time taken for computation: {end_compute - start_compute} seconds")
     # we perform CCD here
     # first we get the rotation and translation
+    start_data_transfer = time.time()
     d_rot = result[0]
     d_trans = result[1]
     d_pos_soft_bunny = result[2]
@@ -741,32 +762,53 @@ for i in range(200):
     # compute the new positions for the entire scene
     new_positions = collision_mesh.vertices["position"].compute().value
     # now we compute the new direction, remember it's the negative we need to put in
+    end_data_transfer = time.time()
+    print(f"Time taken for data transfer: {end_data_transfer - start_data_transfer} seconds")
+    start_direction_compute = time.time()
     direction_copy = position_copy - new_positions
+    end_direction_compute = time.time()
+    print(f"Time taken for direction compute: {end_direction_compute - start_direction_compute} seconds")
+    start_max_movement = time.time()
     max_movement = gpuarray.max(abs(direction_copy)).get()
     target_movement = 1e-2 * DT_VALUE * scene_diag_sqrt
+    end_max_movement = time.time()
+    print(f"Time taken for max movement: {end_max_movement - start_max_movement} seconds")
     print("max movement is:", max_movement, ", target movement is:", target_movement)
     if max_movement < target_movement:
       print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
       break
 
     # check for the largest step size we can take
+    start_ccd = time.time()
     ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 1.0)
+    end_ccd = time.time()
+    print(f"Time taken for CCD: {end_ccd - start_ccd} seconds")
+    start_largest_step = time.time()
     largest_step = ccd.compute_largest_step_size(0.8, position_copy, direction_copy)
+    end_largest_step = time.time()
     print("largest step we can take is", largest_step)
+    print(f"Time taken for largest step: {end_largest_step - start_largest_step} seconds")
     # here we will take this step and check for the collision sets
     substep = 1
     step_taken = largest_step
     while substep <= 8:
+      start_data_transfer = time.time()
       abds_abd_matrices.updateValue(rot_copy - d_rot * step_taken, deepCopy = True)
       abds_translations.updateValue(trans_copy - d_trans * step_taken, deepCopy = True)
       vertices_soft_position.updateValue(bunny_soft_position_copy - d_pos_soft_bunny * step_taken, deepCopy = True)
       vertices_free["position"].updateValue(cloth_free_position_copy - d_pos_cloth_free * step_taken, deepCopy = True)
       cvp.updateValue(cage_position_copy - d_cvp * step_taken, deepCopy = True)
+      end_data_transfer = time.time()
+      print(f"Time taken for data transfer: {end_data_transfer - start_data_transfer} seconds")
 
       # perform collision detection
+      start_cd = time.time()
       ccd.cd(collision_mesh.vertices["position"].compute().value, DHAT_VALUE) # perform collision detection
+      end_cd = time.time()
+      print(f"Time taken for collision detection: {end_cd - start_cd} seconds")
       pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
       print("The separated counts are", ccd.separated_counts)
+      start_update_collision = time.time()
       collision_mesh.pp.updateNumInstances(pp_count)
       collision_mesh.pe.updateNumInstances(pe_count)
       collision_mesh.pt.updateNumInstances(pt_count)
@@ -779,33 +821,42 @@ for i in range(200):
         pt2v.updateConnectivity(ccd.pt[:4 * pt_count])
       if ee_count > 0:
         ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
+      end_update_collision = time.time()
+      print(f"Time taken for updating connectivity: {end_update_collision - start_update_collision} seconds")
+      start_compute = time.time()
       new_energies = s0.computeTotalEnergy()
+      end_compute = time.time()
       print("==================================================================")
       print(f"energy comparison: {new_energies} vs {energies_before}")
       print("==================================================================")
+      print(f"Time taken for computation: {end_compute - start_compute} seconds")
+
+      mem_current, _ = print_mem("Current")
+      print(f"Memory used total: {(mem_start - mem_current) / 1e6:.2f} MB")
       if new_energies <= energies_before:
         break
       step_taken = step_taken / 2.0
       substep += 1
     print("step taken is", step_taken)
     print("substep is", substep)
-    all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+    # all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
 
-    abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
-    soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-    cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES: (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES + positions_cloth.shape[0]]
-    cage_vertices_computed = cvp.value.get().reshape(-1, 3)
-    bunny_cage_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES + positions_cloth.shape[0]: ]
+    # abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
+    # soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+    # cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES: (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES + positions_cloth.shape[0]]
+    # cage_vertices_computed = cvp.value.get().reshape(-1, 3)
+    # bunny_cage_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES + positions_cloth.shape[0]: ]
 
-    abd_poly.points = abd_vertices_computed
-    soft_poly.points = soft_vertices_computed
-    cloth_poly.points = cloth_vertices_computed
-    cage_poly.points = cage_vertices_computed
-    bunny_poly.points = bunny_cage_vertices_computed
-    plotter.render()
-    plotter.update()
+    # abd_poly.points = abd_vertices_computed
+    # soft_poly.points = soft_vertices_computed
+    # cloth_poly.points = cloth_vertices_computed
+    # cage_poly.points = cage_vertices_computed
+    # bunny_poly.points = bunny_cage_vertices_computed
+    # plotter.render()
+    # plotter.update()
 
     inner_iteration += 1
+  start_velocity_update = time.time()
   new_velocities_abd = (vertices_abd_position.compute().value - vertices_abd_last_position.value) / DT_VALUE
   new_velocities_soft = (vertices_soft_position.compute().value - vertices_soft_last_position.value) / DT_VALUE
   new_velocities_free = (vertices_free["position"].compute().value - vertices_free_last_position.value) / DT_VALUE
@@ -814,12 +865,16 @@ for i in range(200):
   vertices_soft_velocity.updateValue(new_velocities_soft, deepCopy = True)
   vertices_free_velocity.updateValue(new_velocities_free, deepCopy = True)
   cvv.updateValue(new_velocities_cage, deepCopy = True)
-  plotter.render()
-  plotter.update()
-  plotter.screenshot(f"outputs/frame_{i:04d}.png")
-  # save the mesh obj file
-  abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
-  soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")
-  cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
-  cage_poly.save(f"meshes/cage_{i:04d}.obj")
-  bunny_poly.save(f"meshes/bunny_cage_{i:04d}.obj")
+  end_velocity_update = time.time()
+  print(f"Time taken for velocity update: {end_velocity_update - start_velocity_update} seconds")
+  # plotter.render()
+  # plotter.update()
+  # plotter.screenshot(f"outputs/frame_{i:04d}.png")
+  # # save the mesh obj file
+  # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
+  # soft_poly.save(f"meshes/bunny_soft_{i:04d}.obj")
+  # cloth_poly.save(f"meshes/cloth_{i:04d}.obj")
+  # cage_poly.save(f"meshes/cage_{i:04d}.obj")
+  # bunny_poly.save(f"meshes/bunny_cage_{i:04d}.obj")
+end = time.time()
+print("Total time: ", end - start)

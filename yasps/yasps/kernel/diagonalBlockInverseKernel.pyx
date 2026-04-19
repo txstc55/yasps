@@ -6,7 +6,7 @@ import ctypes
 import numpy as np
 from yasps.helper import timed
 from yasps.context import context
-
+import time
 
 # the diagonalBlockInverseKernel
 # will be responsible for computing the explicit inverse of the diagonal blocks
@@ -30,6 +30,7 @@ class diagonalBlockInverseKernel:
     # print("diagonal block sizes", self.__diagonal_block_sizes)
     self.__context = context()
 
+  @timed("diagonalBlockInverseKernel.__generateKernel")
   def __generateKernel(self):
     # first we check if the kernel exists
     size_ordered_string = "_".join([str(size) for size in sorted(self.__unique_attribute_sizes)])

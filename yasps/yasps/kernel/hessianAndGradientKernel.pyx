@@ -44,7 +44,7 @@ class hessianAndGradientKernel:
     assert x.gpudata is not None
     return ctypes.c_void_p(int(x.gpudata))
 
-
+  @timed("hessianAndGradientKernel.generateKernel")
   def generateKernel(self, unique_gradient_sizes: List[int], wrt: List[attribute]) -> None:
     # check if our unique gradient sizes contains the input gradient sizes
     # print("unique gradient sizes are", unique_gradient_sizes)
