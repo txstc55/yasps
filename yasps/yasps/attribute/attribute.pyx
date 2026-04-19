@@ -68,6 +68,12 @@ SUM = operator("sum", 3, False) # for summation when the connectivity is unfixed
 AVERAGE = operator("average", 3, False) # for averaging when the connectivity is unfixed
 UNION = operator("union", 3, False) # for union of multiple attributes
 
+# TODO:
+# we really need a sparse local view
+# right now there are lots of matrices generated for differentiation
+# which are natively just very sparse. Materializing this matrix is wasteful
+# we really just want to materialize them only if necessary in some of the computaiton like inverse etc
+
 
 
 class attribute:
@@ -357,6 +363,11 @@ class attribute:
           return False
       self.__isFloatMat = True
       return True
+    # TODO:
+    # we did not handle JOIN and UNION effectively when everything is float
+    # this caused lots of problem with the multiplication that happens at the differentiation
+    # right now we materialize this whole matrix, which is completely wasteful'
+
     # # SPECIAL CASES FOR CHECKING IF A MAT IS FLOAT
     # if self.operator == FLOAT:
     #   return True
