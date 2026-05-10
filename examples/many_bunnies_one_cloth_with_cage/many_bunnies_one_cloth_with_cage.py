@@ -37,6 +37,7 @@ LAMBDA_VALUE_ABDS = []
 for i in range(NUM_ABD_BUNNIES):
   POISSON_VALUE = 0.45 + random.random() * 0.04
   YOUNG_VALUE = 9000000.0 + random.random() * 1000000
+  print(f"ABD bunny {i}: Poisson = {POISSON_VALUE}, Young = {YOUNG_VALUE}")
   MU_LAME_VALUE = YOUNG_VALUE / (2 * (1 + POISSON_VALUE))
   LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
   MU_VALUE_ABDS.append(4.0 * MU_LAME_VALUE / 3.0)
@@ -48,6 +49,7 @@ LAMBDA_VALUE_SOFTS = []
 for i in range(NUM_SOFT_BUNNIES):
   POISSON_VALUE = 0.10 + random.random() * 0.29
   YOUNG_VALUE = 5000.0 + random.random() * 40000
+  print(f"Soft bunny {i}: Poisson = {POISSON_VALUE}, Young = {YOUNG_VALUE}")
   MU_LAME_VALUE = YOUNG_VALUE / (2 * (1 + POISSON_VALUE))
   LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
   MU_VALUE_SOFTS.append(4.0 * MU_LAME_VALUE / 3.0)
@@ -57,6 +59,7 @@ BENDING_STIFFNESS = 0.25
 STRETCH_STIFFNESS = 355007.469799
 SHEAR_STIFFNESS = 100067.114094
 THICKNESS = 0.001
+
 
 ##################################################################
 ## Load the bunny mesh
@@ -108,6 +111,11 @@ NUM_BUNNY_SURFACE_TRIANGLES = surface_triangle_indices_bunny.shape[0]
 NUM_BUNNY_EDGES = edge_indices_bunny.shape[0]
 NUM_BUNNY_SURFACE_INDICES = len(surface_indices_bunny)
 
+print("Number of vertices: ", NUM_BUNNY_VERTICES)
+print("Number of tets: ", NUM_BUNNY_TETS)
+print("Number of surface triangles: ", NUM_BUNNY_SURFACE_TRIANGLES)
+print("Number of edges: ", NUM_BUNNY_EDGES)
+print("Number of surface indices: ", NUM_BUNNY_SURFACE_INDICES)
 
 ##################################################################
 ## Now we construct the indices for the bunnies
@@ -238,6 +246,9 @@ from helpers import generate_edge_to_vertices_list
 edge_to_vertices_cloth = generate_edge_to_vertices_list(triangle_indices_cloth)
 edge_indices_cloth = extract_edges_from_triangles(triangle_indices_cloth)
 
+print("num cloth vertices: ", positions_cloth.shape[0])
+print("num cloth triangles: ", triangle_indices_cloth.shape[0])
+print("num cloth edges: ", edge_indices_cloth.shape[0])
 
 ##################################################################
 ## Load the caged bunny mesh
@@ -269,6 +280,9 @@ tet6_edges = np.array([
 ], dtype=np.int32)
 cage_edges = cages[:, tet6_edges].reshape(-1, 2)   # (Nb*6*12, 2)
 
+print("Cage points: ", cage_points.shape)
+print("number of cages: ", cages.shape[0])
+
 #########################################################
 # Load bunny mesh that we use for cage
 #########################################################
@@ -284,6 +298,11 @@ for line in f:
 bunny_faces = np.array(bunny_faces, dtype=np.uint32)
 bunny_vertices = np.array(bunny_vertices, dtype=np.float64)
 edge_indices_bunny_cage = extract_edges_from_triangles(bunny_faces)
+
+print("Number of vertices in bunny cage: ", bunny_vertices.shape[0])
+print("Number of faces in bunny cage: ", bunny_faces.shape[0])
+print("Number of edges in bunny cage: ", edge_indices_bunny_cage.shape[0])
+exit(0)
 
 
 ##################################################################
