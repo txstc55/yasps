@@ -134,6 +134,48 @@ class primitiveUnion:
       # we can create the new attribute
       from yasps.attribute import attribute
       from yasps.attribute import UNION
+      # we only want to union the non-zero attributes
+      # so we need to do nonzero check on all the children now
+      all_children_attributes = [x[name] for x in self.__primitives]
+      sample_attribute = all_children_attributes[0]
+      source_element_is_nonzero = [0 for _ in range(sample_attribute.rows * sample_attribute.cols)]
+      for i in range(sample_attribute.rows * sample_attribute.cols):
+        for child_attribute in all_children_attributes:
+          if child_attribute[i].isZero == 0: # this means it's a non-zero element
+            source_element_is_nonzero[i] = 1
+            break
+
+      # ok now we need to check if it is fully nonzero
+      if sum(source_element_is_nonzero) == len(source_element_is_nonzero) or sum(source_element_is_nonzero) == 0:
+        # this means that all the elements are non-zero, we can just do a simple union
+        pass
+      else:
+        nonzero_attribute_name = f"{name}_nonzero_for_union_with_{'__'.join([x.fullName for x in self.__primitives])}"
+        # we can start creating a non-zero attribute for each children primitive
+        for child in self.__primitives:
+          child_attribute = child[name]
+          nonzero_elements = []
+          for i in range(child_attribute.rows * child_attribute.cols):
+            if source_element_is_nonzero[i] == 1:
+              nonzero_elements.append(child_attribute[i])
+          nonzero_attribute = attribute.to_array(nonzero_elements, rows = 1, cols = sum(source_element_is_nonzero))
+          child.addAttribute(nonzero_attribute_name, computed_attribute = nonzero_attribute)
+        # now create the UNIONed attribut which only contains nonzero
+        unioned_nonzero_attribute = attribute(name = nonzero_attribute_name, rows = 1, cols = sum(source_element_is_nonzero), correspondance = self, children = [x[nonzero_attribute_name] for x in self.__primitives], operator = UNION)
+        # then we create the new array which contains the zero elements
+        unioned_attribute_list = []
+        nonzero_count = 0
+        for i in range(len(source_element_is_nonzero)):
+          if source_element_is_nonzero[i] == 1:
+            unioned_attribute_list.append(unioned_nonzero_attribute[nonzero_count])
+            nonzero_count += 1
+          else:
+            unioned_attribute_list.append(0.0)
+        unioned_attribute = self.addAttribute(name = name, computed_attribute = attribute.to_array(unioned_attribute_list, rows = sample_attribute.rows, cols = sample_attribute.cols))
+        return unioned_attribute
+
+      # if the attribute is fully dense
+      # we just do normal union
       unioned_attribute = attribute(name, rows = rows_size_check.pop(), cols = cols_size_check.pop(), correspondance = self, children = [x[name] for x in self.__primitives], operator = UNION)
       self.__attributes[name] = unioned_attribute
       return unioned_attribute

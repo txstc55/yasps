@@ -179,18 +179,54 @@ class primitive:
           if through.dimension == 0 and operation is None:
             raise ValueError("primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
           op = JOIN
+          # for JOIN let's do special handling
+          # we will try to only join the non-zero elements, then we will assemble the matrix
+          source_element_is_nonzero = [1 for i in range(source.rows * source.cols)]
+          for i in range(source.rows * source.cols):
+            if source[i].isZero != 0: # this means it is a zero element:
+              source_element_is_nonzero[i] = 0
+          # we will only join the non-zero elements, so first we need to get the non-zero elements to another attribute
+          if sum(source_element_is_nonzero) == len(source_element_is_nonzero) or sum(source_element_is_nonzero) == 0:
+            # there's nothing we need to do, directly do the join
+            pass
+          else:
+            # we create a new attribute on the source, then do the join again.
+            non_zero_joined_children = []
+            for i in range(source.rows * source.cols):
+              if source_element_is_nonzero[i] == 1:
+                non_zero_joined_children.append(source[i])
+            nonzero_child_attribute: attribute
+            nonzero_joined_attribute: attribute
+            if f"{name}_non_zeros" in source.correspondance.attributes:
+              nonzero_child_attribute = source.correspondance.attributes[f"{name}_non_zeros"]
+            else:
+              print(f"Creating non-zero child attribute for source attribute {source.name} with name {name}_non_zeros, which has {sum(source_element_is_nonzero)} non-zero elements out of {len(source_element_is_nonzero)} total elements.")
+              nonzero_child_attribute = source.correspondance.addAttribute(name = f"{name}_non_zeros", computed_attribute = attribute.to_array(non_zero_joined_children, rows = 1, cols = sum(source_element_is_nonzero)))
+            if f"{name}_non_zeros" in self.attributes:
+              nonzero_joined_attribute = self.attributes[f"{name}_non_zeros"]
+            else:
+              nonzero_joined_attribute = attribute(name = f"{name}_non_zeros", correspondance = self, rows = through.dimension, cols = sum(source_element_is_nonzero), through = through, children = [nonzero_child_attribute], operator = JOIN)
+              self.__attributes[f"{name}_non_zeros"] = nonzero_joined_attribute
+            # now we create the joined attribute as an array
+            new_joined_attribute_children = []
+            for i in range(through.dimension):
+              non_zero_count = 0
+              for j in range(source.rows * source.cols):
+                if source_element_is_nonzero[j] == 1:
+                  new_joined_attribute_children.append(nonzero_joined_attribute[i, non_zero_count])
+                  non_zero_count += 1
+                else:
+                  new_joined_attribute_children.append(0.0)
+            # create the new joined attribute
+            newRows: int = through.dimension
+            newCols: int = source.rows * source.cols
+            newAttribute = self.addAttribute(name = name, computed_attribute = attribute.to_array(new_joined_attribute_children, rows = newRows, cols = newCols))
+            return newAttribute
+
+
+          # if the matrix is fully dense already, we just make the join attribute regardless.
           newRows: int = through.dimension
           newCols: int = source.rows * source.cols
-          if operation is not None:
-            newRows = source.rows
-            newCols = source.cols
-            if operation == "SUM":
-              op = SUM
-            elif operation == "AVERAGE":
-              op = AVERAGE
-            else:
-              raise ValueError(f"primitive.addAttribute: the operation '{operation}' is not valid. Available operations are: SUM and AVERAGE.")
-
           newAttribute = attribute(name = name, correspondance = self, rows = newRows, cols = newCols, through = through, children = [source], operator = op)
           # print(f"The attribute {name} for primitive {self.name} now has dimension {newRows}x{newCols}")
           self.__attributes[name] = newAttribute
@@ -237,14 +273,5 @@ class primitive:
         return self.__attributes[key]
       else:
         raise KeyError(f"primitive.__getitem__: attribute with name '{key}' not found in primitive.")
-    # elif isinstance(key, tuple):
-    #   from yasps.attribute import attribute
-    #   # first we check if all names are in the attributes
-    #   for name in key:
-    #     if name not in self.__attributes:
-    #       raise KeyError(f"primitive.__getitem__: attribute with name '{name}' not found in primitive {self.fullName}.")
-    #   # get the list of attributes first
-    #   attributes = attribute.to_array([self.__attributes[name] for name in key], 1, sum([self.__attributes[name].cols * self.__attributes[name].rows for name in key]))
-    #   return attributes
     else:
       raise KeyError(f"primitive.__getitem__: attribute with name '{key}' not found in primitive.")

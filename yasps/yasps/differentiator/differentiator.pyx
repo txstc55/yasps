@@ -171,6 +171,7 @@ class differentiator:
     return self.__generateGlobalJacobianForUnion(current, wrt)
 
   def __generateNeighborJacobianForEnergy(self, parent: attribute, children: List[attribute], autodiff_engine: autodiff) -> None:
+    # this computes d energy / d children, where the children are the local children of the energy variable
     local_gradient_name = f'd_{parent.fullName}_d_{"__".join([x.fullName for x in children])}'
     if local_gradient_name not in parent.correspondance.attributes:
       diff_energy_wrt_children_list: List[attribute] = []
@@ -181,6 +182,7 @@ class differentiator:
       local_gradient = attribute.to_array(diff_energy_wrt_children_list, rows=1, cols=len(diff_energy_wrt_children_list))
       parent.correspondance.addAttribute(local_gradient_name, computed_attribute=local_gradient)
 
+    # this computes d2 energy / d children d children, where the children are the local children of the energy variable
     local_hessian_name = f'd2_{parent.fullName}_d2_{"__".join([x.fullName for x in children])}'
     if local_hessian_name not in parent.correspondance.attributes:
       local_gradient = parent.correspondance[local_gradient_name]
@@ -205,12 +207,16 @@ class differentiator:
         parent.correspondance.addAttribute(local_hessian_name, computed_attribute=local_hessian)
 
   def __generateGlobalJacobianForEnergy(self, current: attribute, wrt: List[attribute]):
+    # first access the local gradient d energy / d children, where the children are the local children of the energy variable
     gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
     if gradient_attribute_name in current.correspondance.attributes:
       result = current.correspondance[gradient_attribute_name]
       self.__global_jacobian = result
       return result
 
+    # we now access the d children /d x, where x is the global optimization variables
+    # we will then multiply them to get the global gradient
+    # we also assemble the global jacobian matrix here, which is d children /dx
     children = self.__path_dict[current]
     current_gradient: attribute = current.correspondance[f'd_{current.fullName}_d_{"__".join([x.fullName for x in children])}']
     children_global_jacobian_name = f'd_{"__".join([x.fullName for x in children])}_d_{"__".join([x.fullName for x in wrt])}'
@@ -241,6 +247,9 @@ class differentiator:
     return full_gradient
 
   def __generateGlobalHessianForEnergy(self, current: attribute, wrt: List[attribute]) -> attribute:
+    # this function computes the global hessian
+    # it is separated into two parts, the first part is the local hessian multiplied by the global jacobian, and the second part is the local gradient multiplied by the global hessian of the children
+    # if the second part is completely 0, then we can project the inner local hessian of the first part
     global_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
     if global_hessian_name in current.correspondance.attributes:
       return current.correspondance[global_hessian_name]
@@ -288,6 +297,8 @@ class differentiator:
     return final_hessian
 
   def __generateNeighborJacobianForJoin(self, parent: attribute, children: List[attribute], autodiff_engine: autodiff) -> None:
+    # computes the neighboring jacobian, as well as the neighboring hessian
+    # this the this is computing d children / d grandchildren, where the children are the local children of the join variable, and the grandchildren are the local children of the child variable
     joined_child = parent.children[0]
     child_jacobian_name = f'd_{joined_child.fullName}_d_{"__".join([x.fullName for x in children])}'
     if child_jacobian_name not in joined_child.correspondance.attributes:
