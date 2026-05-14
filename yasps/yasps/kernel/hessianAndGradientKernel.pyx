@@ -68,7 +68,7 @@ class hessianAndGradientKernel:
     size_names = "_".join([str(size) for size in unique_gradient_sizes])
     full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullName}_wrt_{wrt_names}_with_sizes_{size_names}"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
-    file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}" + "" if self.__project_entire_hessian else "_no_proj"
+    file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}" + ("" if self.__project_entire_hessian else "_no_proj")
     # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
     print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
@@ -263,8 +263,8 @@ extern "C"{{
       for unique_gradient_size in self.__unique_gradient_sizes:
         if unique_gradient_size == 0:
           continue
-        cu_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}" + ".cu" if self.__project_entire_hessian else "_no_proj.cu"
-        obj_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}" + ".o" if self.__project_entire_hessian else "_no_proj.o"
+        cu_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}" + (".cu" if self.__project_entire_hessian else "_no_proj.cu")
+        obj_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}" + (".o" if self.__project_entire_hessian else "_no_proj.o")
         obj_files.append(obj_file)
         # if not os.path.exists(obj_file):
         if True: # always regenerate the kernel because header has been replaced
