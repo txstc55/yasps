@@ -727,7 +727,7 @@ int compute_hessian_and_gradient_with_compression(
           if size != 0:
             self.__kernelString += f'''
       case {size}:
-        compute_hessian_and_gradient_global_function_final_gradient_size_{size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0>>>(
+        compute_hessian_and_gradient_global_function_final_gradient_size_{size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0, streams[i]>>>(
           {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
           {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
           {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
@@ -760,7 +760,7 @@ int compute_hessian_and_gradient_with_compression(
         # this is the case where we are not projecting the entire Hessian
         # this means the compressed gradient size doesn't matter anymore, what we recorded is the largest block size
           self.__kernelString += f'''
-    compute_hessian_and_gradient_global_function_final_gradient_size_{max_child_gradient_size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0>>>(
+    compute_hessian_and_gradient_global_function_final_gradient_size_{max_child_gradient_size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0, streams[i]>>>(
       {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
       {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
       {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
