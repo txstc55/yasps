@@ -248,13 +248,13 @@ ee_energy = bunny.ee.addAttribute("edge_edge", computed_attribute = ee)
 
 
 s0.addEnergy(snh_energy, projection_method = 2)
-# s0.addEnergy(affine_energy, projection_method = 2)
-# s0.addEnergy(inertia_energy_abd, projection_method = -1)
-# s0.addEnergy(inertia_energy_moving, projection_method = -1)
-# s0.addEnergy(pp_energy, dynamic_instances = True, projection_method = 2)
-# s0.addEnergy(pe_energy, dynamic_instances = True, projection_method = 2)
-# s0.addEnergy(pt_energy, dynamic_instances = True, projection_method = 2)
-# s0.addEnergy(ee_energy, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(affine_energy, projection_method = 2)
+s0.addEnergy(inertia_energy_abd, projection_method = -1)
+s0.addEnergy(inertia_energy_moving, projection_method = -1)
+s0.addEnergy(pp_energy, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(pe_energy, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(pt_energy, dynamic_instances = True, projection_method = 2)
+s0.addEnergy(ee_energy, dynamic_instances = True, projection_method = 2)
 s0.addMinimizeTarget([bunny.moving_vertices["position"], bunny.affine_body["affine_matrix"], bunny.affine_body["translation"]])
 
 ##################################################

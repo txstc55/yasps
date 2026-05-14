@@ -790,7 +790,12 @@ class hessian(matrix):
     assert kernel is not None
     # TODO: This doesn't need to be done every iteration for the static parts
     if is_dynamic:
-      kernel.generateKernel(indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)
+      kernel.generateKernel(
+        indices_kernel.outputUniqueGradientSizesCPU.tolist(),
+        indices_kernel.maxChildGradientSize,
+        self.__wrt,
+        indices_kernel.maxNumIndicesNeeded
+      )
 
     counts_gpu = [x.children_primitive_counts_gpu for x in merged_attribute.deviceKernel.kernelPrimitiveUnions]
     arguments: List[gpuarray.GPUArray] = [x.value for x in merged_attribute.deviceKernel.kernelDatas]

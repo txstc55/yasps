@@ -346,9 +346,6 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     }}
     gradient_offset += segment_size;
   }}
-  if (instance == 0 || instance == 100){{
-    printf("instance: %d, Gradient placed\\n", instance);
-  }}
   // Now check if we are also computing the Hessian
 #if {int(not self.__gradient_only)}
 #if {int(self.__project_entire_hessian)} // ok now check if we need to project the entire Hessian matrix
@@ -479,9 +476,6 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 
 
 #else // we are not projecting the entire Hessian matrix, there's room for optimization now
-  if (instance == 0 || instance == 100){{
-    printf("instance: %d, Getting into the else loop\\n", instance);
-  }}
 
   // first we allocate a new array, which computes that for each index
   short int unique_segment_placements[{max_num_indices}] = {{0}}; // this will count how many unique positions we can put the segment, and this is 0 based index
@@ -490,9 +484,6 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   short int unique_segment_sizes[{max_num_indices}] = {{0}}; // this will store the size of the segment for each unique position, this is used for the compression
   unsigned short int unique_segment_placement_first_i[{max_num_indices}] = {{0}}; // this will store, the first i for each unique segment placement
 
-  if (instance == 0 || instance == 100){{
-    printf("instance: %d, Initialization finished\\n", instance);
-  }}
 
   unsigned short int current_unique_position_index = 0;
   short int last_placement = -1;
@@ -558,9 +549,6 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     column_offset += segment_sizes[instance * {max_num_indices} + i]; // increment the column offset
   }}
 
-  if (instance == 0 || instance == 100){{
-    printf("instance: %d, Hessian matrix outer constructed\\n", instance);
-  }}
 
   // now we know for each placement index, the range of columns (and also rows) that corresponds to the same placement
   // we can start the accumulation and placement
@@ -571,11 +559,17 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     // let's get the group's segment length
     const unsigned short int segment_size_i = unique_segment_sizes[i]; // what is the block row size
     unsigned int segment_index_i = segment_indices[instance * {max_num_indices} + unique_segment_placement_first_i[i]]; // what is its position in the global atrix
+    if (segment_index_i < 2){{
+      continue; // this is reserved for attributes that participate in the differentiation, but not in the final hessian, we skip it
+    }}
     unsigned short int group_count_1 = unique_segment_placements_counts[i]; // how many rows in this block
     // let's also get the placement index
     for (unsigned short int j = i; j < current_unique_position_index; j++){{
       const unsigned short int segment_size_j = unique_segment_sizes[j]; // what is the block column size
       unsigned int segment_index_j = segment_indices[instance * {max_num_indices} + unique_segment_placement_first_i[j]]; // what is its position in the global matrix
+      if (segment_index_j < 2){{
+        continue; // this is reserved for attributes that participate in the differentiation, but not in the final hessian, we skip it
+      }}
       unsigned short int group_count_2 = unique_segment_placements_counts[j]; // how many columns in this block
       // now we will start to accumulate the block
       double block[N * N] = {{0}}; // this will be the block for accumulation, N is already the largest block row we know.
@@ -766,8 +760,6 @@ int compute_hessian_and_gradient_with_compression(
         # this is the case where we are not projecting the entire Hessian
         # this means the compressed gradient size doesn't matter anymore, what we recorded is the largest block size
           self.__kernelString += f'''
-    printf("Now computing with size %u\\n", unique_gradient_sizes[i]);
-    printf("instance count for this size: %u\\n", unique_gradient_sizes_instance_count[i]);
     compute_hessian_and_gradient_global_function_final_gradient_size_{max_child_gradient_size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0>>>(
       {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
       {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
