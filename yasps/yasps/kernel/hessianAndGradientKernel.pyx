@@ -68,7 +68,7 @@ class hessianAndGradientKernel:
     size_names = "_".join([str(size) for size in unique_gradient_sizes])
     full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullName}_wrt_{wrt_names}_with_sizes_{size_names}"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
-    file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}"
+    file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}" + "" if self.__project_entire_hessian else "_no_proj"
     # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
     print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
@@ -263,8 +263,8 @@ extern "C"{{
       for unique_gradient_size in self.__unique_gradient_sizes:
         if unique_gradient_size == 0:
           continue
-        cu_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}.cu"
-        obj_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}.o"
+        cu_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}" + ".cu" if self.__project_entire_hessian else "_no_proj.cu"
+        obj_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}" + ".o" if self.__project_entire_hessian else "_no_proj.o"
         obj_files.append(obj_file)
         # if not os.path.exists(obj_file):
         if True: # always regenerate the kernel because header has been replaced
@@ -572,43 +572,10 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
       }}
       unsigned short int group_count_2 = unique_segment_placements_counts[j]; // how many columns in this block
       // now we will start to accumulate the block
-      double block[N * N] = {{0}}; // this will be the block for accumulation, N is already the largest block row we know.
-      for (unsigned short int g1_index = 0; g1_index < group_count_1; g1_index++){{
-        unsigned int column_offset_i = unique_segment_placements_inner[unique_segment_placements_outer[i] + g1_index]; // get the actual coordinate in the local matrix
-        for (unsigned short int g2_index = 0; g2_index < group_count_2; g2_index++){{
-          unsigned int column_offset_j = unique_segment_placements_inner[unique_segment_placements_outer[j] + g2_index]; // get the actual coordinate in the local matrix
-          for (unsigned short int k = 0; k < segment_size_i; k++){{
-            for (unsigned short int l = 0; l < segment_size_j; l++){{
-              block[k * segment_size_j + l] += hg_mat(column_offset_i + k, column_offset_j + l); // now we just accumulate the block
-            }}
-          }}
-        }}
-      }}
-      // now we have the actual block accumulated
-      // let's do the placement
       unsigned int placement_index = lookups[coordinate_start + valid_block_counts];
-      if (segment_index_i < segment_index_j){{
-        for (unsigned int k = 0; k < segment_size_i; k++){{
-          for (unsigned int l = 0; l < segment_size_j; l++){{
-            // this is a block in the upper triangle
-            atomicAdd(&hessian_blocks[placement_index + k * segment_size_j + l], block[k * segment_size_j + l]);
-          }}
-        }}
-      }}else{{
-        for (unsigned int k = 0; k < segment_size_j; k++){{
-          for (unsigned int l = 0; l < segment_size_i; l++){{
-            // put the transpose block in
-            atomicAdd(&hessian_blocks[placement_index + k * segment_size_i + l], block[l * segment_size_j + k]);
-          }}
-        }}
-      }}
-
+      unsigned int diagonal_block_placement = 0; // initialize the diagonal block placement
       if (i == j){{
-        // get the placement
         const unsigned int segment_index = segment_index_i - 2;
-        for (unsigned int k = 0; k < segment_size_i; k++){{
-          atomicAdd(&diagonal[segment_index + k], block[k * segment_size_j + k]);
-        }}
         // now we do the block diagonal placement
         // we first need to determine where to put it in the global diagonal blocks array
         int which_attribute = 0;
@@ -622,11 +589,60 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
         const unsigned int diagonal_block_start = diagonal_blocks_start[which_attribute];
         const unsigned int diff = segment_index - gradient_segments_start[which_attribute];
         const unsigned int which_instance = diff / (segment_size_i);
-        const unsigned int diagonal_block_placement = diagonal_block_start + which_instance * segment_size_i * segment_size_i;
-        // now we put the diagonal block
-        for (unsigned int k = 0; k < segment_size_i; k++){{
-          for (unsigned int l = 0; l < segment_size_i; l++){{
-          atomicAdd(&diagonal_blocks[diagonal_block_placement + k * segment_size_i + l], block[l * segment_size_j + k]);
+        diagonal_block_placement = diagonal_block_start + which_instance * segment_size_i * segment_size_i;
+      }}
+
+      if (segment_index_i < segment_index_j) {{
+        for (unsigned int k = 0; k < segment_size_i; k++) {{
+          for (unsigned int l = 0; l < segment_size_j; l++) {{
+            double acc = 0.0;
+
+            for (unsigned short int g1_index = 0; g1_index < group_count_1; g1_index++) {{
+              const unsigned int column_offset_i =
+                unique_segment_placements_inner[unique_segment_placements_outer[i] + g1_index];
+
+              for (unsigned short int g2_index = 0; g2_index < group_count_2; g2_index++) {{
+                const unsigned int column_offset_j =
+                  unique_segment_placements_inner[unique_segment_placements_outer[j] + g2_index];
+
+                acc += hg_mat(column_offset_i + k, column_offset_j + l);
+              }}
+            }}
+
+            atomicAdd(
+              &hessian_blocks[placement_index + k * segment_size_j + l],
+              acc
+            );
+          }}
+        }}
+      }}else {{
+        for (unsigned int k = 0; k < segment_size_j; k++) {{
+          for (unsigned int l = 0; l < segment_size_i; l++) {{
+            double acc = 0.0;
+
+            for (unsigned short int g1_index = 0; g1_index < group_count_1; g1_index++) {{
+              const unsigned int column_offset_i =
+                unique_segment_placements_inner[unique_segment_placements_outer[i] + g1_index];
+
+              for (unsigned short int g2_index = 0; g2_index < group_count_2; g2_index++) {{
+                const unsigned int column_offset_j =
+                  unique_segment_placements_inner[unique_segment_placements_outer[j] + g2_index];
+
+                // This computes block[l, k], matching your transpose placement.
+                acc += hg_mat(column_offset_i + l, column_offset_j + k);
+              }}
+            }}
+            atomicAdd(
+              &hessian_blocks[placement_index + k * segment_size_i + l],
+              acc
+            );
+            if (i == j) {{
+              const unsigned int segment_index = segment_index_i - 2;
+              atomicAdd(
+                &diagonal_blocks[diagonal_block_placement + k * segment_size_i + l],
+                acc
+              );
+            }}
           }}
         }}
       }}
