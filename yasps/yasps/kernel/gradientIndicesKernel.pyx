@@ -334,7 +334,7 @@ class gradientIndicesKernel:
     self.__used_union_attributes_hashes: Set[int] = set() # we will use this to quickly check if an attribute is already included
     self.__used_primitive_unions: List[primitiveUnion] = [] # all the union primitives, we will use them for indexing
     self.__used_primitive_unions_names: Set[str] = set() # we will use this to quickly check if a primitive union is already included
-
+    self.__maxChildGradientSize = 0 # what is the maximum size of children's attribute. This will be used for when we are don't need to project the entire Hessian. We will use the max child gradient size for kernel data allocation (because the largest block is only size m * m, where m is max child gradeient size)
 
     self.__gradientSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the size of the gradient being used, this will always record the theoretical largest size of the gradient (the size before compression)
     self.__indexSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the number of indices needed, again this is the theoretical largest size
@@ -342,9 +342,7 @@ class gradientIndicesKernel:
     self.__getUsedUnionAttributes() # get the attributes that are union operationsn
     self.__wrt: List[attribute] = wrt # the wrt attributes, we will use this to determine the position in the wrt start indices
     self.__gradientSize, self.__indexSize = self.__getGradientSize(self.__path_dict, self.__energy)
-    # print("Index size and gradient size for each part check")
-    # for item in self.__indexSizeForEachPart:
-    #   print(f"Name: {item.fullName}, index size: {self.__indexSizeForEachPart[item]}, gradient size: {self.__gradientSizeForEachPart[item]}")
+
 
     # exit(0)
 
@@ -402,6 +400,10 @@ class gradientIndicesKernel:
   @property
   def maxNumIndicesNeeded(self):
     return self.__indexSizeForEachPart[self.__energy] # return how many indices are needed for each instance of the energy, used for allocation
+
+  @property
+  def maxChildGradientSize(self):
+    return self.__maxChildGradientSize
 
   @property
   def outputIndices(self):
@@ -539,6 +541,7 @@ class gradientIndicesKernel:
     if current_attribute.operator == DATA:
       self.__gradientSizeForEachPart[current_attribute] = current_attribute.size # the gradient size for the data attribute is its own size
       self.__indexSizeForEachPart[current_attribute] = 1 # the index size for the data attribute is 1
+      self.__maxChildGradientSize = max(self.__maxChildGradientSize, current_attribute.size)
       return current_attribute.size, 1 # the size is just the size of the data attribute and the index size is 1
 
     children_attributes: List[attribute] = []

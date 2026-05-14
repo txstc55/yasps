@@ -7,7 +7,7 @@ sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
 import pycuda.gpuarray as gpuarray
 DT_VALUE = 0.01 # for time step
-DHAT_VALUE = 1e-8 # for collision detection
+DHAT_VALUE = 1e-6 # for collision detection
 
 NUM_RIGID_POINTS = 1500
 KAPPA_VALUE = 10000.0 # for collision
@@ -211,7 +211,7 @@ ee_positions = bunny.ee.addAttribute("positions", through = ee2v, source = bunny
 ##################################################
 # construct ccd
 ##################################################
-ccd = CCD(len(surface_indices), position.shape[0], mesh_indices = [2] * NUM_FIXED_POINTS + [3] * (NUM_ABD1) + [4] * NUM_ABD2 + [0] * (position.shape[0] - NUM_RIGID_POINTS - NUM_FIXED_POINTS), max_ccd_pairs = 1000000, max_cd_pairs = 1000000)
+ccd = CCD(len(surface_indices), position.shape[0], mesh_indices = [2] * NUM_FIXED_POINTS + [3] * (NUM_ABD1) + [4] * NUM_ABD2 + [0] * (position.shape[0] - NUM_RIGID_POINTS - NUM_FIXED_POINTS), max_ccd_pairs = 10000000, max_cd_pairs = 10000000)
 surface_indices_gpu = gpuarray.to_gpu(np.array(surface_indices).astype(np.uint32).flatten())
 edge_indices_gpu = gpuarray.to_gpu(edge_indices.astype(np.uint32).flatten())
 triangle_indices_gpu = gpuarray.to_gpu(surface_triangle_indices.astype(np.uint32).flatten())
@@ -248,13 +248,13 @@ ee_energy = bunny.ee.addAttribute("edge_edge", computed_attribute = ee)
 
 
 s0.addEnergy(snh_energy, projection_method = 2)
-s0.addEnergy(affine_energy, projection_method = 2)
-s0.addEnergy(inertia_energy_abd, projection_method = 0)
-s0.addEnergy(inertia_energy_moving, projection_method = 0)
-s0.addEnergy(pp_energy, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(pe_energy, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(pt_energy, dynamic_instances = True, projection_method = 2)
-s0.addEnergy(ee_energy, dynamic_instances = True, projection_method = 2)
+# s0.addEnergy(affine_energy, projection_method = 2)
+# s0.addEnergy(inertia_energy_abd, projection_method = -1)
+# s0.addEnergy(inertia_energy_moving, projection_method = -1)
+# s0.addEnergy(pp_energy, dynamic_instances = True, projection_method = 2)
+# s0.addEnergy(pe_energy, dynamic_instances = True, projection_method = 2)
+# s0.addEnergy(pt_energy, dynamic_instances = True, projection_method = 2)
+# s0.addEnergy(ee_energy, dynamic_instances = True, projection_method = 2)
 s0.addMinimizeTarget([bunny.moving_vertices["position"], bunny.affine_body["affine_matrix"], bunny.affine_body["translation"]])
 
 ##################################################
@@ -269,7 +269,7 @@ bunny_poly.point_data["colors"] = colors
 plotter = pv.Plotter(window_size=(3840, 2160))
 plotter.add_mesh(bunny_poly, scalars="colors", rgba=True)
 plotter.camera_position = [(0, 0, 20), (0, 0, 0), (0, 1, 0)]
-# plotter.show(interactive_update=True)
+plotter.show(interactive_update=True)
 
 bunny_poly.save(f"outputs/bunny1_base.obj")
 
@@ -356,10 +356,10 @@ for i in range(500):
     #   exit()
     print("step taken is", step_taken)
     print("substep is", substep)
-    # new_positions = bunny.vertices["position"].compute().value.get().reshape(-1, 3)
-    # bunny_poly.points = new_positions
-    # plotter.render()
-    # plotter.update()
+    new_positions = bunny.vertices["position"].compute().value.get().reshape(-1, 3)
+    bunny_poly.points = new_positions
+    plotter.render()
+    plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
     if max_grad < 1e-4:
@@ -376,6 +376,6 @@ for i in range(500):
   bunny_poly.points = new_positions
   # # export the current positions to obj
   bunny_poly.save(f"outputs/bunny1_{i:04d}.obj")
-  # plotter.render()
-  # plotter.update()
+  plotter.render()
+  plotter.update()
   # plotter.screenshot(f"outputs/bunny1_partial_abd_{i:04d}.jpg")

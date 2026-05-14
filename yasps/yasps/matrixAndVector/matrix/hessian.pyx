@@ -735,7 +735,12 @@ class hessian(matrix):
         inner_hessian_rows,
         dynamic_term = dynamic_term
       )
-      kernels[index].generateKernel(indices_kernels[index].outputUniqueGradientSizesCPU.tolist(), self.__wrt)
+      kernels[index].generateKernel(
+        indices_kernels[index].outputUniqueGradientSizesCPU.tolist(),
+        indices_kernels[index].maxChildGradientSize,
+        self.__wrt,
+        indices_kernels[index].maxNumIndicesNeeded
+      )
 
   def __setupCompute(self) -> None:
     if self.__is_setup:

@@ -13,6 +13,7 @@ from typing import List, Set
 import hashlib
 import subprocess
 from yasps.context import context
+import numpy as np
 
 class hessianAndGradientKernel:
   att_name_to_gradient_sizes: dict[str, Set[int]] = {}  # maps attribute names to their unique gradient sizes, this way we only need to generate unique gradient sizes once
@@ -45,14 +46,19 @@ class hessianAndGradientKernel:
     return ctypes.c_void_p(int(x.gpudata))
 
   @timed("hessianAndGradientKernel.generateKernel")
-  def generateKernel(self, unique_gradient_sizes: List[int], wrt: List[attribute]) -> None:
+  def generateKernel(self, unique_gradient_sizes: List[int], max_child_gradient_size: int, wrt: List[attribute], max_num_indices: int) -> None:
     # check if our unique gradient sizes contains the input gradient sizes
     # print("unique gradient sizes are", unique_gradient_sizes)
-    if set(unique_gradient_sizes).issubset(self.__unique_gradient_sizes):
+    if (set(unique_gradient_sizes).issubset(self.__unique_gradient_sizes) and self.__project_entire_hessian) or (max_child_gradient_size in self.__unique_gradient_sizes and not self.__project_entire_hessian):
       return
-    print("Unique gradient sizes before is", unique_gradient_sizes)
-    self.__unique_gradient_sizes.update(unique_gradient_sizes)
-    print("Unique gradient sizes after is", self.__unique_gradient_sizes)
+    if self.__project_entire_hessian:
+      print("Unique gradient sizes before is", unique_gradient_sizes)
+      self.__unique_gradient_sizes.update(unique_gradient_sizes)
+      print("Unique gradient sizes after is", self.__unique_gradient_sizes)
+    else:
+      print("Max child gradient size before is", max_child_gradient_size)
+      self.__unique_gradient_sizes.add(max_child_gradient_size)
+      print("Unique gradient sizes after is", self.__unique_gradient_sizes)
     ## first we get all the header functions
     sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
@@ -202,7 +208,6 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int* groupedIndicesInner, // we need to know which instance will correspond to the current size
   const unsigned int* groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
   const unsigned int nth_gradient_size,    // this indicates which position we are in the outer array
-  const unsigned int max_num_indices, // the maximum number of indices for each instance
   const unsigned int projection_method,
   double* gradient,   // the gradient output
   double* hessian_blocks, // the blocks that will constitute the hessian
@@ -280,7 +285,6 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int* groupedIndicesInner, // we need to know which instance will correspond to the current size
   const unsigned int* groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
   const unsigned int nth_gradient_size,    // this indicates which position we are in the outer array
-  const unsigned int max_num_indices, // the maximum number of indices for each instance
   const unsigned int projection_method,
   double* gradient,   // the gradient output
   double* hessian_blocks, // the blocks that will constitute the hessian
@@ -317,11 +321,11 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   );
   // ok we now first put the gradient into the correct place
   unsigned int gradient_offset = 0;
-  for (unsigned int i = 0; i < max_num_indices; i++){{
+  for (unsigned int i = 0; i < {max_num_indices}; i++){{
     // we will first get the segment size
-    unsigned short int segment_size = segment_sizes[instance * max_num_indices + i];
+    unsigned short int segment_size = segment_sizes[instance * {max_num_indices} + i];
     // and the position for this segment
-    unsigned int segment_placement = segment_indices[instance * max_num_indices + i];
+    unsigned int segment_placement = segment_indices[instance * {max_num_indices} + i];
     if (segment_placement == 0){{
       gradient_offset += segment_size;
       continue; // we encountered space reserved for union, skip
@@ -342,25 +346,19 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     }}
     gradient_offset += segment_size;
   }}
-
-  // ok now we have the gradient, we need to compress the hessian locally
-  // we have the local_permutations, and we know the size of the matrix
-#if {int(not self.__gradient_only)} // gradient only
-  // we will only start this part if we are not just doing gradient
-  // first of all, allocate a matrix
-  Eigen::Matrix<double, N, N> compressed_hessian = Eigen::Matrix<double, N, N>::Zero();
-  unsigned int row_offset = 0;
-#if {int(self.__clear_separation)} // there's a clear separation between hessian and jacobian, we utilize this fact and do assembly here
-  auto jacobian_matrix = hg_mat.block(0, 0, {self.__jacobian_rows}, {self.__jacobian_cols});
-  Eigen::Map<const Eigen::Matrix<double, {self.__hessian_row_size}, {self.__hessian_row_size}>> inner_hessian(hg_mat.data() + {self.__jacobian_rows} * {self.__jacobian_cols}, {self.__hessian_row_size}, {self.__hessian_row_size});
-  Eigen::Matrix<double, {self.__hessian_row_size}, {self.__jacobian_cols}> HJ_mat = inner_hessian * jacobian_matrix;
-#endif
-  for (unsigned int i = 0; i < max_num_indices; i++){{
+  if (instance == 0 || instance == 100){{
+    printf("instance: %d, Gradient placed\\n", instance);
+  }}
+  // Now check if we are also computing the Hessian
+#if {int(not self.__gradient_only)}
+#if {int(self.__project_entire_hessian)} // ok now check if we need to project the entire Hessian matrix
+  Eigen::Matrix<double, N, N> compressed_hessian = Eigen::Matrix<double, N, N>::Zero(); // first we allocate the matrix
+  for (unsigned int i = 0; i < {max_num_indices}; i++){{
     unsigned int col_offset = 0;
     // we first determine what's the correct position to put in the compressed hessian
-    short int permutation_i = local_permutations[instance * max_num_indices + i];
+    short int permutation_i = local_permutations[instance * {max_num_indices} + i];
     if (permutation_i == 0){{
-      row_offset += segment_sizes[instance * max_num_indices + i]; // done with the row since it's reserved for union empty space
+      row_offset += segment_sizes[instance * {max_num_indices} + i]; // done with the row since it's reserved for union empty space
       continue; // we encountered space reserved for union, skip
     }}
     if (permutation_i < 0){{
@@ -368,11 +366,11 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
       permutation_i = -permutation_i;
     }}
     permutation_i -= 1; // back to 0 indexed
-    unsigned short int segment_size_i = segment_sizes[instance * max_num_indices + i];
-    for (unsigned int j = 0; j < max_num_indices; j++){{
-      short int permutation_j = local_permutations[instance * max_num_indices + j];
+    unsigned short int segment_size_i = segment_sizes[instance * {max_num_indices} + i];
+    for (unsigned int j = 0; j < {max_num_indices}; j++){{
+      short int permutation_j = local_permutations[instance * {max_num_indices} + j];
       if (permutation_j == 0){{
-        col_offset += segment_sizes[instance * max_num_indices + j]; // done with the column since it's reserved for union empty space
+        col_offset += segment_sizes[instance * {max_num_indices} + j]; // done with the column since it's reserved for union empty space
         continue; // we encountered space reserved for union, skip
       }}
       if (permutation_j < 0){{
@@ -381,15 +379,11 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
       }}
       permutation_j -= 1; // back to 0 indexed
       // ok at this point we know the correct position to put in the compressed hessian
-      unsigned short int segment_size_j = segment_sizes[instance * max_num_indices + j];
+      unsigned short int segment_size_j = segment_sizes[instance * {max_num_indices} + j];
       for (unsigned int k = 0; k < segment_size_i; k++){{
         for (unsigned int l = 0; l < segment_size_j; l++){{
           // we put the block into the compressed hessian
-#if {int(self.__clear_separation)} // clear separation between hessian and jacobian
-          compressed_hessian(permutation_i + k, permutation_j + l) += jacobian_matrix.col(row_offset + k).dot(HJ_mat.col(col_offset + l));
-#else
           compressed_hessian(permutation_i + k, permutation_j + l) += hg_mat(row_offset + k, col_offset + l);
-#endif
         }}
       }}
       col_offset += segment_size_j;
@@ -398,15 +392,13 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   }}
   // now we have the compressed hessian
   // we will project it if needed
-
-#if {int(self.__project_entire_hessian)} // do we need to project the hessian here
   // project the hessian
   if (N < 4){{
     spd_projection_small<N>(compressed_hessian.data(), compressed_hessian.data(), projection_method);
   }}else{{
     spd_projection_inplace<N>(compressed_hessian.data(), projection_method);
   }}
-#endif // end of projection
+
 
   // we will now put the compressed hessian into the global hessian blocks
   // as well as the diagonal blocks
@@ -414,24 +406,24 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int coordinate_end = coordinatesOuter[instance];
   row_offset = 0;
   unsigned int valid_block_counts = 0;
-  for (unsigned int i = 0; i < max_num_indices; i++){{
+  for (unsigned int i = 0; i < {max_num_indices}; i++){{
     // we first determine what's the correct position to put in the compressed hessian
-    short int permutation_i = local_permutations[instance * max_num_indices + i]; // get the permuted placement
-    unsigned int segment_index_i = segment_indices[instance * max_num_indices + i];
+    short int permutation_i = local_permutations[instance * {max_num_indices} + i]; // get the permuted placement
+    unsigned int segment_index_i = segment_indices[instance * {max_num_indices} + i];
     if (permutation_i > 0 && segment_index_i >= 2){{
       // make it 0 indexed first
       permutation_i -= 1;
-      unsigned short int segment_size_i = segment_sizes[instance * max_num_indices + i];
+      unsigned short int segment_size_i = segment_sizes[instance * {max_num_indices} + i];
       segment_index_i -= 2;
       // we know exactly the row block, we now check for column block
-      for (unsigned int j = i; j < max_num_indices; j++){{
-        short int permutation_j = local_permutations[instance * max_num_indices + j]; // get the permuted placement
-        unsigned int segment_index_j = segment_indices[instance * max_num_indices + j];
+      for (unsigned int j = i; j < {max_num_indices}; j++){{
+        short int permutation_j = local_permutations[instance * {max_num_indices} + j]; // get the permuted placement
+        unsigned int segment_index_j = segment_indices[instance * {max_num_indices} + j];
         if (permutation_j > 0 && segment_index_j >= 2){{
           // ok we have found a valid block
           // first again we make it 0 indexed
           permutation_j -= 1;
-          unsigned short int segment_size_j = segment_sizes[instance * max_num_indices + j];
+          unsigned short int segment_size_j = segment_sizes[instance * {max_num_indices} + j];
           segment_index_j -= 2;
           // we now need to get the index
           unsigned int placement_index = lookups[coordinate_start + valid_block_counts];
@@ -454,7 +446,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
           // additionally, if it is a diagonal block, we also need to put the diagonal elements
           if (i == j){{
             // get the placement
-            unsigned int segment_index = segment_indices[instance * max_num_indices + i] - 2;
+            unsigned int segment_index = segment_indices[instance * {max_num_indices} + i] - 2;
             for (unsigned int k = 0; k < segment_size_i; k++){{
               atomicAdd(&diagonal[segment_index + k], compressed_hessian(permutation_i + k, permutation_j + k));
             }}
@@ -484,7 +476,172 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
       }}
     }}
   }}
-#endif // end of gradient only
+
+
+#else // we are not projecting the entire Hessian matrix, there's room for optimization now
+  if (instance == 0 || instance == 100){{
+    printf("instance: %d, Getting into the else loop\\n", instance);
+  }}
+
+  // first we allocate a new array, which computes that for each index
+  short int unique_segment_placements[{max_num_indices}] = {{0}}; // this will count how many unique positions we can put the segment, and this is 0 based index
+  unsigned short int unique_segment_placements_counts[{max_num_indices}] = {{0}}; // this will count how many segments are placed in each unique position, this is used for the compression
+  short int inverse_map[{max_num_indices}] = {{0}}; // this will map the original segment index to the unique position index, this is also 0 based index
+  short int unique_segment_sizes[{max_num_indices}] = {{0}}; // this will store the size of the segment for each unique position, this is used for the compression
+  unsigned short int unique_segment_placement_first_i[{max_num_indices}] = {{0}}; // this will store, the first i for each unique segment placement
+
+  if (instance == 0 || instance == 100){{
+    printf("instance: %d, Initialization finished\\n", instance);
+  }}
+
+  unsigned short int current_unique_position_index = 0;
+  short int last_placement = -1;
+  for (unsigned short int i = 0; i < {max_num_indices}; i++){{
+    short int permutation_i = local_permutations[instance * {max_num_indices} + i]; // get the permuted placement
+    if (permutation_i == 0){{
+      continue; // we encountered space reserved for union, skip
+    }}
+    if (permutation_i < 0) {{
+      permutation_i = -permutation_i;
+    }}
+    permutation_i -= 1; // make it 0 indexed
+    if (permutation_i > last_placement){{
+      // this means its a new placement, record it
+      unique_segment_placements[current_unique_position_index] = permutation_i;
+      unique_segment_placements_counts[current_unique_position_index] += 1;
+      unique_segment_sizes[current_unique_position_index] = segment_sizes[instance * {max_num_indices} + i];
+      unique_segment_placement_first_i[current_unique_position_index] = i;
+      inverse_map[i] = current_unique_position_index;
+      current_unique_position_index += 1;
+      last_placement = permutation_i;
+
+    }}else{{
+      // increment the count
+      for (unsigned short int j = 0; j < current_unique_position_index; j++){{
+        if (unique_segment_placements[j] == permutation_i){{
+          unique_segment_placements_counts[j] += 1;
+          inverse_map[i] = j;
+          break;
+        }}
+      }}
+    }}
+  }}
+
+  // now we construct the outer index array, which marks the range
+  short int unique_segment_placements_outer[{max_num_indices} + 1] = {{0}};
+  for (unsigned short int i = 0; i < current_unique_position_index; i++){{
+    unique_segment_placements_outer[i + 1] = unique_segment_placements_outer[i] + unique_segment_placements_counts[i];
+  }}
+  // now we actually construct the inner array, which marks for each placement, where in the matrix column can we find the start of the block
+  short int unique_segment_placements_inner[{max_num_indices}] = {{0}};
+  for (unsigned short int i = 0; i < {max_num_indices}; i++){{
+    unique_segment_placements_counts[i] = 0;  // reuse this array for local index counting
+  }}
+
+
+
+  unsigned int column_offset = 0;
+  for (unsigned short int i = 0; i < {max_num_indices}; i++){{
+    // first check if it is a unique permutation
+    short int permutation_i = local_permutations[instance * {max_num_indices} + i];
+    if (permutation_i == 0){{
+      column_offset += segment_sizes[instance * {max_num_indices} + i];
+      continue; // we encountered space reserved for union, skip
+    }}
+    // now we get the outer index
+    const unsigned short int gid = inverse_map[i]; // find out which unique group it belongs to
+    const unsigned short int start = unique_segment_placements_outer[gid]; // get the start of the group
+    const unsigned short int local_count = unique_segment_placements_counts[gid]; // get how many segments have been placed in this group so far
+
+    unique_segment_placements_inner[start + local_count] = column_offset; // record the column offset for this segment
+    unique_segment_placements_counts[gid] = local_count + 1; // increment the count for this group
+    column_offset += segment_sizes[instance * {max_num_indices} + i]; // increment the column offset
+  }}
+
+  if (instance == 0 || instance == 100){{
+    printf("instance: %d, Hessian matrix outer constructed\\n", instance);
+  }}
+
+  // now we know for each placement index, the range of columns (and also rows) that corresponds to the same placement
+  // we can start the accumulation and placement
+  unsigned short int valid_block_counts = 0;
+  const unsigned int coordinate_start = coordinatesOuter[instance];
+  for (unsigned short int i = 0; i < current_unique_position_index; i++){{
+    // this is one group
+    // let's get the group's segment length
+    const unsigned short int segment_size_i = unique_segment_sizes[i]; // what is the block row size
+    unsigned int segment_index_i = segment_indices[instance * {max_num_indices} + unique_segment_placement_first_i[i]]; // what is its position in the global atrix
+    unsigned short int group_count_1 = unique_segment_placements_counts[i]; // how many rows in this block
+    // let's also get the placement index
+    for (unsigned short int j = i; j < current_unique_position_index; j++){{
+      const unsigned short int segment_size_j = unique_segment_sizes[j]; // what is the block column size
+      unsigned int segment_index_j = segment_indices[instance * {max_num_indices} + unique_segment_placement_first_i[j]]; // what is its position in the global matrix
+      unsigned short int group_count_2 = unique_segment_placements_counts[j]; // how many columns in this block
+      // now we will start to accumulate the block
+      double block[N * N] = {{0}}; // this will be the block for accumulation, N is already the largest block row we know.
+      for (unsigned short int g1_index = 0; g1_index < group_count_1; g1_index++){{
+        unsigned int column_offset_i = unique_segment_placements_inner[unique_segment_placements_outer[i] + g1_index]; // get the actual coordinate in the local matrix
+        for (unsigned short int g2_index = 0; g2_index < group_count_2; g2_index++){{
+          unsigned int column_offset_j = unique_segment_placements_inner[unique_segment_placements_outer[j] + g2_index]; // get the actual coordinate in the local matrix
+          for (unsigned short int k = 0; k < segment_size_i; k++){{
+            for (unsigned short int l = 0; l < segment_size_j; l++){{
+              block[k * segment_size_j + l] += hg_mat(column_offset_i + k, column_offset_j + l); // now we just accumulate the block
+            }}
+          }}
+        }}
+      }}
+      // now we have the actual block accumulated
+      // let's do the placement
+      unsigned int placement_index = lookups[coordinate_start + valid_block_counts];
+      if (segment_index_i < segment_index_j){{
+        for (unsigned int k = 0; k < segment_size_i; k++){{
+          for (unsigned int l = 0; l < segment_size_j; l++){{
+            // this is a block in the upper triangle
+            atomicAdd(&hessian_blocks[placement_index + k * segment_size_j + l], block[k * segment_size_j + l]);
+          }}
+        }}
+      }}else{{
+        for (unsigned int k = 0; k < segment_size_j; k++){{
+          for (unsigned int l = 0; l < segment_size_i; l++){{
+            // put the transpose block in
+            atomicAdd(&hessian_blocks[placement_index + k * segment_size_i + l], block[l * segment_size_j + k]);
+          }}
+        }}
+      }}
+
+      if (i == j){{
+        // get the placement
+        const unsigned int segment_index = segment_index_i - 2;
+        for (unsigned int k = 0; k < segment_size_i; k++){{
+          atomicAdd(&diagonal[segment_index + k], block[k * segment_size_j + k]);
+        }}
+        // now we do the block diagonal placement
+        // we first need to determine where to put it in the global diagonal blocks array
+        int which_attribute = 0;
+        for (int k = 0; k < 123456; k++){{ // for now lets just make 123456 our default, need to change it later
+          if (segment_index < gradient_segments_start[k + 1]){{
+            break;
+          }}
+          which_attribute += 1;
+        }}
+        // now determine which instance in that attribute
+        const unsigned int diagonal_block_start = diagonal_blocks_start[which_attribute];
+        const unsigned int diff = segment_index - gradient_segments_start[which_attribute];
+        const unsigned int which_instance = diff / (segment_size_i);
+        const unsigned int diagonal_block_placement = diagonal_block_start + which_instance * segment_size_i * segment_size_i;
+        // now we put the diagonal block
+        for (unsigned int k = 0; k < segment_size_i; k++){{
+          for (unsigned int l = 0; l < segment_size_i; l++){{
+          atomicAdd(&diagonal_blocks[diagonal_block_placement + k * segment_size_i + l], block[l * segment_size_j + k]);
+          }}
+        }}
+      }}
+      valid_block_counts++; // finally increment
+    }}
+  }}
+
+#endif // end of checking if we are projecting the entire Hessian
+#endif // end of checking if we are doing gradient only
 }}
 }}
 ''')
@@ -530,7 +687,6 @@ int compute_hessian_and_gradient_with_compression(
   const unsigned int* groupedIndicesInner, // we need to know which instance will correspond to the current size
   const unsigned int* groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
   const unsigned int nth_gradient_size,    // this indicates which position we are in the outer array, let's keep it in the host function just so that we have a 1 to 1 match
-  const unsigned int max_num_indices, // the maximum number of indices for each instance
   const unsigned int projection_method,
   double* gradient,   // the gradient output
   double* hessian_blocks, // the blocks that will constitute the hessian
@@ -567,13 +723,15 @@ int compute_hessian_and_gradient_with_compression(
   // cudaDeviceSynchronize();
   // cudaDeviceSetLimit(cudaLimitStackSize, 128);
   for (unsigned int i = 0; i < num_unique_gradient_sizes; i++) {{
-    switch(unique_gradient_sizes[i]){{
-
   '''
-      # now we add the for loop to instantiate the known gradient sizes template functions
-      for size in self.__unique_gradient_sizes:
-        if size != 0:
-          self.__kernelString += f'''
+      if self.__project_entire_hessian:
+        self.__kernelString += f'''
+    switch(unique_gradient_sizes[i]){{
+'''
+        # now we add the for loop to instantiate the known gradient sizes template functions
+        for size in self.__unique_gradient_sizes:
+          if size != 0:
+            self.__kernelString += f'''
       case {size}:
         compute_hessian_and_gradient_global_function_final_gradient_size_{size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0>>>(
           {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
@@ -588,7 +746,6 @@ int compute_hessian_and_gradient_with_compression(
           groupedIndicesInner, // we need to know which instance will correspond to the current size
           groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
           i,    // this indicates which position we are in the outer array, let's keep it in the host function just so that we have a 1 to 1 match
-          max_num_indices, // the maximum number of indices for each instance
           projection_method,
           gradient,   // the gradient output
           hessian_blocks, // the blocks that will constitute the hessian
@@ -597,27 +754,43 @@ int compute_hessian_and_gradient_with_compression(
           diagonal_blocks_start, // for each attribute, where does the diagonal block start
           gradient_segments_start // for each attribute, where does the gradient start
         );
-        // {{
-        // // Step 1: Check for launch failure
-        // cudaError_t err = cudaGetLastError();
-        // if (err != cudaSuccess) {{
-        //   printf("CUDA kernel launch error: %s\\n", cudaGetErrorString(err));
-        // }}
-
-        // // Step 2: Check for runtime errors (like illegal memory access)
-        // err = cudaDeviceSynchronize();
-        // if (err != cudaSuccess) {{
-        //   printf("CUDA runtime error after kernel: %s\\n", cudaGetErrorString(err));
-        // }}
-        // }}
-
         break;
 '''
-      self.__kernelString += '''
+        self.__kernelString += '''
       default:
         printf("Invalid gradient size, %u\\n", unique_gradient_sizes[i]);
         break;
     }
+'''
+      else:
+        # this is the case where we are not projecting the entire Hessian
+        # this means the compressed gradient size doesn't matter anymore, what we recorded is the largest block size
+          self.__kernelString += f'''
+    printf("Now computing with size %u\\n", unique_gradient_sizes[i]);
+    printf("instance count for this size: %u\\n", unique_gradient_sizes_instance_count[i]);
+    compute_hessian_and_gradient_global_function_final_gradient_size_{max_child_gradient_size}<<<(unique_gradient_sizes_instance_count[i] + 31) / 32, 32, 0>>>(
+      {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
+      {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
+      {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+      {"".join([f"{x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
+      segment_indices,            // where to place the gradient for each segment of the local gradient / hessian we generated
+      segment_sizes,        // how large is each segment of the gradient before compression
+      local_permutations,            // how do i locally compress the hessian and gradient
+      lookups,                    // how to place the current block inside the hessian
+      coordinatesOuter,           // this will tell us for each instance, the starting and ending index in the lookup table for putting the hessian blocks into the global hessian data array
+      groupedIndicesInner, // we need to know which instance will correspond to the current size
+      groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
+      i,    // this indicates which position we are in the outer array, let's keep it in the host function just so that we have a 1 to 1 match
+      projection_method,
+      gradient,   // the gradient output
+      hessian_blocks, // the blocks that will constitute the hessian
+      diagonal,    // the diagonal, we will use it for preconditioning
+      diagonal_blocks, // store the diagonal blocks, use it for block preconditioning
+      diagonal_blocks_start, // for each attribute, where does the diagonal block start
+      gradient_segments_start // for each attribute, where does the gradient start
+    );
+'''
+      self.__kernelString +='''
   }
   // cudaDeviceSynchronize();
   // cudaDeviceSetLimit(cudaLimitStackSize, 128);
@@ -708,7 +881,6 @@ int compute_hessian_and_gradient_with_compression(
         ctypes.c_void_p,    # groupedIndicesOuter
         # Scalars
         ctypes.c_uint32,      # nth_gradient_size
-        ctypes.c_uint32,      # max_num_indices
         ctypes.c_uint32,      # projection_method
         # Outputs
         ctypes.c_void_p,    # gradient
@@ -740,7 +912,6 @@ int compute_hessian_and_gradient_with_compression(
         ctypes.c_void_p,    # groupedIndicesOuter
         # Scalars
         ctypes.c_uint32,      # nth_gradient_size
-        ctypes.c_uint32,      # max_num_indices
         ctypes.c_uint32,      # projection_method
         # Outputs
         ctypes.c_void_p,    # gradient
@@ -786,7 +957,6 @@ int compute_hessian_and_gradient_with_compression(
       self.__to_void_p(giKernel.outputGroupedIndicesInner),
       self.__to_void_p(giKernel.outputGroupedIndicesOuter),
       ctypes.c_uint32(0),
-      ctypes.c_uint32(giKernel.maxNumIndicesNeeded),
       ctypes.c_uint32(self.__projection_method),
       self.__to_void_p(gradient),
       self.__to_void_p(hessian_blocks),
