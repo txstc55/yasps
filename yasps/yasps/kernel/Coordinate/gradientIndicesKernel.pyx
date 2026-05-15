@@ -78,11 +78,12 @@ __global__ void computePermutation(
         // we continue
         continue;
       }
-      bool found = false;
+
       // if idx_i is 1, this means it's a variable we want to keep in the local matrix
       // but not in the final matrix
-
       // if idx is >= 2, then it means it's an actual variable that will be in the final matrix
+#IFNDEF NO_LOCAL_PERMUTATION // if we want to do local permutaiton, go check it
+      bool found = false;
       if (idx_i >= 2){
         for (unsigned short int j = 0; j < i; j++){
           const unsigned int idx_j = indices[tid * K + j];
@@ -94,6 +95,9 @@ __global__ void computePermutation(
           }
         }
       }
+#ELSE
+      const bool found = false; // if we don't want to do local permutation, we just keep the original order, and we will not have any negative value in the permutation array, this is useful for when we do separation of the Hessian matrix and Jacobian matrix, and materializing local blocks
+#ENDIF
       if (!found) {
         permutation[tid * K + i] = gradient_offset + 1; // always exclude 0
         gradient_offset += index_sizes[tid * K + i]; // we offset the gradient_offset so we know exactly where to put this segment
@@ -320,7 +324,7 @@ int computeCoordinates(
 # The first three things should have same dimension, as in the output array have the same size
 class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__init__")
-  def __init__(self, path_dict: Dict[attribute, List[attribute]], unioned_child_to_its_children: Dict[attribute, List[attribute]], wrt: List[attribute], wrt_start_indices: List[int], energy: attribute):
+  def __init__(self, path_dict: Dict[attribute, List[attribute]], unioned_child_to_its_children: Dict[attribute, List[attribute]], wrt: List[attribute], wrt_start_indices: List[int], energy: attribute, no_local_permutation: bool = False):
     self.__path_dict: Dict[attribute, List[attribute]] = path_dict # the path dict is basically from parent to children
     self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = unioned_child_to_its_children # this is the unioned child to its children
     # print("Checking unioned child to its children")
@@ -335,6 +339,7 @@ class gradientIndicesKernel:
     self.__used_primitive_unions: List[primitiveUnion] = [] # all the union primitives, we will use them for indexing
     self.__used_primitive_unions_names: Set[str] = set() # we will use this to quickly check if a primitive union is already included
     self.__maxChildGradientSize = 0 # what is the maximum size of children's attribute. This will be used for when we are don't need to project the entire Hessian. We will use the max child gradient size for kernel data allocation (because the largest block is only size m * m, where m is max child gradeient size)
+    self.__no_local_permutation = no_local_permutation # whether we want to do local permutation or not, if not, then we will just keep the original order of the indices, this is useful for when we do separation of the Hessian matrix and Jacobian matrix, and materializing local blocks
 
     self.__gradientSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the size of the gradient being used, this will always record the theoretical largest size of the gradient (the size before compression)
     self.__indexSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the number of indices needed, again this is the theoretical largest size
@@ -466,14 +471,14 @@ class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__getCompressionKernel")
   def __getCompressionKernel(self):
     if self.__compression_kernel is None:
-      file_name = ".yasps_constant/compression_kernel"
+      file_name = ".yasps_constant/compression_kernel" + ("" if not self.__no_local_permutation else "_no_perm")
       # check if the file exists
       if not os.path.exists(f'{file_name}.so'):
         # generate the kernel
         f = open(f"{file_name}.cu", 'w')
         f.write(compression_kernel_string)
         f.close()
-        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda")
+        os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda" + ("  -DNO_LOCAL_PERMUTATION" if self.__no_local_permutation else ""))
         self.__compression_kernel = ctypes.CDLL(f"{file_name}.so").compress_indices # get the compiled kernel
         self.__compression_kernel.restype = ctypes.c_int # set the return type to None
         self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2

@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List, Tuple, Set, Optional, Dict
 import math
 
-from yasps.attribute import attribute, JOIN, UNION
+from yasps.attribute import attribute, JOIN, UNION, DATA
 from yasps.autodiff import autodiff
 from yasps.hessian import hessian
 from yasps.path import path
@@ -47,6 +47,15 @@ class differentiator:
     self.__separate_hessian_jacobian = separate_hessian_jacobian
     self.__gradient = None
     self.__hessian = None
+
+    # those are the attributes that helps with the separation of jacobian and hessian
+    # when jacobian is created, it is very likely that it is not only block sparse
+    # but also each block is sparse
+    # so what we do is store the nonzeor positions, and attributes so we can later on reconstruct the jacobian matrix's diagonal blocks
+    self.__global_jacobian_block_nonzero_attributes: List[attribute] = []
+    self.__global_jacobian_block_nonzero_local_positions: List[int] = []
+    self.__global_jacobian_children_sizes: List[int] = []
+    self.__global_jacobian_children_spans: List[int] = []
 
   def __sameTargets(self, target1: List[attribute], target2: List[attribute]) -> bool:
     if len(target1) != len(target2):
@@ -263,12 +272,17 @@ class differentiator:
 
     second_part_hessian_array = [0.0 for _ in range(global_jacobian.cols * global_jacobian.cols)]
     block_offset = 0
+    block_sizes = [] # record the span of jacobian (the column)
     for child in children:
       child_global_hessian = self.__generateHessianThroughRecursion(child, wrt)
       child_size = child.size
       hessian_size = child_global_hessian.size // child_size
       assert hessian_size * child_size == child_global_hessian.size, f"differentiator.__generateGlobalHessianForEnergy: hessian size {hessian_size} * child size {child_size} is not equal to child global hessian size {child_global_hessian.size}"
       hessian_rows = int(math.sqrt(hessian_size))
+      if child.operator == JOIN:
+        block_sizes += [hessian_rows] * child.through.dimension  # this tells us in the final Hessian (local), what span does this child cover
+      elif child.operator == UNION or child.operator == DATA:
+        block_sizes.append(hessian_rows)
       assert hessian_rows * hessian_rows == hessian_size, f"differentiator.__generateGlobalHessianForEnergy: hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
       hessian_cols = hessian_rows
       for i in range(hessian_rows):
@@ -291,6 +305,37 @@ class differentiator:
     children_jacobian_name = f'd_{"__".join([x.fullName for x in children])}_d_{"__".join([x.fullName for x in wrt])}'
     children_global_jacobian = current.correspondance[children_jacobian_name]
     self.__global_jacobian = children_global_jacobian
+
+    # ok regardless of if we want to separate jacobian and hessian or not
+    # let's just compute the following
+    # because the jacobian matrix is blocked sparse
+    # and even the blocks are sparse
+    # what we will do is extract each block, then for each block we extract the non-zero entries
+    row_offset = 0 # the offset of rows in the jacobian matrix
+    col_offset = 0 # the offset of columns in the jacobian matrix
+    nonzero_attributes_array = []
+    nonzero_local_positions = []
+    print("Children sizes: ", [child.size for child in children])
+    print("Block sizes: ", block_sizes)
+    print("Jacobian Size: ", (children_global_jacobian.rows, children_global_jacobian.cols))
+    for (i, child) in enumerate(children):
+      nonzero_counts = 0
+      child_size = child.size
+      child_span = block_sizes[i]
+      for i in range(child_size):
+        for j in range(child_span):
+          if children_global_jacobian[(row_offset + i), (col_offset + j)].isZero == 0:
+            nonzero_counts += 1 # iszero == 0 means it's not zero, it's fucked up, i know
+            nonzero_local_positions.append(i)
+            nonzero_local_positions.append(j)
+            nonzero_attributes_array.append(children_global_jacobian[(row_offset + i), (col_offset + j)])
+      # the jacobian matrix is always block diagonal, so once we are done with one child, we can skip to the next diagonal block
+      row_offset += child_size
+      col_offset += child_span
+
+
+
+
 
     final_hessian = children_global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(children_global_jacobian)).add_explicit(second_part_hessian)
     current.correspondance.addAttribute(global_hessian_name, computed_attribute=final_hessian)
@@ -764,10 +809,6 @@ class differentiator:
       self.__hessian = self.__source.correspondance.attributes[f'd2_{self.__source.fullName}_d2_{"__".join([x.fullName for x in wrt])}']
       return
     self.__hessian = self.__generateHessianThroughRecursion(self.__source, wrt)
-    # print(f"Hessian hash is: {self.__hessian.hash}")
-    # print(f"Inner hessian hash is: {self.__global_inner_hessian.hash}")
-    # print(f"Jacobian hash is: {self.__global_jacobian.hash}")
-    # exit(0)
 
   def __generateHessianThroughRecursion(self, current: attribute, wrt: List[attribute]) -> attribute:
     from yasps.attribute import JOIN, UNION, DATA, CONSTANT
