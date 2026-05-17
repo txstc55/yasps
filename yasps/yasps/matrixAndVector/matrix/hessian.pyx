@@ -63,6 +63,11 @@ class hessian(matrix):
     self.__merged_hessian_and_gradient_attributes: List[Optional[attribute]] = []
     self.__hessian_and_gradient_kernels: List[Optional[hessianAndGradientKernel]] = []
     self.__sources: List[attribute] = []
+    self.__global_jacobian_block_nonzero_attributes: List[List[attribute]] = []
+    self.__global_jacobian_block_nonzero_local_positions: List[List[int]] = []
+    self.__global_jacobian_children_sizes:  List[List[int]] = []
+    self.__global_jacobian_children_spans:  List[List[int]] = []
+    self.__local_hessian_reordered_array:  List[List[attribute]] = []
 
     self.__global_gradients_dynamic: List[attribute] = []
     self.__global_hessians_dynamic: List[attribute] = []
@@ -75,6 +80,11 @@ class hessian(matrix):
     self.__merged_hessian_and_gradient_attributes_dynamic: List[Optional[attribute]] = []
     self.__hessian_and_gradient_kernels_dynamic: List[Optional[hessianAndGradientKernel]] = []
     self.__sources_dynamic: List[attribute] = []
+    self.__global_jacobian_block_nonzero_attributes_dynamic: List[List[attribute]] = []
+    self.__global_jacobian_block_nonzero_local_positions_dynamic: List[List[int]] = []
+    self.__global_jacobian_children_sizes_dynamic:  List[List[int]] = []
+    self.__global_jacobian_children_spans_dynamic:  List[List[int]] = []
+    self.__local_hessian_reordered_array_dynamic:  List[List[attribute]] = []
 
     self.__indices_kernels: List[gradientIndicesKernel] = []
     self.__indices_kernels_dynamic: List[gradientIndicesKernel] = []
@@ -316,6 +326,81 @@ class hessian(matrix):
     self.__hessian_and_gradient_kernels = value
 
   @property
+  def global_jacobian_block_nonzero_attributes(self) -> List[List[attribute]]:
+    return self.__global_jacobian_block_nonzero_attributes
+
+  @global_jacobian_block_nonzero_attributes.setter
+  def global_jacobian_block_nonzero_attributes(self, value: List[List[attribute]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.global_jacobian_block_nonzero_attributes: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.global_jacobian_block_nonzero_attributes: each item must be a list.")
+      if any(not isinstance(att, attribute) for att in item):
+        raise TypeError("hessian.global_jacobian_block_nonzero_attributes: nested items must be attributes.")
+    self.__global_jacobian_block_nonzero_attributes = value
+
+  @property
+  def global_jacobian_block_nonzero_local_positions(self) -> List[List[int]]:
+    return self.__global_jacobian_block_nonzero_local_positions
+
+  @global_jacobian_block_nonzero_local_positions.setter
+  def global_jacobian_block_nonzero_local_positions(self, value: List[List[int]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.global_jacobian_block_nonzero_local_positions: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.global_jacobian_block_nonzero_local_positions: each item must be a list.")
+      if any(not isinstance(position, int) for position in item):
+        raise TypeError("hessian.global_jacobian_block_nonzero_local_positions: nested items must be int.")
+    self.__global_jacobian_block_nonzero_local_positions = value
+
+  @property
+  def global_jacobian_children_sizes(self) -> List[List[int]]:
+    return self.__global_jacobian_children_sizes
+
+  @global_jacobian_children_sizes.setter
+  def global_jacobian_children_sizes(self, value: List[List[int]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.global_jacobian_children_sizes: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.global_jacobian_children_sizes: each item must be a list.")
+      if any(not isinstance(size, int) for size in item):
+        raise TypeError("hessian.global_jacobian_children_sizes: nested items must be int.")
+    self.__global_jacobian_children_sizes = value
+
+  @property
+  def global_jacobian_children_spans(self) -> List[List[int]]:
+    return self.__global_jacobian_children_spans
+
+  @global_jacobian_children_spans.setter
+  def global_jacobian_children_spans(self, value: List[List[int]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.global_jacobian_children_spans: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.global_jacobian_children_spans: each item must be a list.")
+      if any(not isinstance(span, int) for span in item):
+        raise TypeError("hessian.global_jacobian_children_spans: nested items must be int.")
+    self.__global_jacobian_children_spans = value
+
+  @property
+  def local_hessian_reordered_array(self) -> List[List[attribute]]:
+    return self.__local_hessian_reordered_array
+
+  @local_hessian_reordered_array.setter
+  def local_hessian_reordered_array(self, value: List[List[attribute]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.local_hessian_reordered_array: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.local_hessian_reordered_array: each item must be a list.")
+      if any(not isinstance(att, attribute) for att in item):
+        raise TypeError("hessian.local_hessian_reordered_array: nested items must be attributes.")
+    self.__local_hessian_reordered_array = value
+
+  @property
   def global_gradients_dynamic(self) -> List[attribute]:
     return self.__global_gradients_dynamic
 
@@ -438,6 +523,81 @@ class hessian(matrix):
     self.__hessian_and_gradient_kernels_dynamic = value
 
   @property
+  def global_jacobian_block_nonzero_attributes_dynamic(self) -> List[List[attribute]]:
+    return self.__global_jacobian_block_nonzero_attributes_dynamic
+
+  @global_jacobian_block_nonzero_attributes_dynamic.setter
+  def global_jacobian_block_nonzero_attributes_dynamic(self, value: List[List[attribute]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.global_jacobian_block_nonzero_attributes_dynamic: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.global_jacobian_block_nonzero_attributes_dynamic: each item must be a list.")
+      if any(not isinstance(att, attribute) for att in item):
+        raise TypeError("hessian.global_jacobian_block_nonzero_attributes_dynamic: nested items must be attributes.")
+    self.__global_jacobian_block_nonzero_attributes_dynamic = value
+
+  @property
+  def global_jacobian_block_nonzero_local_positions_dynamic(self) -> List[List[int]]:
+    return self.__global_jacobian_block_nonzero_local_positions_dynamic
+
+  @global_jacobian_block_nonzero_local_positions_dynamic.setter
+  def global_jacobian_block_nonzero_local_positions_dynamic(self, value: List[List[int]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.global_jacobian_block_nonzero_local_positions_dynamic: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.global_jacobian_block_nonzero_local_positions_dynamic: each item must be a list.")
+      if any(not isinstance(position, int) for position in item):
+        raise TypeError("hessian.global_jacobian_block_nonzero_local_positions_dynamic: nested items must be int.")
+    self.__global_jacobian_block_nonzero_local_positions_dynamic = value
+
+  @property
+  def global_jacobian_children_sizes_dynamic(self) -> List[List[int]]:
+    return self.__global_jacobian_children_sizes_dynamic
+
+  @global_jacobian_children_sizes_dynamic.setter
+  def global_jacobian_children_sizes_dynamic(self, value: List[List[int]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.global_jacobian_children_sizes_dynamic: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.global_jacobian_children_sizes_dynamic: each item must be a list.")
+      if any(not isinstance(size, int) for size in item):
+        raise TypeError("hessian.global_jacobian_children_sizes_dynamic: nested items must be int.")
+    self.__global_jacobian_children_sizes_dynamic = value
+
+  @property
+  def global_jacobian_children_spans_dynamic(self) -> List[List[int]]:
+    return self.__global_jacobian_children_spans_dynamic
+
+  @global_jacobian_children_spans_dynamic.setter
+  def global_jacobian_children_spans_dynamic(self, value: List[List[int]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.global_jacobian_children_spans_dynamic: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.global_jacobian_children_spans_dynamic: each item must be a list.")
+      if any(not isinstance(span, int) for span in item):
+        raise TypeError("hessian.global_jacobian_children_spans_dynamic: nested items must be int.")
+    self.__global_jacobian_children_spans_dynamic = value
+
+  @property
+  def local_hessian_reordered_array_dynamic(self) -> List[List[attribute]]:
+    return self.__local_hessian_reordered_array_dynamic
+
+  @local_hessian_reordered_array_dynamic.setter
+  def local_hessian_reordered_array_dynamic(self, value: List[List[attribute]]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.local_hessian_reordered_array_dynamic: value must be a list.")
+    for item in value:
+      if not isinstance(item, list):
+        raise TypeError("hessian.local_hessian_reordered_array_dynamic: each item must be a list.")
+      if any(not isinstance(att, attribute) for att in item):
+        raise TypeError("hessian.local_hessian_reordered_array_dynamic: nested items must be attributes.")
+    self.__local_hessian_reordered_array_dynamic = value
+
+  @property
   def indices_kernels(self) -> List[gradientIndicesKernel]:
     return self.__indices_kernels
 
@@ -507,6 +667,11 @@ class hessian(matrix):
     result.merged_hessian_and_gradient_attributes = self.__merged_hessian_and_gradient_attributes + other.merged_hessian_and_gradient_attributes
     result.hessian_and_gradient_kernels = self.__hessian_and_gradient_kernels + other.hessian_and_gradient_kernels
     result.sources = self.__sources + other.sources
+    result.global_jacobian_block_nonzero_attributes = self.__global_jacobian_block_nonzero_attributes + other.global_jacobian_block_nonzero_attributes
+    result.global_jacobian_block_nonzero_local_positions = self.__global_jacobian_block_nonzero_local_positions + other.global_jacobian_block_nonzero_local_positions
+    result.global_jacobian_children_sizes = self.__global_jacobian_children_sizes + other.global_jacobian_children_sizes
+    result.global_jacobian_children_spans = self.__global_jacobian_children_spans + other.global_jacobian_children_spans
+    result.local_hessian_reordered_array = self.__local_hessian_reordered_array + other.local_hessian_reordered_array
 
     result.global_gradients_dynamic = self.__global_gradients_dynamic + other.global_gradients_dynamic
     result.global_hessians_dynamic = self.__global_hessians_dynamic + other.global_hessians_dynamic
@@ -518,10 +683,12 @@ class hessian(matrix):
     result.intermediate_compute_pairs_dynamic = self.__intermediate_compute_pairs_dynamic + other.intermediate_compute_pairs_dynamic
     result.merged_hessian_and_gradient_attributes_dynamic = self.__merged_hessian_and_gradient_attributes_dynamic + other.merged_hessian_and_gradient_attributes_dynamic
     result.hessian_and_gradient_kernels_dynamic = self.__hessian_and_gradient_kernels_dynamic + other.hessian_and_gradient_kernels_dynamic
-    # print("Self source dynamic size:", len(self.__sources_dynamic))
-    # print("Other source dynamic size:", len(other.sources_dynamic))
     result.sources_dynamic = self.__sources_dynamic + other.sources_dynamic
-    # print("Result source dynamic size:", len(result.sources_dynamic))
+    result.global_jacobian_block_nonzero_attributes_dynamic = self.__global_jacobian_block_nonzero_attributes_dynamic + other.global_jacobian_block_nonzero_attributes_dynamic
+    result.global_jacobian_block_nonzero_local_positions_dynamic = self.__global_jacobian_block_nonzero_local_positions_dynamic + other.global_jacobian_block_nonzero_local_positions_dynamic
+    result.global_jacobian_children_sizes_dynamic = self.__global_jacobian_children_sizes_dynamic + other.global_jacobian_children_sizes_dynamic
+    result.global_jacobian_children_spans_dynamic = self.__global_jacobian_children_spans_dynamic + other.global_jacobian_children_spans_dynamic
+    result.local_hessian_reordered_array_dynamic = self.__local_hessian_reordered_array_dynamic + other.local_hessian_reordered_array_dynamic
 
     result.indices_kernels = self.__indices_kernels + other.indices_kernels
     result.indices_kernels_dynamic = self.__indices_kernels_dynamic + other.indices_kernels_dynamic

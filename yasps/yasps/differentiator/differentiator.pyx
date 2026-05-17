@@ -25,6 +25,16 @@ class differentiator:
     self.__gradient: Optional[attribute] = None
     self.__hessian: Optional[attribute] = None
 
+    # those are the attributes that helps with the separation of jacobian and hessian
+    # when jacobian is created, it is very likely that it is not only block sparse
+    # but also each block is sparse
+    # so what we do is store the nonzeor positions, and attributes so we can later on reconstruct the jacobian matrix's diagonal blocks
+    self.__global_jacobian_block_nonzero_attributes: List[attribute] = []
+    self.__global_jacobian_block_nonzero_local_positions: List[int] = []
+    self.__global_jacobian_children_sizes: List[int] = []
+    self.__global_jacobian_children_spans: List[int] = []
+    self.__local_hessian_reordered_array: List[attribute] = []
+
   def __resetDiff2State(
     self,
     source: attribute,
@@ -48,14 +58,12 @@ class differentiator:
     self.__gradient = None
     self.__hessian = None
 
-    # those are the attributes that helps with the separation of jacobian and hessian
-    # when jacobian is created, it is very likely that it is not only block sparse
-    # but also each block is sparse
-    # so what we do is store the nonzeor positions, and attributes so we can later on reconstruct the jacobian matrix's diagonal blocks
-    self.__global_jacobian_block_nonzero_attributes: List[attribute] = []
-    self.__global_jacobian_block_nonzero_local_positions: List[int] = []
-    self.__global_jacobian_children_sizes: List[int] = []
-    self.__global_jacobian_children_spans: List[int] = []
+
+    self.__global_jacobian_block_nonzero_attributes = []
+    self.__global_jacobian_block_nonzero_local_positions = []
+    self.__global_jacobian_children_sizes = []
+    self.__global_jacobian_children_spans = []
+    self.__local_hessian_reordered_array = []
 
   def __sameTargets(self, target1: List[attribute], target2: List[attribute]) -> bool:
     if len(target1) != len(target2):
@@ -129,6 +137,11 @@ class differentiator:
       hessian_local.merged_hessian_and_gradient_attributes = [None]
       hessian_local.hessian_and_gradient_kernels = [None]
       hessian_local.sources = [source]
+      hessian_local.global_jacobian_block_nonzero_attributes = [self.__global_jacobian_block_nonzero_attributes]
+      hessian_local.global_jacobian_block_nonzero_local_positions = [self.__global_jacobian_block_nonzero_local_positions]
+      hessian_local.global_jacobian_children_sizes = [self.__global_jacobian_children_sizes]
+      hessian_local.global_jacobian_children_spans = [self.__global_jacobian_children_spans]
+      hessian_local.local_hessian_reordered_array = [self.__local_hessian_reordered_array]
     else:
       hessian_local.indices_kernels_dynamic = [indices_kernel]
       hessian_local.global_gradients_dynamic = [self.__gradient]
@@ -142,6 +155,11 @@ class differentiator:
       hessian_local.merged_hessian_and_gradient_attributes_dynamic = [None]
       hessian_local.hessian_and_gradient_kernels_dynamic = [None]
       hessian_local.sources_dynamic = [source]
+      hessian_local.global_jacobian_block_nonzero_attributes_dynamic = [self.__global_jacobian_block_nonzero_attributes]
+      hessian_local.global_jacobian_block_nonzero_local_positions_dynamic = [self.__global_jacobian_block_nonzero_local_positions]
+      hessian_local.global_jacobian_children_sizes_dynamic = [self.__global_jacobian_children_sizes]
+      hessian_local.global_jacobian_children_spans_dynamic = [self.__global_jacobian_children_spans]
+      hessian_local.local_hessian_reordered_array_dynamic = [self.__local_hessian_reordered_array]
     return hessian_local
 
   def __generateGradientThroughPathDict(self, wrt: List[attribute], autodiff_engine: autodiff) -> None:
@@ -337,6 +355,31 @@ class differentiator:
       col_offset += child_span
     print(f"Nonzero element count: {len(nonzero_attributes_array)} / {children_global_jacobian.size}")
     print(f"True nonzero count: {sum(children_global_jacobian[i].isZero == 0 for i in range(children_global_jacobian.size))}")
+
+    # if we need to separate the jacobian and hessian
+    # we will need to do some kind of reordering
+    # this is because the jacobian is blocked diagonal
+    # so we want to process the matrices by order
+    local_hessian_reordered_array = []
+    row_offset = 0
+    for i in range(len(children_sizes)):
+      child_size_i = children_sizes[i]
+      col_offset = 0
+      for j in range(len(children_sizes)):
+        child_size_j = children_sizes[j]
+        for m in range(child_size_i):
+          for n in range(child_size_j):
+            local_hessian_reordered_array.append(local_hessian[row_offset + m, col_offset + n])
+        col_offset += child_size_j
+      row_offset += child_size_i
+
+    self.__global_jacobian_block_nonzero_attributes = nonzero_attributes_array
+    self.__global_jacobian_block_nonzero_local_positions = nonzero_local_positions
+    self.__global_jacobian_children_sizes = children_sizes
+    self.__global_jacobian_children_spans = block_sizes
+    self.__local_hessian_reordered_array = local_hessian_reordered_array
+
+
 
 
 
