@@ -63,6 +63,8 @@ class hessian(matrix):
     self.__merged_hessian_and_gradient_attributes: List[Optional[attribute]] = []
     self.__hessian_and_gradient_kernels: List[Optional[hessianAndGradientKernel]] = []
     self.__sources: List[attribute] = []
+
+    # for separation of hessian and jacobian
     self.__global_jacobian_block_nonzero_attributes: List[List[attribute]] = []
     self.__global_jacobian_block_nonzero_local_positions: List[List[int]] = []
     self.__global_jacobian_children_sizes:  List[List[int]] = []
@@ -80,6 +82,8 @@ class hessian(matrix):
     self.__merged_hessian_and_gradient_attributes_dynamic: List[Optional[attribute]] = []
     self.__hessian_and_gradient_kernels_dynamic: List[Optional[hessianAndGradientKernel]] = []
     self.__sources_dynamic: List[attribute] = []
+
+    # for separation of hessian and jacobian
     self.__global_jacobian_block_nonzero_attributes_dynamic: List[List[attribute]] = []
     self.__global_jacobian_block_nonzero_local_positions_dynamic: List[List[int]] = []
     self.__global_jacobian_children_sizes_dynamic:  List[List[int]] = []
@@ -88,6 +92,10 @@ class hessian(matrix):
 
     self.__indices_kernels: List[gradientIndicesKernel] = []
     self.__indices_kernels_dynamic: List[gradientIndicesKernel] = []
+
+    self.__placement_reorder_kernels = []
+    self.__placement_reorder_kernels_dynamic = []
+
     self.__block_indices_gpu: List[gpuarray.GPUArray] = []
     self.__block_indices_gpu_dynamic: List[gpuarray.GPUArray] = []
 
