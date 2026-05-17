@@ -12,6 +12,7 @@ import numpy as np
 import pycuda.autoinit
 import pycuda.gpuarray as gpuarray
 from yasps.helper import timed
+from yasps.placementReorderKernel import placementReorderKernel
 
 
 class hessian(matrix):
@@ -67,9 +68,10 @@ class hessian(matrix):
     # for separation of hessian and jacobian
     self.__global_jacobian_block_nonzero_attributes: List[List[attribute]] = []
     self.__global_jacobian_block_nonzero_local_positions: List[List[int]] = []
-    self.__global_jacobian_children_sizes:  List[List[int]] = []
-    self.__global_jacobian_children_spans:  List[List[int]] = []
-    self.__local_hessian_reordered_array:  List[List[attribute]] = []
+    self.__global_jacobian_children_sizes: List[List[int]] = []
+    self.__global_jacobian_children_spans: List[List[int]] = []
+    self.__local_hessian_reordered_array: List[List[attribute]] = []
+    self.__placement_reorder_kernels: List[placementReorderKernel] = [placementReorderKernel()]
 
     self.__global_gradients_dynamic: List[attribute] = []
     self.__global_hessians_dynamic: List[attribute] = []
@@ -86,9 +88,10 @@ class hessian(matrix):
     # for separation of hessian and jacobian
     self.__global_jacobian_block_nonzero_attributes_dynamic: List[List[attribute]] = []
     self.__global_jacobian_block_nonzero_local_positions_dynamic: List[List[int]] = []
-    self.__global_jacobian_children_sizes_dynamic:  List[List[int]] = []
-    self.__global_jacobian_children_spans_dynamic:  List[List[int]] = []
-    self.__local_hessian_reordered_array_dynamic:  List[List[attribute]] = []
+    self.__global_jacobian_children_sizes_dynamic: List[List[int]] = []
+    self.__global_jacobian_children_spans_dynamic: List[List[int]] = []
+    self.__local_hessian_reordered_array_dynamic: List[List[attribute]] = []
+    self.__placement_reorder_kernels_dynamic: List[placementReorderKernel] = [placementReorderKernel()]
 
     self.__indices_kernels: List[gradientIndicesKernel] = []
     self.__indices_kernels_dynamic: List[gradientIndicesKernel] = []
@@ -653,6 +656,30 @@ class hessian(matrix):
       raise TypeError("hessian.block_indices_gpu_dynamic: all items must be GPUArray.")
     self.__block_indices_gpu_dynamic = value
 
+  @property
+  def placement_reorder_kernels(self) -> List[placementReorderKernel]:
+    return self.__placement_reorder_kernels
+
+  @placement_reorder_kernels.setter
+  def placement_reorder_kernels(self, value: List[placementReorderKernel]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.placement_reorder_kernels: value must be a list.")
+    if any(not isinstance(item, placementReorderKernel) for item in value):
+      raise TypeError("hessian.placement_reorder_kernels: all items must be placementReorderKernel.")
+    self.__placement_reorder_kernels = value
+
+  @property
+  def placement_reorder_kernels_dynamic(self) -> List[placementReorderKernel]:
+    return self.__placement_reorder_kernels_dynamic
+
+  @placement_reorder_kernels_dynamic.setter
+  def placement_reorder_kernels_dynamic(self, value: List[placementReorderKernel]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.placement_reorder_kernels_dynamic: value must be a list.")
+    if any(not isinstance(item, placementReorderKernel) for item in value):
+      raise TypeError("hessian.placement_reorder_kernels_dynamic: all items must be placementReorderKernel.")
+    self.__placement_reorder_kernels_dynamic = value
+
   def __add__(self, other: hessian):
     if not isinstance(other, hessian):
       raise TypeError(f"hessian.__add__: unsupported operand type(s) for +: 'hessian' and '{type(other).__name__}'")
@@ -680,6 +707,7 @@ class hessian(matrix):
     result.global_jacobian_children_sizes = self.__global_jacobian_children_sizes + other.global_jacobian_children_sizes
     result.global_jacobian_children_spans = self.__global_jacobian_children_spans + other.global_jacobian_children_spans
     result.local_hessian_reordered_array = self.__local_hessian_reordered_array + other.local_hessian_reordered_array
+    result.placement_reorder_kernels = self.__placement_reorder_kernels + other.placement_reorder_kernels
 
     result.global_gradients_dynamic = self.__global_gradients_dynamic + other.global_gradients_dynamic
     result.global_hessians_dynamic = self.__global_hessians_dynamic + other.global_hessians_dynamic
@@ -697,6 +725,7 @@ class hessian(matrix):
     result.global_jacobian_children_sizes_dynamic = self.__global_jacobian_children_sizes_dynamic + other.global_jacobian_children_sizes_dynamic
     result.global_jacobian_children_spans_dynamic = self.__global_jacobian_children_spans_dynamic + other.global_jacobian_children_spans_dynamic
     result.local_hessian_reordered_array_dynamic = self.__local_hessian_reordered_array_dynamic + other.local_hessian_reordered_array_dynamic
+    result.placement_reorder_kernels_dynamic = self.__placement_reorder_kernels_dynamic + other.placement_reorder_kernels_dynamic
 
     result.indices_kernels = self.__indices_kernels + other.indices_kernels
     result.indices_kernels_dynamic = self.__indices_kernels_dynamic + other.indices_kernels_dynamic
@@ -720,6 +749,19 @@ class hessian(matrix):
     )
     self.__compression_kernel.compressCoordinatesAndDimensions()
     self.__block_indices_gpu = self.__compression_kernel.lookupArrays
+
+    for i in range(len(self.__placement_reorder_kernels)):
+      if self.__separate_hessian_jacobian[i] and not self.__project_entire_hessian[i]:
+        # we will need to initialize the placement reorder kernel and do the computation
+        self.__placement_reorder_kernels[i].generateKernel(
+          self.__global_jacobian_children_spans[i],
+          self.__indices_kernels[i].maxNumIndicesNeeded,
+          self.__sources[i]
+        )
+        self.__placement_reorder_kernels[i].reorderPlacementIndices(
+          self.__indices_kernels[i],
+          self.__block_indices_gpu[i],
+        )
 
     total_block_size = self.__compression_kernel.totalBlockSize
     if self.blocks_flattened.size < total_block_size:
@@ -756,6 +798,20 @@ class hessian(matrix):
         tmp_count += 1
       else:
         self.__block_indices_gpu_dynamic.append(gpuarray.empty(0, dtype=np.uint32))
+
+    for i in range(len(self.__placement_reorder_kernels_dynamic)):
+      if self.__separate_hessian_jacobian_dynamic[i] and not self.__project_entire_hessian_dynamic[i]:
+        # we will need to initialize the placement reorder kernel and do the computation
+        self.__placement_reorder_kernels_dynamic[i].generateKernel(
+          self.__global_jacobian_children_spans_dynamic[i],
+          self.__indices_kernels_dynamic[i].maxNumIndicesNeeded,
+          self.__sources_dynamic[i]
+        )
+        if (self.__indices_kernels_dynamic[i].numTotalCoordinates > 0):
+          self.__placement_reorder_kernels_dynamic[i].reorderPlacementIndices(
+            self.__indices_kernels_dynamic[i],
+            self.__block_indices_gpu_dynamic[i],
+          )
 
     total_block_size = self.__compression_kernel_dynamic.totalBlockSize
     if self.blocks_flattened_dynamic.size < total_block_size:
@@ -795,6 +851,14 @@ class hessian(matrix):
       else:
         self.__block_indices_gpu_dynamic.append(gpuarray.empty(0, dtype=np.uint32))
 
+    for i in range(len(self.__placement_reorder_kernels_dynamic)):
+      if self.__separate_hessian_jacobian_dynamic[i] and not self.__project_entire_hessian_dynamic[i]:
+        if (self.__indices_kernels_dynamic[i].numTotalCoordinates > 0):
+          self.__placement_reorder_kernels_dynamic[i].reorderPlacementIndices(
+            self.__indices_kernels_dynamic[i],
+            self.__block_indices_gpu_dynamic[i],
+          )
+
     total_block_size = self.__compression_kernel_dynamic.totalBlockSize
     if self.blocks_flattened_dynamic.size < total_block_size:
       self.blocks_flattened_dynamic = gpuarray.zeros(total_block_size, dtype=np.float64)
@@ -813,33 +877,46 @@ class hessian(matrix):
     global_inner_hessian: Optional[attribute],
     project_entire_hessian: bool,
     separate_hessian_jacobian: bool,
-    source: attribute
+    source: attribute,
+    local_hessian_reordered_array: List[attribute],
+    global_jacobian_block_nonzero_attributes: List[attribute],
   ) -> attribute:
     merged_hessian_and_gradient = []
+    merged_hessian_rows = 0
+    merged_hessian_cols = 0
 
     if separate_hessian_jacobian and not project_entire_hessian:
       assert global_jacobian is not None
       assert global_inner_hessian is not None
-      for i in range(global_jacobian.rows):
-        for j in range(global_jacobian.cols):
-          merged_hessian_and_gradient.append(global_jacobian[i, j])
-      for i in range(global_inner_hessian.rows):
-        for j in range(global_inner_hessian.cols):
-          merged_hessian_and_gradient.append(global_inner_hessian[i, j])
-      left_over = global_jacobian.cols - (global_inner_hessian.rows * global_inner_hessian.cols) % global_jacobian.cols
-      for _ in range(left_over):
-        merged_hessian_and_gradient.append(0.0)
+      for item in local_hessian_reordered_array:
+        merged_hessian_and_gradient.append(item)
+      for item in global_jacobian_block_nonzero_attributes:
+        merged_hessian_and_gradient.append(item)
+      for i in range(global_gradient.size):
+        merged_hessian_and_gradient.append(global_gradient[i])
+      merged_hessian_rows = 1
+      merged_hessian_cols = len(merged_hessian_and_gradient)
+
+      # for i in range(global_jacobian.rows):
+      #   for j in range(global_jacobian.cols):
+      #     merged_hessian_and_gradient.append(global_jacobian[i, j])
+      # for i in range(global_inner_hessian.rows):
+      #   for j in range(global_inner_hessian.cols):
+      #     merged_hessian_and_gradient.append(global_inner_hessian[i, j])
+      # left_over = global_jacobian.cols - (global_inner_hessian.rows * global_inner_hessian.cols) % global_jacobian.cols
+      # for _ in range(left_over):
+      #   merged_hessian_and_gradient.append(0.0)
+
     else:
       for i in range(global_hessian.rows):
         for j in range(global_hessian.cols):
           merged_hessian_and_gradient.append(global_hessian[i, j])
-
-    for i in range(global_gradient.size):
-      merged_hessian_and_gradient.append(global_gradient[i])
-
-    merged_hessian_rows = len(merged_hessian_and_gradient) // global_gradient.size
-    merged_attribute = attribute.to_array(merged_hessian_and_gradient, rows=merged_hessian_rows, cols=global_gradient.size)
-    source.correspondance.addAttribute(f'hessian_and_gradient_d2_{source.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = merged_attribute, rows = merged_hessian_rows, cols = global_gradient.size)
+      for i in range(global_gradient.size):
+        merged_hessian_and_gradient.append(global_gradient[i])
+      merged_hessian_rows = len(merged_hessian_and_gradient) // global_gradient.size
+      merged_hessian_cols = global_gradient.size
+    merged_attribute = attribute.to_array(merged_hessian_and_gradient, rows=merged_hessian_rows, cols=merged_hessian_cols)
+    source.correspondance.addAttribute(f'hessian_and_gradient_d2_{source.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = merged_attribute, rows = merged_hessian_rows, cols = merged_hessian_cols)
     return merged_attribute
 
   def __ensureTermKernel(self, index: int, dynamic_term = False) -> None:
@@ -855,6 +932,11 @@ class hessian(matrix):
       kernels = self.__hessian_and_gradient_kernels
       sources = self.__sources
       indices_kernels = self.__indices_kernels
+      global_jacobian_block_nonzero_attributes = self.__global_jacobian_block_nonzero_attributes
+      global_jacobian_block_nonzero_local_positions = self.__global_jacobian_block_nonzero_local_positions
+      global_jacobian_children_sizes = self.__global_jacobian_children_sizes
+      global_jacobian_children_spans = self.__global_jacobian_children_spans
+      local_hessian_reordered_array = self.__local_hessian_reordered_array
     else:
       global_gradients = self.__global_gradients_dynamic
       global_hessians = self.__global_hessians_dynamic
@@ -867,6 +949,12 @@ class hessian(matrix):
       kernels = self.__hessian_and_gradient_kernels_dynamic
       sources = self.__sources_dynamic
       indices_kernels = self.__indices_kernels_dynamic
+      global_jacobian_block_nonzero_attributes = self.__global_jacobian_block_nonzero_attributes_dynamic
+      global_jacobian_block_nonzero_local_positions = self.__global_jacobian_block_nonzero_local_positions_dynamic
+      global_jacobian_children_sizes = self.__global_jacobian_children_sizes_dynamic
+      global_jacobian_children_spans = self.__global_jacobian_children_spans_dynamic
+      local_hessian_reordered_array = self.__local_hessian_reordered_array_dynamic
+
 
     if index >= len(global_gradients) or index >= len(global_hessians):
       raise ValueError("hessian.__ensureTermKernel: symbolic term metadata is incomplete.")
@@ -884,7 +972,9 @@ class hessian(matrix):
         global_inner_hessians[index] if index < len(global_inner_hessians) else None,
         project_entire_hessian[index],
         separate_hessian_jacobian[index],
-        sources[index]
+        sources[index],
+        local_hessian_reordered_array[index],
+        global_jacobian_block_nonzero_attributes[index]
       )
 
     if kernels[index] is None:

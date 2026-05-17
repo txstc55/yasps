@@ -371,7 +371,7 @@ class differentiator:
     for i in range(len(children_sizes)):
       child_size_i = children_sizes[i]
       col_offset = 0
-      for j in range(len(children_sizes)):
+      for j in range(i, len(children_sizes)):
         child_size_j = children_sizes[j]
         for m in range(child_size_i):
           for n in range(child_size_j):

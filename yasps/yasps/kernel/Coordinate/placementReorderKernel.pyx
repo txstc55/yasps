@@ -16,19 +16,24 @@ from yasps.helper import prune_duplicate_functions, timed
 import pycuda.gpuarray as gpuarray
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 class placementReorderKernel:
-  def __init__(self,
+  def __init__(self):
+    self.__energy: Optional[attribute] = None
+    self.__kernel = None
+    self.__reordered_lookups = gpuarray.empty(0, dtype=np.uint32) # the reordered lookups
+    self.__kernelString: str = ""
+
+  def __generate_kernel_string(self,
     global_jacobian_children_spans: List[int],
     max_num_indices: int, # the maximum number of indices for each instance
     energy: attribute # the actual attribute
   ):
     self.__energy = energy
-    self.__kernel = None
     span_count = len(global_jacobian_children_spans)
     large_block_count = (span_count * (span_count + 1)) // 2 # this is the number of large blocks in the hessian, which is also the number of small blocks in the gradient
     global_jacobian_children_spans_outer = [0]
     for span in global_jacobian_children_spans:
       global_jacobian_children_spans_outer.append(global_jacobian_children_spans_outer[-1] + span)
-    self.__kernelString: str = f"""
+    self.__kernelString = f"""
 #include <cuda_runtime.h>
 #include <vector>
 __device__ __constant__ unsigned short int jacobian_block_spans[{span_count + 1}] = {{{', '.join(str(span) for span in global_jacobian_children_spans_outer)}}}; // this is the size of each jacobian block, this will also tell us how to segment the hessian blocks
@@ -168,7 +173,12 @@ int reorderPlacementIndices(
 """
     # self.__generateKernel()
 
-  def __generateKernel(self):
+  def __generateKernel(
+    self,
+    global_jacobian_children_spans: List[int],
+    max_num_indices: int, # the maximum number of indices for each instance
+    energy: attribute # the actual attribute
+  ):
     # ok now we compile the kernel by saving it to a file and then calling nvcc
     file_name = f".yasps_tmp/{self.__energy.fullName}_reorder_placement"
     if os.path.exists(f'{file_name}.so'):
@@ -185,6 +195,7 @@ int reorderPlacementIndices(
       ]
       return
     else:
+      self.__generate_kernel_string(global_jacobian_children_spans, max_num_indices, energy)
       with open(f"{file_name}.cu", "w") as f:
         f.write(self.__kernelString)
       # now we compile the kernel using nvcc
@@ -199,10 +210,15 @@ int reorderPlacementIndices(
         ctypes.c_void_p, # lookupsPermuted
         ctypes.c_uint32 # numInstances
       ]
-  def generateKernel(self):
+  def generateKernel(
+    self,
+    global_jacobian_children_spans: List[int],
+    max_num_indices: int, # the maximum number of indices for each instance
+    energy: attribute # the actual attribute
+  ):
     if self.__kernel is not None:
       return
-    self.__generateKernel()
+    self.__generateKernel(global_jacobian_children_spans, max_num_indices, energy)
 
   def __to_void_p(self, x: gpuarray.GPUArray):
     if x is None or x.size == 0:
@@ -216,16 +232,21 @@ int reorderPlacementIndices(
     self,
     giKernel: gradientIndicesKernel,
     lookups: gpuarray.GPUArray,
-    lookupsPermuted: gpuarray.GPUArray
   ):
     if self.__energy.numInstances <= 0:
       return
-    assert self.__kernel is not None, "Kernel has not been compiled yet"
+    assert self.__kernel is not None, "placementReorderKernel.reorderPlacementindices: Kernel has not been compiled yet"
+    if self.__energy.numInstances > self.__reordered_lookups.size:
+      self.__reordered_lookups = gpuarray.zeros(self.__energy.numInstances, dtype=np.uint32)
     self.__kernel(
       self.__to_void_p(giKernel.outputSizes),
       self.__to_void_p(giKernel.outputPermutations),
       self.__to_void_p(lookups),
       self.__to_void_p(giKernel.outputCompressedCoordinateCountsOuter),
-
+      self.__to_void_p(self.__reordered_lookups),
+      ctypes.c_uint32(self.__energy.numInstances)
     )
-    pass
+
+  @property
+  def reordered_lookups(self):
+    return self.__reordered_lookups
