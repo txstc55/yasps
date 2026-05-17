@@ -27,3 +27,7 @@ from .attributeOperations import *
 from .path import path
 from .differentiator import differentiator
 from .context import context
+from .hessianKernelHost import hessianKernelHost
+from .hessianKernelHeader import hessianKernelHeader
+from .hessianKernelFullProject import hessianKernelFullProject
+from .hessianKernelNoProject import hessianKernelNoProject

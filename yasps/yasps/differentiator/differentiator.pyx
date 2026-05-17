@@ -273,6 +273,7 @@ class differentiator:
     second_part_hessian_array = [0.0 for _ in range(global_jacobian.cols * global_jacobian.cols)]
     block_offset = 0
     block_sizes = [] # record the span of jacobian (the column)
+    children_sizes = []
     for child in children:
       child_global_hessian = self.__generateHessianThroughRecursion(child, wrt)
       child_size = child.size
@@ -281,8 +282,10 @@ class differentiator:
       hessian_rows = int(math.sqrt(hessian_size))
       if child.operator == JOIN:
         block_sizes += [hessian_rows] * child.through.dimension  # this tells us in the final Hessian (local), what span does this child cover
+        children_sizes += [child.size // child.through.dimension] * child.through.dimension # this tells us in the final Hessian (global), what span does this child cover
       elif child.operator == UNION or child.operator == DATA:
         block_sizes.append(hessian_rows)
+        children_sizes.append(child.size)
       assert hessian_rows * hessian_rows == hessian_size, f"differentiator.__generateGlobalHessianForEnergy: hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
       hessian_cols = hessian_rows
       for i in range(hessian_rows):
@@ -315,12 +318,12 @@ class differentiator:
     col_offset = 0 # the offset of columns in the jacobian matrix
     nonzero_attributes_array = []
     nonzero_local_positions = []
-    print("Children sizes: ", [child.size for child in children])
+    print("Children sizes: ", children_sizes)
     print("Block sizes: ", block_sizes)
     print("Jacobian Size: ", (children_global_jacobian.rows, children_global_jacobian.cols))
-    for (i, child) in enumerate(children):
+    for i in range(len(children_sizes)):
       nonzero_counts = 0
-      child_size = child.size
+      child_size = children_sizes[i]
       child_span = block_sizes[i]
       for i in range(child_size):
         for j in range(child_span):
@@ -332,6 +335,8 @@ class differentiator:
       # the jacobian matrix is always block diagonal, so once we are done with one child, we can skip to the next diagonal block
       row_offset += child_size
       col_offset += child_span
+    print(f"Nonzero element count: {len(nonzero_attributes_array)} / {children_global_jacobian.size}")
+    print(f"True nonzero count: {sum(children_global_jacobian[i].isZero == 0 for i in range(children_global_jacobian.size))}")
 
 
 
