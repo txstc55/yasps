@@ -15,6 +15,7 @@ import ctypes
 from yasps.helper import prune_duplicate_functions, timed
 import pycuda.gpuarray as gpuarray
 from yasps.gradientIndicesKernel import gradientIndicesKernel
+import numpy as np
 class placementReorderKernel:
   def __init__(self):
     self.__energy: Optional[attribute] = None
@@ -36,7 +37,7 @@ class placementReorderKernel:
     self.__kernelString = f"""
 #include <cuda_runtime.h>
 #include <vector>
-__device__ __constant__ unsigned short int jacobian_block_spans[{span_count + 1}] = {{{', '.join(str(span) for span in global_jacobian_children_spans_outer)}}}; // this is the size of each jacobian block, this will also tell us how to segment the hessian blocks
+__device__ __constant__ unsigned short int jacobian_block_spans_outer[{span_count + 1}] = {{{', '.join(str(span) for span in global_jacobian_children_spans_outer)}}}; // this is the size of each jacobian block, this will also tell us how to segment the hessian blocks
 
 __device__ inline int upper_tri_index_compute(int i, int j) {{
   return i * {span_count} - (i * (i - 1)) / 2 + (j - i);
@@ -55,6 +56,7 @@ __global__ void reorderPlacementIndicesGlobal(
     return;
   }}
   const unsigned int start = coordinatesOuter[instance];
+  const unsigned int end = coordinatesOuter[instace + 1];
   unsigned short int num_small_blocks_per_large_block[{large_block_count}] = {{0}};
   // we first need to determine, in each large blocks, how many small blocks there are
   unsigned short int current_row = 0;
@@ -69,7 +71,7 @@ __global__ void reorderPlacementIndicesGlobal(
       continue;
     }}
     for (large_block_row_index; large_block_row_index < {span_count}; large_block_row_index++){{
-      if (jacobian_block_spans[large_block_row_index] < current_row && jacobian_block_spans[large_block_row_index + 1] >= current_row){{
+      if (jacobian_block_spans_outer[large_block_row_index] < current_row && jacobian_block_spans_outer[large_block_row_index + 1] >= current_row){{
         break;
       }}
     }}
@@ -82,7 +84,7 @@ __global__ void reorderPlacementIndicesGlobal(
         continue;
       }}
       for (large_block_col_index; large_block_col_index < {span_count}; large_block_col_index++){{
-        if (jacobian_block_spans[large_block_col_index] < current_col && jacobian_block_spans[large_block_col_index + 1] >= current_col){{
+        if (jacobian_block_spans_outer[large_block_col_index] < current_col && jacobian_block_spans_outer[large_block_col_index + 1] >= current_col){{
           break;
         }}
       }}
@@ -115,7 +117,7 @@ __global__ void reorderPlacementIndicesGlobal(
       continue;
     }}
     for (large_block_row_index; large_block_row_index < {span_count}; large_block_row_index++){{
-      if (jacobian_block_spans[large_block_row_index] < current_row && jacobian_block_spans[large_block_row_index + 1] >= current_row){{
+      if (jacobian_block_spans_outer[large_block_row_index] < current_row && jacobian_block_spans_outer[large_block_row_index + 1] >= current_row){{
         break;
       }}
     }}
@@ -128,7 +130,7 @@ __global__ void reorderPlacementIndicesGlobal(
         continue;
       }}
       for (large_block_col_index; large_block_col_index < {span_count}; large_block_col_index++){{
-        if (jacobian_block_spans[large_block_col_index] < current_col && jacobian_block_spans[large_block_col_index + 1] >= current_col){{
+        if (jacobian_block_spans_outer[large_block_col_index] < current_col && jacobian_block_spans_outer[large_block_col_index + 1] >= current_col){{
           break;
         }}
       }}
@@ -140,6 +142,9 @@ __global__ void reorderPlacementIndicesGlobal(
       lookupsPermuted[start + true_block_placement] = lookups[start + total_blocks];
       total_blocks += 1;
     }}
+  }}
+  if (total_blocks != (end - start)){{
+    printf("Total blocks is %d, but the actual total blocks should be: %d\\n", total_blocks, end - start);
   }}
 }}
 

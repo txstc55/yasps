@@ -51,3 +51,12 @@ class deviceKernel:
   @property
   def attributeName(self) -> str:
     return self.__attributeName
+
+  # allow directly modifying the kernelString if necessary
+  @kernelString.setter
+  def kernelString(self, new_kernel_string: str):
+    self.__kernelString = new_kernel_string
+
+  @kernelHeader.setter
+  def kernelHeader(self, new_kernel_header: str):
+    self.__kernelHeader = new_kernel_header

@@ -31,3 +31,5 @@ from .hessianKernelHost import hessianKernelHost
 from .hessianKernelHeader import hessianKernelHeader
 from .hessianKernelFullProject import hessianKernelFullProject
 from .hessianKernelNoProject import hessianKernelNoProject
+from .placementReorderKernel import placementReorderKernel
+from .hessianKernelSeparateJacobian import hessianKernelSeparateJacobian

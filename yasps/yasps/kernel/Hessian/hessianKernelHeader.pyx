@@ -4,9 +4,8 @@ from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 from typing import List, Set
 class hessianKernelHeader:
-  def __init__(self, att: attribute, unique_gradient_sizes: Set[int]):
+  def __init__(self, att: attribute, unique_gradient_sizes: Set[int], sortedDependency: List[deviceKernel]):
     self.__att = att
-    sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions

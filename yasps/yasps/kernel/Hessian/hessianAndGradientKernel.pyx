@@ -18,6 +18,7 @@ from yasps.hessianKernelHeader import hessianKernelHeader
 from yasps.hessianKernelFullProject import hessianKernelFullProject
 from yasps.hessianKernelNoProject import hessianKernelNoProject
 from yasps.hessianKernelHost import hessianKernelHost
+from yasps.hessianKernelSeparateJacobian import hessianKernelSeparateJacobian
 
 class hessianAndGradientKernel:
   att_name_to_gradient_sizes: dict[str, Set[int]] = {}  # maps attribute names to their unique gradient sizes, this way we only need to generate unique gradient sizes once
@@ -50,7 +51,17 @@ class hessianAndGradientKernel:
     return ctypes.c_void_p(int(x.gpudata))
 
   @timed("hessianAndGradientKernel.generateKernel")
-  def generateKernel(self, unique_gradient_sizes: List[int], max_child_gradient_size: int, wrt: List[attribute], max_num_indices: int) -> None:
+  def generateKernel(
+    self,
+    unique_gradient_sizes: List[int],
+    max_child_gradient_size: int,  # the maximum gradient segment size
+    wrt: List[attribute], # wrt
+    max_num_indices: int, # max number of indices for each local hessian
+    global_jacobian_block_nonzero_attributes: List[attribute] = [],
+    global_jacobian_block_nonzero_local_positions: List[attribute] = [],
+    global_jacobian_children_sizes: List[int] = [],
+    global_jacobian_children_spans: List[int] = [],
+  ) -> None:
     # check if our unique gradient sizes contains the input gradient sizes
     # print("unique gradient sizes are", unique_gradient_sizes)
     if (set(unique_gradient_sizes).issubset(self.__unique_gradient_sizes) and self.__project_entire_hessian) or (max_child_gradient_size in self.__unique_gradient_sizes and not self.__project_entire_hessian):
@@ -63,8 +74,23 @@ class hessianAndGradientKernel:
       print("Max child gradient size before is", max_child_gradient_size)
       self.__unique_gradient_sizes.add(max_child_gradient_size)
       print("Unique gradient sizes after is", self.__unique_gradient_sizes)
+
+
+    # if we need to separate the jacobian and hessian, the first thing we need to do is reconstruct the jacobian and hessian symbolically
+    # which we will use to figure out how to compute the final hessian block by performing J_i^T H_ij J_j for each block
+    separate_jacobian_kernel: hessianKernelSeparateJacobian = hessianKernelSeparateJacobian(self.__att, self.__gradient_only)
+    if self.__clear_separation:
+      separate_jacobian_kernel.create_multiplied_blocks(
+        global_jacobian_block_nonzero_attributes,
+        global_jacobian_block_nonzero_local_positions,
+        global_jacobian_children_sizes,
+        global_jacobian_children_spans
+      )
+
+
+
     ## first we get all the header functions
-    sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
+    sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents + separate_jacobian_kernel.dependents
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
@@ -76,7 +102,7 @@ class hessianAndGradientKernel:
     # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
     print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
-      hessian_header_file = hessianKernelHeader(self.__att, self.__unique_gradient_sizes)
+      hessian_header_file = hessianKernelHeader(self.__att, self.__unique_gradient_sizes, sortedDependency)
       with open(".yasps_tmp/allHeaders.cuh", 'w') as f:
         f.write(hessian_header_file.kernelString)
         f.close()
@@ -129,8 +155,10 @@ extern "C"{{
           with open(cu_file, 'w') as f:
             if self.__project_entire_hessian:
               f.write(hessianKernelFullProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName).kernelString)
-            else:
+            elif not self.__clear_separation:
               f.write(hessianKernelNoProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName).kernelString)
+            else:
+              f.write(separate_jacobian_kernel.generateKernelString(max_num_indices, attributeName).kernelString)
             f.close()
           compile_cmd = [
             "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",

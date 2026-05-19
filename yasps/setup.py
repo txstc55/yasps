@@ -33,7 +33,9 @@ extensions = [
     Extension("yasps.hessianKernelHeader", ["yasps/kernel/Hessian/hessianKernelHeader.pyx"]),
     Extension("yasps.hessianKernelFullProject", ["yasps/kernel/Hessian/hessianKernelFullProject.pyx"]),
     Extension("yasps.hessianKernelNoProject", ["yasps/kernel/Hessian/hessianKernelNoProject.pyx"]),
-    Extension("yasps.hessianKernelHost", ["yasps/kernel/Hessian/hessianKernelHost.pyx"])
+    Extension("yasps.hessianKernelHost", ["yasps/kernel/Hessian/hessianKernelHost.pyx"]),
+    Extension("yasps.placementReorderKernel", ["yasps/kernel/Coordinate/placementReorderKernel.pyx"]),
+    Extension("yasps.hessianKernelSeparateJacobian", ["yasps/kernel/Hessian/hessianKernelSeparateJacobian.pyx"]),
 ]
 setup(
     name='yasps',  # This is the name of your package
