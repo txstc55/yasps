@@ -7,7 +7,7 @@ from yasps.autodiff import autodiff
 from yasps.hessian import hessian
 from yasps.path import path
 from yasps.gradientIndicesKernel import gradientIndicesKernel
-
+from yasps.placementReorderKernel import placementReorderKernel
 
 class differentiator:
   def __init__(self):
@@ -143,11 +143,12 @@ class differentiator:
       hessian_local.merged_hessian_and_gradient_attributes = [None]
       hessian_local.hessian_and_gradient_kernels = [None]
       hessian_local.sources = [source]
-      hessian_local.global_jacobian_block_nonzero_attributes = [global_jacobian_block_nonzero_attributes]
-      hessian_local.global_jacobian_block_nonzero_local_positions = [global_jacobian_block_nonzero_local_positions]
-      hessian_local.global_jacobian_children_sizes = [global_jacobian_children_sizes]
-      hessian_local.global_jacobian_children_spans = [global_jacobian_children_spans]
-      # hessian_local.local_hessian_reordered_array = [local_hessian_reordered_array]
+      hessian_local.global_jacobian_block_nonzero_attributes = global_jacobian_block_nonzero_attributes
+      hessian_local.global_jacobian_block_nonzero_local_positions = global_jacobian_block_nonzero_local_positions
+      hessian_local.global_jacobian_children_sizes = global_jacobian_children_sizes
+      hessian_local.global_jacobian_children_spans = global_jacobian_children_spans
+      hessian_local.placement_reorder_kernels = [placementReorderKernel()]
+      # hessian_local.local_hessian_reordered_array = local_hessian_reordered_array
     else:
       hessian_local.indices_kernels_dynamic = [indices_kernel]
       hessian_local.global_gradients_dynamic = [self.__gradient]
@@ -161,11 +162,12 @@ class differentiator:
       hessian_local.merged_hessian_and_gradient_attributes_dynamic = [None]
       hessian_local.hessian_and_gradient_kernels_dynamic = [None]
       hessian_local.sources_dynamic = [source]
-      hessian_local.global_jacobian_block_nonzero_attributes_dynamic = [global_jacobian_block_nonzero_attributes]
-      hessian_local.global_jacobian_block_nonzero_local_positions_dynamic = [global_jacobian_block_nonzero_local_positions]
-      hessian_local.global_jacobian_children_sizes_dynamic = [global_jacobian_children_sizes]
-      hessian_local.global_jacobian_children_spans_dynamic = [global_jacobian_children_spans]
-      # hessian_local.local_hessian_reordered_array_dynamic = [local_hessian_reordered_array]
+      hessian_local.global_jacobian_block_nonzero_attributes_dynamic = global_jacobian_block_nonzero_attributes
+      hessian_local.global_jacobian_block_nonzero_local_positions_dynamic = global_jacobian_block_nonzero_local_positions
+      hessian_local.global_jacobian_children_sizes_dynamic = global_jacobian_children_sizes
+      hessian_local.global_jacobian_children_spans_dynamic = global_jacobian_children_spans
+      hessian_local.placement_reorder_kernels_dynamic = [placementReorderKernel()]
+      # hessian_local.local_hessian_reordered_array_dynamic = local_hessian_reordered_array
     return hessian_local
 
   def __generateGradientThroughPathDict(self, wrt: List[attribute], autodiff_engine: autodiff) -> None:

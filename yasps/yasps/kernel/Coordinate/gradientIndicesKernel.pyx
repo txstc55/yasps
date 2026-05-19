@@ -82,7 +82,7 @@ __global__ void computePermutation(
       // if idx_i is 1, this means it's a variable we want to keep in the local matrix
       // but not in the final matrix
       // if idx is >= 2, then it means it's an actual variable that will be in the final matrix
-#IFNDEF NO_LOCAL_PERMUTATION // if we want to do local permutaiton, go check it
+#ifndef NO_LOCAL_PERMUTATION // if we want to do local permutaiton, go check it
       bool found = false;
       if (idx_i >= 2){
         for (unsigned short int j = 0; j < i; j++){
@@ -95,11 +95,16 @@ __global__ void computePermutation(
           }
         }
       }
-#ELSE
+#else
       const bool found = false; // if we don't want to do local permutation, we just keep the original order, and we will not have any negative value in the permutation array, this is useful for when we do separation of the Hessian matrix and Jacobian matrix, and materializing local blocks
-#ENDIF
+#endif
       if (!found) {
         permutation[tid * K + i] = gradient_offset + 1; // always exclude 0
+#ifdef NO_LOCAL_PERMUTATION
+        if (idx_i == 1){
+          permutation[tid * K + i] = -permutation[tid * K + i]; // if we don't want to do any local permutation, we will use the nagative as an indication that this is a variable is a variable that will not be put into the final matrix
+        }
+#endif
         gradient_offset += index_sizes[tid * K + i]; // we offset the gradient_offset so we know exactly where to put this segment
         total_gradient_size += index_sizes[tid * K + i];
         if (idx_i >= 2){

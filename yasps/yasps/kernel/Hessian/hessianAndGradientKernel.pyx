@@ -158,7 +158,7 @@ extern "C"{{
             elif not self.__clear_separation:
               f.write(hessianKernelNoProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName).kernelString)
             else:
-              f.write(separate_jacobian_kernel.generateKernelString(max_num_indices, attributeName).kernelString)
+              f.write(separate_jacobian_kernel.generateKernelString(attributeName, max_num_indices))
             f.close()
           compile_cmd = [
             "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",

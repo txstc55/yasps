@@ -56,18 +56,18 @@ __global__ void reorderPlacementIndicesGlobal(
     return;
   }}
   const unsigned int start = coordinatesOuter[instance];
-  const unsigned int end = coordinatesOuter[instace + 1];
+  const unsigned int end = coordinatesOuter[instance + 1];
   unsigned short int num_small_blocks_per_large_block[{large_block_count}] = {{0}};
   // we first need to determine, in each large blocks, how many small blocks there are
   unsigned short int current_row = 0;
   unsigned short int current_col = 0;
   unsigned short int large_block_row_index = 0; // which large block are we in (on the row, we just record the index)
   for (unsigned int i = 0; i < {max_num_indices}; i++){{
-    unsigned short int permutation_i = local_permutations[instance * {max_num_indices} + i];
+    short int permutation_i = local_permutations[instance * {max_num_indices} + i];
     unsigned short int block_row_size = segment_sizes[instance * {max_num_indices} + i];
     current_col = current_row; // reset the column to the start of the block
     current_row += block_row_size;
-    if (permutation_i == 0){{
+    if (permutation_i <= 0){{
       continue;
     }}
     for (large_block_row_index; large_block_row_index < {span_count}; large_block_row_index++){{
@@ -77,10 +77,10 @@ __global__ void reorderPlacementIndicesGlobal(
     }}
     unsigned short int large_block_col_index = 0; // which large block we are in (on the col, we just record the index)
     for (unsigned int j = i; j < {max_num_indices}; j++){{
-      unsigned short int permutation_j = local_permutations[instance * {max_num_indices} + j];
+      short int permutation_j = local_permutations[instance * {max_num_indices} + j];
       unsigned short int block_col_size = segment_sizes[instance * {max_num_indices} + j];
       current_col += block_col_size;
-      if (permutation_j == 0){{
+      if (permutation_j <= 0){{
         continue;
       }}
       for (large_block_col_index; large_block_col_index < {span_count}; large_block_col_index++){{
@@ -109,11 +109,11 @@ __global__ void reorderPlacementIndicesGlobal(
   large_block_row_index = 0;
   unsigned short int total_blocks = 0;
   for (unsigned int i = 0; i < {max_num_indices}; i++){{
-    unsigned short int permutation_i = local_permutations[instance * {max_num_indices} + i];
+    short int permutation_i = local_permutations[instance * {max_num_indices} + i];
     unsigned short int block_row_size = segment_sizes[instance * {max_num_indices} + i];
     current_col = current_row; // reset the column to the start of the block
     current_row += block_row_size;
-    if (permutation_i == 0){{
+    if (permutation_i <= 0){{
       continue;
     }}
     for (large_block_row_index; large_block_row_index < {span_count}; large_block_row_index++){{
@@ -123,10 +123,10 @@ __global__ void reorderPlacementIndicesGlobal(
     }}
     unsigned short int large_block_col_index = 0; // which large block we are in (on the col, we just record the index)
     for (unsigned int j = i; j < {max_num_indices}; j++){{
-      unsigned short int permutation_j = local_permutations[instance * {max_num_indices} + j];
+      short int permutation_j = local_permutations[instance * {max_num_indices} + j];
       unsigned short int block_col_size = segment_sizes[instance * {max_num_indices} + j];
       current_col += block_col_size;
-      if (permutation_j == 0){{
+      if (permutation_j <= 0){{
         continue;
       }}
       for (large_block_col_index; large_block_col_index < {span_count}; large_block_col_index++){{
@@ -185,7 +185,7 @@ int reorderPlacementIndices(
     energy: attribute # the actual attribute
   ):
     # ok now we compile the kernel by saving it to a file and then calling nvcc
-    file_name = f".yasps_tmp/{self.__energy.fullName}_reorder_placement"
+    file_name = f".yasps_tmp/{energy.fullName}_reorder_placement"
     if os.path.exists(f'{file_name}.so'):
       # we just use that file?
       self.__kernel = ctypes.CDLL(f"{file_name}.so").reorderPlacementIndices # get the compiled kernel
@@ -204,7 +204,7 @@ int reorderPlacementIndices(
       with open(f"{file_name}.cu", "w") as f:
         f.write(self.__kernelString)
       # now we compile the kernel using nvcc
-      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.cu -o {file_name}.so -O3 -arch=sm_89 -lcudart -lcuda")
+      os.system(f"nvcc -Xcompiler -fPIC -shared  -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda")
       self.__kernel = ctypes.CDLL(f"{file_name}.so").reorderPlacementIndices # get the compiled kernel
       self.__kernel.restype = ctypes.c_int # set the return type to None
       self.__kernel.argtypes = [
@@ -241,8 +241,8 @@ int reorderPlacementIndices(
     if self.__energy.numInstances <= 0:
       return
     assert self.__kernel is not None, "placementReorderKernel.reorderPlacementindices: Kernel has not been compiled yet"
-    if self.__energy.numInstances > self.__reordered_lookups.size:
-      self.__reordered_lookups = gpuarray.zeros(self.__energy.numInstances, dtype=np.uint32)
+    if lookups.size > self.__reordered_lookups.size:
+      self.__reordered_lookups = gpuarray.zeros(lookups.size, dtype=np.uint32)
     self.__kernel(
       self.__to_void_p(giKernel.outputSizes),
       self.__to_void_p(giKernel.outputPermutations),

@@ -70,7 +70,7 @@ class hessian(matrix):
     self.__global_jacobian_block_nonzero_local_positions: List[List[int]] = []
     self.__global_jacobian_children_sizes: List[List[int]] = []
     self.__global_jacobian_children_spans: List[List[int]] = []
-    self.__placement_reorder_kernels: List[placementReorderKernel] = [placementReorderKernel()]
+    self.__placement_reorder_kernels: List[placementReorderKernel] = []
 
     self.__global_gradients_dynamic: List[attribute] = []
     self.__global_hessians_dynamic: List[attribute] = []
@@ -89,13 +89,11 @@ class hessian(matrix):
     self.__global_jacobian_block_nonzero_local_positions_dynamic: List[List[int]] = []
     self.__global_jacobian_children_sizes_dynamic: List[List[int]] = []
     self.__global_jacobian_children_spans_dynamic: List[List[int]] = []
-    self.__placement_reorder_kernels_dynamic: List[placementReorderKernel] = [placementReorderKernel()]
+    self.__placement_reorder_kernels_dynamic: List[placementReorderKernel] = []
 
     self.__indices_kernels: List[gradientIndicesKernel] = []
     self.__indices_kernels_dynamic: List[gradientIndicesKernel] = []
 
-    self.__placement_reorder_kernels = []
-    self.__placement_reorder_kernels_dynamic = []
 
     self.__block_indices_gpu: List[gpuarray.GPUArray] = []
     self.__block_indices_gpu_dynamic: List[gpuarray.GPUArray] = []
@@ -718,6 +716,9 @@ class hessian(matrix):
     self.__compression_kernel.compressCoordinatesAndDimensions()
     self.__block_indices_gpu = self.__compression_kernel.lookupArrays
 
+    print("placement reorder kernels size:", len(self.__placement_reorder_kernels))
+    print("separate hessian jacobian size:", len(self.__separate_hessian_jacobian))
+    print("project entire hessian size:", len(self.__project_entire_hessian))
     for i in range(len(self.__placement_reorder_kernels)):
       if self.__separate_hessian_jacobian[i] and not self.__project_entire_hessian[i]:
         # we will need to initialize the placement reorder kernel and do the computation
@@ -857,8 +858,9 @@ class hessian(matrix):
     if separate_hessian_jacobian and not project_entire_hessian:
       assert global_jacobian is not None
       assert global_inner_hessian is not None
-      for item in global_inner_hessian:
-        merged_hessian_and_gradient.append(item)
+      for i in range(global_inner_hessian.rows):
+        for j in range(global_inner_hessian.cols):
+          merged_hessian_and_gradient.append(global_inner_hessian[i, j])
       for item in global_jacobian_block_nonzero_attributes:
         merged_hessian_and_gradient.append(item)
       for i in range(global_gradient.size):
@@ -1061,7 +1063,7 @@ class hessian(matrix):
       self.__computeOneTerm(
         index,
         indices_kernel,
-        self.__block_indices_gpu[index],
+        self.__placement_reorder_kernels[index] if (self.__separate_hessian_jacobian[index] and not self.__project_entire_hessian[index]) else self.__block_indices_gpu[index],
         self.blocks_flattened,
         self.__merged_hessian_and_gradient_attributes,
         self.__hessian_and_gradient_kernels,
@@ -1077,7 +1079,7 @@ class hessian(matrix):
       self.__computeOneTerm(
         index,
         indices_kernel,
-        self.__block_indices_gpu_dynamic[index],
+        self.__placement_reorder_kernels_dynamic[index] if (self.__separate_hessian_jacobian_dynamic[index] and not self.__project_entire_hessian_dynamic[index]) else self.__block_indices_gpu_dynamic[index],
         self.blocks_flattened_dynamic,
         self.__merged_hessian_and_gradient_attributes_dynamic,
         self.__hessian_and_gradient_kernels_dynamic,
