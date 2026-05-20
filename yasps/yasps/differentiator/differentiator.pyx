@@ -115,7 +115,7 @@ class differentiator:
     paths.getRoots(source, [source])
     paths.getPathDict()
 
-    indices_kernel = gradientIndicesKernel(paths.path_dict, paths.unioned_child_to_its_children, paths.wrt, wrt_start_indices, source)
+    indices_kernel = gradientIndicesKernel(paths.path_dict, paths.unioned_child_to_its_children, paths.wrt, wrt_start_indices, source, separate_hessian_jacobian)
 
     self.__resetDiff2State(source, paths.path_dict, paths.unioned_child_to_its_children, projection_method, save_intermediate, separate_hessian_jacobian)
     autodiff_engine = autodiff()

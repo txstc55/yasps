@@ -144,6 +144,17 @@ __global__ void reorderPlacementIndicesGlobal(
       total_blocks += 1;
     }}
   }}
+  if (instance == 0){{
+    printf("Checking placement\\n");
+    for (unsigned int i = start; i < end; i++){{
+      printf("%d, ", lookups[i]);
+    }}
+    printf("\\n");
+    for (unsigned int i = start; i < end; i++){{
+      printf("%d, ", lookupsPermuted[i]);
+    }}
+    printf("\\n");
+  }}
   if (total_blocks != (end - start)){{
     printf("Total blocks is %d, but the actual total blocks should be: %d\\n", total_blocks, end - start);
   }}

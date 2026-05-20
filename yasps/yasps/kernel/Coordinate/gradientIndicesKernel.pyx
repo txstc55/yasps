@@ -476,6 +476,8 @@ class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__getCompressionKernel")
   def __getCompressionKernel(self):
     if self.__compression_kernel is None:
+      print("no local permutation: ", self.__no_local_permutation)
+      exit()
       file_name = ".yasps_constant/compression_kernel" + ("" if not self.__no_local_permutation else "_no_perm")
       # check if the file exists
       if not os.path.exists(f'{file_name}.so'):
