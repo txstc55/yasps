@@ -357,8 +357,8 @@ class differentiator:
         for j in range(child_span):
           if children_global_jacobian[(row_offset + i), (col_offset + j)].isZero == 0:
             nonzero_counts += 1 # iszero == 0 means it's not zero, it's fucked up, i know
-            nonzero_local_positions.append(i)
-            nonzero_local_positions.append(j)
+            nonzero_local_positions.append(row_offset + i)
+            nonzero_local_positions.append(col_offset + j)
             nonzero_attributes_array.append(children_global_jacobian[(row_offset + i), (col_offset + j)])
       # the jacobian matrix is always block diagonal, so once we are done with one child, we can skip to the next diagonal block
       row_offset += child_size

@@ -37,6 +37,7 @@ class placementReorderKernel:
     self.__kernelString = f"""
 #include <cuda_runtime.h>
 #include <vector>
+#include <iostream>
 __device__ __constant__ unsigned short int jacobian_block_spans_outer[{span_count + 1}] = {{{', '.join(str(span) for span in global_jacobian_children_spans_outer)}}}; // this is the size of each jacobian block, this will also tell us how to segment the hessian blocks
 
 __device__ inline int upper_tri_index_compute(int i, int j) {{
@@ -184,6 +185,7 @@ int reorderPlacementIndices(
     max_num_indices: int, # the maximum number of indices for each instance
     energy: attribute # the actual attribute
   ):
+    self.__energy = energy
     # ok now we compile the kernel by saving it to a file and then calling nvcc
     file_name = f".yasps_tmp/{energy.fullName}_reorder_placement"
     if os.path.exists(f'{file_name}.so'):
@@ -238,7 +240,7 @@ int reorderPlacementIndices(
     giKernel: gradientIndicesKernel,
     lookups: gpuarray.GPUArray,
   ):
-    if self.__energy.numInstances <= 0:
+    if self.__energy.correspondance.numInstances <= 0:
       return
     assert self.__kernel is not None, "placementReorderKernel.reorderPlacementindices: Kernel has not been compiled yet"
     if lookups.size > self.__reordered_lookups.size:
@@ -249,7 +251,7 @@ int reorderPlacementIndices(
       self.__to_void_p(lookups),
       self.__to_void_p(giKernel.outputCompressedCoordinateCountsOuter),
       self.__to_void_p(self.__reordered_lookups),
-      ctypes.c_uint32(self.__energy.numInstances)
+      ctypes.c_uint32(self.__energy.correspondance.numInstances)
     )
 
   @property

@@ -962,7 +962,11 @@ class hessian(matrix):
         indices_kernels[index].outputUniqueGradientSizesCPU.tolist(),
         indices_kernels[index].maxChildGradientSize,
         self.__wrt,
-        indices_kernels[index].maxNumIndicesNeeded
+        indices_kernels[index].maxNumIndicesNeeded,
+        global_jacobian_block_nonzero_attributes[index],
+        global_jacobian_block_nonzero_local_positions[index],
+        global_jacobian_children_sizes[index],
+        global_jacobian_children_spans[index]
       )
 
   def __setupCompute(self) -> None:
@@ -1063,7 +1067,7 @@ class hessian(matrix):
       self.__computeOneTerm(
         index,
         indices_kernel,
-        self.__placement_reorder_kernels[index] if (self.__separate_hessian_jacobian[index] and not self.__project_entire_hessian[index]) else self.__block_indices_gpu[index],
+        self.__placement_reorder_kernels[index].reordered_lookups if (self.__separate_hessian_jacobian[index] and not self.__project_entire_hessian[index]) else self.__block_indices_gpu[index],
         self.blocks_flattened,
         self.__merged_hessian_and_gradient_attributes,
         self.__hessian_and_gradient_kernels,
@@ -1079,7 +1083,7 @@ class hessian(matrix):
       self.__computeOneTerm(
         index,
         indices_kernel,
-        self.__placement_reorder_kernels_dynamic[index] if (self.__separate_hessian_jacobian_dynamic[index] and not self.__project_entire_hessian_dynamic[index]) else self.__block_indices_gpu_dynamic[index],
+        self.__placement_reorder_kernels_dynamic[index].reordered_lookups if (self.__separate_hessian_jacobian_dynamic[index] and not self.__project_entire_hessian_dynamic[index]) else self.__block_indices_gpu_dynamic[index],
         self.blocks_flattened_dynamic,
         self.__merged_hessian_and_gradient_attributes_dynamic,
         self.__hessian_and_gradient_kernels_dynamic,
