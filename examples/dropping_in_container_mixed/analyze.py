@@ -139,7 +139,9 @@ def extract_time(file):
     "yasps_memory_average": average_memory / total_memory_lines - ccd_memory if total_memory_lines > 0 else 0,
     "ccd_cd_total": (ccd_time + cd_time) / 1000.0,
     "diff_total": total_hessian_time / 1000.0,
+    "diff_average": total_hessian_time / total_newton if total_newton > 0 else 0,
     "cg_total": total_cg_time / 1000.0,
+    "cg_average": total_cg_time / total_cg_iterations if total_newton > 0 else 0,
     "index_total": index_time / 1000.0,
     "misc_total": misc_time / 1000.0,
     "total_runtime": total_runtime,
@@ -171,7 +173,11 @@ def latex_row(stats):
     f"{fmt_float(stats['diff_total'], 2)} & "
     f"{fmt_float(stats['cg_total'], 2)} & "
     f"{fmt_float(stats['yasps_memory_max'], 2)} & "
+    f"{fmt_float(stats['total_runtime'])} & "
+    f"{fmt_float(stats['diff_average'])} & "
+    f"{fmt_float(stats['cg_average'])} & "
     f"{fmt_float(52416 / 1204, 2)}\\\\ \\hline"
+
   )
 
 
@@ -272,7 +278,12 @@ def plot_yasps_memory(stats_list):
 
 
 if __name__ == "__main__":
-  log_files = [f"bunny_{i}.log" for i in range(6, 11)]
+  log_files = []
+  for i in range(8, 11):
+    log_files.append(f"bunny_{i}.log")
+    log_files.append(f"bunny_{i}_memory.log")
+    # log_files.append(f"bunny_{i}_memory_new.log")
+    log_files.append(f"bunny_{i}_memory_new_new.log")
 
   stats = [extract_time(file) for file in log_files]
 
