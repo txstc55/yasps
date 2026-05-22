@@ -346,9 +346,9 @@ class differentiator:
     col_offset = 0 # the offset of columns in the jacobian matrix
     nonzero_attributes_array = []
     nonzero_local_positions = []
-    print("Children sizes: ", children_sizes)
-    print("Block sizes: ", block_sizes)
-    print("Jacobian Size: ", (children_global_jacobian.rows, children_global_jacobian.cols))
+    # print("Children sizes: ", children_sizes)
+    # print("Block sizes: ", block_sizes)
+    # print("Jacobian Size: ", (children_global_jacobian.rows, children_global_jacobian.cols))
     for i in range(len(children_sizes)):
       nonzero_counts = 0
       child_size = children_sizes[i]
@@ -363,8 +363,8 @@ class differentiator:
       # the jacobian matrix is always block diagonal, so once we are done with one child, we can skip to the next diagonal block
       row_offset += child_size
       col_offset += child_span
-    print(f"Nonzero element count: {len(nonzero_attributes_array)} / {children_global_jacobian.size}")
-    print(f"True nonzero count: {sum(children_global_jacobian[i].isZero == 0 for i in range(children_global_jacobian.size))}")
+    # print(f"Nonzero element count: {len(nonzero_attributes_array)} / {children_global_jacobian.size}")
+    # print(f"True nonzero count: {sum(children_global_jacobian[i].isZero == 0 for i in range(children_global_jacobian.size))}")
 
     # # if we need to separate the jacobian and hessian
     # # we will need to do some kind of reordering

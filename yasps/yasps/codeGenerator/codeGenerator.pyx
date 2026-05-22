@@ -362,11 +362,11 @@ __device__ void {attributeName}_device_function(
 
     # now we generate the device kernel
     self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allPrimitiveUnions, allDependencies, allEvdSizes, self.__input.fullNameWithHash)
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    print(f"We initialized {self.__total_initialized_registers} registers")
-    print(f"We saved {self.__total_saved_registers} registers")
-    print(f"There are {self.__skipped_attribute_count} skipped attributes")
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    # print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    # print(f"We initialized {self.__total_initialized_registers} registers")
+    # print(f"We saved {self.__total_saved_registers} registers")
+    # print(f"There are {self.__skipped_attribute_count} skipped attributes")
+    # print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
   # get the name of the intermediate variables
   def getIntermediateName(self, attribute: ya.attribute) -> str:

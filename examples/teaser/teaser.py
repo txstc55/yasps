@@ -11,8 +11,8 @@ import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
 DT_VALUE = 0.01 # for time step
-DHAT_VALUE = 1e-8 # for collision detection
-KAPPA_VALUE = 10000.0 # for collision
+DHAT_VALUE = 1e-6 # for collision detection
+KAPPA_VALUE = 1000.0 # for collision
 
 
 POISSON_VALUE_CAGE = 0.15
@@ -561,14 +561,14 @@ collision_mesh.pt.addAttribute("point_triangle", computed_attribute = pt)
 ee = edge_edge(ee_positions, dhat, kappa)
 collision_mesh.ee.addAttribute("edge_edge", computed_attribute = ee)
 
-# s0.addEnergy(snh_abds, projection_method = 2)
+s0.addEnergy(snh_abds, projection_method = 2)
 s0.addEnergy(snh_softs, projection_method = 2)
-# s0.addEnergy(snh_cage, projection_method = 2, separate_hessian_jacobian = True)
-# s0.addEnergy(affine, projection_method = 2)
-# s0.addEnergy(inertia_abds, projection_method = -1)
+s0.addEnergy(snh_cage, projection_method = 2, separate_hessian_jacobian = True)
+s0.addEnergy(affine, projection_method = 2)
+s0.addEnergy(inertia_abds, projection_method = -1)
 s0.addEnergy(inertia_softs, projection_method = -1)
 # s0.addEnergy(inertia_free, projection_method = 0)
-# s0.addEnergy(inertia_cage, projection_method = -1)
+s0.addEnergy(inertia_cage, projection_method = -1)
 # s0.addEnergy(bending_energy, projection_method = 2)
 # s0.addEnergy(baraff_witkin_energy, projection_method = 2)
 s0.addEnergy(pp, dynamic_instances = True, projection_method = 2, separate_hessian_jacobian = True)
@@ -747,12 +747,7 @@ for i in range(200):
     new_positions = collision_mesh.vertices["position"].compute().value
     # now we compute the new direction, remember it's the negative we need to put in
     direction_copy = position_copy - new_positions
-    max_movement = gpuarray.max(abs(direction_copy)).get()
-    target_movement = 1e-2 * DT_VALUE * scene_diag_sqrt
-    print("max movement is:", max_movement, ", target movement is:", target_movement)
-    if max_movement < target_movement:
-      print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
-      break
+
 
     # check for the largest step size we can take
     ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 1.0)
@@ -811,6 +806,14 @@ for i in range(200):
     plotter.update()
 
     inner_iteration += 1
+    max_movement = gpuarray.max(abs(direction_copy)).get()
+    target_movement = 1e-2 * DT_VALUE * scene_diag_sqrt
+    print("max movement is:", max_movement, ", target movement is:", target_movement)
+    if max_movement < target_movement:
+      print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
+      break
+
+
   new_velocities_abd = (vertices_abd_position.compute().value - vertices_abd_last_position.value) / DT_VALUE
   new_velocities_soft = (vertices_soft_position.compute().value - vertices_soft_last_position.value) / DT_VALUE
   new_velocities_free = (vertices_free["position"].compute().value - vertices_free_last_position.value) / DT_VALUE

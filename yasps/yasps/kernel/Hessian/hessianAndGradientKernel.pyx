@@ -100,7 +100,7 @@ class hessianAndGradientKernel:
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}" + ("" if self.__project_entire_hessian else "_no_proj")
     # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
-    print(f"hashed: {file_name}.cu")
+    # print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
       hessian_header_file = hessianKernelHeader(self.__att, self.__unique_gradient_sizes, sortedDependency)
       with open(".yasps_tmp/allHeaders.cuh", 'w') as f:

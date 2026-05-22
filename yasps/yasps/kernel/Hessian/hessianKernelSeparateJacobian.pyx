@@ -62,9 +62,6 @@ class hessianKernelSeparateJacobian:
       local_position_row = global_jacobian_block_nonzero_local_positions[i * 2]
       local_position_col = global_jacobian_block_nonzero_local_positions[i * 2 + 1]
       global_jacobian_array[local_position_row * jacobian_cols + local_position_col] = global_jacobian_replaced_att[i]
-    print(f"global jacobian size: {len(global_jacobian_array)}")
-    print(f"Supposed rows: {local_hessian_rows}, supposed cols: {jacobian_cols}")
-    print("Energy: ", self.__att.fullName)
     global_jacobian = attribute.to_array(global_jacobian_array, rows = local_hessian_rows, cols = jacobian_cols)
 
     # now the both have been created, we will need to do the block multiplications ourselves
@@ -86,7 +83,6 @@ class hessianKernelSeparateJacobian:
         hij_block = self.__getSubBlock(local_hessian_replaced_att, row_offset = sum(children_sizes[:i]), col_offset = sum(children_sizes[:j]), block_rows = J_i_block_rows, block_cols = J_j_block_rows)
         multiplied_block = ji_block.mul_explicit(hij_block).mul_explicit(jj_block)
         multiplied_block = tmp_scene.addAttribute(f"multiplied_block_{i}_{j}", computed_attribute = multiplied_block)
-        print(multiplied_block.fullName)
         self.__stored_multiplied_blocks.append(multiplied_block)
 
     for item in self.__stored_multiplied_blocks:
