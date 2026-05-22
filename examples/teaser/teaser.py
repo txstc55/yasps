@@ -11,8 +11,8 @@ import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
 DT_VALUE = 0.01 # for time step
-DHAT_VALUE = 1e-6 # for collision detection
-KAPPA_VALUE = 100000.0 # for collision
+DHAT_VALUE = 1e-8 # for collision detection
+KAPPA_VALUE = 10000.0 # for collision
 
 
 POISSON_VALUE_CAGE = 0.15
@@ -189,7 +189,7 @@ actual_positions = np.array(actual_positions)
 ##################################################################
 from helpers import generate_cloth_mesh
 CLOTH_LENGTH = diag * 20.0
-NUM_SEGMENTS = 2
+NUM_SEGMENTS = 10
 positions_cloth, triangle_indices_cloth = generate_cloth_mesh(CLOTH_LENGTH, NUM_SEGMENTS)
 # we need to pick out the index of the 4 corners
 # because we want to mark them as another type of vertices
@@ -561,14 +561,14 @@ collision_mesh.pt.addAttribute("point_triangle", computed_attribute = pt)
 ee = edge_edge(ee_positions, dhat, kappa)
 collision_mesh.ee.addAttribute("edge_edge", computed_attribute = ee)
 
-s0.addEnergy(snh_abds, projection_method = 2)
+# s0.addEnergy(snh_abds, projection_method = 2)
 s0.addEnergy(snh_softs, projection_method = 2)
-s0.addEnergy(snh_cage, projection_method = 2, separate_hessian_jacobian = True)
-s0.addEnergy(affine, projection_method = 2)
-s0.addEnergy(inertia_abds, projection_method = -1)
+# s0.addEnergy(snh_cage, projection_method = 2, separate_hessian_jacobian = True)
+# s0.addEnergy(affine, projection_method = 2)
+# s0.addEnergy(inertia_abds, projection_method = -1)
 s0.addEnergy(inertia_softs, projection_method = -1)
 # s0.addEnergy(inertia_free, projection_method = 0)
-s0.addEnergy(inertia_cage, projection_method = -1)
+# s0.addEnergy(inertia_cage, projection_method = -1)
 # s0.addEnergy(bending_energy, projection_method = 2)
 # s0.addEnergy(baraff_witkin_energy, projection_method = 2)
 s0.addEnergy(pp, dynamic_instances = True, projection_method = 2, separate_hessian_jacobian = True)

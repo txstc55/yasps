@@ -43,7 +43,7 @@ SAVE_OBJ = args.save_obj
 NUM_AFFINE_BUNNIES = 1
 
 DT_VALUE = 0.01 # for time step
-DHAT_VALUE = 1e-5 # for collision detection
+DHAT_VALUE = 1e-6 # for collision detection
 KAPPA_VALUE = 10000.0 # for collision
 
 
@@ -631,10 +631,10 @@ for i in range(200):
   # plotter.render()
   # plotter.update()
   # plotter.screenshot(f"outputs/bunny_drop_in_container_{i:04d}.jpg")
-  if SAVE_OBJ:
-    # save the mesh obj file
-    abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
-    soft_poly.save(f"meshes/bunny_drop_in_container_{i:04d}.obj")
+  # if SAVE_OBJ:
+  #   # save the mesh obj file
+  #   abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
+  #   soft_poly.save(f"meshes/bunny_drop_in_container_{i:04d}.obj")
   # container_poly.save(f"meshes/cloth_3_cloth_{i:04d}.obj")
   # # save the mesh obj file
   # bunny_poly0.save(f"outputs/bunny_abd_soft0_{i:04d}.obj")
