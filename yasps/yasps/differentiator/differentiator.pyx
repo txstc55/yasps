@@ -20,7 +20,7 @@ class differentiator:
     self.__projection_method: int = 1
     self.__global_jacobian: Optional[attribute] = None
     self.__global_inner_hessian: Optional[attribute] = None
-    self.__project_entire_hessian: bool = True
+    self.__project_entire_hessian: bool = False
     self.__separate_hessian_jacobian: bool = False
     self.__gradient: Optional[attribute] = None
     self.__hessian: Optional[attribute] = None
@@ -53,7 +53,7 @@ class differentiator:
     self.__projection_method = projection_method
     self.__global_jacobian = None
     self.__global_inner_hessian = None
-    self.__project_entire_hessian = True
+    self.__project_entire_hessian = False
     self.__separate_hessian_jacobian = separate_hessian_jacobian
     self.__gradient = None
     self.__hessian = None
@@ -323,6 +323,7 @@ class differentiator:
 
     local_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in children])}'
     local_hessian = current.correspondance[local_hessian_name]
+
     if second_part_hessian.isZero > 0:
       if self.__projection_method >= 0:
         local_hessian = local_hessian.spd(self.__projection_method)
@@ -862,9 +863,19 @@ class differentiator:
     return res
 
   def __generateHessianThroughPathDict(self, wrt: List[attribute], autodiff_engine: autodiff) -> None:
+
     assert self.__source is not None
     if f'd2_{self.__source.fullName}_d2_{"__".join([x.fullName for x in wrt])}' in self.__source.correspondance.attributes:
+      from yasps.attribute import SPD
       self.__hessian = self.__source.correspondance.attributes[f'd2_{self.__source.fullName}_d2_{"__".join([x.fullName for x in wrt])}']
+      assert self.__hessian is not None
+      # ok this is a temp fix
+      # this is for scenario that the children of the energy is just data, there's no join nor anything
+      # in this case it is very likely when we compute the jacobian we already computed the hessian
+      # so let's just determine the projection cases here
+      if self.__projection_method >= 0 and self.__hessian.operator != SPD:
+        self.__hessian = self.__hessian.spd(self.__projection_method)
+        self.__project_entire_hessian = False
       return
     self.__hessian = self.__generateHessianThroughRecursion(self.__source, wrt)
 

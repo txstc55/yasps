@@ -200,7 +200,7 @@ class primitive:
             if f"{name}_non_zeros" in source.correspondance.attributes:
               nonzero_child_attribute = source.correspondance.attributes[f"{name}_non_zeros"]
             else:
-              print(f"Creating non-zero child attribute for source attribute {source.name} with name {name}_non_zeros, which has {sum(source_element_is_nonzero)} non-zero elements out of {len(source_element_is_nonzero)} total elements.")
+              # print(f"Creating non-zero child attribute for source attribute {source.name} with name {name}_non_zeros, which has {sum(source_element_is_nonzero)} non-zero elements out of {len(source_element_is_nonzero)} total elements.")
               nonzero_child_attribute = source.correspondance.addAttribute(name = f"{name}_non_zeros", computed_attribute = attribute.to_array(non_zero_joined_children, rows = 1, cols = sum(source_element_is_nonzero)))
             if f"{name}_non_zeros" in self.attributes:
               nonzero_joined_attribute = self.attributes[f"{name}_non_zeros"]
