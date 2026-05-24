@@ -92,6 +92,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 
 
 #if {int(not gradient_only)}
+  unsigned int row_offset = 0;
   // we are projecting the entire Hessian
   Eigen::Matrix<double, N, N> compressed_hessian = Eigen::Matrix<double, N, N>::Zero(); // first we allocate the matrix
   for (unsigned int i = 0; i < {max_num_indices}; i++){{
