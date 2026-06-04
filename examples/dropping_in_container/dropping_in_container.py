@@ -279,7 +279,7 @@ s0.addMinimizeTarget([vertices_soft_position])
 ##################################################################
 ccd = CCD(NUM_BUNNY_SURFACE_INDICES * (NUM_BUNNIES) + container_positions.shape[0], # the number of surface points
   NUM_BUNNY_VERTICES * (NUM_BUNNIES) + container_positions.shape[0], # the number of total points
-  max_ccd_pairs = 100000000,
+  max_ccd_pairs = 10000000,
 )
 
 triangle_indices_all = surface_triangles_indices_list
@@ -385,9 +385,6 @@ for i in range(200):
     max_movement = gpuarray.max(abs(direction_copy)).get() / DT_VALUE
     end_max_movement = time.time()
     print(f"Time taken for max movement: {end_max_movement - start_max_movement} seconds")
-    if max_movement < 1e-2:
-      print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
-      break
     # check for the largest step size we can take
     start_ccd = time.time()
     ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 0.5)
@@ -450,14 +447,10 @@ for i in range(200):
     plotter.render()
     plotter.update()
 
-    # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
-    # if max_grad < 1e-4:
-    #   print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
-    #   break
-    # if max(abs(direction_copy).get() / DT_VALUE) < 1e-2:
-    #   print(f"Iteration {inner_iteration} exited with max movement: {max_grad}")
-    #   break
     inner_iteration += 1
+    if max_movement < 1e-4:
+      print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
+      break
   start_velocity_update = time.time()
   new_velocities_soft = (vertices_soft_position.value - vertices_soft_last_position.value) / DT_VALUE
   vertices_soft_velocity.updateValue(new_velocities_soft, deepCopy = True)
