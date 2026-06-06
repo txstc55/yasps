@@ -22,7 +22,7 @@ YOUNG_VALUE = 19000259.25455816859
 MU_LAME_VALUE = YOUNG_VALUE / (2 * (1 + POISSON_VALUE))
 LAMBDA_LAME_VALUE = YOUNG_VALUE * POISSON_VALUE / ((1 + POISSON_VALUE) * (1 - 2 * POISSON_VALUE))
 
-POISSON_VALUE_SPHERE = 0.09
+POISSON_VALUE_SPHERE = 0.29
 YOUNG_VALUE_SPHERE = 20000000
 MU_LAME_VALUE_SPHERE = YOUNG_VALUE_SPHERE / (2 * (1 + POISSON_VALUE_SPHERE))
 LAMBDA_LAME_VALUE_SPHERE = YOUNG_VALUE_SPHERE * POISSON_VALUE_SPHERE / ((1 + POISSON_VALUE_SPHERE) * (1 - 2 * POISSON_VALUE_SPHERE))
@@ -31,7 +31,7 @@ LAMBDA_LAME_VALUE_SPHERE = YOUNG_VALUE_SPHERE * POISSON_VALUE_SPHERE / ((1 + POI
 STRING_VERTEX_COUNT = 500
 VERTICAL_STRING_VERTEX_COUNT = 100
 HANGING_STRING_LENGTH = 1.0
-STRING_ELASTICITY = 10000000.0
+STRING_ELASTICITY = 1000000000
 SHRUNK_VALUE = 1.000
 
 
@@ -184,11 +184,15 @@ all_surface_triangle_indices = []
 all_surface_indices = list(range(len(string_vertices)))
 surface_indices_sphere = np.array(list(range(sphere_vertices.shape[0] - 1)), dtype=np.uint32)
 edge_indices_sphere = extract_edges_from_triangles(sphere_faces).astype(np.uint32)
+min_z_orig = 0.0
+max_z_orig = 0.0
 
 for i in range(len(rod_starting_index)):
   moved_sphere_vertices = sphere_vertices.copy()
   # move the bunny to the center
   moved_sphere_vertices += ending_pos[i]
+  min_z_orig = moved_sphere_vertices[min_z_index, 2]
+  max_z_orig = moved_sphere_vertices[max_z_index, 2]
 
   sphere_vertex_offset = all_vertices.shape[0]
   all_surface_triangle_indices.append(sphere_faces + sphere_vertex_offset) # all triangles
@@ -437,7 +441,17 @@ cvtp = cv.addConstant("target_positions", rows = 1, cols = 3)
 cvtp_array = string_vertices[: 2 * STRING_VERTEX_COUNT].flatten()
 cvtp.updateValue(np.array(cvtp_array))
 cvw = cv.addConstant("weights", rows = 1, cols = 1)
-cvw.updateValue([100000000000] * 2 * STRING_VERTEX_COUNT)
+cvw.updateValue([10000000000000] * 2 * STRING_VERTEX_COUNT)
+
+cv2 = sphere_mesh.addPrimitive("constraint_vertices", numInstances = 2 * len(rod_starting_index))
+cv2_2_spv_array = [min_z_index, max_z_index, min_z_index + sphere_vertices.shape[0], max_z_index + sphere_vertices.shape[0], min_z_index + 2 * sphere_vertices.shape[0], max_z_index + 2 * sphere_vertices.shape[0]]
+cv2_2_spv = cv2.addConnectivity("cv2spv", sphere_mesh_vertices, np.array(cv2_2_spv_array), 1)
+cv2tp = cv2.addConstant("target_positions", rows = 1, cols = 1)
+cv2tp_array = [min_z_orig, max_z_orig, min_z_orig, max_z_orig, min_z_orig, max_z_orig]
+cv2tp.updateValue(np.array(cv2tp_array))
+cv2pos = cv2.addAttribute("positions", through = cv2_2_spv, source = spvp)
+cv2w = cv2.addConstant("weights", rows = 1, cols = 1)
+cv2w.updateValue([10000000000000] * 2 * len(rod_starting_index))
 
 ##################################################################
 ## Create the collision mesh, and the primitive union
@@ -520,6 +534,10 @@ edges.addAttribute("string_elasticity_energy", computed_attribute = see)
 cve = constrained_energy(cvp, cvtp, dt, cvw)
 cv.addAttribute("constrained_energy", computed_attribute = cve)
 
+from helpers import constrained_z_energy
+cve2 = constrained_z_energy(cv2pos, cv2tp, dt, cv2w)
+cv2.addAttribute("constrained_z_energy", computed_attribute = cve2)
+
 from helpers import point_point, point_edge, point_triangle, edge_edge, affine_energy
 pp = point_point(pp_positions, dhat, kappa)
 collision_mesh.pp.addAttribute("point_point", computed_attribute = pp)
@@ -537,6 +555,7 @@ s0.addEnergy(inertia_sphere, projection_method = -1)
 s0.addEnergy(inertia_bunny, projection_method = -1)
 s0.addEnergy(see, projection_method = 2)
 s0.addEnergy(cve, projection_method = -1)
+s0.addEnergy(cve2, projection_method = -1)
 
 
 s0.addEnergy(pp, dynamic_instances = True, projection_method = 2, separate_hessian_jacobian = True)
@@ -553,7 +572,7 @@ sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
 ccd = CCD(all_surface_indices.shape[0], # the number of surface points
   all_vertices.shape[0], # the number of total points
-  mesh_indices = [0] * string_vertices_count + [3] * sphere_vertices.shape[0] + [4] * sphere_vertices.shape[0] + [5] * sphere_vertices.shape[0] + [0] * bunny_vertices_count,
+  mesh_indices = [2] * string_vertices_count + [3] * sphere_vertices.shape[0] + [4] * sphere_vertices.shape[0] + [5] * sphere_vertices.shape[0] + [0] * bunny_vertices_count,
   max_ccd_pairs = 200000000,
   max_cd_pairs = 10000000,
 )

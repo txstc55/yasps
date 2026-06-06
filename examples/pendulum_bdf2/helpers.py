@@ -352,3 +352,8 @@ def constrained_energy(cp, ctp, dt, weight):
   distance = (cp - ctp).dot(cp - ctp)
   energy = 0.5 * weight * distance * distance
   return energy * dt * dt
+
+def constrained_z_energy(cp, ctp, dt, weight):
+  distance = cp[2] - ctp
+  energy = 0.5 * weight * distance * distance
+  return energy * dt * dt
