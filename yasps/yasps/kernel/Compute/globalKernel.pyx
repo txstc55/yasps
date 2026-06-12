@@ -60,6 +60,11 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
     }
     return;
   }
+  if (N == 1){
+    output[0] = choice == 1 ? abs(A[0]) : (A[0] < 1e-6 ? 1e-6: A[0]);
+    return;
+  }
+
   const int M = 4;
   // Initialize an M x M matrix with zeros
   Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Identity();

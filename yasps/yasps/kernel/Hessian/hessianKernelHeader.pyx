@@ -25,97 +25,103 @@ class hessianKernelHeader:
 // For small matrix < 4
 template <unsigned int N>
 __device__ void spd_projection_small(const double *A, double* output, int choice) {
-if (choice == 0){
-  return;
-}
-const int M = 4;
-// Initialize an M x M matrix with zeros
-Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Identity();
-
-// Copy the input N x N matrix into the top-left corner of the M x M matrix
-for (int row = 0; row < N; ++row) {
-  for (int col = 0; col < N; ++col) {
-    symMtr(row, col) = A[row * N + col];
+  if (choice == 0){
+    return;
   }
-}
 
-Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, M, M>> eigenSolver(symMtr);
-const Eigen::Matrix<double, M, M>& B = eigenSolver.eigenvectors();
-Eigen::Matrix<double, M, 1> eigenValues = eigenSolver.eigenvalues();
-
-for (int i = 0; i < M; i++) {
-  if (eigenValues[i] < 0) {
-    eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+  if (N == 1){
+    output[0] = choice == 1 ? abs(A[0]) : (A[0] < 1e-6 ? 1e-6: A[0]);
+    return;
   }
-}
 
-Eigen::Matrix<double, M, M> A_reconstructed;
-A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
+  const int M = 4;
+  // Initialize an M x M matrix with zeros
+  Eigen::Matrix<double, M, M> symMtr = Eigen::Matrix<double, M, M>::Identity();
 
-// Copy the top-left N x N submatrix back to A
-for (int row = 0; row < N; ++row) {
-  for (int col = 0; col < N; ++col) {
-    output[row * N + col] = A_reconstructed(row, col);
+  // Copy the input N x N matrix into the top-left corner of the M x M matrix
+  for (int row = 0; row < N; ++row) {
+    for (int col = 0; col < N; ++col) {
+      symMtr(row, col) = A[row * N + col];
+    }
   }
-}
+
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, M, M>> eigenSolver(symMtr);
+  const Eigen::Matrix<double, M, M>& B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, M, 1> eigenValues = eigenSolver.eigenvalues();
+
+  for (int i = 0; i < M; i++) {
+    if (eigenValues[i] < 0) {
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+    }
+  }
+
+  Eigen::Matrix<double, M, M> A_reconstructed;
+  A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
+
+  // Copy the top-left N x N submatrix back to A
+  for (int row = 0; row < N; ++row) {
+    for (int col = 0; col < N; ++col) {
+      output[row * N + col] = A_reconstructed(row, col);
+    }
+  }
 return;
 }
 
 template <unsigned int N>
 __device__ void spd_projection(const double *A, double* output, int choice) {
-if (choice == 0){
-  for (unsigned int i = 0; i < N * N; i++){
-    output[i] = A[i];
+  if (choice == 0){
+    for (unsigned int i = 0; i < N * N; i++){
+      output[i] = A[i];
+    }
+    return;
   }
+  // Map A to an N x N Eigen matrix without copying
+  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
+  const auto& B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
+
+  for (int i = 0; i < N; i++) {
+    if (eigenValues[i] < 0) {
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+    }
+  }
+
+  Eigen::Matrix<double, N, N> A_reconstructed;
+  A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
+
+  Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>> outputMap(output);
+  outputMap = A_reconstructed;
   return;
-}
-// Map A to an N x N Eigen matrix without copying
-Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
-Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
-const auto& B = eigenSolver.eigenvectors();
-Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
-
-for (int i = 0; i < N; i++) {
-  if (eigenValues[i] < 0) {
-    eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
-  }
-}
-
-Eigen::Matrix<double, N, N> A_reconstructed;
-A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
-
-Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>> outputMap(output);
-outputMap = A_reconstructed;
-return;
 }
 
 template <unsigned int N>
 __device__ void spd_projection_inplace(double *A, int choice) {
-if (choice == 0){
-  return;
-}
-// Map A to an N x N Eigen matrix without copying
-Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
-Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
-const auto& B = eigenSolver.eigenvectors();
-Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
-for (int i = 0; i < N; i++) {
-  if (eigenValues[i] < 0) {
-    eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
+  if (choice == 0){
+    return;
   }
-}
-
-// Reconstruct the matrix directly without using an intermediate matrix
-for (int i = 0; i < N; ++i) {
-  for (int j = 0; j < N; ++j) {
-    double sum = 0.0;
-    for (int k = 0; k < N; ++k) {
-      sum += B(i, k) * eigenValues[k] * B(j, k);
+  // Map A to an N x N Eigen matrix without copying
+  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
+  const auto& B = eigenSolver.eigenvectors();
+  Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
+  for (int i = 0; i < N; i++) {
+    if (eigenValues[i] < 0) {
+      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
     }
-    A[i * N + j] = sum;
   }
-}
-return;
+
+  // Reconstruct the matrix directly without using an intermediate matrix
+  for (int i = 0; i < N; ++i) {
+    for (int j = 0; j < N; ++j) {
+      double sum = 0.0;
+      for (int k = 0; k < N; ++k) {
+        sum += B(i, k) * eigenValues[k] * B(j, k);
+      }
+      A[i * N + j] = sum;
+    }
+  }
+  return;
 }
 #endif // EIGEN_PROJECTION
 '''
