@@ -77,3 +77,7 @@ examples/cage/_skipped.face
 examples/cubify/*
 examples/re_area/*
 examples/two_coins/*
+examples/swing/*
+examples/pendulum/*
+examples/affine_hand_collision/*
+examples/pendulum_midpoint
