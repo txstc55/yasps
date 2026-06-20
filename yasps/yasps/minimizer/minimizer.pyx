@@ -287,7 +287,7 @@ class minimizer:
       self.__active_hessian = None
       return None
 
-    active_hessian.compute(self.__gradient_object)
+    active_hessian.compute(self.__gradient_object) # compute with gradient just means once we computed the actual gradient, it will be stored in this input gradient object
     self.__active_hessian = active_hessian
     self.__gradient_object = active_hessian.gradient
 
