@@ -92,7 +92,7 @@ class solverKernel:
                 ctypes.c_void_p, # d_q (device pointer)
                 ctypes.c_void_p, # d_s (device pointer)
                 ctypes.c_void_p, # solution (device pointer)
-                ctypes.c_void_p  # last 5 solution (device pointer)
+                ctypes.c_void_p  # initial_guess (device pointer)
               ]
               return
             else:
@@ -389,7 +389,7 @@ int computeSolution(unsigned int maxIteration,
                             double* d_q,
                             double* d_s,
                             double* solution,
-                            double* last_5_solution
+                            double* initial_guess
                             ) {
   // Instead, retrieve the current context (if necessary)
   std::vector<cudaStream_t> streams;
@@ -405,7 +405,7 @@ int computeSolution(unsigned int maxIteration,
     cudaStreamCreate(&preconditioner_streams[i]);
   }
   // set the initial guess
-  CUDA_CHECK_ERROR(cudaMemcpy(solution, last_5_solution, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
+  CUDA_CHECK_ERROR(cudaMemcpy(solution, initial_guess, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
 
   // now we compute P^-1 * b where P is the preconditioner
   // jacobiPreconditioner<<<MATRIX_SIZE / 32 + 1, 32>>>(diagonal, gradient, d_p1_b, MATRIX_SIZE);
@@ -433,7 +433,7 @@ int computeSolution(unsigned int maxIteration,
   // CUDA_CHECK_ERROR(cudaMemcpy(d_r, gradient, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
 
 
-  // we need to compute d_r = gradient - A * last_5_solution
+  // we need to compute d_r = gradient - A * initial_guess
   spmvWithSystem(block_values,
                  block_positions,
                  block_values_start,
@@ -442,7 +442,7 @@ int computeSolution(unsigned int maxIteration,
                  block_positions_dynamic,
                  block_values_start_dynamic,
                  block_counts_dynamic,
-                 last_5_solution,
+                 initial_guess,
                  d_r,
                  block_dimensions,
                  NUM_BLOCK_DIMENSIONS,
@@ -658,7 +658,7 @@ int computeSolution(unsigned int maxIteration,
         ctypes.c_void_p, # d_q (device pointer)
         ctypes.c_void_p, # d_s (device pointer)
         ctypes.c_void_p, # solution (device pointer)
-        ctypes.c_void_p  # last 5 solution (device pointer)
+        ctypes.c_void_p  # initial_guess (device pointer)
       ]
       data = []
       with open(".yasps_constant/cg_dimension_to_file.json", "r", encoding="utf-8") as f:
@@ -705,7 +705,7 @@ int computeSolution(unsigned int maxIteration,
     d_q: gpuarray.GPUArray,
     d_s: gpuarray.GPUArray,
     solution: gpuarray.GPUArray,
-    last_5_solution: gpuarray.GPUArray
+    initial_guess: gpuarray.GPUArray
   ):
     self.__context.useDefaultContext()
     # self.__context.useNamedContext("solver") # 14624
@@ -745,7 +745,7 @@ int computeSolution(unsigned int maxIteration,
       self.__to_void_p(d_q),
       self.__to_void_p(d_s),
       self.__to_void_p(solution),
-      self.__to_void_p(last_5_solution)
+      self.__to_void_p(initial_guess)
     )
     # Record the end event
     end_call.record()

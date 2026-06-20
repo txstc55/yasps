@@ -14,6 +14,7 @@ from .hessianAndGradientKernel import hessianAndGradientKernel
 from .coordinateCompressionKernel import coordinateCompressionKernel
 from .diagonalBlockInverseKernel import diagonalBlockInverseKernel
 from .solverKernel import solverKernel
+from .solver import solver
 from .vector import vector
 from .matrix import matrix
 from .gradient import gradient

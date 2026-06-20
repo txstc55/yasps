@@ -21,6 +21,7 @@ extensions = [
     Extension("yasps.coordinateCompressionKernel", ["yasps/kernel/Coordinate/coordinateCompressionKernel.pyx"]),
     Extension("yasps.diagonalBlockInverseKernel", ["yasps/kernel/Solver/diagonalBlockInverseKernel.pyx"]),
     Extension("yasps.solverKernel", ["yasps/kernel/Solver/solverKernel.pyx"]),
+    Extension("yasps.solver", ["yasps/solver/solver.pyx"]),
     Extension("yasps.energy", ["yasps/energy/energy.pyx"]),
     Extension("yasps.minimizer", ["yasps/minimizer/minimizer.pyx"]),
     Extension("yasps.autodiff", ["yasps/attribute/autodiff.pyx"]),

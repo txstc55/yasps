@@ -11,7 +11,7 @@ from yasps.attribute import attribute, DATA
 from yasps.differentiator import differentiator
 from yasps.gradient import gradient
 from yasps.hessian import hessian
-from yasps.solverKernel import solverKernel
+from yasps.solver import solver
 from yasps.diagonalBlockInverseKernel import diagonalBlockInverseKernel
 from yasps.helper import timed
 
@@ -87,15 +87,9 @@ class minimizer:
     self.__gradient_object: Optional[gradient] = None
     self.__seen_pre_targets_full_names: Set[str] = set()
 
-    self.__solver: Optional[solverKernel] = None
-    self.__d_p1_b: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
-    self.__d_r: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
-    self.__d_c: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
-    self.__d_q: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
-    self.__d_s: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
-    self.__solution: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__solver: solver = solver()
+    self.__initial_guess: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
     self.__solutionSegments: List[gpuarray.GPUArray] = []
-    self.__last5solutions: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
 
     self.__diagonalBlockInverseKernel: Optional[diagonalBlockInverseKernel] = None
     self.__ignoredEnergyHashList: List[int] = []
@@ -140,15 +134,9 @@ class minimizer:
     self.__active_hessian_ignore_hashes = tuple()
 
   def __resetSolutionBuffers(self) -> None:
-    self.__solver = None
-    self.__d_p1_b = gpuarray.empty(0, dtype=np.float64)
-    self.__d_r = gpuarray.empty(0, dtype=np.float64)
-    self.__d_c = gpuarray.empty(0, dtype=np.float64)
-    self.__d_q = gpuarray.empty(0, dtype=np.float64)
-    self.__d_s = gpuarray.empty(0, dtype=np.float64)
-    self.__solution = gpuarray.empty(0, dtype=np.float64)
+    self.__solver.reset()
+    self.__initial_guess = gpuarray.empty(0, dtype=np.float64)
     self.__solutionSegments = []
-    self.__last5solutions = gpuarray.empty(0, dtype=np.float64)
     self.__diagonalBlockInverseKernel = None
 
   def __initializeGradientLayout(self) -> None:
@@ -316,81 +304,43 @@ class minimizer:
       self.__diagonalBlockInverseKernel.computeDiagonalBlockInverse(active_hessian.diagonal_blocks, active_hessian.diagonal_blocks_inverse)
     return active_hessian
 
-  def __ensureSolverBuffers(self) -> None:
+  def __ensureInitialGuess(self) -> None:
     if self.gradient.size == 0:
       return
-    if self.__solution.size == self.gradient.size and self.__solver is not None:
+    if self.__initial_guess.size == self.gradient.size:
+      return
+    self.__initial_guess = gpuarray.empty(self.gradient.shape, dtype=np.float64)
+    self.__initial_guess.fill(0)
+
+  def __updateSolutionSegments(self) -> None:
+    solution = self.__solver.solution
+    if solution.size == 0:
+      self.__solutionSegments = []
+      return
+    if len(self.__solutionSegments) > 0 and sum([segment.shape[0] for segment in self.__solutionSegments]) == solution.size:
       return
 
-    if self.__active_hessian is None:
-      return
-
-    self.__solver = solverKernel(self.__active_hessian.block_dimensions + self.__active_hessian.block_dimensions_dynamic)
-    self.__d_p1_b = gpuarray.empty(self.gradient.shape, dtype=np.float64)
-    self.__d_r = gpuarray.empty(self.gradient.shape, dtype=np.float64)
-    self.__d_c = gpuarray.empty(self.gradient.shape, dtype=np.float64)
-    self.__d_q = gpuarray.empty(self.gradient.shape, dtype=np.float64)
-    self.__d_s = gpuarray.empty(self.gradient.shape, dtype=np.float64)
-    self.__solution = gpuarray.empty(self.gradient.shape, dtype=np.float64)
-    self.__last5solutions = gpuarray.empty(self.gradient.shape, dtype=np.float64)
-    self.__solution.fill(0)
-    self.__last5solutions.fill(0)
     self.__solutionSegments = []
-
     count = 0
     for segment in self.gradientSegments:
-      self.__solutionSegments.append(self.__solution[count: count + segment.shape[0]])
+      self.__solutionSegments.append(solution[count: count + segment.shape[0]])
       count += segment.shape[0]
 
   def __solveLinearSystem(self, tolerance = 1e-3, maxIterations = 20000):
     if self.gradient.size == 0:
       return 0
-    if self.__active_hessian is None:
-      self.__ensureSolverBuffers()
-      if self.__solution.size > 0:
-        self.__solution.fill(0)
-      return 0
-
-    self.__ensureSolverBuffers()
-    assert self.__solver is not None
-    self.__solver.updateBlockDimensions(self.__active_hessian.block_dimensions + self.__active_hessian.block_dimensions_dynamic)
-
-    self.__d_p1_b.fill(0)
-    self.__d_r.fill(0)
-    self.__d_c.fill(0)
-    self.__d_q.fill(0)
-    self.__d_s.fill(0)
-    self.__solution.fill(0)
-
+    if self.__active_hessian is not None:
+      self.__ensureInitialGuess()
     error_code = self.__solver.computeSolution(
-      maxIterations,
-      tolerance,
-      self.__active_hessian.blocks_flattened,
-      self.__active_hessian.block_positions,
-      self.__active_hessian.blocks_start_indices,
-      self.__active_hessian.block_counts,
-      self.__active_hessian.block_dimensions,
-      self.__active_hessian.blocks_flattened_dynamic,
-      self.__active_hessian.block_positions_dynamic,
-      self.__active_hessian.blocks_start_indices_dynamic,
-      self.__active_hessian.block_counts_dynamic,
-      self.__active_hessian.block_dimensions_dynamic,
-      self.__active_hessian.diagonal,
-      self.__active_hessian.diagonal_blocks_inverse,
-      self.__active_hessian.diagonal_blocks_start_cpu,
-      [item.correspondance.numInstances for item in self.__wrt],
-      [item.size for item in self.__wrt],
-      self.__gradient_object.gradient_segments_start_cpu,
-      len(self.__wrt),
-      self.gradient,
-      self.__d_p1_b,
-      self.__d_r,
-      self.__d_c,
-      self.__d_q,
-      self.__d_s,
-      self.__solution,
-      self.__last5solutions
+      self.__active_hessian,
+      self.__wrt,
+      self.__gradient_object,
+      self.__initial_guess,
+      tolerance=tolerance,
+      maxIterations=maxIterations
     )
+    if self.__active_hessian is not None:
+      self.__updateSolutionSegments()
     return error_code
 
   @timed("minimizer.computeSolution")
