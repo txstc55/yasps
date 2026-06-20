@@ -533,9 +533,9 @@ for i in range(200):
     max_movement = gpuarray.max(abs(direction_copy)).get() / DT_VALUE
     end_max_movement = time.time()
     print(f"Time taken for max movement: {end_max_movement - start_max_movement} seconds")
-    if max_movement < 1e-2:
-      print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
-      break
+    # if max_movement < 1e-2:
+    #   print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
+    #   break
     # check for the largest step size we can take
     start_ccd = time.time()
     ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 0.5)
@@ -606,6 +606,10 @@ for i in range(200):
       abd_poly.points = abd_vertices_computed
       plotter.render()
       plotter.update()
+
+    if max_movement < 1e-2:
+      print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
+      break
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
     # if max_grad < 1e-4:
