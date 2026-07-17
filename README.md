@@ -21,6 +21,12 @@ And what if there are 3 ways to control a points, what if I now write an energy 
 
 YASPS says: no, just use the JOIN and UNION opeartor that YASPS introduces, and you only need to write the energy as one function.
 
+And with those two operators, we can easily write simulations like those:
+
+| Cage Deformation | Contact with Friction | Repulsive Contact |
+|:---:|:---:|:---:|
+| ![Cage Deformation](videos/cage.gif) | ![Contact with Friction](videos/dropping_in_container_with_friction.gif) | ![Repulsive Curve](videos/repulsive.gif) |
+
 ### GPU by Default
 YASPS generates all the code on GPU, and is very fast, so fast that we directly compared to hand optimized GPU simulation framework (table 1 in the paper), and we are still faster.
 
