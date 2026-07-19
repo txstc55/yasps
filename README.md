@@ -23,7 +23,7 @@ YASPS says: no, just use the JOIN and UNION opeartor that YASPS introduces, and 
 
 And with those two operators, we can easily write simulations like those:
 
-| Cage Deformation | Contact with Friction | Repulsive Contact |
+| Cage Deformation | Contact with Friction | Repulsive Curve |
 |:---:|:---:|:---:|
 | ![Cage Deformation](videos/cage.gif) | ![Contact with Friction](videos/dropping_in_container_with_friction.gif) | ![Repulsive Curve](videos/repulsive.gif) |
 
