@@ -26,7 +26,7 @@ class solverKernel:
   def __init_kernel(self, blockDimensions: List[int]):
     if is_metal:
       if self.__metal_solver is None:
-        from yasps.metal.solver import MetalCGSolver
+        from yasps.kernel.Solver.solverKernelMetal import MetalCGSolver
         self.__metal_solver = MetalCGSolver()
       return
     # convert blockDimensions to a tuple of int, int
@@ -716,7 +716,7 @@ int computeSolution(unsigned int maxIteration,
     self.__context.useDefaultContext()
     if is_metal:
       if self.__metal_solver is None:
-        from yasps.metal.solver import MetalCGSolver
+        from yasps.kernel.Solver.solverKernelMetal import MetalCGSolver
         self.__metal_solver = MetalCGSolver()
       return self.__metal_solver.solve(
         maxIteration,

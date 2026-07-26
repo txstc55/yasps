@@ -1,4 +1,4 @@
-"""Generated Metal compression for sparse block coordinates."""
+"""Metal counterparts to the coordinate compression and placement kernels."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import mlx.core as mx
 
 from yasps.backend import GPUArray
-from yasps.metal.scan import exclusive_scan, outer_indices
+from yasps.kernel.Coordinate.scanMetal import exclusive_scan, outer_indices
 
 
 _THREADS = 256

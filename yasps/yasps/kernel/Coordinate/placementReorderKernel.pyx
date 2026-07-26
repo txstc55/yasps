@@ -226,7 +226,9 @@ int reorderPlacementIndices(
   ):
     if is_metal:
       if self.__metal_pipeline is None:
-        from yasps.metal.coordinates import MetalPlacementReorder
+        from yasps.kernel.Coordinate.coordinateCompressionKernelMetal import (
+          MetalPlacementReorder,
+        )
         self.__energy = energy
         self.__metal_pipeline = MetalPlacementReorder(
           global_jacobian_children_spans,

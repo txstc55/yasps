@@ -6,8 +6,10 @@ from yasps.backend import is_metal
 from yasps.backend import gpuarray
 from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 from yasps.gradientIndicesKernel import gradientIndicesKernel
-from yasps.metal.scan import exclusive_scan, outer_indices
-from yasps.metal.coordinates import MetalPlacementReorder
+from yasps.kernel.Coordinate.scanMetal import exclusive_scan, outer_indices
+from yasps.kernel.Coordinate.coordinateCompressionKernelMetal import (
+  MetalPlacementReorder,
+)
 from yasps.scene import scene
 from types import SimpleNamespace
 

@@ -11,6 +11,7 @@ extensions = [
     Extension("yasps.operator", ["yasps/operator/operator.pyx"]),
     Extension("yasps.deviceKernel", ["yasps/kernel/Compute/deviceKernel.pyx"]),
     Extension("yasps.codeGenerator", ["yasps/codeGenerator/codeGenerator.pyx"]),
+    Extension("yasps.codeGeneratorMetal", ["yasps/codeGenerator/codeGeneratorMetal.pyx"]),
     Extension("yasps.globalKernel", ["yasps/kernel/Compute/globalKernel.pyx"]),
     Extension("yasps.vector", ["yasps/matrixAndVector/vector/vector.pyx"]),
     Extension("yasps.matrix", ["yasps/matrixAndVector/matrix/matrix.pyx"]),

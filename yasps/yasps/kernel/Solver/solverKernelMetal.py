@@ -1,4 +1,4 @@
-"""Generated Metal block-sparse preconditioned conjugate-gradient solver."""
+"""Metal counterpart to ``solverKernel.pyx``."""
 
 from __future__ import annotations
 

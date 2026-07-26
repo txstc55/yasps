@@ -64,7 +64,9 @@ class hessianAndGradientKernel:
     global_jacobian_children_spans: List[int] = [],
   ) -> None:
     if is_metal:
-      from yasps.metal.assembly import MetalHessianProgram
+      from yasps.kernel.Hessian.hessianAndGradientKernelMetal import (
+        MetalHessianProgram,
+      )
       if self.__metal_program is None:
         self.__metal_program = MetalHessianProgram(
           self.__att,

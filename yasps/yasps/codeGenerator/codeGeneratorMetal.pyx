@@ -1,4 +1,4 @@
-"""Fused Metal source generation for symbolic YASPS attributes.
+"""Metal counterpart to ``codeGenerator.pyx`` for symbolic attributes.
 
 This module deliberately does not evaluate an attribute graph with MLX array
 operations. It emits one Metal program whose thread-local temporaries mirror
@@ -89,7 +89,14 @@ class MetalProgram:
     self.modules = self._ordered_modules(root_module.key)
     module_sources = [module.source for module in self.modules]
     self.header = "\n\n".join(
-      [Path(__file__).with_name("linalg.metal").read_text(), *module_sources]
+      [
+        (
+          Path(__import__("yasps").__file__).parent
+          / "kernel"
+          / "metalLinalg.metal"
+        ).read_text(),
+        *module_sources,
+      ]
     )
     result_name = f"root_result_{root_module.key}".replace("-", "neg")
     lines: list[str] = [

@@ -1,4 +1,4 @@
-"""Generated Metal prefix scans used by sparse-index pipelines."""
+"""Metal prefix scans shared by the coordinate kernels in this directory."""
 
 from __future__ import annotations
 

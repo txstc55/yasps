@@ -614,7 +614,9 @@ class coordinateCompressionKernel:
         self.__uniqueDimensionsBlockCounts = gpuarray.empty(0, np.uint32)
         self.__lookupArray = gpuarray.empty(0, np.uint32)
         return
-      from yasps.metal.coordinates import MetalCoordinateCompressor
+      from yasps.kernel.Coordinate.coordinateCompressionKernelMetal import (
+        MetalCoordinateCompressor,
+      )
       result = MetalCoordinateCompressor().run(
         self.__coordinates,
         self.__dimensions,

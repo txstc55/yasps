@@ -34,7 +34,9 @@ class diagonalBlockInverseKernel:
   @timed("diagonalBlockInverseKernel.__generateKernel")
   def __generateKernel(self):
     if is_metal:
-      from yasps.metal.preconditioner import MetalDiagonalBlockInverse
+      from yasps.kernel.Solver.diagonalBlockInverseKernelMetal import (
+        MetalDiagonalBlockInverse,
+      )
       self.__metal_program = MetalDiagonalBlockInverse(
         self.__diagonal_blocks_start,
         self.__diagonal_blocks_count,

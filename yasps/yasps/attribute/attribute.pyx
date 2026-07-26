@@ -907,7 +907,7 @@ class attribute:
     from yasps.backend import is_metal
     if is_metal:
       if self.__globalKernel is None:
-        from yasps.metal.codegen import MetalGlobalKernel
+        from yasps.codeGeneratorMetal import MetalGlobalKernel
         self.__globalKernel = MetalGlobalKernel(self)
       required_size = self.__correspondance.numInstances * self.size
       if self.__value is None or self.__value.size < required_size:

@@ -399,7 +399,7 @@ class gradientIndicesKernel:
     self.__metal_pipeline = None
     self.__metal_total_coordinates = 0
     if is_metal:
-      from yasps.metal.indexing import MetalIndexPipeline
+      from yasps.kernel.Coordinate.gradientIndicesKernelMetal import MetalIndexPipeline
       self.__metal_pipeline = MetalIndexPipeline(
         self.__path_dict,
         self.__unioned_child_to_its_children,

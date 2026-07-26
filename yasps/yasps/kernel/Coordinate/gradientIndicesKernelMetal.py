@@ -1,4 +1,4 @@
-"""Topology-specific generated Metal kernels for sparse gradient indices."""
+"""Metal counterpart to ``gradientIndicesKernel.pyx``."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import mlx.core as mx
 
 from yasps.backend import GPUArray
-from yasps.metal.scan import outer_indices
+from yasps.kernel.Coordinate.scanMetal import outer_indices
 
 import importlib
 

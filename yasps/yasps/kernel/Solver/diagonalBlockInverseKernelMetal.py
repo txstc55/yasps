@@ -1,4 +1,4 @@
-"""Generated Metal block-Jacobi preconditioner kernels."""
+"""Metal counterpart to ``diagonalBlockInverseKernel.pyx``."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class MetalDiagonalBlockInverse:
       )
       block_start += count
     self.source = "\n".join(lines)
-    self.header = Path(__file__).with_name("linalg.metal").read_text()
+    self.header = (Path(__file__).parents[1] / "metalLinalg.metal").read_text()
     digest = sha256((self.header + self.source).encode()).hexdigest()[:16]
     self.name = f"yasps_diagonal_block_inverse_{digest}"
     self.kernel = mx.fast.metal_kernel(

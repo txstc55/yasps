@@ -1,4 +1,4 @@
-"""Generated Metal kernels for gradient and block-Hessian assembly."""
+"""Metal counterpart to ``hessianAndGradientKernel.pyx``."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import mlx.core as mx
 
 from yasps.backend import GPUArray
-from yasps.metal.codegen import MetalProgram
+from yasps.codeGeneratorMetal import MetalProgram
 
 
 _THREADS = 256
