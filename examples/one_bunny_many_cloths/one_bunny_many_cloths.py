@@ -440,21 +440,32 @@ cloth_free_position_copy = vertices_free["position"].compute().value.copy()
 
 
 def compute_total_energy():
-  total_energy = 0.0
-  total_energy += gpuarray.sum(snh_softs.compute().value).get()
-  total_energy += gpuarray.sum(inertia_softs.compute().value).get()
-  total_energy += gpuarray.sum(inertia_free.compute().value).get()
-  total_energy += gpuarray.sum(bending_energy.compute().value).get()
-  total_energy += gpuarray.sum(baraff_witkin_energy.compute().value).get()
-  if pp.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(pp.compute().value).get()
-  if pe.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(pe.compute().value).get()
-  if pt.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(pt.compute().value).get()
-  if ee.correspondance.numInstances > 0:
-    total_energy += gpuarray.sum(ee.compute().value).get()
-  return total_energy
+  return s0.computeTotalEnergy()
+
+
+def update_collision_set(candidate_position):
+  ccd.cd(candidate_position, DHAT_VALUE)
+  pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
+  print("The separated counts are", ccd.separated_counts)
+  collision_mesh.pp.updateNumInstances(pp_count)
+  collision_mesh.pe.updateNumInstances(pe_count)
+  collision_mesh.pt.updateNumInstances(pt_count)
+  collision_mesh.ee.updateNumInstances(ee_count)
+  if pp_count > 0:
+    pp2v.updateConnectivity(ccd.pp[:2 * pp_count])
+  if pe_count > 0:
+    pe2v.updateConnectivity(ccd.pe[:3 * pe_count])
+  if pt_count > 0:
+    pt2v.updateConnectivity(ccd.pt[:4 * pt_count])
+  if ee_count > 0:
+    ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
+
+
+# The cloth layers begin inside DHAT of one another.  Populate the dynamic
+# barrier terms before the first Newton solve so the line search compares the
+# same objective on both sides.
+update_collision_set(position_copy)
+
 import time
 
 start = time.time()
@@ -521,7 +532,9 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
     # here we will take this step and check for the collision sets
     substep = 1
     step_taken = largest_step
-    while substep <= 8:
+    line_search_accepted = False
+    line_search_limit = int(os.environ.get("YASPS_EXAMPLE_LINE_SEARCH_STEPS", "8"))
+    while substep <= line_search_limit:
       start_data_transfer = time.time()
       vertices_soft_position.updateValue(bunny_soft_position_copy - d_pos_soft_bunny * step_taken, deepCopy = True)
       vertices_free["position"].updateValue(cloth_free_position_copy - d_pos_cloth_free * step_taken, deepCopy = True)
@@ -530,24 +543,10 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
       start_cd = time.time()
 
   #     # perform collision detection
-      ccd.cd(collision_mesh.vertices["position"].compute().value, DHAT_VALUE) # perform collision detection
+      update_collision_set(collision_mesh.vertices["position"].compute().value)
       end_cd = time.time()
       print(f"Time taken for collision detection: {end_cd - start_cd} seconds")
-      pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
-      print("The separated counts are", ccd.separated_counts)
       start_update_collision = time.time()
-      collision_mesh.pp.updateNumInstances(pp_count)
-      collision_mesh.pe.updateNumInstances(pe_count)
-      collision_mesh.pt.updateNumInstances(pt_count)
-      collision_mesh.ee.updateNumInstances(ee_count)
-      if pp_count > 0:
-        pp2v.updateConnectivity(ccd.pp[:2 * pp_count])
-      if pe_count > 0:
-        pe2v.updateConnectivity(ccd.pe[:3 * pe_count])
-      if pt_count > 0:
-        pt2v.updateConnectivity(ccd.pt[:4 * pt_count])
-      if ee_count > 0:
-        ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
       end_update_collision = time.time()
       print(f"Time taken for updating connectivity: {end_update_collision - start_update_collision} seconds")
       start_compute = time.time()
@@ -557,12 +556,17 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
 
       print(f"energy comparison: {new_energies} vs {energies_before}")
       if new_energies <= energies_before:
+        line_search_accepted = True
         break
       step_taken = step_taken / 2.0
       substep += 1
-  #   if substep > 8:
-  #     print("failed")
-  #     exit(1)
+    if not line_search_accepted:
+      vertices_soft_position.updateValue(bunny_soft_position_copy, deepCopy=True)
+      vertices_free["position"].updateValue(
+        cloth_free_position_copy, deepCopy=True
+      )
+      update_collision_set(position_copy)
+      step_taken = 0.0
     print("step taken is", step_taken)
     print("substep is", substep)
 
@@ -574,6 +578,12 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
     plotter.render()
     plotter.update()
 
+    if not line_search_accepted:
+      print(
+        f"Iteration {inner_iteration} exited because the line search "
+        "found no descending float32 state"
+      )
+      break
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
     # if max_grad < 1e-4:
     #   print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
@@ -582,6 +592,10 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
     #   print(f"Iteration {inner_iteration} exited with max movement: {max_grad}")
     #   break
     inner_iteration += 1
+    validation_limit = int(os.environ.get("YASPS_EXAMPLE_INNER_ITERATIONS", "0"))
+    if validation_limit > 0 and inner_iteration >= validation_limit:
+      print(f"Stopped after {validation_limit} bounded validation iterations")
+      break
   start_velocity_update = time.time()
   new_velocities_soft = (vertices_soft_position.value - vertices_soft_last_position.value) / DT_VALUE
   new_velocities_free = (vertices_free["position"].value - vertices_free_last_position.value) / DT_VALUE
@@ -597,7 +611,9 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
   cloth_poly.points = cloth_vertices_computed
   plotter.render()
   plotter.update()
-  # plotter.screenshot(f"outputs/many_bunny_one_cloth_block_jacobian_1e3_{i:04d}.jpg")
+  plotter.screenshot(
+    f"outputs/many_bunny_one_cloth_block_jacobian_1e3_{i:04d}.jpg"
+  )
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
   # soft_poly.save(f"meshes/bunny_soft_3_cloth_{i:04d}.obj")

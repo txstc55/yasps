@@ -542,6 +542,25 @@ translations_copy = translations.value.copy()
 container_y_copy = container_y_translation.value.copy()
 # sphere_position_copy = vertices_sphere_position.compute().value.copy()
 
+
+def update_collision_set(candidate_position):
+  ccd.cd(candidate_position, DHAT_VALUE)
+  pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
+  print("The separated counts are", ccd.separated_counts)
+  collision_mesh.pp.updateNumInstances(pp_count)
+  collision_mesh.pe.updateNumInstances(pe_count)
+  collision_mesh.pt.updateNumInstances(pt_count)
+  collision_mesh.ee.updateNumInstances(ee_count)
+  if pp_count > 0:
+    pp2v.updateConnectivity(ccd.pp[:2 * pp_count])
+  if pe_count > 0:
+    pe2v.updateConnectivity(ccd.pe[:3 * pe_count])
+  if pt_count > 0:
+    pt2v.updateConnectivity(ccd.pt[:4 * pt_count])
+  if ee_count > 0:
+    ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
+
+
 start = time.time()
 for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "2000"))):
   start_data_transfer = time.time()
@@ -649,6 +668,7 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "2000"))):
     # here we will take this step and check for the collision sets
     substep = 1
     step_taken = largest_step
+    line_search_accepted = False
     while substep <= 8:
       start_data_transfer = time.time()
       vertices_bunny_position.updateValue(bunny_soft_position_copy - d_pos_soft_bunny * step_taken, deepCopy = True)
@@ -661,24 +681,10 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "2000"))):
       start_cd = time.time()
 
       # perform collision detection
-      ccd.cd(collision_mesh.vertices["position"].compute().value, DHAT_VALUE) # perform collision detection
+      update_collision_set(collision_mesh.vertices["position"].compute().value)
       end_cd = time.time()
       print(f"Time taken for collision detection: {end_cd - start_cd} seconds")
-      pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
-      print("The separated counts are", ccd.separated_counts)
       start_update_collision = time.time()
-      collision_mesh.pp.updateNumInstances(pp_count)
-      collision_mesh.pe.updateNumInstances(pe_count)
-      collision_mesh.pt.updateNumInstances(pt_count)
-      collision_mesh.ee.updateNumInstances(ee_count)
-      if pp_count > 0:
-        pp2v.updateConnectivity(ccd.pp[:2 * pp_count])
-      if pe_count > 0:
-        pe2v.updateConnectivity(ccd.pe[:3 * pe_count])
-      if pt_count > 0:
-        pt2v.updateConnectivity(ccd.pt[:4 * pt_count])
-      if ee_count > 0:
-        ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
       end_update_collision = time.time()
       print(f"Time taken for updating connectivity: {end_update_collision - start_update_collision} seconds")
       start_compute = time.time()
@@ -688,12 +694,19 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "2000"))):
 
       print(f"energy comparison: {new_energies} vs {energies_before}")
       if new_energies <= energies_before:
+        line_search_accepted = True
         break
       step_taken = step_taken / 2.0
       substep += 1
-    # if substep > 8:
-    #   print("failed")
-    #   exit(1)
+    if not line_search_accepted:
+      vertices_bunny_position.updateValue(
+        bunny_soft_position_copy, deepCopy=True
+      )
+      affine_matrices.updateValue(affine_matrices_copy, deepCopy=True)
+      translations.updateValue(translations_copy, deepCopy=True)
+      container_y_translation.updateValue(container_y_copy, deepCopy=True)
+      update_collision_set(position_copy)
+      step_taken = 0.0
     print("step taken is", step_taken)
     print("substep is", substep)
 
@@ -709,10 +722,20 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "2000"))):
     plotter.update()
 
 
+    if not line_search_accepted:
+      print(
+        f"Iteration {inner_iteration} exited because the line search "
+        "found no descending float32 state"
+      )
+      break
     if max_movement < 2e-2 or inner_iteration >= 100:
       print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
       break
     inner_iteration += 1
+    validation_limit = int(os.environ.get("YASPS_EXAMPLE_INNER_ITERATIONS", "0"))
+    if validation_limit > 0 and inner_iteration >= validation_limit:
+      print(f"Stopped after {validation_limit} bounded validation iterations")
+      break
   start_velocity_update = time.time()
   new_velocities_bunny = (vertices_bunny_position.value - vertices_bunny_last_position.value) / DT_VALUE
   vertices_bunny_velocity.updateValue(new_velocities_bunny, deepCopy = True)

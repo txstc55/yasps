@@ -813,6 +813,10 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
     if max_movement < target_movement:
       print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
       break
+    validation_limit = int(os.environ.get("YASPS_EXAMPLE_INNER_ITERATIONS", "0"))
+    if validation_limit > 0 and inner_iteration >= validation_limit:
+      print(f"Stopped after {validation_limit} bounded validation iterations")
+      break
 
 
   new_velocities_abd = (vertices_abd_position.compute().value - vertices_abd_last_position.value) / DT_VALUE

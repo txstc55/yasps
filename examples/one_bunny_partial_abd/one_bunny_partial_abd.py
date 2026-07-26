@@ -279,6 +279,24 @@ position_copy.set(bunny.vertices["position"].compute().value)
 direction_copy = gpuarray.zeros_like(bunny.vertices["position"].compute().value)
 rotation_copy = bunny.affine_body["affine_matrix"].value.copy()
 translation_copy = bunny.affine_body["translation"].value.copy()
+
+def update_collision_set(candidate_position):
+  ccd.cd(candidate_position, DHAT_VALUE)
+  pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
+  print("The separated counts are", ccd.separated_counts)
+  bunny.pp.updateNumInstances(pp_count)
+  bunny.pe.updateNumInstances(pe_count)
+  bunny.pt.updateNumInstances(pt_count)
+  bunny.ee.updateNumInstances(ee_count)
+  if pp_count > 0:
+    pp2v.updateConnectivity(ccd.pp[:2 * pp_count])
+  if pe_count > 0:
+    pe2v.updateConnectivity(ccd.pe[:3 * pe_count])
+  if pt_count > 0:
+    pt2v.updateConnectivity(ccd.pt[:4 * pt_count])
+  if ee_count > 0:
+    ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
+
 for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
   # for all the moving vertices we will copy the position to last_position
   bunny.abd_vertices["last_position"].updateValue(bunny.abd_vertices["position"].compute().value, deepCopy = True)
@@ -319,6 +337,7 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
     # here we will take this step and check for the collision sets
     step_taken = largest_step
     substep = 1
+    line_search_accepted = False
     # step_taken = 1.0
     while substep <= 8:
       computed_position = position_copy - direction_copy * step_taken
@@ -329,32 +348,30 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
 
 
 
-      ccd.cd(computed_position, DHAT_VALUE) # perform collision detection
-      pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
-      print("The separated counts are", ccd.separated_counts)
-      bunny.pp.updateNumInstances(pp_count)
-      bunny.pe.updateNumInstances(pe_count)
-      bunny.pt.updateNumInstances(pt_count)
-      bunny.ee.updateNumInstances(ee_count)
-      if pp_count > 0:
-        pp2v.updateConnectivity(ccd.pp[:2 * pp_count])
-      if pe_count > 0:
-        pe2v.updateConnectivity(ccd.pe[:3 * pe_count])
-      if pt_count > 0:
-        pt2v.updateConnectivity(ccd.pt[:4 * pt_count])
-      if ee_count > 0:
-        ee2v.updateConnectivity(ccd.ee[:4 * ee_count])
+      update_collision_set(computed_position)
       new_energies = s0.computeTotalEnergy()
       print(f"energy comparison: {new_energies} vs {energies_before}")
       if new_energies <= energies_before:
+        line_search_accepted = True
         break
       step_taken = step_taken / 2.0
       substep += 1
-    # if substep > 8 and max_grad > 1e-1:
-    #   print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    #   print("substep failed")
-    #   print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    #   exit()
+    if not line_search_accepted:
+      # A failed search used to leave the last energy-increasing trial active.
+      # Restore the accepted state; on float32 this also provides the natural
+      # termination point when no representable descending step remains.
+      bunny.moving_vertices["position"].updateValue(
+        position_copy[3 * (NUM_FIXED_POINTS + NUM_RIGID_POINTS):],
+        deepCopy=True,
+      )
+      bunny.affine_body["affine_matrix"].updateValue(rotation_copy)
+      bunny.affine_body["translation"].updateValue(translation_copy)
+      restored_position = position_copy.copy()
+      restored_position[
+        3 * NUM_FIXED_POINTS : 3 * (NUM_FIXED_POINTS + NUM_RIGID_POINTS)
+      ].set(bunny.abd_vertices["position"].compute().value)
+      update_collision_set(restored_position)
+      step_taken = 0.0
     print("step taken is", step_taken)
     print("substep is", substep)
     new_positions = bunny.vertices["position"].compute().value.get().reshape(-1, 3)
@@ -363,10 +380,20 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
     plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
+    if not line_search_accepted:
+      print(
+        f"Iteration {inner_iteration} exited because the line search "
+        "found no descending float32 state"
+      )
+      break
     if max_grad < 1e-4:
       print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
       break
     inner_iteration += 1
+    validation_limit = int(os.environ.get("YASPS_EXAMPLE_INNER_ITERATIONS", "0"))
+    if validation_limit > 0 and inner_iteration >= validation_limit:
+      print(f"Stopped after {validation_limit} bounded validation iterations")
+      break
   new_velocities = (bunny.moving_vertices["position"].value - bunny.moving_vertices["last_position"].value) / DT_VALUE
   bunny.moving_vertices["velocity"].updateValue(new_velocities)
 
@@ -379,4 +406,4 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
   bunny_poly.save(f"outputs/bunny1_{i:04d}.obj")
   plotter.render()
   plotter.update()
-  # plotter.screenshot(f"outputs/bunny1_partial_abd_{i:04d}.jpg")
+  plotter.screenshot(f"outputs/bunny1_partial_abd_{i:04d}.jpg")
