@@ -518,6 +518,12 @@ class MetalCGSolver:
       )
       delta_old = delta_new
       delta_new = _dot(residual._array, preconditioned._array)
+      if trace and iteration % 512 == 0:
+        print(
+          "Metal PCG iteration "
+          f"{iteration}, recursive residual {delta_new:.9g}, "
+          f"best true residual {best_delta:.9g}"
+        )
       if delta_new <= relative_tolerance:
         # A recursively updated float32 residual can look converged even after
         # drifting away from b - A*x.  Confirm against the true residual.
