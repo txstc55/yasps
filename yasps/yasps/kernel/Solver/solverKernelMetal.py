@@ -448,6 +448,10 @@ class MetalCGSolver:
         return -iteration - 4
       alpha = delta_new / denominator
       solution._array = _combine(solution._array, direction._array, alpha)
+      # The solution is not consumed by either scalar reduction below.  Without
+      # materializing it here, MLX retains one more vector-update node per PCG
+      # iteration and eventually replays an increasingly deep lazy graph.
+      mx.eval(solution._array)
       residual._array = _combine(residual._array, product._array, -alpha)
       preconditioned._array = self._precondition(
         inverse_blocks,
