@@ -1,7 +1,7 @@
 # cython: language_level=3
 from __future__ import annotations
 from typing import List, Tuple, Set
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 import ctypes
 import numpy as np
 from yasps.backend import driver as cuda
@@ -17,12 +17,18 @@ class solverKernel:
     self.__cg_kernel = None
     self.__saved_block_dimensions = set([])
     self.__context = context()
+    self.__metal_solver = None
 
   def updateBlockDimensions(self, blockDimensions: List[int]):
     self.__init_kernel(blockDimensions)
 
   @timed("solverKernel.__init_kernel")
   def __init_kernel(self, blockDimensions: List[int]):
+    if is_metal:
+      if self.__metal_solver is None:
+        from yasps.metal.solver import MetalCGSolver
+        self.__metal_solver = MetalCGSolver()
+      return
     # convert blockDimensions to a tuple of int, int
     blockDimensionsTuples = []
     for i in range(len(blockDimensions) // 2):
@@ -708,6 +714,37 @@ int computeSolution(unsigned int maxIteration,
     initial_guess: gpuarray.GPUArray
   ):
     self.__context.useDefaultContext()
+    if is_metal:
+      if self.__metal_solver is None:
+        from yasps.metal.solver import MetalCGSolver
+        self.__metal_solver = MetalCGSolver()
+      return self.__metal_solver.solve(
+        maxIteration,
+        threshold,
+        block_values,
+        block_positions,
+        block_values_start,
+        block_counts,
+        block_dimensions,
+        block_values_dynamic,
+        block_positions_dynamic,
+        block_values_start_dynamic,
+        block_counts_dynamic,
+        block_dimensions_dynamic,
+        diagonal_blocks_inverse,
+        diagonal_blocks_start,
+        diagonal_blocks_count,
+        diagonal_blocks_size,
+        gradient_segments_start,
+        gradient,
+        d_p1_b,
+        d_r,
+        d_c,
+        d_q,
+        d_s,
+        solution,
+        initial_guess,
+      )
     # self.__context.useNamedContext("solver") # 14624
 
     start_call = cuda.Event()
