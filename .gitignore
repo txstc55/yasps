@@ -81,3 +81,8 @@ examples/swing/*
 examples/pendulum/*
 examples/affine_hand_collision/*
 examples/pendulum_midpoint
+
+# Native source for the generated MLX/Metal solver extension.
+!yasps/yasps/kernel/Solver/metalExtension/CMakeLists.txt
+!yasps/yasps/kernel/Solver/metalExtension/*.cpp
+!yasps/yasps/kernel/Solver/metalExtension/*.h

@@ -1,7 +1,12 @@
+import os
+import platform
+import sys
+
 from setuptools import setup, find_packages, Extension
+from setuptools.command.build_ext import build_ext as SetuptoolsBuildExt
 from Cython.Build import cythonize
 
-extensions = [
+cython_extensions = [
     Extension("yasps.scene", ["yasps/scene/scene.pyx"]),
     Extension("yasps.attribute", ["yasps/attribute/attribute.pyx"]),
     Extension("yasps.mesh", ["yasps/mesh/mesh.pyx"]),
@@ -39,6 +44,39 @@ extensions = [
     Extension("yasps.placementReorderKernel", ["yasps/kernel/Coordinate/placementReorderKernel.pyx"]),
     Extension("yasps.hessianKernelSeparateJacobian", ["yasps/kernel/Hessian/hessianKernelSeparateJacobian.pyx"]),
 ]
+
+extra_extensions = []
+cmdclass = {}
+if sys.platform == "darwin" and platform.machine() == "arm64":
+    from mlx import extension as mlx_extension
+
+    class MixedBuildExt(mlx_extension.CMakeBuild):
+        """Build ordinary Cython modules and the native MLX/Metal extension."""
+
+        def build_extension(self, ext):
+            if isinstance(ext, mlx_extension.CMakeExtension):
+                previous_args = os.environ.get("CMAKE_ARGS")
+                interpreter_arg = f"-DPython_EXECUTABLE={sys.executable}"
+                os.environ["CMAKE_ARGS"] = " ".join(
+                    part for part in (previous_args, interpreter_arg) if part
+                )
+                try:
+                    return mlx_extension.CMakeBuild.build_extension(self, ext)
+                finally:
+                    if previous_args is None:
+                        os.environ.pop("CMAKE_ARGS", None)
+                    else:
+                        os.environ["CMAKE_ARGS"] = previous_args
+            return SetuptoolsBuildExt.build_extension(self, ext)
+
+    extra_extensions.append(
+        mlx_extension.CMakeExtension(
+            "yasps._metal_solver_ext",
+            sourcedir="yasps/kernel/Solver/metalExtension",
+        )
+    )
+    cmdclass["build_ext"] = MixedBuildExt
+
 setup(
     name='yasps',  # This is the name of your package
     version='0.1.0',  # The initial release version
@@ -49,14 +87,24 @@ setup(
     long_description_content_type='text/markdown',  # The content type of the long description
     url='https://github.com/yourusername/yasps',  # The URL to the repository
     packages=find_packages(),  # Finds all packages in the directory
-    package_data={'yasps': ['*.txt', '*.cuh', '*.cu', 'metal/*.metal']},
+    package_data={
+        'yasps': [
+            '*.txt',
+            '*.cuh',
+            '*.cu',
+            '*.so',
+            '*.dylib',
+            'metal/*.metal',
+        ]
+    },
     ext_modules=cythonize(
-      extensions,
-      annotate=False,        # Generates the HTML .html annotation files
-      compiler_directives={"language_level": "3"},
-      nthreads=0,
-      force=False       # important! only rebuild changed files
-    ),
+        cython_extensions,
+        annotate=False,        # Generates the HTML .html annotation files
+        compiler_directives={"language_level": "3"},
+        nthreads=0,
+        force=False       # important! only rebuild changed files
+    ) + extra_extensions,
+    cmdclass=cmdclass,
     classifiers=[
         # Trove classifiers
         # Full list: https://pypi.org/classifiers/
@@ -71,4 +119,5 @@ setup(
     ],
     python_requires='>=3.10',
     include_package_data=True,  # Includes files described by MANIFEST.in
+    zip_safe=False,
 )

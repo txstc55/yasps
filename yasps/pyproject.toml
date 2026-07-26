@@ -1,3 +1,11 @@
 [build-system]
-requires = ["setuptools", "wheel", "Cython", "numpy"]
+requires = [
+    "setuptools",
+    "wheel",
+    "Cython",
+    "numpy",
+    "cmake>=3.27; platform_system == 'Darwin' and platform_machine == 'arm64'",
+    "nanobind>=2.4; platform_system == 'Darwin' and platform_machine == 'arm64'",
+    "mlx>=0.29; platform_system == 'Darwin' and platform_machine == 'arm64'",
+]
 build-backend = "setuptools.build_meta"

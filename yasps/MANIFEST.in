@@ -1,0 +1,1 @@
+recursive-include yasps/kernel/Solver/metalExtension CMakeLists.txt *.cpp *.h
