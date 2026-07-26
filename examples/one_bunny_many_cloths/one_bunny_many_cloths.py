@@ -6,7 +6,7 @@ import numpy as np
 import sys
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
@@ -438,7 +438,6 @@ bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
 cloth_free_position_copy = vertices_free["position"].compute().value.copy()
 
 
-import pycuda.gpuarray as gpuarray
 def compute_total_energy():
   total_energy = 0.0
   total_energy += gpuarray.sum(snh_softs.compute().value).get()

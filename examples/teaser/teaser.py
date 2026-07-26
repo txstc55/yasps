@@ -6,7 +6,7 @@ import numpy as np
 import sys
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy

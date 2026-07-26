@@ -6,12 +6,13 @@ import numpy as np
 import sys
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
 import time
 import random
+from pathlib import Path
 random.seed(13)
 rng = np.random.default_rng(seed=13)
 
@@ -120,7 +121,10 @@ all_surface_triangles = surface_triangle_indices_bunny.copy()
 ###########################################################
 sphere_vertices = []
 sphere_faces = []
-f = open("../data/sphere_low_poly.obj", 'r')
+sphere_path = Path("../data/sphere_low_poly.obj")
+if not sphere_path.exists():
+  sphere_path = Path("../data/sphere_small.obj")
+f = sphere_path.open('r')
 for line in f:
   if line.startswith('v '):
     sphere_vertices.append([float(x) for x in line.split()[1:]])
@@ -210,11 +214,6 @@ all_vertices = np.concatenate((all_vertices, container_positions), axis = 0)
 all_surface_triangles = np.concatenate((all_surface_triangles, container_surface_triangles + offset), axis = 0)
 all_edges = np.concatenate((all_edges, container_edge_indices + offset), axis = 0)
 all_surface_indices += list(range(offset, offset + container_positions.shape[0]))
-
-all_vertices = all_vertices
-# load all vertices and directions
-loaded_positions = np.load("positions/positions_0015.npy")
-loaded_directions = np.load("positions/direction_0015.npy")
 
 ##################################################################
 ## construct the scene

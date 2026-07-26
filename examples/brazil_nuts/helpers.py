@@ -1,6 +1,6 @@
 import numpy as np
 from yasps import attribute
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray, is_metal
 def extract_surface_triangles(tets):
   from collections import defaultdict
   face_count = defaultdict(int)
@@ -188,15 +188,18 @@ def edge_edge(position, dHat, kappa):
   I5log = I5.log()
   return kappa * lenE * lenE * I5log * I5log
 
-from pycuda.reduction import ReductionKernel
-# Define the reduction kernel once
-abs_max_reduce = ReductionKernel(
-  np.float64,
-  neutral="0",
-  reduce_expr="max(a, b)",
-  map_expr="fabs(x[i])",
-  arguments="double *x"
-)
+if is_metal:
+  def abs_max_reduce(values):
+    return gpuarray.max(abs(values))
+else:
+  from pycuda.reduction import ReductionKernel
+  abs_max_reduce = ReductionKernel(
+    np.float64,
+    neutral="0",
+    reduce_expr="max(a, b)",
+    map_expr="fabs(x[i])",
+    arguments="double *x"
+  )
 
 def affine_energy(rotation, weight):
   identity = attribute.to_array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], rows=3, cols=3)

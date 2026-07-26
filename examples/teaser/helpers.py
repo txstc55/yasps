@@ -1,6 +1,6 @@
 import numpy as np
 from yasps import attribute
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 def extract_surface_triangles(tets):
   from collections import defaultdict
   face_count = defaultdict(int)
@@ -173,9 +173,6 @@ def edge_edge(position, dHat, kappa):
   lenE = d - dHat
   I5log = I5.log()
   return kappa * lenE * lenE * I5log * I5log
-
-from pycuda.reduction import ReductionKernel
-
 
 def affine_energy(rotation):
   identity = attribute.to_array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], rows=3, cols=3)

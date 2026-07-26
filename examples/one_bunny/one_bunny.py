@@ -5,7 +5,7 @@ import numpy as np
 import sys
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-4 # for collision detection
 KAPPA_VALUE = 10000.0 # for collision
