@@ -394,7 +394,11 @@ class MetalProgram:
     )
 
   def _emit(self, attribute, index, cache, lines, indent):
-    key = attribute.hash
+    # Algebraically equivalent attributes can deliberately share a public
+    # hash.  They are not interchangeable while source is being emitted:
+    # for example, ``-(-x)`` hashes like ``x`` and would otherwise resolve to
+    # the outer expression's not-yet-initialized local array.
+    key = id(attribute)
     if key in cache:
       return cache[key]
 

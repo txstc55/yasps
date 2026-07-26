@@ -161,3 +161,26 @@ def test_shared_connectivity_is_bound_once_in_generated_index_kernel():
   assembled.compute()
 
   assert assembled.gradient.value.get().shape == (4,)
+
+
+def test_constant_power_derivative_is_finite_at_zero():
+  simulation = scene("constant_power_zero")
+  mesh = simulation.addMesh("mesh")
+  vertices = mesh.addPrimitive("vertices", numInstances=1)
+  values = vertices.addAttribute("values")
+  values.updateValue(np.array([0.0], np.float32))
+  energy = vertices.addAttribute(
+    "energy", computed_attribute=values.pow(2.0)
+  )
+  assembled = differentiator().diff2(
+    [energy], [values], [values], projection_method=0
+  )
+
+  assembled.compute()
+
+  np.testing.assert_array_equal(
+    assembled.gradient.value.get(), np.array([0.0], np.float32)
+  )
+  np.testing.assert_allclose(
+    assembled.blocks_flattened.get(), np.array([2.0], np.float32)
+  )

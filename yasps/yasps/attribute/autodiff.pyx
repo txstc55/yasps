@@ -166,6 +166,9 @@ class autodiff:
     fx = current.children[0]
     gx = current.children[1]
     d_fx = self.__diff(fx, wrt)
+    if gx.operator == ya.FLOAT:
+      factor = gx * fx.pow(gx.float_value - 1.0)
+      return d_fx.mul_explicit(factor)
     d_gx = self.__diff(gx, wrt)
     ln_fx = fx.log()
     d_gx_ln_fx = d_gx.mul_explicit(ln_fx) # we know ln_fx is a scalar

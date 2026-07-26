@@ -188,3 +188,19 @@ def test_generated_resource_packing_avoids_metal_buffer_limit():
     "yasps_resource_offsets",
   ]
   assert len(program.input_names) == 3
+
+
+def test_emission_cache_does_not_alias_equivalent_negations():
+  primitive = _primitive("negation_identity_cache", 2)
+  values = primitive.addAttribute("values", rows=3, cols=1)
+  source = np.array(
+    [[1.25, -2.5, 3.75], [-4.0, 5.0, -6.0]], dtype=np.float32
+  )
+  values.updateValue(source)
+  restored = primitive.addAttribute(
+    "restored", computed_attribute=-(-values)
+  )
+
+  restored.compute()
+
+  np.testing.assert_array_equal(restored.value.get().reshape(2, 3), source)
