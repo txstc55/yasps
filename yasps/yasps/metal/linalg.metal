@@ -93,18 +93,10 @@ METAL_FUNC void yasps_inverse(
   }
 }
 
-// Batched YASPS kernels invoke this once per simulation primitive. Each Metal
-// thread therefore diagonalizes one small Hessian while the GPU processes the
-// full batch in parallel. The matrix never leaves thread-local storage.
 template <ushort N>
-METAL_FUNC void yasps_spd_project(thread float* a, int choice) {
-  if (choice == 0) return;
-  if (N == 1) {
-    a[0] = choice == 1 ? metal::abs(a[0]) : metal::max(a[0], 0.0f);
-    return;
-  }
-
-  float eigenvectors[N * N];
+METAL_FUNC void yasps_symmetric_eigen(
+    thread float* a,
+    thread float* eigenvectors) {
   for (ushort row = 0; row < N; ++row) {
     for (ushort column = 0; column < N; ++column) {
       const float lhs = a[row * N + column];
@@ -170,7 +162,21 @@ METAL_FUNC void yasps_spd_project(thread float* a, int choice) {
       eigenvectors[row * N + q] = sine * vp + cosine * vq;
     }
   }
+}
 
+// Batched YASPS kernels invoke this once per simulation primitive. Each Metal
+// thread therefore diagonalizes one small Hessian while the GPU processes the
+// full batch in parallel. The matrix never leaves thread-local storage.
+template <ushort N>
+METAL_FUNC void yasps_spd_project(thread float* a, int choice) {
+  if (choice == 0) return;
+  if (N == 1) {
+    a[0] = choice == 1 ? metal::abs(a[0]) : metal::max(a[0], 0.0f);
+    return;
+  }
+
+  float eigenvectors[N * N];
+  yasps_symmetric_eigen<N>(a, eigenvectors);
   float eigenvalues[N];
   for (ushort i = 0; i < N; ++i) {
     const float value = a[i * N + i];
@@ -189,4 +195,40 @@ METAL_FUNC void yasps_spd_project(thread float* a, int choice) {
     }
   }
   for (ushort i = 0; i < N * N; ++i) a[i] = projected[i];
+}
+
+template <ushort N>
+METAL_FUNC void yasps_evd_abs_inverse(
+    thread const float* input,
+    thread float* output) {
+  if (N == 1) {
+    const float eigenvalue = input[0];
+    output[0] = metal::abs(eigenvalue) < 1.0e-6f
+        ? metal::abs(eigenvalue)
+        : metal::abs(1.0f / eigenvalue);
+    return;
+  }
+
+  float diagonalized[N * N];
+  float eigenvectors[N * N];
+  for (ushort i = 0; i < N * N; ++i) diagonalized[i] = input[i];
+  yasps_symmetric_eigen<N>(diagonalized, eigenvectors);
+
+  float inverse_eigenvalues[N];
+  for (ushort i = 0; i < N; ++i) {
+    const float eigenvalue = diagonalized[i * N + i];
+    inverse_eigenvalues[i] = metal::abs(eigenvalue) < 1.0e-6f
+        ? metal::abs(eigenvalue)
+        : metal::abs(1.0f / eigenvalue);
+  }
+  for (ushort row = 0; row < N; ++row) {
+    for (ushort column = 0; column < N; ++column) {
+      float value = 0.0f;
+      for (ushort k = 0; k < N; ++k) {
+        value += eigenvectors[row * N + k] * inverse_eigenvalues[k]
+            * eigenvectors[column * N + k];
+      }
+      output[row * N + column] = value;
+    }
+  }
 }

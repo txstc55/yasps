@@ -1,4 +1,4 @@
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 import os
 from yasps.backend import driver as cuda
 from typing import Set, List
@@ -24,6 +24,7 @@ class diagonalBlockInverseKernel:
     self.__diagonal_blocks_start = np.array(diagonal_blocks_start, dtype=np.uint32)
     self.__diagonal_blocks_count = np.array(diagonal_blocks_count, dtype=np.uint32)
     self.__diagonal_block_sizes = np.array(diagonal_block_sizes, dtype=np.uint32)
+    self.__metal_program = None
     self.__generateKernel()
     # print("diagonal blocks start", self.__diagonal_blocks_start)
     # print("diagonal blocks count", self.__diagonal_blocks_count)
@@ -32,6 +33,14 @@ class diagonalBlockInverseKernel:
 
   @timed("diagonalBlockInverseKernel.__generateKernel")
   def __generateKernel(self):
+    if is_metal:
+      from yasps.metal.preconditioner import MetalDiagonalBlockInverse
+      self.__metal_program = MetalDiagonalBlockInverse(
+        self.__diagonal_blocks_start,
+        self.__diagonal_blocks_count,
+        self.__diagonal_block_sizes,
+      )
+      return
     # first we check if the kernel exists
     size_ordered_string = "_".join([str(size) for size in sorted(self.__unique_attribute_sizes)])
     file_name = f".yasps_constant/diagonal_inverse_for_size_{size_ordered_string}"
@@ -204,6 +213,11 @@ void invert_diagonal_blocks(
     output_blocks: gpuarray.GPUArray,
   ):
     self.__context.useDefaultContext()
+    if is_metal:
+      if self.__metal_program is None:
+        raise RuntimeError("Metal diagonal inverse kernel was not generated.")
+      output_blocks._array = self.__metal_program.run(diagonal_blocks)
+      return
     assert self.__kernel is not None, "diagonalBlockInverseKernel.computeDiagonalBlockInverse: Kernel not linked"
     self.__kernel(
       self.__to_void_p(diagonal_blocks),
