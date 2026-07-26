@@ -152,6 +152,79 @@ kernel void yasps_solver_reduce_pairs(
     output_lo[group] = scratch_lo[0];
   }
 }
+
+kernel void yasps_solver_store_pair(
+    device const float* input_hi [[buffer(0)]],
+    device const float* input_lo [[buffer(1)]],
+    device float* state [[buffer(2)]],
+    constant uint& slot [[buffer(3)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index == 0u) state[slot] = input_hi[0] + input_lo[0];
+}
+
+kernel void yasps_solver_prepare_alpha(
+    device float* state [[buffer(0)]],
+    device int* status [[buffer(1)]],
+    constant uint& iteration [[buffer(2)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index != 0u) return;
+  if (status[0] != 0) {
+    state[4] = 0.0f;
+    return;
+  }
+  const float denominator = state[3];
+  if (!metal::isfinite(denominator) || denominator <= 0.0f) {
+    status[0] = -int(iteration) - 4;
+    state[4] = 0.0f;
+    return;
+  }
+  state[5] = state[2];
+  state[4] = state[2] / denominator;
+}
+
+kernel void yasps_solver_update_solution_residual(
+    device float* solution [[buffer(0)]],
+    device const float* direction [[buffer(1)]],
+    device float* residual [[buffer(2)]],
+    device const float* product [[buffer(3)]],
+    device const float* state [[buffer(4)]],
+    device const int* status [[buffer(5)]],
+    constant uint& count [[buffer(6)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index >= count || status[0] != 0) return;
+  const float alpha = state[4];
+  solution[index] += alpha * direction[index];
+  residual[index] -= alpha * product[index];
+}
+
+kernel void yasps_solver_finish_iteration(
+    device float* state [[buffer(0)]],
+    device int* status [[buffer(1)]],
+    constant uint& iteration [[buffer(2)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index != 0u || status[0] != 0) return;
+  const float delta_new = state[2];
+  if (!metal::isfinite(delta_new)) {
+    status[0] = -int(iteration) - 4;
+    state[6] = 0.0f;
+  } else if (delta_new <= state[1]) {
+    status[0] = int(iteration);
+    state[6] = 0.0f;
+  } else {
+    state[6] = delta_new / state[5];
+  }
+}
+
+kernel void yasps_solver_update_direction(
+    device const float* preconditioned [[buffer(0)]],
+    device float* direction [[buffer(1)]],
+    device const float* state [[buffer(2)]],
+    device const int* status [[buffer(3)]],
+    constant uint& count [[buffer(4)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index >= count || status[0] != 0) return;
+  direction[index] = preconditioned[index] + state[6] * direction[index];
+}
 """
 
 

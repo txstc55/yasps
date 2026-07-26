@@ -1,6 +1,7 @@
 #include "metalSolverExtension.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -75,6 +76,13 @@ mx::array allocate_float_vector(size_t size) {
       mx::allocator::malloc(size * sizeof(float)),
       mx::Shape{static_cast<mx::ShapeElem>(size)},
       mx::float32);
+}
+
+mx::array allocate_int_vector(size_t size) {
+  return mx::array(
+      mx::allocator::malloc(size * sizeof(int32_t)),
+      mx::Shape{static_cast<mx::ShapeElem>(size)},
+      mx::int32);
 }
 
 void dispatch_vector(
@@ -203,6 +211,8 @@ std::tuple<mx::array, int, float> solve_pcg(
     throw std::invalid_argument("Metal PCG vectors exceed uint32 indexing");
   }
 
+  const auto materialization_started =
+      std::chrono::steady_clock::now();
   mx::eval(std::vector<mx::array>{
       block_values,
       block_positions,
@@ -218,6 +228,7 @@ std::tuple<mx::array, int, float> solve_pcg(
       solution,
       initial_guess,
   });
+  const auto solve_started = std::chrono::steady_clock::now();
 
   const auto selected_stream = mx::to_stream(stream);
   auto& metal_device = mx::metal::device(selected_stream.device);
@@ -237,6 +248,16 @@ std::tuple<mx::array, int, float> solve_pcg(
       "yasps_solver_dot_first", library);
   auto* reduce_kernel = metal_device.get_kernel(
       "yasps_solver_reduce_pairs", library);
+  auto* store_pair_kernel = metal_device.get_kernel(
+      "yasps_solver_store_pair", library);
+  auto* prepare_alpha_kernel = metal_device.get_kernel(
+      "yasps_solver_prepare_alpha", library);
+  auto* update_solution_residual_kernel = metal_device.get_kernel(
+      "yasps_solver_update_solution_residual", library);
+  auto* finish_iteration_kernel = metal_device.get_kernel(
+      "yasps_solver_finish_iteration", library);
+  auto* update_direction_kernel = metal_device.get_kernel(
+      "yasps_solver_update_direction", library);
 
   std::unordered_map<uint64_t, MTL::ComputePipelineState*> spmv_kernels;
   auto register_spmv_kernels =
@@ -280,6 +301,8 @@ std::tuple<mx::array, int, float> solve_pcg(
   auto reduction_hi_b = allocate_float_vector(maximum_reduction_groups);
   auto reduction_lo_b = allocate_float_vector(maximum_reduction_groups);
   auto best_solution = allocate_like(solution);
+  auto state = allocate_float_vector(7);
+  auto iteration_status = allocate_int_vector(1);
 
   auto copy = [&](const mx::array& input, mx::array& output) {
     dispatch_vector(encoder, copy_kernel, input, nullptr, output);
@@ -379,7 +402,7 @@ std::tuple<mx::array, int, float> solve_pcg(
     }
   };
 
-  auto dot = [&](const mx::array& left, const mx::array& right) {
+  auto encode_dot = [&](const mx::array& left, const mx::array& right) {
     uint32_t count = static_cast<uint32_t>(left.size());
     size_t groups =
         (static_cast<size_t>(count) + kReductionWidth - 1) /
@@ -416,8 +439,70 @@ std::tuple<mx::array, int, float> solve_pcg(
       std::swap(input_hi, output_hi);
       std::swap(input_lo, output_lo);
     }
+    return std::make_pair(input_hi, input_lo);
+  };
+
+  auto dot = [&](const mx::array& left, const mx::array& right) {
+    const auto [input_hi, input_lo] = encode_dot(left, right);
     encoder.synchronize();
     return input_hi->data<float>()[0] + input_lo->data<float>()[0];
+  };
+
+  auto dot_to_state = [&](
+                          const mx::array& left,
+                          const mx::array& right,
+                          uint32_t slot) {
+    const auto [input_hi, input_lo] = encode_dot(left, right);
+    encoder.set_compute_pipeline_state(store_pair_kernel);
+    encoder.set_input_array(*input_hi, 0);
+    encoder.set_input_array(*input_lo, 1);
+    encoder.set_output_array(state, 2);
+    encoder.set_bytes(slot, 3);
+    encoder.dispatch_threads(MTL::Size(1, 1, 1), MTL::Size(1, 1, 1));
+  };
+
+  auto prepare_alpha = [&](uint32_t iteration) {
+    encoder.set_compute_pipeline_state(prepare_alpha_kernel);
+    encoder.set_output_array(state, 0);
+    encoder.set_output_array(iteration_status, 1);
+    encoder.set_bytes(iteration, 2);
+    encoder.dispatch_threads(MTL::Size(1, 1, 1), MTL::Size(1, 1, 1));
+  };
+
+  auto update_solution_residual = [&]() {
+    const uint32_t count = static_cast<uint32_t>(solution.size());
+    encoder.set_compute_pipeline_state(update_solution_residual_kernel);
+    encoder.set_output_array(solution, 0);
+    encoder.set_input_array(direction, 1);
+    encoder.set_output_array(residual, 2);
+    encoder.set_input_array(product, 3);
+    encoder.set_input_array(state, 4);
+    encoder.set_input_array(iteration_status, 5);
+    encoder.set_bytes(count, 6);
+    encoder.dispatch_threads(
+        MTL::Size(count, 1, 1),
+        MTL::Size(std::min<size_t>(count, kVectorThreads), 1, 1));
+  };
+
+  auto finish_iteration = [&](uint32_t iteration) {
+    encoder.set_compute_pipeline_state(finish_iteration_kernel);
+    encoder.set_output_array(state, 0);
+    encoder.set_output_array(iteration_status, 1);
+    encoder.set_bytes(iteration, 2);
+    encoder.dispatch_threads(MTL::Size(1, 1, 1), MTL::Size(1, 1, 1));
+  };
+
+  auto update_direction = [&]() {
+    const uint32_t count = static_cast<uint32_t>(direction.size());
+    encoder.set_compute_pipeline_state(update_direction_kernel);
+    encoder.set_input_array(preconditioned, 0);
+    encoder.set_output_array(direction, 1);
+    encoder.set_input_array(state, 2);
+    encoder.set_input_array(iteration_status, 3);
+    encoder.set_bytes(count, 4);
+    encoder.dispatch_threads(
+        MTL::Size(count, 1, 1),
+        MTL::Size(std::min<size_t>(count, kVectorThreads), 1, 1));
   };
 
   float relative_tolerance = 0.0f;
@@ -427,9 +512,21 @@ std::tuple<mx::array, int, float> solve_pcg(
     }
     encoder.synchronize();
     if (trace) {
+      const auto finished = std::chrono::steady_clock::now();
+      const double materialization_ms =
+          std::chrono::duration<double, std::milli>(
+              solve_started - materialization_started)
+              .count();
+      const double solve_ms =
+          std::chrono::duration<double, std::milli>(
+              finished - solve_started)
+              .count();
       std::cout << "Metal PCG status " << status
                 << ", preconditioned residual " << residual_value
-                << ", threshold " << relative_tolerance << std::endl;
+                << ", threshold " << relative_tolerance
+                << ", input materialization " << materialization_ms
+                << " ms, compiled recurrence " << solve_ms << " ms"
+                << std::endl;
     }
     return std::make_tuple(solution, status, residual_value);
   };
@@ -449,89 +546,78 @@ std::tuple<mx::array, int, float> solve_pcg(
   float best_delta = delta_new;
   copy(solution, best_solution);
   uint32_t stagnant_restarts = 0;
+  state.data<float>()[0] = delta_zero;
+  state.data<float>()[1] = relative_tolerance;
+  state.data<float>()[2] = delta_new;
+  iteration_status.data<int32_t>()[0] = 0;
 
-  for (uint32_t iteration = 1; iteration <= max_iterations;
-       ++iteration) {
-    spmv(direction, product);
-    float denominator = dot(direction, product);
-    if (!std::isfinite(denominator) || denominator <= 0.0f) {
-      spmv(solution, residual);
-      combine(gradient, residual, -1.0f, residual);
-      precondition(residual, direction);
-      delta_new = dot(residual, direction);
+  constexpr uint32_t recurrence_chunk = 32;
+  uint32_t last_iteration = 0;
+  while (last_iteration < max_iterations) {
+    const uint32_t chunk_end = std::min(
+        max_iterations, last_iteration + recurrence_chunk);
+    for (uint32_t iteration = last_iteration + 1;
+         iteration <= chunk_end;
+         ++iteration) {
       spmv(direction, product);
-      denominator = dot(direction, product);
-      if (std::isfinite(delta_new) && delta_new < best_delta) {
-        best_delta = delta_new;
-        copy(solution, best_solution);
-      }
-      if (!std::isfinite(denominator) || denominator <= 0.0f) {
-        return finish(
-            -static_cast<int>(iteration) - 4, best_delta, true);
-      }
+      dot_to_state(direction, product, 3);
+      prepare_alpha(iteration);
+      update_solution_residual();
+      precondition(residual, preconditioned);
+      dot_to_state(residual, preconditioned, 2);
+      finish_iteration(iteration);
+      update_direction();
     }
+    encoder.synchronize();
+    const int chunk_status = iteration_status.data<int32_t>()[0];
+    last_iteration = chunk_end;
 
-    const float alpha = delta_new / denominator;
-    combine(solution, direction, alpha, solution);
-    combine(residual, product, -alpha, residual);
+    // Confirm convergence and bound float32 recurrence drift against b - A*x.
+    spmv(solution, residual);
+    combine(gradient, residual, -1.0f, residual);
     precondition(residual, preconditioned);
-    const float delta_old = delta_new;
     delta_new = dot(residual, preconditioned);
-
-    if (trace && iteration % 512 == 0) {
-      std::cout << "Metal PCG iteration " << iteration
-                << ", recursive residual " << delta_new
-                << ", best true residual " << best_delta << std::endl;
-    }
-
     if (delta_new <= relative_tolerance) {
-      spmv(solution, residual);
-      combine(gradient, residual, -1.0f, residual);
-      precondition(residual, preconditioned);
-      delta_new = dot(residual, preconditioned);
-      if (delta_new <= relative_tolerance) {
-        return finish(
-            static_cast<int>(iteration), delta_new, false);
-      }
-      if (std::isfinite(delta_new) && delta_new < best_delta) {
-        best_delta = delta_new;
-        copy(solution, best_solution);
-      }
-      copy(preconditioned, direction);
-      continue;
+      const int converged_iteration =
+          chunk_status > 0 ? chunk_status : static_cast<int>(chunk_end);
+      return finish(converged_iteration, delta_new, false);
     }
 
-    if (iteration % 32 == 0) {
-      spmv(solution, residual);
-      combine(gradient, residual, -1.0f, residual);
-      precondition(residual, preconditioned);
-      delta_new = dot(residual, preconditioned);
-      if (delta_new <= relative_tolerance) {
-        return finish(
-            static_cast<int>(iteration), delta_new, false);
-      }
-      const float previous_best = best_delta;
-      if (std::isfinite(delta_new) && delta_new < best_delta) {
-        best_delta = delta_new;
-        copy(solution, best_solution);
-      }
-      if (std::isfinite(delta_new) &&
-          delta_new < previous_best * 0.99f) {
-        stagnant_restarts = 0;
-      } else {
-        ++stagnant_restarts;
-      }
-      if (!std::isfinite(delta_new) || stagnant_restarts >= 8) {
-        return finish(
-            -static_cast<int>(iteration) - 4, best_delta, true);
-      }
-      copy(preconditioned, direction);
+    const float previous_best = best_delta;
+    if (std::isfinite(delta_new) && delta_new < best_delta) {
+      best_delta = delta_new;
+      copy(solution, best_solution);
+    }
+    if (std::isfinite(delta_new) &&
+        delta_new < previous_best * 0.99f) {
+      stagnant_restarts = 0;
     } else {
-      combine(
-          preconditioned,
-          direction,
-          delta_new / delta_old,
-          direction);
+      ++stagnant_restarts;
+    }
+    if (!std::isfinite(delta_new) || stagnant_restarts >= 8) {
+      return finish(
+          chunk_status < 0
+              ? chunk_status
+              : -static_cast<int>(chunk_end) - 4,
+          best_delta,
+          true);
+    }
+
+    copy(preconditioned, direction);
+    if (chunk_status < 0) {
+      spmv(direction, product);
+      const float denominator = dot(direction, product);
+      if (!std::isfinite(denominator) || denominator <= 0.0f) {
+        return finish(chunk_status, best_delta, true);
+      }
+    }
+    state.data<float>()[2] = delta_new;
+    iteration_status.data<int32_t>()[0] = 0;
+
+    if (trace && last_iteration % 512 == 0) {
+      std::cout << "Metal PCG iteration " << last_iteration
+                << ", true residual " << delta_new
+                << ", best true residual " << best_delta << std::endl;
     }
   }
 
