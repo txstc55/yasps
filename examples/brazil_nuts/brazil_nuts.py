@@ -483,7 +483,7 @@ edge_indices_all = all_edges
 surface_indices_gpu = gpuarray.to_gpu(surface_indices_all.flatten())
 edge_indices_gpu = gpuarray.to_gpu(edge_indices_all.flatten())
 triangle_indices_gpu = gpuarray.to_gpu(triangle_indices_all.flatten())
-position_gpu = gpuarray.to_gpu(collision_vertices_position.compute().value.get()) # basically copy it out
+position_gpu = collision_vertices_position.compute().value.copy()
 
 ccd.init_faces(position_gpu, triangle_indices_gpu, surface_indices_gpu, triangle_indices_all.shape[0])
 ccd.init_edges(position_gpu, position_gpu, edge_indices_gpu, edge_indices_all.shape[0])
