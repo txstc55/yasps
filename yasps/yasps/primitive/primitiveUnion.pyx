@@ -12,7 +12,7 @@ if TYPE_CHECKING:
   from yasps.scene import scene as yscene
   from yasps.primitive import primitive
 
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 import numpy as np
 
 ## the goal of primitive Union

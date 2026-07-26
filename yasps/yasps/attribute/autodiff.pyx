@@ -2,7 +2,8 @@
 from __future__ import annotations
 from typing import Optional, List, Union, Tuple, Dict
 from typing import TYPE_CHECKING
-import yasps.attribute as ya
+import importlib
+ya = importlib.import_module("yasps.attribute")
 
 
 class autodiff:

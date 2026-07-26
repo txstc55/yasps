@@ -1,7 +1,8 @@
 # cython: language_level=3
 from __future__ import annotations
 from enum import IntFlag
-import yasps.attribute as ya
+import importlib
+ya = importlib.import_module("yasps.attribute")
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 from typing import Dict, List, Set, Tuple

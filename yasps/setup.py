@@ -48,12 +48,12 @@ setup(
     long_description_content_type='text/markdown',  # The content type of the long description
     url='https://github.com/yourusername/yasps',  # The URL to the repository
     packages=find_packages(),  # Finds all packages in the directory
-    package_data={'yasps': ['*.txt', '*.cuh', '*.cu']},
+    package_data={'yasps': ['*.txt', '*.cuh', '*.cu', 'metal/*.metal']},
     ext_modules=cythonize(
       extensions,
       annotate=False,        # Generates the HTML .html annotation files
       compiler_directives={"language_level": "3"},
-      nthreads=16,       # optional, parallel compile
+      nthreads=0,
       force=False       # important! only rebuild changed files
     ),
     classifiers=[
@@ -65,8 +65,9 @@ setup(
     ],
     install_requires=[
         'numpy',
-        'pycuda'
+        'pycuda; platform_system != "Darwin"',
+        'mlx>=0.29; platform_system == "Darwin" and platform_machine == "arm64"',
     ],
-    python_requires='>=3.6',  # Minimum version requirement of the package
+    python_requires='>=3.10',
     include_package_data=True,  # Includes files described by MANIFEST.in
 )

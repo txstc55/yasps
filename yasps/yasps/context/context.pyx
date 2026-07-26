@@ -1,4 +1,4 @@
-import pycuda.driver as cuda
+from yasps.backend import driver as cuda, is_metal
 from yasps.helper import timed
 
 class context:
@@ -8,6 +8,8 @@ class context:
 
   @classmethod
   def _ensure_init(cls):
+    if is_metal:
+      return
     if cls.__main_ctx is None:
       cls.__main_ctx = cuda.Context.get_current()
       assert cls.__main_ctx is not None, "Must have an active CUDA context"
@@ -18,6 +20,8 @@ class context:
 
   @timed("context.useDefaultContext")
   def useDefaultContext(self):
+    if is_metal:
+      return
     if context.__current_ctx == context.__main_ctx:
       return
     # first we pop the active context (if any) to avoid nesting contexts
@@ -32,6 +36,8 @@ class context:
 
   @timed("context.useNamedContext")
   def useNamedContext(self, name: str):
+    if is_metal:
+      return
     if name not in self.__named_contexts:
       device = cuda.Device(0)
       current_ctx = cuda.Context.get_current()

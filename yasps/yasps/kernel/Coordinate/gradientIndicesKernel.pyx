@@ -2,13 +2,13 @@ from __future__ import annotations
 from yasps.attribute import attribute
 from yasps.primitiveUnion import primitiveUnion
 from typing import List, Tuple, Dict, Set
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 import ctypes
 import numpy as np
 from yasps.attribute import JOIN, DATA, UNION
 from yasps.helper import timed
 import os
-import pycuda.driver as cuda
+from yasps.backend import driver as cuda
 from yasps.helper import prune_duplicate_functions
 from yasps.context import context
 import time

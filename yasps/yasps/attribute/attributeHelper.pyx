@@ -1,6 +1,7 @@
 # cython: language_level=3
 from typing import List
-import yasps.attribute as ya
+import importlib
+ya = importlib.import_module("yasps.attribute")
 import hashlib # for hashing
 
 def hashAttribute(att: ya.attribute) -> int:

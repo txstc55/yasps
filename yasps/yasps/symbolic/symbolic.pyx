@@ -1,5 +1,4 @@
 from __future__ import annotations
-import pycuda
 import numpy as np
 from .operator import operator
 

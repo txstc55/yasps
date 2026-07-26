@@ -1,10 +1,10 @@
 # cython: language_level=3
 from __future__ import annotations
 from typing import List, Tuple, Set
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 import ctypes
 import numpy as np
-import pycuda.driver as cuda
+from yasps.backend import driver as cuda
 import os
 import hashlib
 import json

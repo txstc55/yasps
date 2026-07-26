@@ -8,7 +8,7 @@ from yasps.helper import prune_duplicate_functions
 import os
 import ctypes
 from yasps.helper import timed
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 from yasps.primitiveUnion import primitiveUnion
 import subprocess
 from yasps.context import context

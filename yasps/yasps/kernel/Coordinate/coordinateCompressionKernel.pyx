@@ -2,12 +2,12 @@ from __future__ import annotations
 # from ast import Str
 from yasps.attribute import attribute
 from typing import List
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 import ctypes
 import numpy as np
 from yasps.helper import timed
 import os
-import pycuda.driver as cuda
+from yasps.backend import driver as cuda
 from yasps.context import context
 import time
 

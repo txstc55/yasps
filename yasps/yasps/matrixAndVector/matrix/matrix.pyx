@@ -1,7 +1,6 @@
 from __future__ import annotations
-import pycuda.autoinit
 import numpy as np
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 from typing import List
 
 

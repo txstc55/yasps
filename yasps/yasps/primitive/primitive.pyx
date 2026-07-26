@@ -178,6 +178,24 @@ class primitive:
               raise ValueError(f"primitive.addAttribute: the primitive {self.fullName} has no connection to the attribute, whose correspondance is {source.correspondance.fullName}.")
           if through.dimension == 0 and operation is None:
             raise ValueError("primitive.addAttribute: an operation must be specified when the connectivity is not fixed. Available operations are: SUM and AVERAGE.")
+          if through.dimension == 0:
+            if operation == "SUM":
+              op = SUM
+            elif operation == "AVERAGE":
+              op = AVERAGE
+            else:
+              raise ValueError(f"primitive.addAttribute: the operation '{operation}' is not valid. Available operations are: SUM and AVERAGE.")
+            newAttribute = attribute(
+              name=name,
+              correspondance=self,
+              rows=source.rows,
+              cols=source.cols,
+              through=through,
+              children=[source],
+              operator=op,
+            )
+            self.__attributes[name] = newAttribute
+            return newAttribute
           op = JOIN
           # for JOIN let's do special handling
           # we will try to only join the non-zero elements, then we will assemble the matrix

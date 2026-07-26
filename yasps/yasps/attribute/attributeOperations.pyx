@@ -1,4 +1,5 @@
-import yasps.attribute as ya
+import importlib
+ya = importlib.import_module("yasps.attribute")
 import math
 def add(att: ya.attribute, other: ya.attribute) -> ya.attribute:
   if att.rows != other.rows or att.cols != other.cols:
