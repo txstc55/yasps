@@ -85,6 +85,45 @@ def test_generated_float32_matrix_kernels_and_spd_projection():
   )
 
 
+def test_generated_batched_spd_uses_threadgroup_jacobi(
+  tmp_path, monkeypatch
+):
+  monkeypatch.chdir(tmp_path)
+  count = 1024
+  dimension = 12
+  primitive = _primitive("batched_spd", count)
+  matrices = primitive.addAttribute(
+    "matrices", rows=dimension, cols=dimension
+  )
+  rng = np.random.default_rng(20260725)
+  source = rng.normal(
+    size=(count, dimension, dimension)
+  ).astype(np.float32)
+  source = 0.5 * (source + source.swapaxes(1, 2))
+  matrices.updateValue(source)
+  projected = primitive.addAttribute(
+    "projected", computed_attribute=matrices.spd(1)
+  )
+
+  projected.compute()
+
+  eigenvalues, eigenvectors = np.linalg.eigh(source)
+  expected = eigenvectors * np.abs(eigenvalues)[:, None, :]
+  expected = expected @ eigenvectors.swapaxes(1, 2)
+  np.testing.assert_allclose(
+    projected.value.get().reshape(source.shape),
+    expected,
+    rtol=8e-5,
+    atol=3e-5,
+  )
+  program = projected.globalKernel.program
+  assert program._staged_spd
+  assert "yasps_staged_resources" in program.resource_input_names
+  assert list(
+    (tmp_path / ".yasps_tmp/metal").glob("yasps_batched_spd_12_*.metal")
+  )
+
+
 def test_generated_join_and_dynamic_sum_kernels():
   simulation = scene("topology_test")
   mesh = simulation.addMesh("mesh")

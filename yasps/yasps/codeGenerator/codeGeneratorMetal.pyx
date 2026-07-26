@@ -8,7 +8,9 @@ the CUDA/Eigen code generator, then lets MLX compile and cache that source.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from hashlib import sha256
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -37,6 +39,11 @@ class _Module:
 
 
 _MODULE_CACHE: dict[int, _Module] = {}
+_BATCHED_SPD_MIN_DIMENSION = 12
+_BATCHED_SPD_MAX_DIMENSION = 32
+_BATCHED_SPD_MIN_INSTANCES = 1024
+_BATCHED_SPD_BUFFER_BYTES = 64 * 1024 * 1024
+_BATCHED_SPD_THREADS = 32
 
 
 def _metal_array(value):
@@ -62,6 +69,177 @@ def _resource_symbol(kind: str, name: str) -> str:
   return f"yasps_{kind}_{digest}"
 
 
+@lru_cache(maxsize=None)
+def _batched_spd_kernel(dimension: int):
+  size = dimension * dimension
+  sweeps = dimension * 8
+  source = f"""
+    const uint tid = thread_position_in_threadgroup.x;
+    const uint instance = threadgroup_position_in_grid.x;
+    if (instance >= settings[0]) return;
+    constexpr uint N = {dimension}u;
+    constexpr uint NN = {size}u;
+    constexpr uint THREADS = {_BATCHED_SPD_THREADS}u;
+    threadgroup float matrix[NN];
+    threadgroup float eigenvectors[NN];
+    threadgroup float scratch[THREADS];
+    const uint base = instance * NN;
+    for (uint entry = tid; entry < NN; entry += THREADS) {{
+      const uint row = entry / N;
+      const uint column = entry % N;
+      matrix[entry] = 0.5f * (
+          matrices[base + entry]
+          + matrices[base + column * N + row]);
+      eigenvectors[entry] = row == column ? 1.0f : 0.0f;
+    }}
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint sweep = 0u; sweep < {sweeps}u; ++sweep) {{
+      for (uint p = 0u; p + 1u < N; ++p) {{
+        for (uint q = p + 1u; q < N; ++q) {{
+          const float apq = matrix[p * N + q];
+          float cosine = 1.0f;
+          float sine = 0.0f;
+          if (metal::abs(apq) > 1.0e-30f) {{
+            const float tau =
+                (matrix[q * N + q] - matrix[p * N + p])
+                / (2.0f * apq);
+            const float tangent =
+                (tau >= 0.0f ? 1.0f : -1.0f)
+                / (metal::abs(tau) + metal::sqrt(1.0f + tau * tau));
+            cosine = metal::rsqrt(1.0f + tangent * tangent);
+            sine = tangent * cosine;
+          }}
+          threadgroup_barrier(mem_flags::mem_threadgroup);
+          if (sine != 0.0f) {{
+            for (uint k = tid; k < N; k += THREADS) {{
+              const float left = matrix[k * N + p];
+              const float right = matrix[k * N + q];
+              matrix[k * N + p] = cosine * left - sine * right;
+              matrix[k * N + q] = sine * left + cosine * right;
+            }}
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            for (uint k = tid; k < N; k += THREADS) {{
+              const float left = matrix[p * N + k];
+              const float right = matrix[q * N + k];
+              matrix[p * N + k] = cosine * left - sine * right;
+              matrix[q * N + k] = sine * left + cosine * right;
+            }}
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            for (uint k = tid; k < N; k += THREADS) {{
+              const float left = eigenvectors[k * N + p];
+              const float right = eigenvectors[k * N + q];
+              eigenvectors[k * N + p] = cosine * left - sine * right;
+              eigenvectors[k * N + q] = sine * left + cosine * right;
+            }}
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+          }}
+        }}
+      }}
+
+      float local_largest = 0.0f;
+      float local_diagonal = 0.0f;
+      for (uint entry = tid; entry < NN; entry += THREADS) {{
+        const uint row = entry / N;
+        const uint column = entry % N;
+        const float value = metal::abs(matrix[entry]);
+        if (row == column) {{
+          local_diagonal = metal::max(local_diagonal, value);
+        }} else {{
+          local_largest = metal::max(local_largest, value);
+        }}
+      }}
+      scratch[tid] = local_largest;
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      for (uint stride = THREADS / 2u; stride > 0u; stride >>= 1u) {{
+        if (tid < stride) {{
+          scratch[tid] = metal::max(scratch[tid], scratch[tid + stride]);
+        }}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+      }}
+      const float largest = scratch[0];
+      scratch[tid] = local_diagonal;
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      for (uint stride = THREADS / 2u; stride > 0u; stride >>= 1u) {{
+        if (tid < stride) {{
+          scratch[tid] = metal::max(scratch[tid], scratch[tid + stride]);
+        }}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+      }}
+      if (largest <= 2.0e-6f * metal::max(scratch[0], 1.0f)) break;
+    }}
+
+    const uint method_count = settings[1];
+    const int choice = int(methods[method_count == 1u ? 0u : instance]);
+    for (uint entry = tid; entry < NN; entry += THREADS) {{
+      const uint row = entry / N;
+      const uint column = entry % N;
+      float value = 0.0f;
+      for (uint k = 0u; k < N; ++k) {{
+        const float eigenvalue = matrix[k * N + k];
+        const float projected = choice == 1
+            ? metal::abs(eigenvalue)
+            : choice == 2
+            ? metal::max(eigenvalue, 0.0f)
+            : eigenvalue;
+        value += eigenvectors[row * N + k] * projected
+            * eigenvectors[column * N + k];
+      }}
+      projected_matrices[base + entry] = value;
+    }}
+  """
+  digest = sha256(source.encode()).hexdigest()[:16]
+  name = f"yasps_batched_spd_{dimension}_{digest}"
+  output_directory = Path(".yasps_tmp/metal")
+  output_directory.mkdir(parents=True, exist_ok=True)
+  source_path = output_directory / f"{name}.metal"
+  if not source_path.exists() or source_path.read_text() != source:
+    source_path.write_text(source)
+  return mx.fast.metal_kernel(
+    name=name,
+    input_names=["matrices", "methods", "settings"],
+    output_names=["projected_matrices"],
+    source=source,
+    compile_options={"math_mode": "fast"},
+  )
+
+
+class _BatchedSPDProjection:
+  def __init__(self, attribute):
+    self.attribute = attribute
+    self.dimension = int(attribute.rows)
+    self.count = int(attribute.correspondance.numInstances)
+    self.matrix_program = MetalProgram(attribute.children[0])
+    self.method_program = MetalProgram(attribute.children[1])
+    self.method_count = int(
+      attribute.children[1].correspondance.numInstances
+    )
+    if self.method_count not in (1, self.count):
+      raise ValueError(
+        "A batched SPD method must be global or match the matrix count."
+      )
+    self.name = (
+      f"{attribute.fullName}:batched-spd:{attribute.hash}"
+    )
+
+  def run(self):
+    matrices = self.matrix_program.run()
+    methods = self.method_program.run()
+    return _batched_spd_kernel(self.dimension)(
+      inputs=[
+        matrices,
+        methods,
+        mx.array(
+          [self.count, self.method_count], dtype=mx.uint32
+        ),
+      ],
+      grid=(self.count * _BATCHED_SPD_THREADS, 1, 1),
+      threadgroup=(_BATCHED_SPD_THREADS, 1, 1),
+      output_shapes=[(self.count * self.attribute.size,)],
+      output_dtypes=[mx.float32],
+    )[0]
+
+
 class MetalProgram:
   """A generated, JIT-compiled Metal program for one symbolic attribute."""
 
@@ -74,6 +252,11 @@ class MetalProgram:
     self._current_root = None
     self._current_dependencies: list[int] = []
     self._modules: dict[int, _Module] = {}
+    self._enable_batched_spd = os.environ.get(
+      "YASPS_METAL_BATCHED_EVD", "1"
+    ).strip().lower() not in {"0", "false", "no"}
+    self._staged_spd: dict[int, _BatchedSPDProjection] = {}
+    self._staged_resource_keys: dict[int, tuple[str, str]] = {}
     self._collect(attribute, set())
     self.resources = sorted(
       self._resources.values(), key=lambda resource: (resource.kind, resource.name)
@@ -93,15 +276,22 @@ class MetalProgram:
       for index, resource in enumerate(self.resources)
       if resource.kind == "data"
     )
+    self._staged_resource_indices = tuple(
+      index
+      for index, resource in enumerate(self.resources)
+      if resource.kind == "staged_spd"
+    )
     self._uint_resource_indices = tuple(
       index
       for index, resource in enumerate(self.resources)
-      if resource.kind != "data"
+      if resource.kind not in ("data", "staged_spd")
     )
     self._resource_categories = {
       (resource.kind, resource.name): (
         "yasps_float_resources"
         if resource.kind == "data"
+        else "yasps_staged_resources"
+        if resource.kind == "staged_spd"
         else "yasps_uint_resources"
       )
       for resource in self.resources
@@ -150,12 +340,67 @@ class MetalProgram:
     name = owner.fullName
     self._resources.setdefault((kind, name), _Resource(kind, name, value))
 
+  def _can_stage_spd(self, attribute) -> bool:
+    if not self._enable_batched_spd or attribute.operator != ya.SPD:
+      return False
+    dimension = int(attribute.rows)
+    count = int(attribute.correspondance.numInstances)
+    method = attribute.children[1]
+    if method.correspondance is None:
+      return False
+    method_count = int(method.correspondance.numInstances)
+    if method.operator not in (ya.DATA, ya.CONSTANT):
+      return False
+    try:
+      projection_method = int(method.value.get().reshape((-1,))[0])
+    except (IndexError, TypeError, ValueError):
+      return False
+    return (
+      dimension >= _BATCHED_SPD_MIN_DIMENSION
+      and dimension <= _BATCHED_SPD_MAX_DIMENSION
+      and attribute.rows == attribute.cols
+      and count >= _BATCHED_SPD_MIN_INSTANCES
+      and count * attribute.size * 4 <= _BATCHED_SPD_BUFFER_BYTES
+      and method_count in (1, count)
+      and projection_method == 1
+    )
+
+  def _stage_spd(self, attribute):
+    identity = id(attribute)
+    staged = self._staged_spd.get(identity)
+    if staged is not None:
+      return staged
+    staged = _BatchedSPDProjection(attribute)
+    key = ("staged_spd", staged.name)
+    self._staged_spd[identity] = staged
+    self._staged_resource_keys[identity] = key
+    self._resources.setdefault(
+      key,
+      _Resource(
+        key[0],
+        key[1],
+        lambda item=staged: item.run(),
+      ),
+    )
+    if os.environ.get(
+      "YASPS_METAL_JIT_TRACE", ""
+    ).strip().lower() in {"1", "true", "yes"}:
+      print(
+        "Metal JIT staged batched SPD "
+        f"{attribute.fullName}: {attribute.rows}x{attribute.cols}, "
+        f"{attribute.correspondance.numInstances} instances"
+      )
+    return staged
+
   def _collect(self, attribute, seen: set[int]):
     identity = id(attribute)
     if identity in seen:
       return
     seen.add(identity)
     operator = attribute.operator
+    if self._can_stage_spd(attribute):
+      self._stage_spd(attribute)
+      return
     if operator == ya.DATA or operator == ya.CONSTANT:
       self._add_resource("data", attribute, lambda item=attribute: item.value)
       return
@@ -190,6 +435,9 @@ class MetalProgram:
       if identity in seen:
         return
       seen.add(identity)
+      if identity in self._staged_resource_keys:
+        keys.add(self._staged_resource_keys[identity])
+        return
       operator = current.operator
       if operator == ya.DATA or operator == ya.CONSTANT:
         keys.add(("data", current.fullName))
@@ -236,6 +484,8 @@ class MetalProgram:
       names.append("yasps_float_resources")
     if self._uint_resource_indices:
       names.append("yasps_uint_resources")
+    if self._staged_resource_indices:
+      names.append("yasps_staged_resources")
     if self.resources:
       names.append("yasps_resource_offsets")
     return names
@@ -252,6 +502,7 @@ class MetalProgram:
     for indices, dtype in (
       (self._float_resource_indices, mx.float32),
       (self._uint_resource_indices, mx.uint32),
+      (self._staged_resource_indices, mx.float32),
     ):
       if not indices:
         continue
@@ -280,8 +531,19 @@ class MetalProgram:
       f"{instance}, {result});"
     )
 
+  def _module_key(self, attribute) -> int:
+    staged_resources = tuple(
+      key
+      for key in self._resource_keys(attribute)
+      if key[0] == "staged_spd"
+    )
+    if not staged_resources:
+      return attribute.hash
+    signature = repr((attribute.hash, staged_resources)).encode()
+    return int(sha256(signature).hexdigest()[:16], 16)
+
   def _compile_module(self, attribute) -> _Module:
-    key = attribute.hash
+    key = self._module_key(attribute)
     cached = _MODULE_CACHE.get(key)
     if cached is not None:
       self._modules[key] = cached
@@ -366,7 +628,7 @@ class MetalProgram:
     self, attribute, index, output, lines, indent
   ) -> str:
     module = self._compile_module(attribute)
-    if module.key != self._current_root.hash:
+    if module.key != self._module_key(self._current_root):
       self._current_dependencies.append(module.key)
     arguments = self._module_arguments(module, suffix=True)
     lines.append(
@@ -406,6 +668,14 @@ class MetalProgram:
     size = attribute.size
     output = self._new_variable(size, lines, indent)
     cache[key] = output
+    staged_key = self._staged_resource_keys.get(key)
+    if staged_key is not None:
+      source = self._resource_names[staged_key]
+      lines.append(
+        f"{indent}for (ushort i = 0; i < {size}; ++i) "
+        f"{output}[i] = {source}[({index}) * {size} + i];"
+      )
+      return output
     if (
       attribute is not self._current_root
       and attribute.name != ""
