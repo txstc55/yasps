@@ -12,6 +12,8 @@ random.seed(1313)
 np.random.seed(13)      # for numpy
 import time
 import os
+SHOW_EXAMPLE = os.environ.get("YASPS_EXAMPLE_SHOW", "1") != "0"
+SAVE_EXAMPLE = os.environ.get("YASPS_EXAMPLE_SAVE", "1") != "0"
 
 import argparse
 
@@ -398,7 +400,8 @@ plotter.camera_position = [(0, 3, 15),
  (0, 1, 0)
 ]
 # plotter.show()
-plotter.show(interactive_update=True, auto_close=False)
+if SHOW_EXAMPLE:
+  plotter.show(interactive_update=True, auto_close=False)
 # exit()
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
 bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
@@ -597,8 +600,9 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
 
     soft_vertices_computed = vertices_soft_position.compute().value.get().reshape((-1, 3))
     soft_poly.points = soft_vertices_computed
-    plotter.render()
-    plotter.update()
+    if SHOW_EXAMPLE:
+      plotter.render()
+      plotter.update()
 
 
     if max_movement < 1e-2:
@@ -618,10 +622,11 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
   # container_poly.points = container_vertices_computed
   # plotter.render()
   # plotter.update()
-  plotter.screenshot(f"outputs/bunny_drop_in_container_{i:04d}.jpg")
+  if SAVE_EXAMPLE:
+    plotter.screenshot(f"outputs/bunny_drop_in_container_{i:04d}.jpg")
+    soft_poly.save(f"meshes/bunny_drop_in_container_{i:04d}.obj")
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
-  soft_poly.save(f"meshes/bunny_drop_in_container_{i:04d}.obj")
   # container_poly.save(f"meshes/cloth_3_cloth_{i:04d}.obj")
   # # save the mesh obj file
   # bunny_poly0.save(f"outputs/bunny_abd_soft0_{i:04d}.obj")

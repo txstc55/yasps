@@ -5,6 +5,8 @@ from helpers import extract_surface_triangles, inertia, extract_edges_from_trian
 import numpy as np
 import sys
 import os
+SHOW_EXAMPLE = os.environ.get("YASPS_EXAMPLE_SHOW", "1") != "0"
+SAVE_EXAMPLE = os.environ.get("YASPS_EXAMPLE_SAVE", "1") != "0"
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
 from yasps.backend import gpuarray
@@ -432,7 +434,8 @@ plotter.camera_position = [(0, 2, 6),
  (0.0, 0.0, 0.0),
  (0, 1, 0)
 ]
-plotter.show(interactive_update=True, auto_close=False)
+if SHOW_EXAMPLE:
+  plotter.show(interactive_update=True, auto_close=False)
 # exit()
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
 bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
@@ -575,8 +578,9 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
     cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
     soft_poly.points = soft_vertices_computed
     cloth_poly.points = cloth_vertices_computed
-    plotter.render()
-    plotter.update()
+    if SHOW_EXAMPLE:
+      plotter.render()
+      plotter.update()
 
     if not line_search_accepted:
       print(
@@ -609,11 +613,13 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
   cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
   soft_poly.points = soft_vertices_computed
   cloth_poly.points = cloth_vertices_computed
-  plotter.render()
-  plotter.update()
-  plotter.screenshot(
-    f"outputs/many_bunny_one_cloth_block_jacobian_1e3_{i:04d}.jpg"
-  )
+  if SHOW_EXAMPLE:
+    plotter.render()
+    plotter.update()
+  if SAVE_EXAMPLE:
+    plotter.screenshot(
+      f"outputs/many_bunny_one_cloth_block_jacobian_1e3_{i:04d}.jpg"
+    )
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
   # soft_poly.save(f"meshes/bunny_soft_3_cloth_{i:04d}.obj")

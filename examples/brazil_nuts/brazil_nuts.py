@@ -16,6 +16,8 @@ from pathlib import Path
 import os
 random.seed(13)
 rng = np.random.default_rng(seed=13)
+SHOW_EXAMPLE = os.environ.get("YASPS_EXAMPLE_SHOW", "1") != "0"
+SAVE_EXAMPLE = os.environ.get("YASPS_EXAMPLE_SAVE", "1") != "0"
 
 NUM_BUNNIES = 1
 COUNT_PER_DIM = 15
@@ -531,7 +533,8 @@ plotter.camera_position = [
 ]
 plotter.camera.clipping_range = (0.001, 10.0)
 # plotter.show()
-plotter.show(interactive_update=True, auto_close=False)
+if SHOW_EXAMPLE:
+  plotter.show(interactive_update=True, auto_close=False)
 
 
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
@@ -718,8 +721,9 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "2000"))):
     container_poly.points = container_vertices_computed
 
 
-    plotter.render()
-    plotter.update()
+    if SHOW_EXAMPLE:
+      plotter.render()
+      plotter.update()
 
 
     if not line_search_accepted:
@@ -745,10 +749,11 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "2000"))):
   vertices_container_velocity.updateValue(new_velocities_container, deepCopy = True)
   end_velocity_update = time.time()
   print(f"Time taken for velocity update: {end_velocity_update - start_velocity_update} seconds")
-  plotter.screenshot(f"outputs/bunny_drop_in_container_{i:04d}.jpg")
-  bunny_poly.save(f"meshes/bunny_drop_in_container_{i:04d}.obj")
-  container_poly.save(f"meshes/container_{i:04d}.obj")
-  sphere_poly.save(f"meshes/spheres_{i:04d}.obj")
+  if SAVE_EXAMPLE:
+    plotter.screenshot(f"outputs/bunny_drop_in_container_{i:04d}.jpg")
+    bunny_poly.save(f"meshes/bunny_drop_in_container_{i:04d}.obj")
+    container_poly.save(f"meshes/container_{i:04d}.obj")
+    sphere_poly.save(f"meshes/spheres_{i:04d}.obj")
   # # save all the positions
   # all_positions = collision_mesh.vertices["position"].compute().value.get().reshape(-1, 3)
   # np.save(f"positions/positions_{i:04d}.npy", all_positions)

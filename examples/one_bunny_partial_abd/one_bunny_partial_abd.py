@@ -4,6 +4,8 @@ from helpers import point_point, point_edge, point_triangle, edge_edge, affine_e
 import numpy as np
 import sys
 import os
+SHOW_EXAMPLE = os.environ.get("YASPS_EXAMPLE_SHOW", "1") != "0"
+SAVE_EXAMPLE = os.environ.get("YASPS_EXAMPLE_SAVE", "1") != "0"
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
 from yasps.backend import gpuarray
@@ -270,9 +272,11 @@ bunny_poly.point_data["colors"] = colors
 plotter = pv.Plotter(window_size=(3840, 2160))
 plotter.add_mesh(bunny_poly, scalars="colors", rgba=True)
 plotter.camera_position = [(0, 0, 20), (0, 0, 0), (0, 1, 0)]
-plotter.show(interactive_update=True)
+if SHOW_EXAMPLE:
+  plotter.show(interactive_update=True)
 
-bunny_poly.save(f"outputs/bunny1_base.obj")
+if SAVE_EXAMPLE:
+  bunny_poly.save(f"outputs/bunny1_base.obj")
 
 position_copy = gpuarray.zeros_like(bunny.vertices["position"].compute().value)
 position_copy.set(bunny.vertices["position"].compute().value)
@@ -376,8 +380,9 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
     print("substep is", substep)
     new_positions = bunny.vertices["position"].compute().value.get().reshape(-1, 3)
     bunny_poly.points = new_positions
-    plotter.render()
-    plotter.update()
+    if SHOW_EXAMPLE:
+      plotter.render()
+      plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
     if not line_search_accepted:
@@ -403,7 +408,10 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
   new_positions = bunny.vertices["position"].compute().value.get().reshape(-1, 3)
   bunny_poly.points = new_positions
   # # export the current positions to obj
-  bunny_poly.save(f"outputs/bunny1_{i:04d}.obj")
-  plotter.render()
-  plotter.update()
-  plotter.screenshot(f"outputs/bunny1_partial_abd_{i:04d}.jpg")
+  if SAVE_EXAMPLE:
+    bunny_poly.save(f"outputs/bunny1_{i:04d}.obj")
+  if SHOW_EXAMPLE:
+    plotter.render()
+    plotter.update()
+  if SAVE_EXAMPLE:
+    plotter.screenshot(f"outputs/bunny1_partial_abd_{i:04d}.jpg")
