@@ -2,16 +2,15 @@ from __future__ import annotations
 # from ast import Str
 from yasps.attribute import attribute
 from typing import List
-import pycuda.gpuarray as gpuarray
+from yasps.backend import driver as cuda, gpuarray, is_metal
 import ctypes
 import numpy as np
 from yasps.helper import timed
 import os
-import pycuda.driver as cuda
 import subprocess
 import time
 
-class CCD:
+class _CudaCCD:
   def __init__(self, num_vertices: int, all_vertices: int, max_cd_pairs: int = 10000000, max_ccd_pairs: int = 100000000, mesh_indices: List[int] = []):
     module_dir = os.path.dirname(os.path.abspath(__file__))  # always resolves to y.py's directory
     mlbvh_so_path = os.path.join(module_dir, "libmlbvh.so")
@@ -489,6 +488,12 @@ class CCD:
 
   def get_scene_size_edges(self) -> float:
     return self.__lbvh_e_scene_size(self.__bvh_e)
+
+
+if is_metal:
+  from ccdMetal import MetalCCD as CCD
+else:
+  CCD = _CudaCCD
 
 
 
