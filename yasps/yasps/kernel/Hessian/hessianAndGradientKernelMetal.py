@@ -15,6 +15,7 @@ from yasps.codeGeneratorMetal import MetalProgram
 
 _THREADS = 256
 _STAGED_EXPRESSION_SOURCE_BYTES = 128 * 1024
+_STAGED_EXPRESSION_BUFFER_BYTES = 16 * 1024 * 1024
 
 
 @lru_cache(maxsize=1)
@@ -107,10 +108,13 @@ class MetalHessianProgram:
     self.expression = MetalProgram(attribute)
     # Fusing a very large differentiated expression into every projection-size
     # variant makes Metal compile the same expression repeatedly.  Stage those
-    # expressions once on the GPU and keep the assembly variants compact.
-    self.stage_expression = (
-      len(self.expression.header) >= _STAGED_EXPRESSION_SOURCE_BYTES
+    # expressions once on the GPU and keep the assembly variants compact.  A
+    # single local/separate projection has no variants to reuse.
+    self.can_stage_expression = (
+      project_entire_hessian
+      and len(self.expression.header) >= _STAGED_EXPRESSION_SOURCE_BYTES
     )
+    self._last_stage_expression = None
     if os.environ.get("YASPS_METAL_JIT_TRACE", "").strip().lower() in {
       "1",
       "true",
@@ -119,8 +123,8 @@ class MetalHessianProgram:
       print(
         "Metal Hessian JIT "
         f"{attribute.fullName}: expression source "
-        f"{len(self.expression.header)} bytes, staged "
-        f"{self.stage_expression}"
+        f"{len(self.expression.header)} bytes, staging eligible "
+        f"{self.can_stage_expression}"
       )
     self.project_entire_hessian = project_entire_hessian
     self.projection_method = projection_method
@@ -149,18 +153,21 @@ class MetalHessianProgram:
         raise ValueError("Separate Jacobian block metadata is inconsistent.")
     self.kernels = {}
 
-  def update(self, unique_gradient_sizes):
+  def update(self, unique_gradient_sizes, stage_expression=None):
+    if stage_expression is None:
+      return
     sizes = [int(size) for size in unique_gradient_sizes if int(size) > 0]
     if not self.project_entire_hessian:
       sizes = [0]
     for size in sizes:
-      if size not in self.kernels:
-        self.kernels[size] = self._compile(size)
+      key = (size, stage_expression)
+      if key not in self.kernels:
+        self.kernels[key] = self._compile(size, stage_expression)
 
-  def _compile(self, gradient_size):
-    source = self._source(gradient_size)
+  def _compile(self, gradient_size, stage_expression):
+    source = self._source(gradient_size, stage_expression)
     header = (
-      _linalg_header() if self.stage_expression else self.expression.header
+      _linalg_header() if stage_expression else self.expression.header
     )
     digest = sha256((header + source).encode()).hexdigest()[:16]
     name = f"yasps_hessian_assembly_{digest}"
@@ -172,7 +179,7 @@ class MetalHessianProgram:
       source_path.write_text(full_source)
     expression_inputs = (
       ["expression_values"]
-      if self.stage_expression
+      if stage_expression
       else self.expression.resource_input_names
     )
     return mx.fast.metal_kernel(
@@ -204,7 +211,7 @@ class MetalHessianProgram:
       atomic_outputs=True,
     )
 
-  def _source(self, gradient_size):
+  def _source(self, gradient_size, stage_expression):
     lines = [
       "const uint local_index = thread_position_in_grid.x;",
       "const uint group_start = grouped_outer[group_index[0]];",
@@ -213,7 +220,7 @@ class MetalHessianProgram:
       "const uint instance = grouped_indices[group_start + local_index];",
       f"constexpr ushort K = {self.max_num_indices};",
     ]
-    if self.stage_expression:
+    if stage_expression:
       lines.append(
         "const auto hg = expression_values "
         f"+ instance * {self.attribute.size}u;"
@@ -663,23 +670,41 @@ class MetalHessianProgram:
     unique_sizes = [
       int(size) for size in gi_kernel.outputUniqueGradientSizesCPU.tolist()
     ]
-    self.update(unique_sizes)
     instance_count = self.attribute.correspondance.numInstances
     if instance_count == 0:
       return
+    expression_buffer_bytes = (
+      instance_count * self.attribute.size * 4
+    )
+    stage_expression = (
+      self.can_stage_expression
+      and expression_buffer_bytes <= _STAGED_EXPRESSION_BUFFER_BYTES
+    )
+    self.update(unique_sizes, stage_expression)
+    if (
+      stage_expression != self._last_stage_expression
+      and os.environ.get("YASPS_METAL_JIT_TRACE", "").strip().lower()
+      in {"1", "true", "yes"}
+    ):
+      print(
+        "Metal Hessian JIT "
+        f"{self.attribute.fullName}: runtime expression buffer "
+        f"{expression_buffer_bytes} bytes, staged {stage_expression}"
+      )
+    self._last_stage_expression = stage_expression
     targets = [gradient, hessian_blocks, diagonal, diagonal_blocks]
     output_shapes = [target.shape for target in targets]
     output_dtypes = [_array(target).dtype for target in targets]
     expression_inputs = (
       [self.expression.run()]
-      if self.stage_expression
+      if stage_expression
       else self.expression.resource_arrays()
     )
     for group_index, gradient_size in enumerate(unique_sizes):
       if gradient_size == 0:
         continue
       kernel_key = gradient_size if self.project_entire_hessian else 0
-      kernel = self.kernels[kernel_key]
+      kernel = self.kernels[(kernel_key, stage_expression)]
       inputs = [
         *expression_inputs,
         _array(gi_kernel.outputIndices),
