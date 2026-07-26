@@ -1,222 +1,188 @@
-# Architecture
+# Generated backend architecture
 
-YASPS separates a backend-independent symbolic model from backend-specific
-evaluation and sparse numerical work. Understanding that boundary is useful
-when adding an operator, debugging generated code, or extending the Metal
-backend.
+> This developer page is intentionally excluded from the published
+> documentation while Metal validation is in progress.
 
-## Layer map
+YASPS keeps one backend-independent symbolic frontend and two generated GPU
+backends. Python constructs expression and topology graphs; it does not
+interpret every operation numerically.
+
+## Pipeline
 
 ```text
-Python user program
-  scene → mesh → primitive → attribute/connectivity/union
-                       │
-                       ▼
-             symbolic attribute DAG
-           shapes, lineage, operations
-                       │
-              symbolic derivatives
-      gradient indices, Jacobians, Hessians
-                       │
-        sparse coordinate compression
-                       │
-                       ▼
-       backend-specific numerical execution
-       ├── CUDA: generated CUDA/Eigen kernels
-       └── Metal: MLX + custom Metal kernels
-                       │
-                       ▼
-       block preconditioner + PCG solution
+scene / mesh / primitive / attribute / connectivity / union
+                              |
+                              v
+                    symbolic attribute DAG
+                              |
+                symbolic first/second derivatives
+                              |
+              generated raw sparse block coordinates
+                              |
+                  GPU coordinate compression
+                              |
+        generated local gradient/Hessian evaluation + assembly
+                              |
+            generated block inverse + sparse PCG solve
 ```
 
-The scene and expression graph should not contain CUDA- or Metal-specific
-user-facing concepts. Backend selection happens below that interface.
+CUDA specializes CUDA/C++ with Eigen. Metal specializes MSL, allocates its
+buffers through MLX, and uses a small compiled C++ extension where an eager
+host dispatch loop materially reduces overhead.
 
-## Shared interface and specialization points
+## Dispatch remains in the old structure
 
-High-level dispatch stays in the existing logical implementation files. This
-keeps the Metal specialization next to the CUDA path for navigation:
+The existing classes remain authoritative:
 
-- `attribute.pyx` selects expression evaluation;
-- `gradientIndicesKernel.pyx` selects derivative-index generation;
-- `coordinateCompressionKernel.pyx` selects sparse coordinate compression;
-- `hessian.pyx` selects numerical assembly;
-- `solver.pyx` selects sparse solve operations; and
-- `minimizer.pyx` coordinates differentiation, assembly, and solving.
+- `attribute/attribute.pyx` dispatches root computation;
+- `kernel/Coordinate/gradientIndicesKernel.pyx` dispatches raw derivative
+  indices;
+- `kernel/Coordinate/coordinateCompressionKernel.pyx` dispatches compression;
+- `kernel/Coordinate/placementReorderKernel.pyx` dispatches lookup reorder;
+- `kernel/Hessian/hessianAndGradientKernel.pyx` dispatches numerical assembly;
+- `kernel/Solver/diagonalBlockInverseKernel.pyx` dispatches block inversion;
+- `kernel/Solver/solverKernel.pyx` dispatches the sparse solve; and
+- `examples/ccd/ccd.py` dispatches collision detection.
 
-These files mark Metal branches with `METAL SPECIALIZATION` comments.
+Their Metal implementations sit beside them as
+`codeGeneratorMetal.pyx`, `*KernelMetal.py`, `ccdMetal.py`, and
+`metalLinalg.metal`. The CUDA paths are preserved.
 
-Low-level Metal implementation belongs in `yasps/metal/`, which acts as the
-dedicated Metal numerical library:
+## Generated attribute modules
 
-- `evaluator.py` evaluates symbolic attribute graphs;
-- `linalg.py` provides small-matrix eigendecomposition and SPD projection;
-- `assembly.py` builds sparse gradient and Hessian values;
-- `sparse.py` provides sparse matrix-vector products, block inverses, and PCG;
-  and
-- `ccd.py` provides Metal collision detection and continuous collision
-  detection.
+`MetalProgram` traverses an attribute root and emits one MSL helper function
+for each reusable boundary. Reusable boundaries include:
 
-This layout avoids duplicating the scene API while keeping shader-oriented code
-out of large Cython interface modules.
+- the requested root;
+- named computed attributes;
+- JOIN and UNION nodes; and
+- staged large SPD projections.
 
-## Backend selection
+Each module records only the data, connectivity, and union-prefix resources
+it consumes. Dependencies are emitted in topological order and cached by a
+structural key. This mirrors CUDA's modular compilation intent, although MLX
+accepts source rather than relocatable Metal object files.
 
-`yasps.backend` is the common runtime facade. It reads `YASPS_BACKEND`:
+Generated sources are written to `.yasps_tmp/metal/` with stable hashes.
+Those files are diagnostic cache artifacts and are ignored by Git.
 
-| Value | Behavior |
-| --- | --- |
-| `auto` or unset | Probe usable CUDA first, then select Metal on Apple silicon |
-| `cuda` | Require a working PyCUDA context |
-| `metal` | Require Apple silicon and the MLX Metal runtime |
+## Index generation
 
-The facade exposes the small `gpuarray` surface used by the Cython modules.
-On CUDA this is PyCUDA's implementation. On Metal, the compatibility wrapper
-keeps live host-visible arrays while numerical kernels execute through MLX or
-custom Metal code.
+`MetalIndexPipeline` generates MSL for the derivative graph's raw global
+indices and local sizes. Generated follow-up kernels:
 
-Code that merely needs an array, synchronization, or backend query should
-import from `yasps.backend`, not directly from PyCUDA.
+1. compress duplicate local target indices;
+2. build gradient-size histograms;
+3. compact and group instances;
+4. emit sparse upper-triangular block coordinates; and
+5. route primitive-union children through prefix counts.
 
-## Symbolic graph
+`MetalCoordinateCompressor` then sorts and deduplicates global coordinates,
+builds lookup tables, and groups block dimensions. Hierarchical prefix scans
+stay on Metal; only compact sizes/totals needed for specialization cross to
+the host.
 
-An attribute node records:
+## Hessian and gradient assembly
 
-- its row and column shape;
-- the operation that produced it;
-- parent operands;
-- its owning primitive or mesh;
-- data lineage through connectivities and unions; and
-- whether it is mutable stored data, a constant, or a computed value.
+Symbolic differentiation still produces local gradient and Hessian
+expressions. `MetalHessianProgram` reuses `MetalProgram` modules, specializes
+one MSL assembly kernel for each layout, and atomically accumulates:
 
-Python operators and methods construct nodes; they do not immediately execute
-the operation. `compute()` materializes a graph. Naming a computed attribute
-attaches that graph to a primitive and gives later code a stable lookup point.
+- global gradient entries;
+- sparse Hessian blocks;
+- scalar diagonal values; and
+- block-diagonal values for the preconditioner.
 
-Shape information is part of the graph. Operations such as matrix
-multiplication, transpose, determinant, inverse, reduction, indexing, and
-stacking determine their output shape when the expression is constructed.
+Named intermediate modules prevent repeated source expansion. Large repeated
+12-32 dimensional absolute-value SPD projections can be materialized by a
+threadgroup Jacobi kernel and consumed as a packed generated resource.
 
-## Differentiation
+## Linear algebra
 
-`scene.addMinimizeTarget()` establishes the independent attributes and their
-global order. For every registered scalar energy, YASPS symbolically
-differentiates the graph with respect to those targets.
+`kernel/metalLinalg.metal` provides statically sized determinant, inverse,
+cyclic symmetric Jacobi EVD, eigenvalue projection, and block inverse helpers.
+The Metal backend uses float32 because Apple GPU shaders do not provide
+general float64 arithmetic.
 
-Topology lineage is as important as algebraic lineage. If a tetrahedron energy
-uses positions gathered through a tetrahedron-to-vertex connectivity, the
-derivative generator maps each local derivative block back to the global
-vertex degrees of freedom.
+Projection methods retain CUDA semantics:
 
-The sparse pipeline is:
-
-1. generate raw gradient and Hessian coordinates from the symbolic derivative
-   graph and connectivities;
-2. merge duplicate coordinates;
-3. evaluate derivative expressions for every active energy instance;
-4. assemble values into the compressed structure;
-5. project local Hessian blocks when requested; and
-6. solve \(H\Delta x=g\).
-
-The result returned to Python is split in exactly the minimization-target order.
-
-## Hessian projection and eigendecomposition
-
-Energy registration chooses one projection method:
-
-| Method | Local eigenvalue treatment |
+| Method | Eigenvalue treatment |
 | ---: | --- |
 | `-1` | Skip projection |
-| `0` | Keep eigenvalues unchanged |
-| `1` | Replace each eigenvalue with its absolute value |
-| `2` | Clamp negative eigenvalues to zero |
+| `0` | Keep unchanged |
+| `1` | Replace by absolute value |
+| `2` | Clamp below zero |
 
-The CUDA path uses the existing generated Eigen-based implementation. The
-Metal path uses a custom symmetric Jacobi eigensolver for the small block sizes
-used by YASPS (`1`, `2`, `3`, `4`, `6`, `9`, and `12`). Projection reconstructs
-the block from its eigenvectors and modified eigenvalues.
+## PCG
 
-Metal shaders do not provide general double-precision arithmetic, so this path
-uses float32. Float64 inputs are converted at the backend boundary. Tests must
-therefore use tolerances appropriate to float32 and include nonsymmetric
-matrices when validating inverse or determinant derivatives.
+`solverKernelMetal.py` generates and caches MSL specialized to the active
+block dimensions:
 
-## Sparse solve
+- symmetric block-sparse SpMV;
+- block-Jacobi application;
+- compensated reductions;
+- vector initialization/update; and
+- a GPU-resident alpha/beta/status recurrence.
 
-The Metal sparse path does not form a dense global Hessian. It keeps compressed
-block coordinates, evaluates values on the GPU, applies sparse matrix-vector
-products, builds block-diagonal inverses, and runs preconditioned conjugate
-gradient.
+`kernel/Solver/metalExtension/` compiles a Darwin arm64 extension that owns
+the eager PCG host loop. It dispatches 32-iteration recurrence chunks, checks
+status/residuals at chunk boundaries, and restores the best finite iterate at
+the float32 residual floor. This replaces the earlier Python-per-iteration
+prototype without moving sparse arithmetic off the GPU.
 
-Dynamic energy instance counts change assembled values and active terms without
-changing the target layout. The solution buffer remains persistent so Cython
-views returned for each target observe updated solver results on later calls.
+## CCD
 
-## Collision subsystem
+The Metal counterpart in `examples/ccd/` follows the CUDA component boundary:
+topology and device arrays enter `CCD`, generated kernels perform numerical
+work, and only compact counts/step scalars drive host control flow.
 
-The shared entry point is `examples/ccd/ccd.py`:
+The broad phase:
 
-- CUDA selects the original generated-kernel implementation;
-- Metal selects `yasps.metal.ccd.MetalCCD`.
+1. generates swept or static element AABBs;
+2. chooses a uniform grid from scene extent and activation gap;
+3. counts and scans cell references;
+4. generates and sorts 64-bit cell keys; and
+5. queries face and edge candidates with duplicate/shared-feature filtering.
 
-The Metal implementation builds Morton-ordered balanced AABB trees and traverses
-them with custom kernels. It performs:
+The default query atomically appends into a reusable capacity buffer in one
+candidate traversal. Overflow reports the required size and retries; it never
+silently truncates. `YASPS_METAL_CCD_APPEND=0` retains a
+count-scan-write reference path.
 
-- discrete broad-phase candidate generation;
-- robust point/edge/triangle feature classification;
-- separated PP, PE, PT, and EE contact output;
-- continuous collision candidate generation; and
-- conservative advancement for a collision-free step size.
+Generated narrow-phase code classifies PP, PE, PT, and EE pairs. Continuous
+queries feed generated additive time-of-impact kernels and a GPU minimum
+reduction.
 
-Mesh topology is supplied from host arrays because it changes rarely. Bounding
-boxes, traversal, and numerical feature tests execute on the GPU.
+## Adding an operator
 
-Candidate output has an explicit capacity. Overflow is observable and callers
-must retry with a larger capacity or fail; losing candidates silently would
-invalidate contact simulation.
+An operator is complete only when it has:
 
-## Generated CUDA code
+1. a public graph construction method and shape rules;
+2. symbolic first/second derivatives;
+3. CUDA generation;
+4. Metal MSL emission in `MetalProgram._emit`;
+5. scalar/matrix/batched numerical tests; and
+6. derivative tests where applicable.
 
-The CUDA backend still uses expression-specific generated kernels and Eigen
-headers. Backend work should preserve that path. A shared Cython file may
-dispatch to Metal, but it must not remove the existing CUDA code-generation
-logic or change a CUDA example merely to make a Metal example run.
+Do not add an eager Metal-only evaluation fallback. Missing operations should
+fail source generation clearly until both symbolic and generated numerical
+semantics are implemented.
 
-The separately named Metal dropping driver exists because the original driver
-is a research artifact with CUDA-oriented imports and launch assumptions. Both
-drivers build the same categories of YASPS objects.
+## Validation order
 
-## Adding a symbolic operator
+Use increasing scope:
 
-An operator is complete only when all relevant layers agree:
+1. generated attribute operators;
+2. matrix inverse/determinant/SPD projection;
+3. raw indices, JOIN/UNION routing, and compression;
+4. sparse assembly against a dense reference;
+5. block inverse and PCG residuals;
+6. isolated CCD feature and swept-step cases;
+7. small complete scenes;
+8. ordinary versus separate-Jacobian scene comparison;
+9. large mixed/contact scenes; and
+10. PyVista rendering in a separate or explicitly controlled phase.
 
-1. define its graph node, shape rules, and Python entry point;
-2. define symbolic first and second derivatives;
-3. add CUDA generation or evaluation;
-4. add Metal evaluation;
-5. test scalar, vector, matrix, and batched-instance cases as applicable;
-6. test derivatives with finite differences; and
-7. document public support in the operator table.
-
-Do not expose an operation merely because an internal opcode exists. A public
-operator also needs a stable construction method and backend implementations.
-
-## Validation strategy
-
-Use tests in increasing scope:
-
-1. backend array and live-view behavior;
-2. individual expression operators;
-3. finite-difference gradients and Hessians;
-4. small-matrix eigendecomposition and projection;
-5. sparse assembly against dense reference matrices;
-6. PCG against a known solution;
-7. isolated PP, PE, PT, and EE CCD cases;
-8. a tiny complete scene;
-9. one dropping frame;
-10. a run through first impact and subsequent friction frames.
-
-A pre-impact run validates gravity, elasticity, and solving, but not the
-collision implementation. Record mesh sizes, contact counts, overflow retries,
-solver convergence, and accepted energy changes for meaningful performance and
-correctness comparisons.
+Keep interactive PyVista rendering disabled during performance runs on the
+same Apple GPU. The exact scene wrappers expose compute-only environment
+controls without changing their default material or solver settings.

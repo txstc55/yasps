@@ -1,87 +1,123 @@
 # CUDA and Metal backends
 
-YASPS exposes one symbolic scene interface and specializes numerical
-execution by backend.
+> This page is intentionally excluded from the published documentation while
+> the Metal backend remains under validation.
 
-## Auto detection
+YASPS exposes one symbolic scene interface and generates backend-specific
+GPU programs from the same attribute and derivative graphs. Metal is not an
+eager graph evaluator: it follows the CUDA architecture by specializing
+source for computations, derivative indices, Hessian/gradient assembly,
+matrix projection, sparse solving, and collision detection.
 
-At import, YASPS:
+## Backend selection
 
-1. honors `YASPS_BACKEND=cuda|metal` when set;
-2. otherwise probes for a usable CUDA device/PyCUDA;
-3. otherwise probes for Apple silicon MLX Metal;
-4. raises if neither backend is usable.
+At import, `yasps.backend`:
+
+1. honors `YASPS_BACKEND=cuda|metal`;
+2. otherwise selects usable CUDA/PyCUDA first;
+3. otherwise selects MLX Metal on Apple silicon; and
+4. raises if neither backend is available.
 
 ```python
 from yasps.backend import backend_info, backend_name, is_cuda, is_metal
 ```
 
-## Shared high-level specialization
+`backend_info()` reports the selected backend, platform, device, and primary
+real dtype.
 
-Backend branches live beside the existing CUDA path in the corresponding
-shared file:
+## Generated paths
 
-| Shared component | CUDA path | Metal specialization |
+| Operation | CUDA implementation | Metal implementation |
 | --- | --- | --- |
-| `attribute.pyx` | generated CUDA/Eigen evaluation | MLX graph evaluator |
-| `gradientIndicesKernel.pyx` | generated CUDA/Thrust | JOIN/UNION Metal indexing |
-| `coordinateCompressionKernel.pyx` | CUDA sorting/compression | MLX/Metal compression |
-| `hessian.pyx` | generated Hessian kernels | Metal atomic assembly |
-| `minimizer.pyx` | CUDA block inverse | Metal eigensolver block inverse |
-| `solver.pyx` | generated CUDA CG | Metal block-sparse PCG |
-| `examples/ccd/ccd.py` | `CudaCCD` | `MetalCCD` |
+| Attribute computation | `codeGenerator.pyx` + CUDA/Eigen | `codeGeneratorMetal.pyx` + generated MSL |
+| Raw derivative indices | `gradientIndicesKernel.pyx` | `gradientIndicesKernelMetal.py` |
+| Coordinate compression | `coordinateCompressionKernel.pyx` | `coordinateCompressionKernelMetal.py` |
+| Placement reordering | `placementReorderKernel.pyx` | generated `MetalPlacementReorder` kernel |
+| Hessian/gradient values | `hessianAndGradientKernel.pyx` | `hessianAndGradientKernelMetal.py` |
+| Block inverse | `diagonalBlockInverseKernel.pyx` | `diagonalBlockInverseKernelMetal.py` |
+| PCG | generated CUDA/C++ | generated MSL driven by a compiled C++ extension |
+| CCD | generated CUDA/GIPC helper code | generated MSL in `ccdMetal.py` |
 
-Low-level Metal kernels are grouped under `yasps/yasps/metal/` so the Jacobi
-eigensolver, sparse SpMV, assembly, and CCD code form one dedicated library
-rather than being duplicated across public interface files.
+The existing Cython classes remain the dispatch points. Metal counterparts
+live beside their CUDA equivalents under the same logical `kernel` and
+`codeGenerator` directories.
+
+## JIT module reuse
+
+`MetalProgram` recursively compiles named attributes, JOIN/UNION boundaries,
+and requested roots into reusable MSL helper modules. A module records:
+
+- its generated function;
+- the data/connectivity/union resources it consumes;
+- dependencies on other generated modules; and
+- a structural cache key.
+
+Root kernels include the dependency modules in topological order. Generated
+source is persisted under `.yasps_tmp/metal/` for inspection, and MLX JIT
+compiles the resulting specialization. Repeated subexpressions and named
+attributes reuse cached modules within the process.
+
+The Metal API exposed by MLX does not provide CUDA-style relocatable object
+linking, so modular reuse occurs at generated MSL function/source level
+rather than by linking `.o` files.
 
 ## Precision
 
-| Backend | Real dtype | Rationale |
-| --- | --- | --- |
-| CUDA | float64 | Existing generated Eigen/CUDA implementation |
-| Metal | float32 | Supported and accurate enough for IPC/PCG/eigensolve |
+| Backend | Primary real dtype |
+| --- | --- |
+| CUDA | float64 |
+| Metal | float32 |
 
-Metal maps incoming NumPy float64 data to float32. Integer connectivity keeps
-the required integer dtype.
+The Metal facade maps incoming float64 numerical arrays and float64 allocation
+requests to float32. Integer connectivity retains its integer dtype.
 
-Float16 is not used for core simulation. Although the request permits it,
-half precision is unsafe for `dhat` values around \(10^{-6}\), determinants,
-Jacobi rotations, sparse accumulation, and PCG residuals.
+Float16 is not used for core simulation. It cannot safely represent common
+IPC distances around \(10^{-6}\), and it is inadequate for determinant,
+Jacobi EVD, sparse accumulation, and PCG residual calculations.
 
 ## Metal linear algebra
 
-The dedicated Metal library provides:
+`yasps/yasps/kernel/metalLinalg.metal` supplies generated kernels with:
 
-- symmetric Jacobi eigendecomposition for local matrix sizes used by YASPS;
+- statically sized determinant and inverse operations;
+- cyclic symmetric Jacobi eigendecomposition;
 - Hessian eigenvalue projection;
-- 1×1, 2×2, and 3×3 determinant/inverse evaluation;
-- diagonal block spectral inverse;
-- upper-triangular block-sparse symmetric SpMV;
-- block-Jacobi PCG.
+- small-block spectral inversion; and
+- helpers shared by generated attribute and Hessian programs.
 
-The eigensolver is a custom MSL kernel because MLX's high-level
-`linalg.eigh` path is not a GPU Metal implementation for this use.
+Large batches of 12-32 dimensional absolute-eigenvalue projections may use a
+threadgroup Jacobi kernel. Smaller or incompatible terms retain the
+thread-local generated path.
 
-## Device array facade
+## Sparse solve
 
-`yasps.backend.gpuarray` presents the subset of PyCUDA's `GPUArray` API used
-by YASPS:
+The Metal solver keeps the sparse block matrix, block-Jacobi preconditioner,
+vectors, reductions, and PCG scalar recurrence on Metal. Python specializes
+and caches the generated MSL program. The compiled extension under
+`kernel/Solver/metalExtension/` owns the eager host loop and dispatches
+32-iteration GPU recurrence chunks, avoiding a Python dispatch per PCG
+iteration.
 
-```python
-from yasps.backend import gpuarray
+## CCD
 
-x = gpuarray.to_gpu(host_values)
-y = gpuarray.zeros_like(x)
-maximum = gpuarray.max(abs(x))
-```
+`examples/ccd/ccd.py` selects `ccdMetal.py` on Metal. Generated kernels build
+a hashed uniform grid, emit face and edge candidates, classify discrete
+features, and compute additive continuous-collision step sizes.
 
-Metal arrays preserve live slice/view behavior expected by cached solution
-segments even though MLX slicing is functionally copy-oriented.
+The default query uses a capacity-aware atomic append buffer and reuses
+separate capacities for face/edge and discrete/continuous work. Set
+`YASPS_METAL_CCD_APPEND=0` to retain the deterministic count-scan-write
+fallback. No candidate is silently dropped: overflow grows the buffer or
+raises at the configured maximum.
 
-Raw CUDA pointers (`gpudata`, `ptr`) intentionally raise on Metal.
+## Device arrays and synchronization
 
-## Synchronization
+`yasps.backend.gpuarray` implements the subset of PyCUDA `GPUArray` used by
+YASPS. On Metal, numerical arithmetic stays in MLX arrays. `.get()` and
+`.item()` are explicit host boundaries; `.gpudata` and `.ptr` raise because
+raw CUDA pointers have no Metal equivalent.
+
+Use:
 
 ```python
 from yasps.backend import synchronize
@@ -89,14 +125,5 @@ from yasps.backend import synchronize
 synchronize()
 ```
 
-Use synchronization for timing boundaries or before interacting with an
-external consumer. `.get()` and scalar `.item()` also synchronize the needed
-value.
-
-## Performance notes
-
-- Reuse scenes and static sparsity structures.
-- Avoid `.get()` in inner numerical loops.
-- Keep dynamic contact host transfer limited to compact index topology.
-- Let the CCD retry capacity rather than choosing an enormous default.
-- Benchmark after warm-up; Metal compiles custom kernels lazily.
+only for timing, diagnostics, or external consumers. Keep full-array `.get()`
+calls outside numerical inner loops.

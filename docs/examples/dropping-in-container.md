@@ -1,234 +1,113 @@
-# Dropping in a container
+# Dropping in a container on Metal
 
-`examples/dropping_in_container/dropping_in_container_metal.py` is a separate,
-headless-friendly version of the full dropping experiment. It preserves the
-original CUDA driver and exercises the shared YASPS interface through the
-selected backend.
+> This page is intentionally excluded from the published documentation while
+> Metal validation is in progress.
 
-It is the best end-to-end example of how topology, symbolic energy
-construction, automatic differentiation, dynamic contact, and iterative
-solving fit together.
+`dropping_in_container_metal.py` is a thin launcher. It sets
+`YASPS_BACKEND=metal`, creates the expected output directories, changes into
+the example directory, and executes the original
+`dropping_in_container.py`. The material model, time step, collision
+parameters, solver settings, and line search therefore have one source of
+truth.
 
-## Run it
+## Run
 
 From the repository root:
 
 ```bash
-python examples/dropping_in_container/dropping_in_container_metal.py \
-  --steps 60 \
-  --max-newton 20
+PYTHONPATH="$PWD/yasps:$PWD/examples/ccd" \
+  .venv/bin/python \
+  examples/dropping_in_container/dropping_in_container_metal.py
 ```
 
-On Apple silicon, automatic backend selection chooses Metal. Select it
-explicitly while debugging:
+The original driver accepts:
 
 ```bash
-YASPS_BACKEND=metal \
-python examples/dropping_in_container/dropping_in_container_metal.py \
-  --steps 1 \
-  --max-newton 2 \
-  --solver-iterations 500
+--num-bunnies N
 ```
 
-Use `--save-meshes` to write an OBJ surface for each completed frame.
+For bounded validation, the shared source also honors:
 
-## Render saved frames
+| Environment variable | Meaning | Default |
+| --- | --- | --- |
+| `YASPS_EXAMPLE_FRAMES` | Frames to execute | `500` |
+| `YASPS_EXAMPLE_SHOW` | Open/update interactive PyVista | `1` |
+| `YASPS_EXAMPLE_SAVE` | Save screenshots/OBJ outputs | `1` |
 
-Install the optional PyVista renderer:
+A compute-only smoke test is:
 
 ```bash
-python -m pip install -e './yasps[render]'
+PYTHONPATH="$PWD/yasps:$PWD/examples/ccd" \
+YASPS_EXAMPLE_FRAMES=3 \
+YASPS_EXAMPLE_SHOW=0 \
+YASPS_EXAMPLE_SAVE=0 \
+  .venv/bin/python \
+  examples/dropping_in_container/dropping_in_container_metal.py
 ```
 
-Then turn the accepted OBJ frames into a camera-stable MP4 and final PNG:
+These controls do not change scene physics or solver parameters.
+
+## Scene structure
+
+The driver creates deformable bunny vertices and tetrahedra, fixed container
+geometry, and a collision mesh with a primitive union over both vertex
+collections. The union exposes matching `position` and historical attributes
+without erasing each child's derivative path.
+
+Tetrahedra JOIN four current and four rest positions. The stable
+Neo-Hookean energy uses generated determinant and inverse operations and is
+registered alongside inertia/gravity.
+
+## Dynamic contact
+
+The collision mesh owns dynamic PP, PE, PT, and EE primitives. After discrete
+classification, the driver:
+
+1. updates each dynamic primitive's active count;
+2. writes its connectivity;
+3. evaluates the existing barrier graph; and
+4. asks the dynamic Hessian path to regenerate active indices and values.
+
+The expression graph is not rebuilt for every pair set.
+
+At the beginning of a frame, the prior accepted contact set becomes the
+lagged friction set. Closest coordinates, tangent bases, and normal-force
+magnitudes are named computed attributes so they can be reused in the
+friction expressions and generated modules.
+
+## Newton and CCD loop
+
+Each nonlinear iteration:
+
+1. evaluates the current energy;
+2. generates/assembles the active Hessian and gradient;
+3. solves \(H\Delta x=g\);
+4. forms the proposed device-resident displacement;
+5. runs swept face/edge CCD on Metal;
+6. limits the step with generated time-of-impact kernels;
+7. updates discrete contacts at the trial state; and
+8. accepts a descending energy or backtracks.
+
+If float32 line search cannot find a descending representable state, the
+driver restores the last accepted state. Frame velocities are updated only
+after the nonlinear loop.
+
+## Rendering
+
+Default runs preserve the original interactive PyVista behavior. For
+performance measurements, set both display and saving to zero so VTK does not
+compete with compute kernels on the same interactive Apple GPU.
+
+An off-screen export can be validated with:
 
 ```bash
-python examples/dropping_in_container/render_metal.py \
-  --input-directory examples/dropping_in_container/meshes_metal_5_bunnies \
-  --num-bunnies 5 \
-  --video examples/dropping_in_container/artifacts/dropping_metal_5_bunnies.mp4 \
-  --screenshot examples/dropping_in_container/artifacts/dropping_metal_5_bunnies.png
+PYVISTA_OFF_SCREEN=true \
+YASPS_EXAMPLE_FRAMES=1 \
+YASPS_EXAMPLE_SHOW=0 \
+YASPS_EXAMPLE_SAVE=1 \
+  .venv/bin/python \
+  examples/dropping_in_container/dropping_in_container_metal.py
 ```
 
-Rendering is deliberately separate from simulation. A VTK window or video
-encoder therefore cannot interfere with Metal synchronization, solver timing,
-or a long headless run. The script uses a fixed camera, a translucent
-container, stable per-bunny colors, topology validation, and off-screen
-anti-aliasing.
-
-## Scene layout
-
-The example builds three meshes:
-
-```text
-scene
-├── soft_mesh
-│   ├── vertices       current and historical state
-│   └── tetrahedra     elastic elements
-├── fixed_mesh
-│   └── vertices       container geometry
-└── collision_mesh
-    ├── vertices       union of soft and fixed vertices
-    ├── pp/pe/pt/ee    dynamic barrier interactions
-    └── *_friction     dynamic lagged-friction interactions
-```
-
-The collision vertex union exposes child attributes with:
-
-```python
-collision_vertices = collision_mesh.addPrimitiveUnion(
-  "vertices", [soft_vertices, fixed_vertices]
-)
-collision_vertices.addAttribute("position")
-collision_vertices.addAttribute("last_position")
-```
-
-The order of the children determines the global collision-vertex numbering.
-The triangle, edge, and surface-vertex arrays use the same ordering.
-
-## Elasticity
-
-Each tetrahedron gathers four current and four rest positions through a
-connectivity:
-
-```python
-tet_to_vertex = tetrahedra.addConnectivity(
-  "tet2vertex", soft_vertices, tetrahedron_indices, 4
-)
-tet_position = tetrahedra.addAttribute(
-  "position", through=tet_to_vertex, source=position
-)
-tet_rest_position = tetrahedra.addAttribute(
-  "rest_position", through=tet_to_vertex, source=rest_position
-)
-```
-
-The helper constructs a stable Neo-Hookean density from the deformation
-gradient, rest volume, and Lamé parameters. The final expression is scalar for
-each tetrahedron and is registered with Hessian projection method `1`.
-
-The symbolic determinant and inverse therefore participate in both first and
-second derivatives. On Metal these 3×3 operations are evaluated in float32.
-
-## Inertia and gravity
-
-The vertex inertia term uses the usual implicit-Euler prediction:
-
-```text
-x_predicted = x_last + dt * velocity + dt² * gravity
-E_inertia   = 0.5 * mass / dt² * ||x - x_predicted||²
-```
-
-Only the current soft-vertex position is a minimization target. Rest
-positions, mass, time step, velocity, and historical state are constants:
-they may change between frames, but are excluded from differentiation.
-
-## Barrier contact
-
-The broad phase receives:
-
-- the complete collision-vertex position array;
-- surface triangles;
-- unique surface edges; and
-- surface-vertex indices.
-
-It returns four feature-classified pair arrays: point–point, point–edge,
-point–triangle, and edge–edge. Those arrays become the connectivity of four
-dynamic primitives:
-
-```python
-primitive.updateNumInstances(pair_count)
-connectivity.updateConnectivity(pair_indices)
-```
-
-The barrier energy expressions were attached when the scene was built. Changing
-the active count and indices changes which instances are evaluated without
-rebuilding the expression graph.
-
-For Metal, the broad phase uses Morton-ordered balanced AABB trees and GPU
-tree traversal. A capacity flag detects when a query produced more candidates
-than its output allocation. The driver retries with a larger capacity up to
-`--max-candidates-per-query` rather than silently dropping contacts.
-
-## Friction
-
-At the beginning of each frame, the current separated contact set becomes the
-lagged friction set. Each friction primitive gathers both current and previous
-positions. Named computed attributes store:
-
-- closest-point coordinates;
-- a tangent basis; and
-- the lagged normal-force magnitude.
-
-The friction energy then uses those named results. Naming the intermediate
-attributes makes the graph easier to inspect and avoids duplicating a long
-subexpression in user code.
-
-## Newton and line search
-
-Every frame follows this loop:
-
-1. Update lagged friction pairs from the prior accepted state.
-2. Evaluate the current total energy.
-3. Call `scene.minimizeEnergy()` to solve \(H\Delta x=g\).
-4. Test `x_trial = x - alpha * delta`.
-5. Run continuous collision detection from the accepted position to the trial
-   position.
-6. Limit the trial by the collision-free step size.
-7. Recompute discrete contacts and total energy at the trial position.
-8. Accept an energy-reducing step or halve `alpha`.
-
-If no line-search trial is accepted, the example restores the last accepted
-position. This matters because `updateValue()` mutates the live scene state.
-
-The float32 Metal path permits a tiny scale-relative energy slack in the
-acceptance test. It covers rounding at large total energies without accepting
-a materially uphill step.
-
-## State update
-
-After the Newton loop, velocity is updated from the frame displacement:
-
-```python
-velocity.updateValue((position.value - last_position.value) / dt)
-last_position.updateValue(position.value)
-```
-
-The example keeps these arrays as persistent attributes; updating them does not
-rebuild or redifferentiate the energy graph.
-
-## Command-line controls
-
-| Argument | Default | Purpose |
-| --- | ---: | --- |
-| `--num-bunnies` | `1` | Number of deformable copies |
-| `--steps` | `500` | Number of simulation frames |
-| `--max-newton` | `100` | Newton iteration limit per frame |
-| `--solver-iterations` | `20000` | PCG iteration limit |
-| `--max-line-search` | `12` | Backtracking limit |
-| `--max-newton-displacement` | `0.1` | Infinity-norm cap before CCD |
-| `--candidates-per-query` | `128` | Initial Metal broad-phase capacity |
-| `--max-candidates-per-query` | `8192` | Maximum retry capacity |
-| `--save-meshes` | off | Save accepted soft surfaces |
-| `--output-directory` | `meshes_metal` | Override output location |
-
-Use fewer Newton and solver iterations for smoke tests, not as a replacement
-for convergence checks in production experiments.
-
-## What this validates
-
-A run that reaches contact exercises substantially more than scene setup:
-
-- symbolic matrix inverse and determinant;
-- stable Neo-Hookean gradients and Hessians;
-- sparse coordinate compression and assembly;
-- block-diagonal inversion and PCG;
-- all four discrete contact types;
-- continuous collision detection;
-- dynamic primitive resizing;
-- barrier and friction differentiation;
-- repeated live updates; and
-- accepted-state restoration during line search.
-
-That makes impact, rather than a pre-impact gravity frame, the meaningful
-acceptance threshold for backend work.
+Generated JPG/OBJ outputs are ignored by Git and should be removed after
+validation.
