@@ -121,3 +121,47 @@ def test_generated_join_and_dynamic_sum_kernels():
   np.testing.assert_array_equal(
     summed.value.get(), np.array([5, 12, 7, 0], dtype=np.float32)
   )
+
+
+def test_generated_triangle_normal_kernel():
+  simulation = scene("normal_test")
+  mesh = simulation.addMesh("mesh")
+  vertices = mesh.addPrimitive("vertices", numInstances=4)
+  triangles = mesh.addPrimitive("triangles", numInstances=2)
+  positions = vertices.addAttribute("position", rows=3, cols=1)
+  source = np.array(
+    [
+      [0.0, 0.0, 0.0],
+      [2.0, 0.0, 0.0],
+      [0.0, 3.0, 0.0],
+      [0.0, 0.0, 4.0],
+    ],
+    dtype=np.float32,
+  )
+  positions.updateValue(source)
+  triangle_vertices = triangles.addConnectivity(
+    "triangle_vertices",
+    vertices,
+    np.array([[0, 1, 2], [0, 3, 1]], dtype=np.uint32),
+    3,
+  )
+  triangle_positions = triangles.addAttribute(
+    "positions", through=triangle_vertices, source=positions
+  )
+  edge_01 = triangle_positions.row(1) - triangle_positions.row(0)
+  edge_02 = triangle_positions.row(2) - triangle_positions.row(0)
+  unnormalized = edge_01.cross(edge_02)
+  normals = triangles.addAttribute(
+    "normal", computed_attribute=unnormalized / unnormalized.norm()
+  )
+
+  normals.compute()
+
+  expected = np.cross(
+    source[[1, 3]] - source[[0, 0]],
+    source[[2, 1]] - source[[0, 0]],
+  )
+  expected /= np.linalg.norm(expected, axis=1, keepdims=True)
+  np.testing.assert_allclose(
+    normals.value.get().reshape(2, 3), expected, rtol=2e-6, atol=2e-6
+  )
