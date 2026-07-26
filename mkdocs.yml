@@ -1,0 +1,53 @@
+site_name: YASPS
+site_description: Symbolic GPU framework for extensible physical simulation
+site_url: https://txstc55.github.io/yasps/
+repo_url: https://github.com/txstc55/yasps
+repo_name: txstc55/yasps
+
+theme:
+  name: readthedocs
+  highlightjs: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - Running examples: getting-started/running-examples.md
+  - Core concepts:
+      - Scenes, meshes, and primitives: concepts/project-model.md
+      - Attributes: concepts/attributes.md
+      - Connectivity and JOIN: concepts/connectivity-and-join.md
+      - Primitive unions: concepts/primitive-unions.md
+  - Guides:
+      - Writing computations: guides/computations.md
+      - Energies and differentiation: guides/energies-and-differentiation.md
+      - Solving and updating: guides/solving-and-updating.md
+      - Dynamic collision terms: guides/dynamic-collision-terms.md
+  - Examples:
+      - Example map: examples/index.md
+  - API:
+      - Scene: api/scene.md
+      - Meshes and primitives: api/meshes-and-primitives.md
+      - Attribute: api/attribute.md
+      - Connectivity: api/connectivity.md
+  - Reference:
+      - Operator support: reference/operator-support.md
+      - Limitations: reference/limitations.md
+      - Troubleshooting: reference/troubleshooting.md
+
+exclude_docs: |
+  README.md
+  guides/backends.md
+  examples/dropping-in-container.md
+  reference/backend-compatibility.md
+  reference/metal-validation.md
+  developer/architecture.md
