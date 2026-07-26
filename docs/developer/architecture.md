@@ -27,8 +27,8 @@ scene / mesh / primitive / attribute / connectivity / union
 ```
 
 CUDA specializes CUDA/C++ with Eigen. Metal specializes MSL, allocates its
-buffers through MLX, and uses a small compiled C++ extension where an eager
-host dispatch loop materially reduces overhead.
+buffers through MLX, and uses a small compiled C++ extension where a host
+control loop materially reduces dispatch overhead.
 
 ## Dispatch remains in the old structure
 
@@ -125,7 +125,7 @@ block dimensions:
 - a GPU-resident alpha/beta/status recurrence.
 
 `kernel/Solver/metalExtension/` compiles a Darwin arm64 extension that owns
-the eager PCG host loop. It dispatches 32-iteration recurrence chunks, checks
+the PCG host control loop. It dispatches 32-iteration recurrence chunks, checks
 status/residuals at chunk boundaries, and restores the best finite iterate at
 the float32 residual floor. This replaces the earlier Python-per-iteration
 prototype without moving sparse arithmetic off the GPU.

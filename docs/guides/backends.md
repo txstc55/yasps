@@ -94,7 +94,7 @@ thread-local generated path.
 The Metal solver keeps the sparse block matrix, block-Jacobi preconditioner,
 vectors, reductions, and PCG scalar recurrence on Metal. Python specializes
 and caches the generated MSL program. The compiled extension under
-`kernel/Solver/metalExtension/` owns the eager host loop and dispatches
+`kernel/Solver/metalExtension/` owns the host control loop and dispatches
 32-iteration GPU recurrence chunks, avoiding a Python dispatch per PCG
 iteration.
 
