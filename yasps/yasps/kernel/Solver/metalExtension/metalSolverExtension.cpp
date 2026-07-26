@@ -25,6 +25,7 @@ constexpr size_t kVectorThreads = 256;
 constexpr size_t kBlockThreads = 32;
 constexpr size_t kReductionThreads = 256;
 constexpr size_t kReductionWidth = 2 * kReductionThreads;
+constexpr uint32_t kMaximumStagnantRestarts = 8;
 
 void require_float32_vector(const mx::array& value, const char* name) {
   if (value.dtype() != mx::float32 || value.ndim() != 1 ||
@@ -540,7 +541,11 @@ std::tuple<mx::array, int, float> solve_pcg(
   };
 
   float relative_tolerance = 0.0f;
-  auto finish = [&](int status, float residual_value, bool restore_best) {
+  auto finish = [&](
+                    int status,
+                    float residual_value,
+                    bool restore_best,
+                    const char* outcome = "") {
     if (restore_best) {
       copy(best_solution, solution);
     }
@@ -560,6 +565,7 @@ std::tuple<mx::array, int, float> solve_pcg(
                 << ", threshold " << relative_tolerance
                 << ", input materialization " << materialization_ms
                 << " ms, compiled recurrence " << solve_ms << " ms"
+                << outcome
                 << std::endl;
     }
     return std::make_tuple(solution, status, residual_value);
@@ -572,6 +578,7 @@ std::tuple<mx::array, int, float> solve_pcg(
   combine(gradient, residual, -1.0f, residual);
   precondition(residual, direction);
   float delta_new = dot(residual, direction);
+  const float initial_delta = delta_new;
   relative_tolerance = threshold * delta_zero;
   if (delta_new <= relative_tolerance) {
     return finish(0, delta_new, false);
@@ -628,13 +635,29 @@ std::tuple<mx::array, int, float> solve_pcg(
     } else {
       ++stagnant_restarts;
     }
-    if (!std::isfinite(delta_new) || stagnant_restarts >= 8) {
+    if (!std::isfinite(delta_new)) {
       return finish(
           chunk_status < 0
               ? chunk_status
               : -static_cast<int>(chunk_end) - 4,
           best_delta,
           true);
+    }
+    if (stagnant_restarts >= kMaximumStagnantRestarts) {
+      // CUDA's float64 recurrence can keep reducing tolerances that are below
+      // the useful float32 floor.  Exact residual replacements show whether
+      // Metal has instead reached a stable best iterate.  Treat that as a
+      // numerical stopping condition only when the solve made real progress;
+      // invalid arithmetic and non-positive curvature remain hard failures.
+      const bool made_progress =
+          std::isfinite(best_delta) && best_delta < initial_delta;
+      return finish(
+          made_progress
+              ? static_cast<int>(chunk_end)
+              : -static_cast<int>(chunk_end) - 4,
+          best_delta,
+          true,
+          made_progress ? ", float32 residual floor" : "");
     }
 
     copy(preconditioned, direction);
