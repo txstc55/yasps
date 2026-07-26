@@ -3,6 +3,7 @@ from helpers import extract_surface_triangles, stable_neo_hookean, inertia, extr
 from helpers import point_point, point_edge, point_triangle, edge_edge, affine_energy
 import numpy as np
 import sys
+import os
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
 from yasps.backend import gpuarray
@@ -278,7 +279,7 @@ position_copy.set(bunny.vertices["position"].compute().value)
 direction_copy = gpuarray.zeros_like(bunny.vertices["position"].compute().value)
 rotation_copy = bunny.affine_body["affine_matrix"].value.copy()
 translation_copy = bunny.affine_body["translation"].value.copy()
-for i in range(500):
+for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
   # for all the moving vertices we will copy the position to last_position
   bunny.abd_vertices["last_position"].updateValue(bunny.abd_vertices["position"].compute().value, deepCopy = True)
   bunny.moving_vertices["last_position"].updateValue(bunny.moving_vertices["position"].value, deepCopy = True)

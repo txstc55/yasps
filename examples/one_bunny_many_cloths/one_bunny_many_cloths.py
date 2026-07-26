@@ -4,6 +4,7 @@ from helpers import extract_surface_triangles, inertia, extract_edges_from_trian
 
 import numpy as np
 import sys
+import os
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
 from yasps.backend import gpuarray
@@ -457,7 +458,7 @@ def compute_total_energy():
 import time
 
 start = time.time()
-for i in range(200):
+for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
   start_data_transfer = time.time()
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   vertices_free["last_position"].updateValue(vertices_free["position"].value, deepCopy = True)

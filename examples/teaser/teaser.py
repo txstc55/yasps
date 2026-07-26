@@ -4,6 +4,7 @@ from helpers import extract_surface_triangles, inertia, extract_edges_from_trian
 import math
 import numpy as np
 import sys
+import os
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
 from yasps.backend import gpuarray
@@ -706,7 +707,7 @@ scene_diag_sqrt = math.sqrt(ccd.get_scene_size_faces())
 
 
 
-for i in range(200):
+for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
   bunnies_abd.vertices_abd["last_position"].updateValue(bunnies_abd.vertices_abd["position"].compute().value, deepCopy = True)
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   cloth.vertices_free["last_position"].updateValue(cloth.vertices_free["position"].value, deepCopy = True)

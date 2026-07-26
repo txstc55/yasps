@@ -13,6 +13,7 @@ np.random.seed(13)      # for numpy
 import time
 import random
 from pathlib import Path
+import os
 random.seed(13)
 rng = np.random.default_rng(seed=13)
 
@@ -542,7 +543,7 @@ container_y_copy = container_y_translation.value.copy()
 # sphere_position_copy = vertices_sphere_position.compute().value.copy()
 
 start = time.time()
-for i in range(2000):
+for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "2000"))):
   start_data_transfer = time.time()
   bunnies_soft.vertices["last_position"].updateValue(bunnies_soft.vertices["position"].value, deepCopy = True)
   spheres.vertices["last_position"].updateValue(spheres.vertices["position"].compute().value, deepCopy = True)

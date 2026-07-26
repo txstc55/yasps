@@ -11,6 +11,7 @@ import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
 import time
+import os
 
 import argparse
 
@@ -405,7 +406,7 @@ bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
 
 
 start = time.time()
-for i in range(500):
+for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
   start_data_transfer = time.time()
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   end_data_transfer = time.time()
