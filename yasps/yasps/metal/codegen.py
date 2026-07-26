@@ -639,9 +639,9 @@ class MetalProgram:
     counts = self._resource("union", attribute.correspondance)
     lines.append(f"{indent}uint union_offset = 0;")
     for child_index, child in enumerate(attribute.children):
-      prefix = "if" if child_index == 0 else "else if"
       lines.append(
-        f"{indent}{prefix} (({index}) < union_offset + {counts}[{child_index}]) {{"
+        f"{indent}if (({index}) >= union_offset && ({index}) < "
+        f"union_offset + {counts}[{child_index}]) {{"
       )
       child_lines: list[str] = []
       if child.operator == ya.FLOAT or child.isFloatMat:

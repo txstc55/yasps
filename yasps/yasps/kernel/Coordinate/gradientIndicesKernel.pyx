@@ -2,7 +2,7 @@ from __future__ import annotations
 from yasps.attribute import attribute
 from yasps.primitiveUnion import primitiveUnion
 from typing import List, Tuple, Dict, Set
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 import ctypes
 import numpy as np
 from yasps.attribute import JOIN, DATA, UNION
@@ -396,6 +396,23 @@ class gradientIndicesKernel:
     self.__indices_kernel = None # the kernel for computing the indices
     self.__compression_kernel = None # the kernel for compressing the indices
     self.__coordinate_kernel = None # the kernel for compressing the indices
+    self.__metal_pipeline = None
+    self.__metal_total_coordinates = 0
+    if is_metal:
+      from yasps.metal.indexing import MetalIndexPipeline
+      self.__metal_pipeline = MetalIndexPipeline(
+        self.__path_dict,
+        self.__unioned_child_to_its_children,
+        self.__wrt,
+        self.__energy,
+        self.__gradientSizeForEachPart,
+        self.__indexSizeForEachPart,
+        self.__gradientSizeForEachPart[self.__energy],
+        self.maxNumIndicesNeeded,
+        self.__no_local_permutation,
+      )
+      self.__context = context()
+      return
     self.__generateKernel() # generate and compile the kernel
     self.__getCompressionKernel() # generate or just get the compression kernel
     self.__getCoordinateKernel() # generate or just get the coordinate kernel
@@ -977,6 +994,8 @@ extern "C" int get_indices(
   def numTotalCoordinates(self) -> int:
     if self.__numInstances == 0:
       return 0
+    if is_metal:
+      return self.__metal_total_coordinates
     result = np.zeros(1, dtype=np.uint32)
     assert self.__outputCompressedCoordinateCountsOuter is not None
     cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
@@ -1015,6 +1034,26 @@ extern "C" int get_indices(
 
   @timed("gradientIndicesKernel.computeIndices")
   def computeIndices(self, wrt_start_indices: List[int]):
+    if is_metal:
+      self.__numInstances = self.__energy.correspondance.numInstances
+      result = self.__metal_pipeline.run(
+        wrt_start_indices, self.__numInstances
+      )
+      self.__outputIndices = result["indices"]
+      self.__outputIndexSizes = result["sizes"]
+      self.__outputPermutations = result["permutations"]
+      self.__outputGradientSizes = result["gradient_sizes"]
+      self.__outputUniqueGradientSizes = result["unique_sizes"]
+      self.__outputGroupedIndicesInner = result["grouped_inner"]
+      self.__outputGroupedIndicesOuter = result["grouped_outer"]
+      self.__outputNumUniqueGradientSizes = result["num_unique"]
+      self.__outputCompressedCoordinateCountsOuter = result["coordinate_outer"]
+      self.__outputCoordinates = result["coordinates"]
+      self.__outputBlockDimensions = result["dimensions"]
+      self.__metal_total_coordinates = result["total_coordinates"]
+      self.__outputNumUniqueGradientSizesCPU = None
+      self.__outputUniqueGradientSizesCPU = None
+      return
     self.__reallocate()
     if self.__numInstances == 0:
       return
