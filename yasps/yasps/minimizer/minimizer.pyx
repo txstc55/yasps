@@ -4,7 +4,7 @@ import time
 from typing import List, Set, Optional, Tuple
 
 import numpy as np
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal, precise_sum
 
 from yasps.attribute import attribute, DATA
 from yasps.differentiator import differentiator
@@ -340,6 +340,11 @@ class minimizer:
     )
     if self.__active_hessian is not None:
       self.__updateSolutionSegments()
+      if is_metal:
+        # Float32 contact systems benefit substantially from the previous
+        # Newton direction as a GPU-resident Krylov warm start.  PyCUDA keeps
+        # its historical zero-start behavior unchanged.
+        self.__initial_guess.set(self.__solver.solution)
     return error_code
 
   @timed("minimizer.computeSolution")
@@ -363,10 +368,10 @@ class minimizer:
     for request in self.__energy_requests:
       if request.hash in self.__ignoredEnergyHashList:
         continue
-      total_energy += gpuarray.sum(request.energy.compute().value).get()
+      total_energy += precise_sum(request.energy.compute().value)
     for request in self.__energy_requests_dynamic:
       if request.energy.correspondance.numInstances > 0:
         if request.hash in self.__ignoredEnergyHashList:
           continue
-        total_energy += gpuarray.sum(request.energy.compute().value).get()
+        total_energy += precise_sum(request.energy.compute().value)
     return total_energy

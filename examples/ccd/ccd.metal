@@ -177,7 +177,11 @@ inline int yasps_ccd_edge_edge_type(
     const float3 crossed = cross(u, v);
     if (t_numerator > 0.0f && t_numerator < t_denominator
         && (dot(w, crossed) == 0.0f
-            || length_squared(crossed) < 1.0e-20f * a * c)) {
+            // CUDA's 1e-20 relative test is appropriate for float64 but is
+            // below a useful classification scale in float32.  Treat edges
+            // within roughly 1e-6 radians as parallel so the EE distance
+            // never divides by an unresolved cross product.
+            || length_squared(crossed) < 1.0e-12f * a * c)) {
       if (s_numerator < determinant * 0.5f) {
         t_numerator = e;
         t_denominator = c;

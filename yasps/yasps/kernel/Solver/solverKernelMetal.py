@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from functools import lru_cache
 from hashlib import sha256
+import math
+import os
 from pathlib import Path
 
 import mlx.core as mx
 
+from yasps.kernel.Compute.compensatedSumMetal import compensated_dot
+
 
 _THREADS = 256
-_REDUCTION_WIDTH = _THREADS * 2
 
 
 def _metadata(values):
@@ -45,60 +48,6 @@ def _combine_kernel():
   )
 
 
-@lru_cache(maxsize=1)
-def _dot_blocks_kernel():
-  return mx.fast.metal_kernel(
-    name="yasps_solver_dot_blocks",
-    input_names=["left", "right", "count"],
-    output_names=["block_sums"],
-    source=f"""
-      const uint tid = thread_position_in_threadgroup.x;
-      const uint group = threadgroup_position_in_grid.x;
-      const uint base = group * {_REDUCTION_WIDTH}u;
-      const uint first = base + tid;
-      const uint second = first + {_THREADS}u;
-      threadgroup float scratch[{_THREADS}];
-      float value = 0.0f;
-      if (first < count[0]) value += left[first] * right[first];
-      if (second < count[0]) value += left[second] * right[second];
-      scratch[tid] = value;
-      threadgroup_barrier(mem_flags::mem_threadgroup);
-      for (uint offset = {_THREADS // 2}u; offset > 0u; offset >>= 1u) {{
-        if (tid < offset) scratch[tid] += scratch[tid + offset];
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-      }}
-      if (tid == 0u) block_sums[group] = scratch[0];
-    """,
-  )
-
-
-@lru_cache(maxsize=1)
-def _sum_blocks_kernel():
-  return mx.fast.metal_kernel(
-    name="yasps_solver_sum_blocks",
-    input_names=["values", "count"],
-    output_names=["block_sums"],
-    source=f"""
-      const uint tid = thread_position_in_threadgroup.x;
-      const uint group = threadgroup_position_in_grid.x;
-      const uint base = group * {_REDUCTION_WIDTH}u;
-      const uint first = base + tid;
-      const uint second = first + {_THREADS}u;
-      threadgroup float scratch[{_THREADS}];
-      float value = 0.0f;
-      if (first < count[0]) value += values[first];
-      if (second < count[0]) value += values[second];
-      scratch[tid] = value;
-      threadgroup_barrier(mem_flags::mem_threadgroup);
-      for (uint offset = {_THREADS // 2}u; offset > 0u; offset >>= 1u) {{
-        if (tid < offset) scratch[tid] += scratch[tid + offset];
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-      }}
-      if (tid == 0u) block_sums[group] = scratch[0];
-    """,
-  )
-
-
 def _copy(source):
   count = source.size
   if count == 0:
@@ -128,29 +77,8 @@ def _combine(left, right, scale):
   )[0]
 
 
-def _reduce(values):
-  while values.size > 1:
-    groups = (values.size + _REDUCTION_WIDTH - 1) // _REDUCTION_WIDTH
-    values = _sum_blocks_kernel()(
-      inputs=[values, mx.array([values.size], dtype=mx.uint32)],
-      grid=(groups * _THREADS, 1, 1),
-      threadgroup=(_THREADS, 1, 1),
-      output_shapes=[(groups,)],
-      output_dtypes=[mx.float32],
-    )[0]
-  return values
-
-
 def _dot(left, right):
-  groups = (left.size + _REDUCTION_WIDTH - 1) // _REDUCTION_WIDTH
-  values = _dot_blocks_kernel()(
-    inputs=[left, right, mx.array([left.size], dtype=mx.uint32)],
-    grid=(groups * _THREADS, 1, 1),
-    threadgroup=(_THREADS, 1, 1),
-    output_shapes=[(groups,)],
-    output_dtypes=[mx.float32],
-  )[0]
-  return float(_reduce(values)[0].item())
+  return compensated_dot(left, right)
 
 
 def _atomic_add(output, index, value):
@@ -171,10 +99,24 @@ class MetalCGSolver:
     key = (tuple(static_dimensions), tuple(dynamic_dimensions))
     if key in self.spmv_kernels:
       return self.spmv_kernels[key]
+    group_width = 32
+    maximum_rows = max(
+      [rows for rows, _ in static_dimensions + dynamic_dimensions],
+      default=1,
+    )
     lines = [
-      "const uint block = thread_position_in_grid.x;",
-      "uint remaining = block;",
-      "uint position_start = 0u;",
+      "const uint tid = thread_position_in_threadgroup.x;",
+      "uint remaining_group = threadgroup_position_in_grid.x;",
+      "bool assigned = false;",
+      "bool valid = false;",
+      "uint output_row = 0xffffffffu;",
+      f"ushort active_rows = {maximum_rows}u;",
+      f"threadgroup float forward[{group_width * maximum_rows}];",
+      f"threadgroup uint row_keys[{group_width}];",
+      (
+        f"for (ushort i = 0; i < {maximum_rows}; ++i) "
+        f"forward[tid * {maximum_rows}u + i] = 0.0f;"
+      ),
     ]
     groups = [
       ("static", row, column, group)
@@ -187,39 +129,84 @@ class MetalCGSolver:
       counts = f"{kind}_counts"
       starts = f"{kind}_starts"
       positions = f"{kind}_positions"
+      position_starts = f"{kind}_position_starts"
+      threadgroups = f"{kind}_threadgroups"
       values = f"{kind}_values"
       lines.extend(
         [
-          f"if (remaining < {counts}[{group}]) {{",
-          "  const uint position = position_start + remaining;",
-          f"  const uint row = {positions}[position * 2u];",
-          f"  const uint column = {positions}[position * 2u + 1u];",
+          "if (!assigned) {",
+          f"  if (remaining_group < {threadgroups}[{group}]) {{",
           (
-            f"  const uint value_start = {starts}[{group}] "
-            f"+ remaining * {rows * columns}u;"
+            f"    const uint block = remaining_group * {group_width}u "
+            "+ tid;"
           ),
-          f"  for (ushort i = 0; i < {rows}; ++i) {{",
-          "    float value = 0.0f;",
-          f"    for (ushort j = 0; j < {columns}; ++j) {{",
-          f"      value += {values}[value_start + i * {columns}u + j] * x[column + j];",
-          "    }",
-          "    " + _atomic_add("result", "row + i", "value"),
-          "  }",
-          "  if (row != column) {",
-          f"    for (ushort j = 0; j < {columns}; ++j) {{",
-          "      float value = 0.0f;",
+          f"    active_rows = {rows}u;",
+          f"    if (block < {counts}[{group}]) {{",
+          (
+            f"      const uint position = {position_starts}[{group}] "
+            "+ block;"
+          ),
+          f"      output_row = {positions}[position * 2u];",
+          f"      const uint column = {positions}[position * 2u + 1u];",
+          (
+            f"      const uint value_start = {starts}[{group}] "
+            f"+ block * {rows * columns}u;"
+          ),
           f"      for (ushort i = 0; i < {rows}; ++i) {{",
-          f"        value += {values}[value_start + i * {columns}u + j] * x[row + i];",
+          "        float value = 0.0f;",
+          f"        for (ushort j = 0; j < {columns}; ++j) {{",
+          (
+            f"          value += {values}[value_start + i * "
+            f"{columns}u + j] * x[column + j];"
+          ),
+          "        }",
+          f"        forward[tid * {maximum_rows}u + i] = value;",
           "      }",
-          "      " + _atomic_add("result", "column + j", "value"),
+          "      if (output_row != column) {",
+          f"        for (ushort j = 0; j < {columns}; ++j) {{",
+          "          float value = 0.0f;",
+          f"          for (ushort i = 0; i < {rows}; ++i) {{",
+          (
+            f"            value += {values}[value_start + i * "
+            f"{columns}u + j] * x[output_row + i];"
+          ),
+          "          }",
+          "          " + _atomic_add("result", "column + j", "value"),
+          "        }",
+          "      }",
+          "      row_keys[tid] = output_row;",
+          "      valid = true;",
           "    }",
+          "    assigned = true;",
+          "  } else {",
+          f"    remaining_group -= {threadgroups}[{group}];",
           "  }",
-          "  return;",
           "}",
-          f"remaining -= {counts}[{group}];",
-          f"position_start += {counts}[{group}];",
         ]
       )
+    lines.extend(
+      [
+        "if (!valid) row_keys[tid] = 0xffffffffu;",
+        "threadgroup_barrier(mem_flags::mem_threadgroup);",
+        (
+          "if (valid && "
+          "(tid == 0u || row_keys[tid - 1u] != row_keys[tid])) {"
+        ),
+        "  for (ushort component = 0; component < active_rows; ++component) {",
+        "    float value = 0.0f;",
+        f"    for (uint other = tid; other < {group_width}u; ++other) {{",
+        "      if (row_keys[other] != row_keys[tid]) break;",
+        (
+          f"      value += forward[other * {maximum_rows}u + component];"
+        ),
+        "    }",
+        "    " + _atomic_add(
+          "result", "row_keys[tid] + component", "value"
+        ),
+        "  }",
+        "}",
+      ]
+    )
     source = "\n".join(lines)
     digest = sha256(source.encode()).hexdigest()[:16]
     kernel = mx.fast.metal_kernel(
@@ -229,10 +216,14 @@ class MetalCGSolver:
         "static_positions",
         "static_starts",
         "static_counts",
+        "static_position_starts",
+        "static_threadgroups",
         "dynamic_values",
         "dynamic_positions",
         "dynamic_starts",
         "dynamic_counts",
+        "dynamic_position_starts",
+        "dynamic_threadgroups",
         "x",
       ],
       output_names=["result"],
@@ -327,20 +318,42 @@ class MetalCGSolver:
     total_blocks = sum(static_counts) + sum(dynamic_counts)
     if total_blocks == 0:
       return mx.zeros_like(x)
+    static_position_starts = []
+    position_start = 0
+    for count in static_counts:
+      static_position_starts.append(position_start)
+      position_start += count
+    dynamic_position_starts = []
+    position_start = 0
+    for count in dynamic_counts:
+      dynamic_position_starts.append(position_start)
+      position_start += count
+    group_width = 32
+    static_threadgroups = [
+      (count + group_width - 1) // group_width for count in static_counts
+    ]
+    dynamic_threadgroups = [
+      (count + group_width - 1) // group_width for count in dynamic_counts
+    ]
+    total_threadgroups = sum(static_threadgroups) + sum(dynamic_threadgroups)
     return self._spmv_kernel(static_pairs, dynamic_pairs)(
       inputs=[
         static_values._array,
         static_positions._array,
         _metadata(static_starts),
         _metadata(static_counts),
+        _metadata(static_position_starts),
+        _metadata(static_threadgroups),
         dynamic_values._array,
         dynamic_positions._array,
         _metadata(dynamic_starts),
         _metadata(dynamic_counts),
+        _metadata(dynamic_position_starts),
+        _metadata(dynamic_threadgroups),
         x,
       ],
-      grid=(total_blocks, 1, 1),
-      threadgroup=(min(total_blocks, _THREADS), 1, 1),
+      grid=(total_threadgroups * group_width, 1, 1),
+      threadgroup=(group_width, 1, 1),
       output_shapes=[x.shape],
       output_dtypes=[mx.float32],
       init_value=0.0,
@@ -399,6 +412,21 @@ class MetalCGSolver:
     solution,
     initial_guess,
   ):
+    trace = os.environ.get("YASPS_SOLVER_TRACE", "").strip().lower() in {
+      "1",
+      "true",
+      "yes",
+    }
+
+    def finish(status, residual_value):
+      if trace:
+        print(
+          "Metal PCG status "
+          f"{status}, preconditioned residual {residual_value:.9g}, "
+          f"threshold {relative_tolerance:.9g}"
+        )
+      return status
+
     def spmv(vector):
       return self._spmv(
         block_values,
@@ -437,15 +465,42 @@ class MetalCGSolver:
     delta_new = _dot(residual._array, direction._array)
     relative_tolerance = float(threshold) * delta_zero
     if delta_new <= relative_tolerance:
-      return 0
+      return finish(0, delta_new)
+    best_delta = delta_new
+    best_solution = _copy(solution._array)
+    stagnant_restarts = 0
 
     for iteration in range(1, int(max_iterations) + 1):
       product._array = spmv(direction._array)
       denominator = _dot(direction._array, product._array)
-      if denominator < 0.0:
-        return -iteration - 4
-      if denominator == 0.0:
-        return -iteration - 4
+      if not math.isfinite(denominator) or denominator <= 0.0:
+        # A long float32 recurrence can lose A-conjugacy and make an SPD
+        # product look non-positive.  Recompute the true residual and restart
+        # from preconditioned steepest descent before declaring breakdown.
+        residual._array = _combine(
+          gradient_array, spmv(solution._array), -1.0
+        )
+        direction._array = self._precondition(
+          inverse_blocks,
+          residual._array,
+          diagonal_starts,
+          diagonal_counts,
+          diagonal_sizes,
+          gradient_starts,
+        )
+        delta_new = _dot(residual._array, direction._array)
+        product._array = spmv(direction._array)
+        denominator = _dot(direction._array, product._array)
+        if math.isfinite(delta_new) and delta_new < best_delta:
+          best_delta = delta_new
+          best_solution = _copy(solution._array)
+          mx.eval(best_solution)
+        if (
+          not math.isfinite(denominator)
+          or denominator <= 0.0
+        ):
+          solution._array = best_solution
+          return finish(-iteration - 4, best_delta)
       alpha = delta_new / denominator
       solution._array = _combine(solution._array, direction._array, alpha)
       # The solution is not consumed by either scalar reduction below.  Without
@@ -464,10 +519,66 @@ class MetalCGSolver:
       delta_old = delta_new
       delta_new = _dot(residual._array, preconditioned._array)
       if delta_new <= relative_tolerance:
-        return iteration
-      direction._array = _combine(
-        preconditioned._array,
-        direction._array,
-        delta_new / delta_old,
-      )
-    return int(max_iterations) + 1
+        # A recursively updated float32 residual can look converged even after
+        # drifting away from b - A*x.  Confirm against the true residual.
+        residual._array = _combine(
+          gradient_array, spmv(solution._array), -1.0
+        )
+        preconditioned._array = self._precondition(
+          inverse_blocks,
+          residual._array,
+          diagonal_starts,
+          diagonal_counts,
+          diagonal_sizes,
+          gradient_starts,
+        )
+        delta_new = _dot(residual._array, preconditioned._array)
+        if delta_new <= relative_tolerance:
+          return finish(iteration, delta_new)
+        if math.isfinite(delta_new) and delta_new < best_delta:
+          best_delta = delta_new
+          best_solution = _copy(solution._array)
+          mx.eval(best_solution)
+        direction._array = _copy(preconditioned._array)
+        continue
+      if iteration % 32 == 0:
+        # Residual replacement bounds recurrence drift in float32 and restarts
+        # PCG with the residual of the solution actually stored on the GPU.
+        residual._array = _combine(
+          gradient_array, spmv(solution._array), -1.0
+        )
+        preconditioned._array = self._precondition(
+          inverse_blocks,
+          residual._array,
+          diagonal_starts,
+          diagonal_counts,
+          diagonal_sizes,
+          gradient_starts,
+        )
+        delta_new = _dot(residual._array, preconditioned._array)
+        if delta_new <= relative_tolerance:
+          return finish(iteration, delta_new)
+        previous_best = best_delta
+        if math.isfinite(delta_new) and delta_new < best_delta:
+          best_delta = delta_new
+          best_solution = _copy(solution._array)
+          mx.eval(best_solution)
+        if (
+          math.isfinite(delta_new)
+          and delta_new < previous_best * 0.99
+        ):
+          stagnant_restarts = 0
+        else:
+          stagnant_restarts += 1
+        if not math.isfinite(delta_new) or stagnant_restarts >= 8:
+          solution._array = best_solution
+          return finish(-iteration - 4, best_delta)
+        direction._array = _copy(preconditioned._array)
+      else:
+        direction._array = _combine(
+          preconditioned._array,
+          direction._array,
+          delta_new / delta_old,
+        )
+    solution._array = best_solution
+    return finish(-int(max_iterations) - 5, best_delta)

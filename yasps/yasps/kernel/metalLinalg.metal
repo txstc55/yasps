@@ -215,9 +215,17 @@ METAL_FUNC void yasps_evd_abs_inverse(
   yasps_symmetric_eigen<N>(diagonalized, eigenvectors);
 
   float inverse_eigenvalues[N];
+  float largest_abs_eigenvalue = 0.0f;
+  for (ushort i = 0; i < N; ++i) {
+    largest_abs_eigenvalue = metal::max(
+        largest_abs_eigenvalue,
+        metal::abs(diagonalized[i * N + i]));
+  }
+  const float inverse_cutoff = metal::max(
+      1.0e-6f, largest_abs_eigenvalue * 1.0e-5f);
   for (ushort i = 0; i < N; ++i) {
     const float eigenvalue = diagonalized[i * N + i];
-    inverse_eigenvalues[i] = metal::abs(eigenvalue) < 1.0e-6f
+    inverse_eigenvalues[i] = metal::abs(eigenvalue) < inverse_cutoff
         ? metal::abs(eigenvalue)
         : metal::abs(1.0f / eigenvalue);
   }

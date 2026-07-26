@@ -59,6 +59,27 @@ def test_generated_discrete_face_and_edge_kernels_are_repeatable():
   )
 
 
+def test_nearly_parallel_edges_use_a_finite_endpoint_feature():
+  vertices = _device(
+    [
+      [0.0, 0.0, 0.0],
+      [1.0, 0.0, 0.0],
+      [0.0, 1.0e-4, 1.0e-4],
+      [1.0, 1.01e-4, 1.0e-4],
+    ],
+    np.float32,
+  )
+  edges = _device([[0, 1], [2, 3]], np.uint32)
+  detector = CCD(0, 4, max_cd_pairs=100, max_ccd_pairs=100)
+  detector.init_edges(vertices, vertices, edges, 2)
+
+  detector.cd_edges(vertices, 1.0e-6)
+
+  counts = detector.separated_counts
+  assert sum(counts) > 0
+  assert counts[3] == 0
+
+
 def test_generated_swept_broad_phase_and_additive_step_kernel():
   positions = np.array(
     [

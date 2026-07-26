@@ -69,6 +69,9 @@ if is_cuda:
   def synchronize() -> None:
     driver.Context.synchronize()
 
+  def precise_sum(value) -> float:
+    return float(gpuarray.sum(value).get())
+
 else:
   import mlx.core as mx
 
@@ -363,6 +366,11 @@ else:
 
   def synchronize() -> None:
     mx.synchronize()
+
+  def precise_sum(value) -> float:
+    from yasps.kernel.Compute.compensatedSumMetal import compensated_sum
+
+    return compensated_sum(_unwrap(value))
 
 
 def backend_info() -> dict[str, Any]:
