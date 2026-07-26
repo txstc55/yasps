@@ -7,6 +7,7 @@ from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 import math
+import os
 import time
 
 import mlx.core as mx
@@ -18,6 +19,18 @@ from yasps.kernel.Coordinate.scanMetal import outer_indices
 
 _THREADS = 256
 _HEADER = Path(__file__).with_name("ccd.metal").read_text()
+
+
+def _trace_enabled():
+  return os.environ.get(
+    "YASPS_METAL_CCD_TRACE", ""
+  ).strip().lower() in {"1", "true", "yes"}
+
+
+def _append_enabled():
+  return os.environ.get(
+    "YASPS_METAL_CCD_APPEND", "1"
+  ).strip().lower() not in {"0", "false", "no"}
 
 
 def _array(value):
@@ -197,6 +210,8 @@ def _sort_reorder_kernel():
 
 
 def _build_grid(vertices, movement, elements, arity, count, gap, alpha):
+  trace = _trace_enabled()
+  started = time.perf_counter() if trace else None
   if count == 0:
     return _SpatialGrid(
       mx.empty((0,), dtype=mx.float32),
@@ -252,6 +267,13 @@ def _build_grid(vertices, movement, elements, arity, count, gap, alpha):
   )[0]
   cell_offsets = outer_indices(cell_counts)
   reference_count = int(cell_offsets[-1].item())
+  if trace:
+    prefix_finished = time.perf_counter()
+    print(
+      "Metal CCD grid prefix "
+      f"arity {arity}: {(prefix_finished - started) * 1000.0:.3f} ms, "
+      f"{count} elements, {reference_count} cell references"
+    )
   if reference_count == 0:
     return _SpatialGrid(
       lower,
@@ -290,6 +312,13 @@ def _build_grid(vertices, movement, elements, arity, count, gap, alpha):
     output_shapes=[(reference_count,), (reference_count,)],
     output_dtypes=[mx.uint64, mx.uint32],
   )
+  if trace:
+    mx.eval(sorted_keys, sorted_elements)
+    print(
+      "Metal CCD grid sort "
+      f"arity {arity}: "
+      f"{(time.perf_counter() - prefix_finished) * 1000.0:.3f} ms"
+    )
   return _SpatialGrid(
     lower,
     upper,
@@ -300,7 +329,7 @@ def _build_grid(vertices, movement, elements, arity, count, gap, alpha):
   )
 
 
-def _query_source(kind, continuous, write):
+def _query_source(kind, continuous, mode):
   if kind == "faces":
     prepare = """
       const uint vertex_id = surface_vertices[query_index];
@@ -455,7 +484,7 @@ def _query_source(kind, continuous, write):
           }
     """
 
-  if write:
+  if mode == "write":
     on_hit = """
           if (hit) {
             const uint destination = pair_offsets[query_index] + local_count;
@@ -467,16 +496,53 @@ def _query_source(kind, continuous, write):
           }
     """
     finish = ""
+  elif mode == "append":
+    pair_store = "" if continuous else """
+              atomic_store_explicit(
+                  atomic_pairs + destination * 4u + component,
+                  discrete_pair[component],
+                  memory_order_relaxed);
+    """
+    on_hit = f"""
+          if (hit) {{
+            const uint destination = atomic_fetch_add_explicit(
+                atomic_pair_count, 1u, memory_order_relaxed);
+            if (destination < settings[2]) {{
+              for (uint component = 0u; component < 4u; ++component) {{
+                {pair_store}
+                atomic_store_explicit(
+                    atomic_full_pairs + destination * 4u + component,
+                    full_pair[component],
+                    memory_order_relaxed);
+              }}
+            }}
+          }}
+    """
+    declarations = """
+      device atomic_uint* atomic_pair_count =
+          reinterpret_cast<device atomic_uint*>(pair_count);
+      device atomic_int* atomic_full_pairs =
+          reinterpret_cast<device atomic_int*>(full_pairs);
+    """
+    if not continuous:
+      declarations += """
+      device atomic_int* atomic_pairs =
+          reinterpret_cast<device atomic_int*>(pairs);
+      """
+    finish = ""
   else:
     on_hit = """
           if (hit) ++local_count;
     """
     finish = "counts[query_index] = local_count;"
+  if mode != "append":
+    declarations = ""
 
   source = f"""
     const uint query_index = thread_position_in_grid.x;
     if (query_index >= settings[0]) return;
     constexpr bool continuous = {"true" if continuous else "false"};
+    {declarations}
     {prepare}
     uint local_count = 0u;
     for (int x = first.x; x <= last.x; ++x) {{
@@ -505,9 +571,9 @@ def _query_source(kind, continuous, write):
   return source
 
 
-@lru_cache(maxsize=8)
-def _query_kernel(kind, continuous, write):
-  source = _query_source(kind, continuous, write)
+@lru_cache(maxsize=12)
+def _query_kernel(kind, continuous, mode):
+  source = _query_source(kind, continuous, mode)
   digest = sha256(source.encode()).hexdigest()[:16]
   input_names = [
     "vertices",
@@ -524,9 +590,15 @@ def _query_kernel(kind, continuous, write):
     "settings",
     "options",
   ]
-  if write:
+  if mode == "write":
     input_names.append("pair_offsets")
     output_names = ["pairs", "full_pairs"]
+  elif mode == "append":
+    output_names = (
+      ["full_pairs", "pair_count"]
+      if continuous
+      else ["pairs", "full_pairs", "pair_count"]
+    )
   else:
     output_names = ["counts"]
   return mx.fast.metal_kernel(
@@ -536,7 +608,90 @@ def _query_kernel(kind, continuous, write):
     header=_HEADER,
     source=source,
     compile_options={"math_mode": "fast"},
+    atomic_outputs=mode == "append",
   )
+
+
+def _initial_pair_capacity(continuous, query_count, maximum_pairs):
+  divisor = 2 if continuous else 16
+  return min(
+    maximum_pairs,
+    max(1024, (int(query_count) + divisor - 1) // divisor),
+  )
+
+
+def _detect_append(
+    kind,
+    continuous,
+    inputs,
+    query_count,
+    maximum_pairs,
+    capacity,
+    trace,
+    started,
+):
+  if capacity is None:
+    capacity = _initial_pair_capacity(
+      continuous, query_count, maximum_pairs
+    )
+  capacity = min(maximum_pairs, max(1, int(capacity)))
+  empty = mx.empty((0,), dtype=mx.int32)
+  attempts = 0
+  while True:
+    settings = mx.array(
+      [
+        query_count,
+        int(inputs[9].size),
+        capacity,
+      ],
+      dtype=mx.uint32,
+    )
+    output_shapes = (
+      [(capacity * 4,), (1,)]
+      if continuous
+      else [(capacity * 4,), (capacity * 4,), (1,)]
+    )
+    output_dtypes = (
+      [mx.int32, mx.uint32]
+      if continuous
+      else [mx.int32, mx.int32, mx.uint32]
+    )
+    outputs = _query_kernel(kind, continuous, "append")(
+      inputs=[*inputs[:11], settings, inputs[12]],
+      grid=_grid(query_count),
+      threadgroup=_threadgroup(query_count),
+      output_shapes=output_shapes,
+      output_dtypes=output_dtypes,
+      init_value=0,
+    )
+    if continuous:
+      full_pairs, count = outputs
+      pairs = empty
+    else:
+      pairs, full_pairs, count = outputs
+    pair_count = int(count.item())
+    attempts += 1
+    if pair_count > maximum_pairs:
+      raise RuntimeError(
+        f"Metal CCD found {pair_count} pairs, exceeding the configured "
+        f"maximum of {maximum_pairs}."
+      )
+    if pair_count <= capacity:
+      pairs = pairs[:pair_count * 4]
+      full_pairs = full_pairs[:pair_count * 4]
+      if trace:
+        mx.eval(pairs, full_pairs)
+        print(
+          f"Metal CCD {kind} append: "
+          f"{(time.perf_counter() - started) * 1000.0:.3f} ms, "
+          f"{pair_count} pairs, capacity {capacity}, "
+          f"{attempts} pass{'es' if attempts != 1 else ''}"
+        )
+      return pairs, full_pairs, max(capacity, pair_count)
+    capacity = min(
+      maximum_pairs,
+      max(pair_count, min(maximum_pairs, capacity * 2)),
+    )
 
 
 def _detect(
@@ -553,7 +708,10 @@ def _detect(
     d_hat,
     alpha,
     maximum_pairs,
+    capacity=None,
 ):
+  trace = _trace_enabled()
+  started = time.perf_counter() if trace else None
   arity = 3 if kind == "faces" else 2
   grid_data = _build_grid(
     vertices,
@@ -566,7 +724,7 @@ def _detect(
   )
   if query_count == 0 or grid_data.reference_count == 0:
     empty = mx.empty((0,), dtype=mx.int32)
-    return empty, empty, grid_data
+    return empty, empty, grid_data, capacity
   movement_array = _array(movement) if continuous else _array(vertices)
   surface_array = (
     _array(surface_vertices)
@@ -590,7 +748,19 @@ def _detect(
     ),
     mx.array([d_hat, alpha], dtype=mx.float32),
   ]
-  counts = _query_kernel(kind, continuous, False)(
+  if _append_enabled():
+    pairs, full_pairs, capacity = _detect_append(
+      kind,
+      continuous,
+      inputs,
+      query_count,
+      maximum_pairs,
+      capacity,
+      trace,
+      started,
+    )
+    return pairs, full_pairs, grid_data, capacity
+  counts = _query_kernel(kind, continuous, "count")(
     inputs=inputs,
     grid=_grid(query_count),
     threadgroup=_threadgroup(query_count),
@@ -599,6 +769,13 @@ def _detect(
   )[0]
   offsets = outer_indices(counts)
   pair_count = int(offsets[-1].item())
+  if trace:
+    counted = time.perf_counter()
+    print(
+      f"Metal CCD {kind} count: "
+      f"{(counted - started) * 1000.0:.3f} ms, "
+      f"{pair_count} pairs"
+    )
   if pair_count > maximum_pairs:
     raise RuntimeError(
       f"Metal CCD found {pair_count} pairs, exceeding the configured "
@@ -607,14 +784,20 @@ def _detect(
   if pair_count == 0:
     empty = mx.empty((0,), dtype=mx.int32)
     return empty, empty, grid_data
-  pairs, full_pairs = _query_kernel(kind, continuous, True)(
+  pairs, full_pairs = _query_kernel(kind, continuous, "write")(
     inputs=[*inputs, offsets],
     grid=_grid(query_count),
     threadgroup=_threadgroup(query_count),
     output_shapes=[(pair_count * 4,), (pair_count * 4,)],
     output_dtypes=[mx.int32, mx.int32],
   )
-  return pairs, full_pairs, grid_data
+  if trace:
+    mx.eval(pairs, full_pairs)
+    print(
+      f"Metal CCD {kind} write: "
+      f"{(time.perf_counter() - counted) * 1000.0:.3f} ms"
+    )
+  return pairs, full_pairs, grid_data, capacity
 
 
 @lru_cache(maxsize=None)
@@ -861,6 +1044,7 @@ class MetalCCD:
     self._edge_count = 0
     self._face_grid = None
     self._edge_grid = None
+    self._pair_capacities = {}
     self.reset()
 
   @property
@@ -910,9 +1094,16 @@ class MetalCCD:
     if self._faces is None:
       empty = mx.empty((0,), dtype=mx.int32)
       return empty, empty
-    pairs, full_pairs, self._face_grid = _detect(
+    continuous = movement is not None
+    key = ("faces", continuous)
+    (
+      pairs,
+      full_pairs,
+      self._face_grid,
+      self._pair_capacities[key],
+    ) = _detect(
       "faces",
-      movement is not None,
+      continuous,
       vertices,
       movement,
       self._faces,
@@ -923,7 +1114,8 @@ class MetalCCD:
       self._num_surface_vertices,
       d_hat,
       alpha,
-      self._max_ccd_pairs if movement is not None else self._max_cd_pairs,
+      self._max_ccd_pairs if continuous else self._max_cd_pairs,
+      self._pair_capacities.get(key),
     )
     return pairs, full_pairs
 
@@ -931,9 +1123,16 @@ class MetalCCD:
     if self._edges is None:
       empty = mx.empty((0,), dtype=mx.int32)
       return empty, empty
-    pairs, full_pairs, self._edge_grid = _detect(
+    continuous = movement is not None
+    key = ("edges", continuous)
+    (
+      pairs,
+      full_pairs,
+      self._edge_grid,
+      self._pair_capacities[key],
+    ) = _detect(
       "edges",
-      movement is not None,
+      continuous,
       vertices,
       movement,
       self._edges,
@@ -944,7 +1143,8 @@ class MetalCCD:
       self._edge_count,
       d_hat,
       alpha,
-      self._max_ccd_pairs if movement is not None else self._max_cd_pairs,
+      self._max_ccd_pairs if continuous else self._max_cd_pairs,
+      self._pair_capacities.get(key),
     )
     return pairs, full_pairs
 
@@ -1087,6 +1287,8 @@ class MetalCCD:
       "Computing largest step size took "
       f"{(time.perf_counter() - started) * 1000:.2f} ms"
     )
+    if _trace_enabled():
+      print(f"Metal CCD step reduction processed {pair_count} pairs")
     return step
 
   @staticmethod

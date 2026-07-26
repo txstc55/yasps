@@ -109,3 +109,35 @@ def test_generated_swept_broad_phase_and_additive_step_kernel():
   assert detector.compute_largest_step_size(
     0.8, vertices, directions
   ) == pytest.approx(0.4, abs=2.0e-6)
+
+
+def test_generated_append_query_grows_and_reuses_pair_capacity():
+  positions = np.array(
+    [
+      [0.0, 0.0, 0.0],
+      [1.0, 0.0, 0.0],
+      [0.0, 1.0, 0.0],
+      [0.2, 0.2, 1.0],
+      [0.3, 0.2, 1.0],
+      [0.2, 0.3, 1.0],
+    ],
+    np.float32,
+  )
+  movement = np.zeros_like(positions)
+  movement[3:, 2] = 2.0
+  vertices = _device(positions, np.float32)
+  directions = _device(movement, np.float32)
+  faces = _device([[0, 1, 2]], np.uint32)
+  surface = _device([0, 1, 2, 3, 4, 5], np.uint32)
+  detector = CCD(6, 6, max_cd_pairs=100, max_ccd_pairs=100)
+  detector.init_faces(vertices, faces, surface, 1)
+  detector._pair_capacities[("faces", True)] = 1
+
+  detector.ccd(vertices, 1.0e-4, directions, 1.0)
+
+  assert detector._pair_capacities[("faces", True)] >= 3
+  assert int(detector.cp_num.get()[0]) == 3
+  np.testing.assert_array_equal(
+    np.sort(detector.collision_pairs_ccd.get()[:, 0]),
+    np.array([-6, -5, -4], np.int32),
+  )
