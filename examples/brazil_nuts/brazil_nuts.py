@@ -713,17 +713,16 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "2000"))):
     print("step taken is", step_taken)
     print("substep is", substep)
 
-    bunny_vertices_computed = vertices_bunny_position.value.get().reshape((-1, 3))
-    bunny_poly.points = bunny_vertices_computed
-    sphere_vertices_computed = vertices_sphere_position.compute().value.get().reshape((-1, 3))
-    sphere_poly.points = sphere_vertices_computed
-    container_vertices_computed = vertices_container_positions.compute().value.get().reshape((-1, 3))
-    container_poly.points = container_vertices_computed
-
-
-    if SHOW_EXAMPLE:
-      plotter.render()
-      plotter.update()
+    if SHOW_EXAMPLE or SAVE_EXAMPLE:
+      bunny_vertices_computed = vertices_bunny_position.value.get().reshape((-1, 3))
+      bunny_poly.points = bunny_vertices_computed
+      sphere_vertices_computed = vertices_sphere_position.compute().value.get().reshape((-1, 3))
+      sphere_poly.points = sphere_vertices_computed
+      container_vertices_computed = vertices_container_positions.compute().value.get().reshape((-1, 3))
+      container_poly.points = container_vertices_computed
+      if SHOW_EXAMPLE:
+        plotter.render()
+        plotter.update()
 
 
     if not line_search_accepted:

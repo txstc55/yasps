@@ -598,11 +598,12 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
     print("step taken is", step_taken)
     print("substep is", substep)
 
-    soft_vertices_computed = vertices_soft_position.compute().value.get().reshape((-1, 3))
-    soft_poly.points = soft_vertices_computed
-    if SHOW_EXAMPLE:
-      plotter.render()
-      plotter.update()
+    if SHOW_EXAMPLE or SAVE_EXAMPLE:
+      soft_vertices_computed = vertices_soft_position.compute().value.get().reshape((-1, 3))
+      soft_poly.points = soft_vertices_computed
+      if SHOW_EXAMPLE:
+        plotter.render()
+        plotter.update()
 
 
     if max_movement < 1e-2:

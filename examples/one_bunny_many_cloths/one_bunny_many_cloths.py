@@ -573,14 +573,15 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
     print("step taken is", step_taken)
     print("substep is", substep)
 
-    all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
-    soft_vertices_computed = all_vertices_computed[0:(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-    cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
-    soft_poly.points = soft_vertices_computed
-    cloth_poly.points = cloth_vertices_computed
-    if SHOW_EXAMPLE:
-      plotter.render()
-      plotter.update()
+    if SHOW_EXAMPLE or SAVE_EXAMPLE:
+      all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+      soft_vertices_computed = all_vertices_computed[0:(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+      cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+      soft_poly.points = soft_vertices_computed
+      cloth_poly.points = cloth_vertices_computed
+      if SHOW_EXAMPLE:
+        plotter.render()
+        plotter.update()
 
     if not line_search_accepted:
       print(
@@ -608,14 +609,15 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
   end_velocity_update = time.time()
   print(f"Time taken for velocity update: {end_velocity_update - start_velocity_update} seconds")
 
-  all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
-  soft_vertices_computed = all_vertices_computed[0:(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-  cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
-  soft_poly.points = soft_vertices_computed
-  cloth_poly.points = cloth_vertices_computed
-  if SHOW_EXAMPLE:
-    plotter.render()
-    plotter.update()
+  if SHOW_EXAMPLE or SAVE_EXAMPLE:
+    all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+    soft_vertices_computed = all_vertices_computed[0:(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+    cloth_vertices_computed = all_vertices_computed[(NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES:]
+    soft_poly.points = soft_vertices_computed
+    cloth_poly.points = cloth_vertices_computed
+    if SHOW_EXAMPLE:
+      plotter.render()
+      plotter.update()
   if SAVE_EXAMPLE:
     plotter.screenshot(
       f"outputs/many_bunny_one_cloth_block_jacobian_1e3_{i:04d}.jpg"

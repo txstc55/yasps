@@ -793,22 +793,23 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "200"))):
       substep += 1
     print("step taken is", step_taken)
     print("substep is", substep)
-    all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
+    if SHOW_EXAMPLE or SAVE_EXAMPLE:
+      all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
 
-    abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
-    soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
-    cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES: (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES + positions_cloth.shape[0]]
-    cage_vertices_computed = cvp.value.get().reshape(-1, 3)
-    bunny_cage_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES + positions_cloth.shape[0]: ]
+      abd_vertices_computed = all_vertices_computed[:NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES]
+      soft_vertices_computed = all_vertices_computed[NUM_ABD_BUNNIES * NUM_BUNNY_VERTICES:(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES]
+      cloth_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES: (NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES + positions_cloth.shape[0]]
+      cage_vertices_computed = cvp.value.get().reshape(-1, 3)
+      bunny_cage_vertices_computed = all_vertices_computed[(NUM_ABD_BUNNIES + NUM_SOFT_BUNNIES) * NUM_BUNNY_VERTICES + positions_cloth.shape[0]: ]
 
-    abd_poly.points = abd_vertices_computed
-    soft_poly.points = soft_vertices_computed
-    cloth_poly.points = cloth_vertices_computed
-    cage_poly.points = cage_vertices_computed
-    bunny_poly.points = bunny_cage_vertices_computed
-    if SHOW_EXAMPLE:
-      plotter.render()
-      plotter.update()
+      abd_poly.points = abd_vertices_computed
+      soft_poly.points = soft_vertices_computed
+      cloth_poly.points = cloth_vertices_computed
+      cage_poly.points = cage_vertices_computed
+      bunny_poly.points = bunny_cage_vertices_computed
+      if SHOW_EXAMPLE:
+        plotter.render()
+        plotter.update()
 
     inner_iteration += 1
     max_movement = gpuarray.max(abs(direction_copy)).get()

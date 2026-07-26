@@ -378,11 +378,12 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
       step_taken = 0.0
     print("step taken is", step_taken)
     print("substep is", substep)
-    new_positions = bunny.vertices["position"].compute().value.get().reshape(-1, 3)
-    bunny_poly.points = new_positions
-    if SHOW_EXAMPLE:
-      plotter.render()
-      plotter.update()
+    if SHOW_EXAMPLE or SAVE_EXAMPLE:
+      new_positions = bunny.vertices["position"].compute().value.get().reshape(-1, 3)
+      bunny_poly.points = new_positions
+      if SHOW_EXAMPLE:
+        plotter.render()
+        plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
     if not line_search_accepted:
@@ -405,8 +406,9 @@ for i in range(int(os.environ.get("YASPS_EXAMPLE_FRAMES", "500"))):
   abd_velocities = (bunny.abd_vertices["position"].compute().value - bunny.abd_vertices["last_position"].value) / DT_VALUE
   bunny.abd_vertices["velocity"].updateValue(abd_velocities)
 
-  new_positions = bunny.vertices["position"].compute().value.get().reshape(-1, 3)
-  bunny_poly.points = new_positions
+  if SHOW_EXAMPLE or SAVE_EXAMPLE:
+    new_positions = bunny.vertices["position"].compute().value.get().reshape(-1, 3)
+    bunny_poly.points = new_positions
   # # export the current positions to obj
   if SAVE_EXAMPLE:
     bunny_poly.save(f"outputs/bunny1_{i:04d}.obj")
