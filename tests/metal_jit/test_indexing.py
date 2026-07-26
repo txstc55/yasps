@@ -3,6 +3,8 @@ import numpy as np
 import pytest
 
 from yasps.backend import is_metal
+from yasps.backend import gpuarray
+from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.metal.scan import exclusive_scan, outer_indices
 from yasps.scene import scene
@@ -104,3 +106,44 @@ def test_generated_union_indices_shift_each_child():
     kernel.outputSizes.get().reshape(4, 2),
     np.array([[1, 0], [1, 0], [1, 0], [1, 0]], dtype=np.uint16),
   )
+
+
+def test_generated_coordinate_compression_groups_and_maps_duplicates():
+  simulation = scene("coordinate_compression")
+  mesh = simulation.addMesh("mesh")
+  first = mesh.addPrimitive("first", numInstances=1)
+  second = mesh.addPrimitive("second", numInstances=1)
+  first_value = first.addAttribute("value", rows=2, cols=1)
+  second_value = second.addAttribute("value", rows=3, cols=1)
+  coordinates = gpuarray.to_gpu(
+    np.array([9, 9, 0, 0, 3, 4, 0, 0, 1, 2, 7, 8], np.uint32)
+  )
+  dimensions = gpuarray.to_gpu(
+    np.array([3, 3, 2, 2, 2, 2, 2, 2, 3, 3, 2, 2], np.uint16)
+  )
+  compressor = coordinateCompressionKernel(
+    [coordinates], [dimensions], [6], [first_value, second_value]
+  )
+
+  compressor.compressCoordinatesAndDimensions()
+
+  np.testing.assert_array_equal(
+    compressor.uniqueCoordinates.get(),
+    np.array([0, 0, 3, 4, 7, 8, 1, 2, 9, 9], np.uint32),
+  )
+  np.testing.assert_array_equal(
+    compressor.uniqueDimensions.get(), np.array([2, 2, 3, 3], np.uint16)
+  )
+  np.testing.assert_array_equal(
+    compressor.uniqueDimensionsOuterIndices.get(),
+    np.array([0, 12, 30], np.uint32),
+  )
+  np.testing.assert_array_equal(
+    compressor.uniqueDimensionsBlockCounts.get(), np.array([3, 2], np.uint32)
+  )
+  np.testing.assert_array_equal(
+    compressor.lookupArray.get(), np.array([21, 0, 4, 0, 12, 8], np.uint32)
+  )
+  assert compressor.numUniqueCoordinates == 5
+  assert compressor.numUniqueDimensions == 2
+  assert compressor.totalBlockSize == 30

@@ -2,7 +2,7 @@ from __future__ import annotations
 # from ast import Str
 from yasps.attribute import attribute
 from typing import List
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 import ctypes
 import numpy as np
 from yasps.helper import timed
@@ -391,7 +391,11 @@ class coordinateCompressionKernel:
     self.__uniqueCoordinates: gpuarray.GPUArray = gpuarray.zeros(2, np.uint32)
     # temporary arrays for uncompressed coordinates and dimensions
     # used for compressing coordinates
-    self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = gpuarray.empty(1, coord_dim_dtype)
+    self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = (
+      gpuarray.empty(1, np.uint32)
+      if is_metal
+      else gpuarray.empty(1, coord_dim_dtype)
+    )
     self.__uncompressedCoordinates = gpuarray.zeros(2, np.uint32)
     self.__uncompressedDimensions = gpuarray.zeros(2, np.uint16)
 
@@ -417,6 +421,7 @@ class coordinateCompressionKernel:
     self.__compress_unique_coords_kernel = None # the kernel that compresses the unique coordinates and check the position in the actual data
     # invoke functions
     self.__context = context()
+    self.__metal_total_block_size = 0
 
   def updateCoordinates(self, coordinates: List[gpuarray.GPUArray], dimensions: List[gpuarray.GPUArray], num_coordinates: List[int]):
     self.__num_coordinates = []
@@ -484,6 +489,8 @@ class coordinateCompressionKernel:
   def totalBlockSize(self):
     if self.__total_coordinates == 0:
       return 0
+    if is_metal:
+      return self.__metal_total_block_size
     return self.__uniqueDimensionsOuterIndices.get()[self.__num_unique_dimensions]
 
   @timed("coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions")
@@ -596,6 +603,32 @@ class coordinateCompressionKernel:
   def compressCoordinatesAndDimensions(self):
     # first we check if we need to reallocate space
     self.__total_coordinates = sum(self.__num_coordinates)
+    if is_metal:
+      if self.__total_coordinates == 0:
+        self.__num_unique_coords = 0
+        self.__num_unique_dimensions = 0
+        self.__metal_total_block_size = 0
+        self.__uniqueCoordinates = gpuarray.empty(0, np.uint32)
+        self.__uniqueDimensions = gpuarray.empty(0, np.uint16)
+        self.__uniqueDimensionsOuterIndices = gpuarray.zeros(1, np.uint32)
+        self.__uniqueDimensionsBlockCounts = gpuarray.empty(0, np.uint32)
+        self.__lookupArray = gpuarray.empty(0, np.uint32)
+        return
+      from yasps.metal.coordinates import MetalCoordinateCompressor
+      result = MetalCoordinateCompressor().run(
+        self.__coordinates,
+        self.__dimensions,
+        self.__num_coordinates,
+      )
+      self.__uniqueCoordinates = result["unique_coordinates"]
+      self.__uniqueDimensions = result["unique_dimensions"]
+      self.__uniqueDimensionsOuterIndices = result["dimension_offsets"]
+      self.__uniqueDimensionsBlockCounts = result["block_counts"]
+      self.__lookupArray = result["lookup"]
+      self.__num_unique_coords = result["num_unique"]
+      self.__num_unique_dimensions = result["num_dimensions"]
+      self.__metal_total_block_size = result["total_block_size"]
+      return
     # do a reset
     self.__uniqueCoordinates.fill(0)
     # self.__uncompressedCoordinatesAndDimensionsTmp.fill(0)
