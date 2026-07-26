@@ -6,6 +6,7 @@ from functools import lru_cache
 from hashlib import sha256
 import os
 from pathlib import Path
+import time
 
 import mlx.core as mx
 
@@ -667,6 +668,10 @@ class MetalHessianProgram:
     diagonal_blocks_start,
     gradient_segments_start,
   ):
+    trace = os.environ.get(
+      "YASPS_METAL_HESSIAN_TRACE", ""
+    ).strip().lower() in {"1", "true", "yes"}
+    started = time.perf_counter() if trace else None
     unique_sizes = [
       int(size) for size in gi_kernel.outputUniqueGradientSizesCPU.tolist()
     ]
@@ -731,3 +736,19 @@ class MetalHessianProgram:
         init_value=0.0,
       )
       _accumulate(targets, contributions)
+    if trace:
+      mx.eval(*[_array(target) for target in targets])
+      elapsed_ms = (time.perf_counter() - started) * 1000.0
+      mode = (
+        "full"
+        if self.project_entire_hessian
+        else "separate"
+        if self.separate_hessian_jacobian
+        else "local"
+      )
+      print(
+        "Metal Hessian materialization "
+        f"{self.attribute.fullName}: {elapsed_ms:.3f} ms, "
+        f"{instance_count} instances, projection {mode}, "
+        f"gradient sizes {unique_sizes}"
+      )

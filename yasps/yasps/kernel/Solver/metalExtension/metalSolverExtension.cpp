@@ -213,21 +213,55 @@ std::tuple<mx::array, int, float> solve_pcg(
 
   const auto materialization_started =
       std::chrono::steady_clock::now();
-  mx::eval(std::vector<mx::array>{
-      block_values,
-      block_positions,
-      dynamic_values,
-      dynamic_positions,
-      inverse_blocks,
-      gradient,
-      p1_b,
-      residual,
-      direction,
-      product,
-      preconditioned,
-      solution,
-      initial_guess,
-  });
+  if (trace) {
+    auto eval_stage = [](
+                          const char* name,
+                          const std::vector<mx::array>& arrays) {
+      const auto started = std::chrono::steady_clock::now();
+      mx::eval(arrays);
+      const auto finished = std::chrono::steady_clock::now();
+      std::cout
+          << "Metal PCG materialization " << name << " "
+          << std::chrono::duration<double, std::milli>(
+                 finished - started)
+                 .count()
+          << " ms" << std::endl;
+    };
+    eval_stage(
+        "metadata",
+        {block_positions, dynamic_positions});
+    eval_stage(
+        "Hessian/gradient",
+        {block_values, dynamic_values, gradient});
+    eval_stage("block inverse", {inverse_blocks});
+    eval_stage(
+        "workspace",
+        {
+            p1_b,
+            residual,
+            direction,
+            product,
+            preconditioned,
+            solution,
+            initial_guess,
+        });
+  } else {
+    mx::eval(std::vector<mx::array>{
+        block_values,
+        block_positions,
+        dynamic_values,
+        dynamic_positions,
+        inverse_blocks,
+        gradient,
+        p1_b,
+        residual,
+        direction,
+        product,
+        preconditioned,
+        solution,
+        initial_guess,
+    });
+  }
   const auto solve_started = std::chrono::steady_clock::now();
 
   const auto selected_stream = mx::to_stream(stream);
