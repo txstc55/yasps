@@ -141,3 +141,24 @@ def test_generated_append_query_grows_and_reuses_pair_capacity():
     np.sort(detector.collision_pairs_ccd.get()[:, 0]),
     np.array([-6, -5, -4], np.int32),
   )
+
+
+def test_two_pass_fallback_handles_an_empty_query(monkeypatch):
+  monkeypatch.setenv("YASPS_METAL_CCD_APPEND", "0")
+  vertices = _device(
+    [
+      [-1.0, 0.0, 0.0],
+      [1.0, 0.0, 0.0],
+      [-1.0, 2.0, 0.0],
+      [1.0, 2.0, 0.0],
+    ],
+    np.float32,
+  )
+  directions = _device(np.zeros((4, 3)), np.float32)
+  edges = _device([[0, 1], [2, 3]], np.uint32)
+  detector = CCD(0, 4, max_cd_pairs=100, max_ccd_pairs=100)
+  detector.init_edges(vertices, vertices, edges, 2)
+
+  detector.ccd(vertices, 1.0e-4, directions, 1.0)
+
+  assert int(detector.cp_num.get()[0]) == 0

@@ -712,6 +712,13 @@ def _detect(
 ):
   trace = _trace_enabled()
   started = time.perf_counter() if trace else None
+  if trace and continuous and kind == "faces":
+    movement_values = _array(movement)
+    print(
+      "Metal CCD movement diagnostics: "
+      f"max {float(mx.max(mx.abs(movement_values)).item()):.9g}, "
+      f"finite {bool(mx.all(mx.isfinite(movement_values)).item())}"
+    )
   arity = 3 if kind == "faces" else 2
   grid_data = _build_grid(
     vertices,
@@ -767,7 +774,22 @@ def _detect(
     output_shapes=[(query_count,)],
     output_dtypes=[mx.uint32],
   )[0]
+  counts_cpu = None
+  # Keep the long generated broad-phase traversal in its own command buffer.
+  # Chaining a large custom query directly into the hierarchical scan can let
+  # MLX recycle the count storage before the scan's terminal value is read.
+  mx.eval(counts)
+  if trace:
+    counts_cpu = np.array(counts, copy=True)
   offsets = outer_indices(counts)
+  if trace:
+    mx.eval(offsets)
+    print(
+      f"Metal CCD {kind} count diagnostics: "
+      f"sum {int(np.sum(counts_cpu, dtype=np.uint64))}, "
+      f"max {int(np.max(counts_cpu, initial=0))}, "
+      f"outer {int(offsets[-1].item())}"
+    )
   pair_count = int(offsets[-1].item())
   if trace:
     counted = time.perf_counter()
@@ -783,7 +805,7 @@ def _detect(
     )
   if pair_count == 0:
     empty = mx.empty((0,), dtype=mx.int32)
-    return empty, empty, grid_data
+    return empty, empty, grid_data, capacity
   pairs, full_pairs = _query_kernel(kind, continuous, "write")(
     inputs=[*inputs, offsets],
     grid=_grid(query_count),
