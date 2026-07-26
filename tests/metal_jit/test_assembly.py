@@ -84,6 +84,37 @@ def test_generated_full_projection_uses_float32_eigensolver_and_assembly():
   )
 
 
+def test_large_expression_staging_reuses_compact_hessian_assembly(
+  monkeypatch,
+):
+  import yasps.kernel.Hessian.hessianAndGradientKernelMetal as metal_hessian
+
+  monkeypatch.setattr(metal_hessian, "_STAGED_EXPRESSION_SOURCE_BYTES", 0)
+  simulation = scene("staged_full_projection_assembly")
+  mesh = simulation.addMesh("mesh")
+  vertices = mesh.addPrimitive("vertices", numInstances=2)
+  values = vertices.addAttribute("values")
+  values.updateValue(np.array([2.0, -3.0], np.float32))
+  energy = vertices.addAttribute(
+    "energy", computed_attribute=0.5 * values * values
+  )
+  assembled = differentiator().diff2(
+    [energy], [values], [values], projection_method=2
+  )
+
+  assembled.compute()
+
+  np.testing.assert_allclose(
+    assembled.gradient.value.get(), np.array([2.0, -3.0], np.float32)
+  )
+  np.testing.assert_allclose(
+    assembled.blocks_flattened.get(), np.ones(2, np.float32)
+  )
+  np.testing.assert_allclose(
+    assembled.diagonal_blocks.get(), np.ones(2, np.float32)
+  )
+
+
 def test_generated_separate_jacobian_assembles_j_transpose_h_j():
   simulation = scene("separate_jacobian_assembly")
   mesh = simulation.addMesh("mesh")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from hashlib import sha256
+import os
 from pathlib import Path
 
 import mlx.core as mx
@@ -13,6 +14,16 @@ from yasps.codeGeneratorMetal import MetalProgram
 
 
 _THREADS = 256
+_STAGED_EXPRESSION_SOURCE_BYTES = 128 * 1024
+
+
+@lru_cache(maxsize=1)
+def _linalg_header():
+  return (
+    Path(__import__("yasps").__file__).parent
+    / "kernel"
+    / "metalLinalg.metal"
+  ).read_text()
 
 
 def _array(value):
@@ -94,6 +105,23 @@ class MetalHessianProgram:
   ):
     self.attribute = attribute
     self.expression = MetalProgram(attribute)
+    # Fusing a very large differentiated expression into every projection-size
+    # variant makes Metal compile the same expression repeatedly.  Stage those
+    # expressions once on the GPU and keep the assembly variants compact.
+    self.stage_expression = (
+      len(self.expression.header) >= _STAGED_EXPRESSION_SOURCE_BYTES
+    )
+    if os.environ.get("YASPS_METAL_JIT_TRACE", "").strip().lower() in {
+      "1",
+      "true",
+      "yes",
+    }:
+      print(
+        "Metal Hessian JIT "
+        f"{attribute.fullName}: expression source "
+        f"{len(self.expression.header)} bytes, staged "
+        f"{self.stage_expression}"
+      )
     self.project_entire_hessian = project_entire_hessian
     self.projection_method = projection_method
     self.gradient_only = gradient_only
@@ -131,18 +159,26 @@ class MetalHessianProgram:
 
   def _compile(self, gradient_size):
     source = self._source(gradient_size)
-    digest = sha256((self.expression.header + source).encode()).hexdigest()[:16]
+    header = (
+      _linalg_header() if self.stage_expression else self.expression.header
+    )
+    digest = sha256((header + source).encode()).hexdigest()[:16]
     name = f"yasps_hessian_assembly_{digest}"
     output_directory = Path(".yasps_tmp/metal")
     output_directory.mkdir(parents=True, exist_ok=True)
     source_path = output_directory / f"{name}.metal"
-    full_source = self.expression.header + "\n\n" + source
+    full_source = header + "\n\n" + source
     if not source_path.exists() or source_path.read_text() != full_source:
       source_path.write_text(full_source)
+    expression_inputs = (
+      ["expression_values"]
+      if self.stage_expression
+      else self.expression.resource_input_names
+    )
     return mx.fast.metal_kernel(
       name=name,
       input_names=[
-        *self.expression.resource_input_names,
+        *expression_inputs,
         "segment_indices",
         "segment_sizes",
         "local_permutations",
@@ -162,7 +198,7 @@ class MetalHessianProgram:
         "diagonal_contribution",
         "diagonal_blocks_contribution",
       ],
-      header=self.expression.header,
+      header=header,
       source=source,
       compile_options={"math_mode": "fast"},
       atomic_outputs=True,
@@ -176,14 +212,28 @@ class MetalHessianProgram:
       "if (local_index >= group_end - group_start) return;",
       "const uint instance = grouped_indices[group_start + local_index];",
       f"constexpr ushort K = {self.max_num_indices};",
-      f"float hg[{self.attribute.size}];",
-      self.expression.root_call("instance", "hg"),
-      "uint gradient_offset = 0u;",
-      "for (ushort i = 0; i < K; ++i) {",
-      "  const ushort segment_size = segment_sizes[instance * K + i];",
-      "  uint placement = segment_indices[instance * K + i];",
-      "  if (placement >= 2u) {",
     ]
+    if self.stage_expression:
+      lines.append(
+        "const auto hg = expression_values "
+        f"+ instance * {self.attribute.size}u;"
+      )
+    else:
+      lines.extend(
+        [
+          f"float hg[{self.attribute.size}];",
+          self.expression.root_call("instance", "hg"),
+        ]
+      )
+    lines.extend(
+      [
+        "uint gradient_offset = 0u;",
+        "for (ushort i = 0; i < K; ++i) {",
+        "  const ushort segment_size = segment_sizes[instance * K + i];",
+        "  uint placement = segment_indices[instance * K + i];",
+        "  if (placement >= 2u) {",
+      ]
+    )
     if self.separate_hessian_jacobian:
       gradient_base = self.attribute.cols - self.jacobian_cols
     else:
@@ -620,13 +670,18 @@ class MetalHessianProgram:
     targets = [gradient, hessian_blocks, diagonal, diagonal_blocks]
     output_shapes = [target.shape for target in targets]
     output_dtypes = [_array(target).dtype for target in targets]
+    expression_inputs = (
+      [self.expression.run()]
+      if self.stage_expression
+      else self.expression.resource_arrays()
+    )
     for group_index, gradient_size in enumerate(unique_sizes):
       if gradient_size == 0:
         continue
       kernel_key = gradient_size if self.project_entire_hessian else 0
       kernel = self.kernels[kernel_key]
       inputs = [
-        *self.expression.resource_arrays(),
+        *expression_inputs,
         _array(gi_kernel.outputIndices),
         _array(gi_kernel.outputSizes),
         _array(gi_kernel.outputPermutations),
