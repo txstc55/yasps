@@ -165,3 +165,26 @@ def test_generated_triangle_normal_kernel():
   np.testing.assert_allclose(
     normals.value.get().reshape(2, 3), expected, rtol=2e-6, atol=2e-6
   )
+
+
+def test_generated_resource_packing_avoids_metal_buffer_limit():
+  primitive = _primitive("resource_packing", 1)
+  sources = []
+  for index in range(40):
+    source = primitive.addAttribute(f"source_{index}")
+    source.updateValue(np.array([index + 1], dtype=np.float32))
+    sources.append(source)
+  expression = sources[0]
+  for source in sources[1:]:
+    expression = expression + source
+  total = primitive.addAttribute("total", computed_attribute=expression)
+
+  total.compute()
+
+  assert total.value.get()[0] == pytest.approx(sum(range(1, 41)))
+  program = total.globalKernel.program
+  assert program.resource_input_names == [
+    "yasps_float_resources",
+    "yasps_resource_offsets",
+  ]
+  assert len(program.input_names) == 3

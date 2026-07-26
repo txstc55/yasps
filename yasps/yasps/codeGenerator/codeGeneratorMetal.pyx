@@ -84,6 +84,28 @@ class MetalProgram:
       )
       for resource in self.resources
     }
+    self._resource_indices = {
+      (resource.kind, resource.name): index
+      for index, resource in enumerate(self.resources)
+    }
+    self._float_resource_indices = tuple(
+      index
+      for index, resource in enumerate(self.resources)
+      if resource.kind == "data"
+    )
+    self._uint_resource_indices = tuple(
+      index
+      for index, resource in enumerate(self.resources)
+      if resource.kind != "data"
+    )
+    self._resource_categories = {
+      (resource.kind, resource.name): (
+        "yasps_float_resources"
+        if resource.kind == "data"
+        else "yasps_uint_resources"
+      )
+      for resource in self.resources
+    }
     root_module = self._compile_module(attribute)
     self.root_module = root_module
     self.modules = self._ordered_modules(root_module.key)
@@ -104,7 +126,7 @@ class MetalProgram:
       "if (instance >= max_index[0]) return;",
       f"float {result_name}[{attribute.size}];",
       f"{root_module.name}("
-      f"{self._module_arguments(root_module, suffix=True)}"
+      f"{self._external_module_arguments(root_module, suffix=True)}"
       f"instance, {result_name});",
     ]
     lines.append(
@@ -114,10 +136,7 @@ class MetalProgram:
     self.source = "\n".join(lines)
     digest = sha256((self.header + self.source).encode()).hexdigest()[:16]
     self.name = f"yasps_attribute_{digest}"
-    self.input_names = [
-      self._resource_names[(resource.kind, resource.name)]
-      for resource in self.resources
-    ] + ["max_index"]
+    self.input_names = [*self.resource_input_names, "max_index"]
     self.kernel = mx.fast.metal_kernel(
       name=self.name,
       input_names=self.input_names,
@@ -194,26 +213,70 @@ class MetalProgram:
       return ", ".join(arguments) + ", "
     return ", ".join(arguments)
 
+  def _external_module_arguments(
+    self, module: _Module, suffix: bool = False
+  ) -> str:
+    arguments = [
+      (
+        f"{self._resource_categories[key]} + "
+        f"yasps_resource_offsets[{self._resource_indices[key]}]"
+      )
+      for key in module.resources
+    ]
+    if suffix and arguments:
+      return ", ".join(arguments) + ", "
+    return ", ".join(arguments)
+
   @property
   def resource_input_names(self) -> list[str]:
-    """Stable Metal parameter names for this expression library."""
+    """Packed buffers keep generated kernels below Metal's binding limit."""
 
-    return [
-      self._resource_names[(resource.kind, resource.name)]
-      for resource in self.resources
-    ]
+    names = []
+    if self._float_resource_indices:
+      names.append("yasps_float_resources")
+    if self._uint_resource_indices:
+      names.append("yasps_uint_resources")
+    if self.resources:
+      names.append("yasps_resource_offsets")
+    return names
 
   def resource_arrays(self) -> list[mx.array]:
-    """Current device buffers referenced by the generated expression."""
+    """Pack current buffers on Metal and return them in ABI order."""
 
-    return [_metal_array(resource.value()) for resource in self.resources]
+    arrays = [
+      _metal_array(resource.value()).reshape((-1,))
+      for resource in self.resources
+    ]
+    offsets = [0] * len(arrays)
+    packed = []
+    for indices, dtype in (
+      (self._float_resource_indices, mx.float32),
+      (self._uint_resource_indices, mx.uint32),
+    ):
+      if not indices:
+        continue
+      group = []
+      offset = 0
+      for index in indices:
+        current = arrays[index]
+        if current.dtype != dtype:
+          current = current.astype(dtype)
+        offsets[index] = offset
+        offset += current.size
+        group.append(current)
+      packed.append(
+        group[0] if len(group) == 1 else mx.concatenate(group, axis=0)
+      )
+    if self.resources:
+      packed.append(mx.array(offsets, dtype=mx.uint32))
+    return packed
 
   def root_call(self, instance: str, result: str) -> str:
     """Emit a call to the compiled root module from a surrounding kernel."""
 
     return (
       f"{self.root_module.name}("
-      f"{self._module_arguments(self.root_module, suffix=True)}"
+      f"{self._external_module_arguments(self.root_module, suffix=True)}"
       f"{instance}, {result});"
     )
 
