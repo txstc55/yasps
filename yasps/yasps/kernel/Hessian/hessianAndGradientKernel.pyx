@@ -3,7 +3,7 @@ from __future__ import annotations
 from yasps.deviceKernel import deviceKernel
 from yasps.attribute import attribute
 from yasps.connectivity import connectivity
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.primitiveUnion import primitiveUnion
 from yasps.helper import prune_duplicate_functions, timed
@@ -41,6 +41,7 @@ class hessianAndGradientKernel:
     self.__additional_compile_flags = []  # --ptxas-options=-v,-warn-spills,-warn-lmem-usage  use this for memory checking
     self.__dynamic_terms = dynamic_term
     self.__context = context()
+    self.__metal_program = None
     # self.__generateKernel(att)
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -62,6 +63,20 @@ class hessianAndGradientKernel:
     global_jacobian_children_sizes: List[int] = [],
     global_jacobian_children_spans: List[int] = [],
   ) -> None:
+    if is_metal:
+      from yasps.metal.assembly import MetalHessianProgram
+      if self.__metal_program is None:
+        self.__metal_program = MetalHessianProgram(
+          self.__att,
+          self.__project_entire_hessian,
+          self.__projection_method,
+          self.__gradient_only,
+          self.__clear_separation,
+          max_num_indices,
+        )
+      self.__metal_program.update(unique_gradient_sizes)
+      self.__unique_gradient_sizes.update(unique_gradient_sizes)
+      return
     # check if our unique gradient sizes contains the input gradient sizes
     # print("unique gradient sizes are", unique_gradient_sizes)
     if (set(unique_gradient_sizes).issubset(self.__unique_gradient_sizes) and self.__project_entire_hessian) or (max_child_gradient_size in self.__unique_gradient_sizes and not self.__project_entire_hessian):
@@ -303,6 +318,22 @@ extern "C"{{
     # print("Num unique gradient sizes cpu before hessian kernel:", giKernel.numUniqueGradientSizesCPU)
     if giKernel.numUniqueGradientSizesCPU == 0:
       # there is nothing to compute
+      return
+    if is_metal:
+      if self.__metal_program is None:
+        raise RuntimeError(
+          "Metal Hessian kernel was not generated before compute()."
+        )
+      self.__metal_program.run(
+        giKernel,
+        lookups,
+        gradient,
+        hessian_blocks,
+        diagonal,
+        diagonal_blocks,
+        diagonal_blocks_start,
+        gradient_segments_start,
+      )
       return
     assert self.__kernel is not None
     # self.__context.useNamedContext("dynamic_hessian" if self.__dynamic_terms else "static_hessian")

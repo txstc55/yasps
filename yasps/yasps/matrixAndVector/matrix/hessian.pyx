@@ -9,7 +9,7 @@ from yasps.attribute import attribute
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.codeGenerator import codeGenerator
 import numpy as np
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 from yasps.helper import timed
 from yasps.placementReorderKernel import placementReorderKernel
 
@@ -936,8 +936,9 @@ class hessian(matrix):
 
     if kernels[index] is None:
       assert merged_attributes[index] is not None
-      codegen: codeGenerator = codeGenerator(merged_attributes[index])
-      codegen.generateCode()
+      if not is_metal:
+        codegen: codeGenerator = codeGenerator(merged_attributes[index])
+        codegen.generateCode()
       jacobian_rows = 0
       jacobian_cols = 0
       inner_hessian_rows = 0
@@ -1023,11 +1024,13 @@ class hessian(matrix):
         indices_kernel.maxNumIndicesNeeded
       )
 
-    counts_gpu = [x.children_primitive_counts_gpu for x in merged_attribute.deviceKernel.kernelPrimitiveUnions]
-    arguments: List[gpuarray.GPUArray] = [x.value for x in merged_attribute.deviceKernel.kernelDatas]
-    arguments += [x.value for x in merged_attribute.deviceKernel.kernelConnectivity]
-    arguments += [x.compressedRows for x in merged_attribute.deviceKernel.kernelConnectivity if x.dimension == 0]
-    arguments += counts_gpu
+    arguments: List[gpuarray.GPUArray] = []
+    if not is_metal:
+      counts_gpu = [x.children_primitive_counts_gpu for x in merged_attribute.deviceKernel.kernelPrimitiveUnions]
+      arguments = [x.value for x in merged_attribute.deviceKernel.kernelDatas]
+      arguments += [x.value for x in merged_attribute.deviceKernel.kernelConnectivity]
+      arguments += [x.compressedRows for x in merged_attribute.deviceKernel.kernelConnectivity if x.dimension == 0]
+      arguments += counts_gpu
     kernel.compute(
       arguments,
       indices_kernel,

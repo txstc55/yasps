@@ -187,6 +187,29 @@ class MetalProgram:
       return ", ".join(arguments) + ", "
     return ", ".join(arguments)
 
+  @property
+  def resource_input_names(self) -> list[str]:
+    """Stable Metal parameter names for this expression library."""
+
+    return [
+      self._resource_names[(resource.kind, resource.name)]
+      for resource in self.resources
+    ]
+
+  def resource_arrays(self) -> list[mx.array]:
+    """Current device buffers referenced by the generated expression."""
+
+    return [_metal_array(resource.value()) for resource in self.resources]
+
+  def root_call(self, instance: str, result: str) -> str:
+    """Emit a call to the compiled root module from a surrounding kernel."""
+
+    return (
+      f"{self.root_module.name}("
+      f"{self._module_arguments(self.root_module, suffix=True)}"
+      f"{instance}, {result});"
+    )
+
   def _compile_module(self, attribute) -> _Module:
     key = attribute.hash
     cached = _MODULE_CACHE.get(key)
@@ -674,7 +697,7 @@ class MetalProgram:
     count = self.attribute.correspondance.numInstances
     if count == 0:
       return mx.empty((0,), dtype=mx.float32)
-    inputs = [_metal_array(resource.value()) for resource in self.resources]
+    inputs = self.resource_arrays()
     inputs.append(mx.array([count], dtype=mx.uint32))
     return self.kernel(
       inputs=inputs,
