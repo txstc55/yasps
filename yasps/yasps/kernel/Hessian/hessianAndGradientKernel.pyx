@@ -73,6 +73,13 @@ class hessianAndGradientKernel:
           self.__gradient_only,
           self.__clear_separation,
           max_num_indices,
+          self.__jacobian_rows,
+          self.__jacobian_cols,
+          self.__hessian_row_size,
+          len(global_jacobian_block_nonzero_attributes),
+          global_jacobian_block_nonzero_local_positions,
+          global_jacobian_children_sizes,
+          global_jacobian_children_spans,
         )
       self.__metal_program.update(unique_gradient_sizes)
       self.__unique_gradient_sizes.update(unique_gradient_sizes)

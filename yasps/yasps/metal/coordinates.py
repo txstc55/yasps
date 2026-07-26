@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from hashlib import sha256
+from pathlib import Path
 
 import mlx.core as mx
 
@@ -488,3 +489,130 @@ class MetalCoordinateCompressor:
       "num_dimensions": 0,
       "total_block_size": 0,
     }
+
+
+class MetalPlacementReorder:
+  """Group separate-Jacobian lookup entries by large Hessian block."""
+
+  def __init__(self, spans, max_num_indices):
+    self.spans = tuple(int(span) for span in spans)
+    self.max_num_indices = int(max_num_indices)
+    outer = [0]
+    for span in self.spans:
+      outer.append(outer[-1] + span)
+    span_count = len(self.spans)
+    large_blocks = span_count * (span_count + 1) // 2
+    source = f"""
+      const uint instance = thread_position_in_grid.x;
+      if (instance >= instance_count[0]) return;
+      constexpr ushort K = {self.max_num_indices};
+      constexpr ushort L = {span_count};
+      constexpr ushort B = {large_blocks};
+      ushort span_outer[L + 1] = {{{", ".join(f"{value}u" for value in outer)}}};
+      ushort block_counts[B];
+      ushort block_outer[B + 1];
+      ushort block_added[B];
+      for (ushort block = 0; block < B; ++block) {{
+        block_counts[block] = 0;
+        block_added[block] = 0;
+      }}
+      block_outer[0] = 0;
+
+      uint current_row = 0u;
+      for (ushort i = 0; i < K; ++i) {{
+        current_row += uint(segment_sizes[instance * K + i]);
+        if (local_permutations[instance * K + i] <= 0) continue;
+        ushort large_row = 0;
+        while (large_row + 1u < L
+            && current_row > uint(span_outer[large_row + 1u])) {{
+          ++large_row;
+        }}
+        uint current_column = current_row - uint(segment_sizes[instance * K + i]);
+        for (ushort j = i; j < K; ++j) {{
+          current_column += uint(segment_sizes[instance * K + j]);
+          if (local_permutations[instance * K + j] <= 0) continue;
+          ushort large_column = 0;
+          while (large_column + 1u < L
+              && current_column > uint(span_outer[large_column + 1u])) {{
+            ++large_column;
+          }}
+          const ushort upper = large_row * L
+              - (large_row * (large_row - 1u)) / 2u
+              + (large_column - large_row);
+          ++block_counts[upper];
+        }}
+      }}
+      for (ushort block = 0; block < B; ++block) {{
+        block_outer[block + 1u] =
+            block_outer[block] + block_counts[block];
+      }}
+
+      const uint lookup_start = coordinate_outer[instance];
+      current_row = 0u;
+      ushort original_block = 0;
+      for (ushort i = 0; i < K; ++i) {{
+        current_row += uint(segment_sizes[instance * K + i]);
+        if (local_permutations[instance * K + i] <= 0) continue;
+        ushort large_row = 0;
+        while (large_row + 1u < L
+            && current_row > uint(span_outer[large_row + 1u])) {{
+          ++large_row;
+        }}
+        uint current_column = current_row - uint(segment_sizes[instance * K + i]);
+        for (ushort j = i; j < K; ++j) {{
+          current_column += uint(segment_sizes[instance * K + j]);
+          if (local_permutations[instance * K + j] <= 0) continue;
+          ushort large_column = 0;
+          while (large_column + 1u < L
+              && current_column > uint(span_outer[large_column + 1u])) {{
+            ++large_column;
+          }}
+          const ushort upper = large_row * L
+              - (large_row * (large_row - 1u)) / 2u
+              + (large_column - large_row);
+          const uint destination = lookup_start + block_outer[upper]
+              + block_added[upper];
+          reordered[destination] = lookups[lookup_start + original_block];
+          ++block_added[upper];
+          ++original_block;
+        }}
+      }}
+    """
+    digest = sha256(source.encode()).hexdigest()[:16]
+    self.source = source
+    self.kernel = mx.fast.metal_kernel(
+      name=f"yasps_reorder_placements_{digest}",
+      input_names=[
+        "segment_sizes",
+        "local_permutations",
+        "lookups",
+        "coordinate_outer",
+        "instance_count",
+      ],
+      output_names=["reordered"],
+      source=source,
+    )
+    output_directory = Path(".yasps_tmp/metal")
+    output_directory.mkdir(parents=True, exist_ok=True)
+    (output_directory / f"yasps_reorder_placements_{digest}.metal").write_text(
+      source
+    )
+
+  def run(self, gi_kernel, lookups, instance_count):
+    if instance_count == 0 or lookups.size == 0:
+      return GPUArray._wrap(mx.empty((0,), dtype=mx.uint32))
+    reordered = self.kernel(
+      inputs=[
+        _array(gi_kernel.outputSizes),
+        _array(gi_kernel.outputPermutations),
+        _array(lookups),
+        _array(gi_kernel.outputCompressedCoordinateCountsOuter),
+        mx.array([instance_count], dtype=mx.uint32),
+      ],
+      grid=_grid(instance_count),
+      threadgroup=_threadgroup(instance_count),
+      output_shapes=[lookups.shape],
+      output_dtypes=[mx.uint32],
+      init_value=0,
+    )[0]
+    return GPUArray._wrap(reordered)

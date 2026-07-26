@@ -13,7 +13,7 @@ from yasps.attribute import attribute
 import os
 import ctypes
 from yasps.helper import prune_duplicate_functions, timed
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 import numpy as np
 class placementReorderKernel:
@@ -22,6 +22,7 @@ class placementReorderKernel:
     self.__kernel = None
     self.__reordered_lookups = gpuarray.empty(0, dtype=np.uint32) # the reordered lookups
     self.__kernelString: str = ""
+    self.__metal_pipeline = None
 
   def __generate_kernel_string(self,
     global_jacobian_children_spans: List[int],
@@ -223,6 +224,16 @@ int reorderPlacementIndices(
     max_num_indices: int, # the maximum number of indices for each instance
     energy: attribute # the actual attribute
   ):
+    if is_metal:
+      if self.__metal_pipeline is None:
+        from yasps.metal.coordinates import MetalPlacementReorder
+        self.__energy = energy
+        self.__metal_pipeline = MetalPlacementReorder(
+          global_jacobian_children_spans,
+          max_num_indices,
+        )
+        self.__kernelString = self.__metal_pipeline.source
+      return
     if self.__kernel is not None:
       return
     self.__generateKernel(global_jacobian_children_spans, max_num_indices, energy)
@@ -241,6 +252,15 @@ int reorderPlacementIndices(
     lookups: gpuarray.GPUArray,
   ):
     if self.__energy.correspondance.numInstances <= 0:
+      return
+    if is_metal:
+      if self.__metal_pipeline is None:
+        raise RuntimeError("Metal placement reorder kernel was not generated.")
+      self.__reordered_lookups = self.__metal_pipeline.run(
+        giKernel,
+        lookups,
+        self.__energy.correspondance.numInstances,
+      )
       return
     assert self.__kernel is not None, "placementReorderKernel.reorderPlacementindices: Kernel has not been compiled yet"
     if lookups.size > self.__reordered_lookups.size:

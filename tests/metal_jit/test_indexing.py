@@ -7,7 +7,9 @@ from yasps.backend import gpuarray
 from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.metal.scan import exclusive_scan, outer_indices
+from yasps.metal.coordinates import MetalPlacementReorder
 from yasps.scene import scene
+from types import SimpleNamespace
 
 
 pytestmark = pytest.mark.skipif(not is_metal, reason="requires Apple Metal")
@@ -147,3 +149,21 @@ def test_generated_coordinate_compression_groups_and_maps_duplicates():
   assert compressor.numUniqueCoordinates == 5
   assert compressor.numUniqueDimensions == 2
   assert compressor.totalBlockSize == 30
+
+
+def test_generated_separate_jacobian_lookup_reordering():
+  indices = SimpleNamespace(
+    outputSizes=gpuarray.to_gpu(np.ones(4, np.uint16)),
+    outputPermutations=gpuarray.to_gpu(np.arange(1, 5, dtype=np.int16)),
+    outputCompressedCoordinateCountsOuter=gpuarray.to_gpu(
+      np.array([0, 10], np.uint32)
+    ),
+  )
+  lookups = gpuarray.to_gpu(np.arange(100, 110, dtype=np.uint32))
+
+  reordered = MetalPlacementReorder([2, 2], 4).run(indices, lookups, 1)
+
+  np.testing.assert_array_equal(
+    reordered.get(),
+    np.array([100, 101, 104, 102, 103, 105, 106, 107, 108, 109], np.uint32),
+  )
