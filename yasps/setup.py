@@ -2,7 +2,7 @@ import os
 import platform
 import sys
 
-from setuptools import setup, find_packages, Extension
+from setuptools import setup, find_namespace_packages, Extension
 from setuptools.command.build_ext import build_ext as SetuptoolsBuildExt
 from Cython.Build import cythonize
 
@@ -86,7 +86,7 @@ setup(
     # long_description=open('README.md').read(),  # A long description from your README file
     long_description_content_type='text/markdown',  # The content type of the long description
     url='https://github.com/yourusername/yasps',  # The URL to the repository
-    packages=find_packages(),  # Finds all packages in the directory
+    packages=find_namespace_packages(include=["yasps", "yasps.kernel*"]),
     package_data={
         'yasps': [
             '*.txt',
@@ -94,7 +94,7 @@ setup(
             '*.cu',
             '*.so',
             '*.dylib',
-            'metal/*.metal',
+            'kernel/*.metal',
         ]
     },
     ext_modules=cythonize(
