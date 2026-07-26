@@ -49,7 +49,7 @@ class MetalIndexPipeline:
     self.no_local_permutation = no_local_permutation
     self.joins = sorted(
       {
-        item.hash: item
+        item.through.fullName: item
         for item in path_dict
         if item.operator == ya.JOIN
       }.values(),

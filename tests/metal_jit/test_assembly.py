@@ -130,3 +130,34 @@ def test_generated_separate_jacobian_assembles_j_transpose_h_j():
     assembled.diagonal_blocks.get().reshape(2, 2, 2),
     np.broadcast_to(expected_block, (2, 2, 2)),
   )
+
+
+def test_shared_connectivity_is_bound_once_in_generated_index_kernel():
+  simulation = scene("shared_connectivity_indices")
+  mesh = simulation.addMesh("mesh")
+  vertices = mesh.addPrimitive("vertices", numInstances=2)
+  edges = mesh.addPrimitive("edges", numInstances=1)
+  left = vertices.addAttribute("left")
+  right = vertices.addAttribute("right")
+  left.updateValue(np.array([1.0, 2.0], np.float32))
+  right.updateValue(np.array([3.0, 4.0], np.float32))
+  edge_vertices = edges.addConnectivity(
+    "edge_vertices", vertices, np.array([[0, 1]], np.uint32), 2
+  )
+  joined_left = edges.addAttribute(
+    "joined_left", through=edge_vertices, source=left
+  )
+  joined_right = edges.addAttribute(
+    "joined_right", through=edge_vertices, source=right
+  )
+  value = joined_left[0] * joined_right[1]
+  energy = edges.addAttribute(
+    "energy", computed_attribute=0.5 * value * value
+  )
+  assembled = differentiator().diff2(
+    [energy], [left, right], [left, right], projection_method=0
+  )
+
+  assembled.compute()
+
+  assert assembled.gradient.value.get().shape == (4,)
