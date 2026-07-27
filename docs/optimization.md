@@ -100,9 +100,9 @@ directions = world.minimizeEnergy(
 
 The return value is a list of flattened PyCUDA `GPUArray` views, one per target in registration order. Internally YASPS solves:
 
-$$
-H\Delta x=g.
-$$
+```text
+H Δx = g
+```
 
 It does not negate or apply the direction. A Newton-style update is therefore:
 

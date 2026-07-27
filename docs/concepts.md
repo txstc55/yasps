@@ -40,7 +40,7 @@ The names must be valid Python identifiers and must not collide with existing me
 
 ## Attributes are per-instance expressions
 
-For a primitive with $n$ instances, an attribute declared with `rows=r, cols=c` represents a per-instance $r\times c$ value. Its numerical storage is flattened to $nrc$ values.
+For a primitive with `n` instances, an attribute declared with `rows=r, cols=c` represents a per-instance `r × c` value. Its numerical storage is flattened to `nrc` values.
 
 ```python
 position = vertices.addAttribute("position", rows=3, cols=1)
@@ -80,7 +80,7 @@ tet_positions = tets.addAttribute(
 )
 ```
 
-If `position` is $3\times1$ and the connectivity arity is four, `tet_positions` has per-instance shape $4\times3$.
+If `position` is `3 × 1` and the connectivity arity is four, `tet_positions` has per-instance shape `4 × 3`.
 
 ## UNION preserves heterogeneous origins
 
@@ -110,11 +110,11 @@ YASPS sums those per-instance contributions conceptually when building the globa
 
 ## The solve returns a direction, not a timestep
 
-`minimizeEnergy` assembles $H$ and $g$ and solves:
+`minimizeEnergy` assembles `H` and `g` and solves:
 
-$$
-H\Delta x=g.
-$$
+```text
+H Δx = g
+```
 
 It returns one flattened GPU segment per minimization target, in the same order passed to `addMinimizeTarget`. YASPS does not apply the update and does not negate it:
 

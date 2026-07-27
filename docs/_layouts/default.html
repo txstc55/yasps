@@ -7,13 +7,6 @@
     <title>{% if page.title %}{{ page.title }} · {% endif %}YASPS</title>
     <meta name="description" content="{{ page.description | default: site.description | escape }}">
     <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
-    <script>
-      window.MathJax = {
-        tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] },
-        options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
-      };
-    </script>
-    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#content">Skip to content</a>
@@ -27,10 +20,18 @@
           </span>
         </a>
 
+        <div class="build-stamp">
+          <span>CUDA / MAIN</span>
+          <strong>SYMBOLIC → GPU</strong>
+        </div>
+
         <nav>
           <p class="nav-label">Start here</p>
           <a href="{{ '/getting-started/' | relative_url }}">Getting started</a>
           <a href="{{ '/concepts/' | relative_url }}">Mental model</a>
+
+          <p class="nav-label">Complete example</p>
+          <a href="{{ '/tutorials/mixed-separation/' | relative_url }}">Mixed bodies + separation</a>
 
           <p class="nav-label">Core syntax</p>
           <a href="{{ '/attributes/' | relative_url }}">Attributes & expressions</a>
@@ -67,6 +68,7 @@
             <div>
               <a href="{{ '/getting-started/' | relative_url }}">Getting started</a>
               <a href="{{ '/concepts/' | relative_url }}">Mental model</a>
+              <a href="{{ '/tutorials/mixed-separation/' | relative_url }}">Complete walkthrough</a>
               <a href="{{ '/attributes/' | relative_url }}">Attributes</a>
               <a href="{{ '/join/' | relative_url }}">JOIN</a>
               <a href="{{ '/union/' | relative_url }}">UNION</a>
@@ -76,6 +78,13 @@
             </div>
           </details>
         </header>
+
+        <div class="status-strip" aria-hidden="true">
+          <span>COMPOSE</span>
+          <span>DIFFERENTIATE</span>
+          <span>GENERATE</span>
+          <span>SOLVE</span>
+        </div>
 
         <main id="content" class="content">
           {{ content }}

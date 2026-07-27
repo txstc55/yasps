@@ -35,7 +35,7 @@ tet_positions = tetrahedra.addAttribute(
 )
 ```
 
-For a source attribute with shape $r\times c$ and connectivity arity $k$, JOIN produces a $k\times(rc)$ attribute. A four-to-one JOIN of a $3\times1$ position therefore becomes a $4\times3$ per-tetrahedron matrix.
+For a source attribute with shape `r × c` and connectivity arity `k`, JOIN produces a `k × (rc)` attribute. A four-to-one JOIN of a `3 × 1` position therefore becomes a `4 × 3` per-tetrahedron matrix.
 
 If the source attribute has the same name as the new attribute, `source` may be omitted:
 

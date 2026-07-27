@@ -92,7 +92,7 @@ The implementation is `yasps/yasps/matrixAndVector/matrix/hessian.pyx`. The `gra
 
 `minimizer.computeNumericValue()` assembles the active Hessian and gradient, then computes inverse diagonal blocks for preconditioning. `solver.computeSolution()` invokes the generated PCG implementation on the GPU.
 
-The system is $H\Delta x=g$; applying $x\leftarrow x-\Delta x$ remains outside the library.
+The system is `H Δx = g`; applying `x ← x − Δx` remains outside the library.
 
 ## Where to change a rule
 

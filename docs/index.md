@@ -11,7 +11,7 @@ description: YASPS is a GPU-first symbolic framework for extensible IPC-style ph
 
 <div class="hero-actions">
   <a class="button" href="{{ '/getting-started/' | relative_url }}">Build your first model</a>
-  <a class="button secondary" href="{{ '/concepts/' | relative_url }}">Understand JOIN and UNION</a>
+  <a class="button secondary" href="{{ '/tutorials/mixed-separation/' | relative_url }}">Follow the complete example</a>
   <a class="button secondary" href="https://github.com/txstc55/yasps/blob/main/YASPS_compressed.pdf">Read the paper</a>
 </div>
 
@@ -29,6 +29,21 @@ The central problem YASPS addresses is mixed parameterization. A world-space poi
   <div class="card">
     <h3>GPU end to end</h3>
     <p>YASPS generates CUDA, assembles block-sparse Hessians, and runs a block-Jacobi PCG solver.</p>
+  </div>
+</div>
+
+<div class="feature-panel">
+  <div>
+    <p class="eyebrow">End-to-end tutorial</p>
+    <h2>Drop mixed bunnies into a container</h2>
+    <p>Build one collision objective over soft vertices, affine-body vertices, and a static container. Then follow the generated solve through separated Hessian/Jacobian assembly, CCD, dynamic contact updates, backtracking, and state integration.</p>
+    <p><a href="{{ '/tutorials/mixed-separation/' | relative_url }}">Open the complete mixed-parameterization walkthrough →</a></p>
+  </div>
+  <div class="feature-stats" aria-label="Tutorial concepts">
+    <span>5 bunnies</span>
+    <span>3 target groups</span>
+    <span>4 contact stencils</span>
+    <span>1 symbolic frontend</span>
   </div>
 </div>
 
@@ -71,21 +86,21 @@ This code describes the model. YASPS owns the derivative generation, sparse plac
 
 ## What YASPS deliberately does not prescribe
 
-YASPS returns the solution of $H\Delta x=g$; it does not negate the result. A Newton update therefore usually subtracts the returned segment. The framework also does not provide a universal collision detector, continuous collision detector, line search, or timestep policy. Those pieces depend on the geometry and parameterization and remain part of the application.
+YASPS returns the solution of `H Δx = g`; it does not negate the result. A Newton update therefore usually subtracts the returned segment. The framework also does not provide a universal collision detector, continuous collision detector, line search, or timestep policy. Those pieces depend on the geometry and parameterization and remain part of the application.
 
 ## See it in action
 
 <div class="showcase">
   <figure>
-    <img src="https://raw.githubusercontent.com/txstc55/yasps/main/videos/cage.gif" alt="A bunny deforming through a control cage">
+    <img loading="lazy" decoding="async" src="https://raw.githubusercontent.com/txstc55/yasps/main/videos/cage.gif" alt="A bunny deforming through a control cage">
     <figcaption>Cage deformation</figcaption>
   </figure>
   <figure>
-    <img src="https://raw.githubusercontent.com/txstc55/yasps/main/videos/dropping_in_container_with_friction.gif" alt="Soft bodies falling into a container with frictional contact">
+    <img loading="lazy" decoding="async" src="https://raw.githubusercontent.com/txstc55/yasps/main/videos/dropping_in_container_with_friction.gif" alt="Soft bodies falling into a container with frictional contact">
     <figcaption>Contact with friction</figcaption>
   </figure>
   <figure>
-    <img src="https://raw.githubusercontent.com/txstc55/yasps/main/videos/repulsive.gif" alt="A repulsive curve simulation">
+    <img loading="lazy" decoding="async" src="https://raw.githubusercontent.com/txstc55/yasps/main/videos/repulsive.gif" alt="A repulsive curve simulation">
     <figcaption>Repulsive curve</figcaption>
   </figure>
 </div>

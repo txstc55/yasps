@@ -6,6 +6,9 @@ repository: txstc55/yasps
 markdown: kramdown
 highlighter: rouge
 permalink: pretty
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
 
 defaults:
   - scope:

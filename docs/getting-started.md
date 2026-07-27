@@ -62,9 +62,9 @@ Importing YASPS initializes PyCUDA, so this check must run where a CUDA device i
 
 This model creates four scalar degrees of freedom and minimizes
 
-$$
-E(x)=\frac{1}{2}\sum_i (x_i-x_i^\star)^2.
-$$
+```text
+E(x) = ½ Σᵢ (xᵢ − xᵢ*)²
+```
 
 ```python
 import numpy as np
@@ -139,3 +139,4 @@ values = quadratic_expression.compute().value.get()
 - Use [Connectivity and JOIN]({{ '/join/' | relative_url }}) for mesh topology.
 - Use [Primitive unions]({{ '/union/' | relative_url }}) for mixed parameterizations.
 - Follow [Energies and minimization]({{ '/optimization/' | relative_url }}) for Newton and contact loops.
+- Put the entire frontend together in the [five-bunny mixed-separation walkthrough]({{ '/tutorials/mixed-separation/' | relative_url }}).

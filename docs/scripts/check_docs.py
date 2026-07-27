@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -57,6 +58,17 @@ def main() -> int:
             pages[permalink] = path
         if text.count("```") % 2:
             errors.append(f"{relative}: unbalanced fenced code block")
+        for block_number, block in enumerate(
+            re.findall(r"```python\n(.*?)\n```", text, flags=re.DOTALL),
+            start=1,
+        ):
+            try:
+                ast.parse(block, filename=str(relative))
+            except SyntaxError as error:
+                errors.append(
+                    f"{relative}: Python block {block_number} is invalid: "
+                    f"{error.msg}"
+                )
 
     sources = markdown_files + [DOCS / "_layouts" / "default.html"]
     relative_url_pattern = re.compile(
@@ -97,6 +109,23 @@ def main() -> int:
     for name in explicit_exports + wildcard_modules:
         if not re.search(rf"\b{re.escape(name)}\b", reference_text):
             errors.append(f"reference: package export {name!r} is undocumented")
+
+    layout_text = (DOCS / "_layouts" / "default.html").read_text(
+        encoding="utf-8"
+    )
+    if "<script" in layout_text:
+        errors.append("layout: runtime scripts violate the static-site budget")
+
+    style_text = (DOCS / "assets" / "css" / "style.css").read_text(
+        encoding="utf-8"
+    )
+    for selector in (".highlight .k", ".highlight .s", ".highlight .mi"):
+        if selector not in style_text:
+            errors.append(f"stylesheet: missing Rouge selector {selector!r}")
+
+    tutorial = DOCS / "tutorials" / "mixed-separation.md"
+    if not tutorial.is_file():
+        errors.append("tutorial: mixed-separation walkthrough is missing")
 
     github_example_pattern = re.compile(
         r"https://github\.com/txstc55/yasps/tree/main/examples/"

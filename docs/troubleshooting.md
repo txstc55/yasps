@@ -48,7 +48,7 @@ The operands have incompatible lineage. Gather through a [connectivity and JOIN]
 
 ### JOIN has the wrong shape
 
-For fixed arity $k$, a source with per-instance shape $r\times c$ becomes $k\times(rc)$. Index its rows or call `resize` before matrix algebra if you need another shape with the same number of entries.
+For fixed arity `k`, a source with per-instance shape `r × c` becomes `k × (rc)`. Index its rows or call `resize` before matrix algebra if you need another shape with the same number of entries.
 
 ### Variable connectivity asks for an operation
 
@@ -93,7 +93,7 @@ Every attribute passed in `addEnergy(..., targets=[...])` must also appear in `a
 
 ### The update moves uphill
 
-YASPS solves $H\Delta x=g$, not $H\Delta x=-g$. Apply `x - alpha * direction`.
+YASPS solves `H Δx = g`, not `H Δx = -g`. Apply `x - alpha * direction`.
 
 ### The solver does not converge
 
