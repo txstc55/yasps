@@ -16,6 +16,7 @@ PARSER.add_argument(
 )
 PARSER.add_argument("--frames", type=int, default=24)
 PARSER.add_argument("--max-inner-iterations", type=int, default=0)
+PARSER.add_argument("--solver-diagnostics", type=int, default=0)
 PARSER.add_argument("--soft-bunnies", type=int, default=1)
 PARSER.add_argument("--mixed-bunnies", type=int, default=2)
 ARGS = PARSER.parse_args()
@@ -25,6 +26,7 @@ FRAMES = ARGS.frames
 SOFT_BUNNIES = ARGS.soft_bunnies
 MIXED_BUNNIES = ARGS.mixed_bunnies
 MAX_INNER_ITERATIONS = ARGS.max_inner_iterations
+SOLVER_DIAGNOSTICS = ARGS.solver_diagnostics
 
 
 def bunny_label(count, kind):
@@ -186,6 +188,16 @@ def summarize_variant(name, metadata):
     log,
     int,
   )
+  solver_error_codes = extract_numbers(
+    r"scene\.minimizeEnergy: got error code (-\d+)",
+    log,
+    int,
+  )
+  preconditioner_fallbacks = len(re.findall(
+    r"^CG preconditioner fallback:",
+    log,
+    re.MULTILINE,
+  ))
   line_search_substeps = extract_numbers(
     r"^substep is (\d+)$",
     log,
@@ -213,7 +225,16 @@ def summarize_variant(name, metadata):
     "kernel_gpu_ms_per_frame": total_gpu_ms / frame_count,
     "dispatch_wall_ms": dispatch_wall_ms,
     "kernel_calls": kernel_calls,
-    "nonlinear_solves": len(cg_iterations),
+    "nonlinear_solves": (
+      len(cg_iterations) + len(solver_error_codes)
+    ),
+    "solver_error_codes": solver_error_codes,
+    "solver_failures": len(solver_error_codes),
+    "preconditioner_fallbacks": preconditioner_fallbacks,
+    "zero_iteration_solves": sum(
+      iteration == 0
+      for iteration in cg_iterations
+    ),
     "cg_iterations": {
       "total": sum(cg_iterations),
       "mean": (
@@ -268,6 +289,9 @@ def write_csv(summary):
     "kernel_gpu_ms_per_frame",
     "kernel_calls",
     "nonlinear_solves",
+    "solver_failures",
+    "preconditioner_fallbacks",
+    "zero_iteration_solves",
     "cg_iterations_total",
     "cg_iterations_mean",
     *[f"{stage}_gpu_ms" for stage in STAGES],
@@ -291,6 +315,13 @@ def write_csv(summary):
         ),
         "kernel_calls": result["kernel_calls"],
         "nonlinear_solves": result["nonlinear_solves"],
+        "solver_failures": result["solver_failures"],
+        "preconditioner_fallbacks": (
+          result["preconditioner_fallbacks"]
+        ),
+        "zero_iteration_solves": (
+          result["zero_iteration_solves"]
+        ),
         "cg_iterations_total": result["cg_iterations"]["total"],
         "cg_iterations_mean": result["cg_iterations"]["mean"],
       }
@@ -318,6 +349,7 @@ def main():
       "MTLCommandBuffer GPU time; compilation and rendering excluded"
     ),
     "nonlinear_stopping": "example defaults; no iteration cap",
+    "solver_diagnostics": bool(SOLVER_DIAGNOSTICS),
   }
   if MAX_INNER_ITERATIONS > 0:
     policy["nonlinear_stopping"] = (
