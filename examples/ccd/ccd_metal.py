@@ -704,20 +704,39 @@ kernel void calculate_internal_boxes_independent(
   device const ulong* hashes [[buffer(0)]],
   device AABB* boxes [[buffer(1)]],
   constant uint& count [[buffer(2)]],
-  uint index [[thread_position_in_grid]]
+  uint local_index [[thread_index_in_threadgroup]],
+  uint group_index [[threadgroup_position_in_grid]]
 ) {
-  if (index >= count - 1) {
+  if (group_index >= count - 1) {
     return;
   }
   // Metal device atomics only provide relaxed ordering. Compute each
   // node from its contiguous Morton leaf range so parent nodes never
   // race the child writes produced by another threadgroup.
-  uint2 range = determine_range(hashes, count, index);
+  uint2 range = determine_range(hashes, count, group_index);
   AABB result = empty_aabb();
-  for (uint leaf = range.x; leaf <= range.y; ++leaf) {
+  for (
+    uint leaf = range.x + local_index;
+    leaf <= range.y;
+    leaf += 32
+  ) {
     result = merge_aabb(result, boxes[leaf + count - 1]);
   }
-  boxes[index] = result;
+  threadgroup AABB partial[32];
+  partial[local_index] = result;
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  for (uint stride = 16; stride > 0; stride >>= 1) {
+    if (local_index < stride) {
+      partial[local_index] = merge_aabb(
+        partial[local_index],
+        partial[local_index + stride]
+      );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+  if (local_index == 0) {
+    boxes[group_index] = partial[0];
+  }
 }
 
 kernel void scene_size_squared(
@@ -1498,8 +1517,8 @@ class _MetalBVH:
           self.boxes,
           np.uint32(self.count),
         ],
-        self.count - 1,
-        0,
+        (self.count - 1) * 32,
+        32,
       ))
     gpuarray.dispatch_batch(
       dispatches,
@@ -1855,9 +1874,31 @@ class MetalCCD:
     self._check_pair_capacity(True)
 
   def reset(self):
-    self._fill_words(self._separated_counts)
-    self._fill_words(self._cp_num)
-    self._fill_words(self._mqueue)
+    gpuarray.dispatch_batch(
+      [
+        (
+          self.kernels["fill_uint"],
+          [
+            self._separated_counts,
+            np.uint32(0),
+            np.uint32(self._separated_counts.size),
+          ],
+          self._separated_counts.size,
+          0,
+        ),
+        (
+          self.kernels["fill_uint"],
+          [
+            self._cp_num,
+            np.uint32(0),
+            np.uint32(self._cp_num.size),
+          ],
+          self._cp_num.size,
+          0,
+        ),
+      ],
+      "ccd_reset",
+    )
 
   def cd(self, vertices, dhat):
     start = time.perf_counter()
@@ -1865,7 +1906,6 @@ class MetalCCD:
     self.reset()
     if self.face_bvh is not None:
       self.cd_faces(vertices, dhat)
-    self._fill_words(self._collision_pairs)
     self._fill_words(self._cp_num)
     if self.edge_bvh is not None:
       self.cd_edges(vertices, dhat)
@@ -1902,8 +1942,8 @@ class MetalCCD:
     print("number of collision pairs:", pair_count)
     if pair_count < 1:
       return 1.0
-    self._dispatch(
-      "calculate_step_reciprocals",
+    dispatches = [(
+      self.kernels["calculate_step_reciprocals"],
       [
         vertices,
         self._collision_pairs_ccd,
@@ -1913,20 +1953,25 @@ class MetalCCD:
         np.uint32(pair_count),
       ],
       pair_count,
-    )
+      0,
+    )]
     source = self._mqueue
     target = self._reduce_scratch
     reduction_count = pair_count
     while reduction_count > 1:
       output_count = (reduction_count + 255) // 256
-      self._dispatch(
-        "reduce_max_float",
+      dispatches.append((
+        self.kernels["reduce_max_float"],
         [source, target, np.uint32(reduction_count)],
         output_count * 256,
         256,
-      )
+      ))
       reduction_count = output_count
       source, target = target, source
+    gpuarray.dispatch_batch(
+      dispatches,
+      "ccd_largest_step",
+    )
     reciprocal = float(source.get()[0])
     step = 1.0 / reciprocal
     elapsed = (time.perf_counter() - start) * 1000.0

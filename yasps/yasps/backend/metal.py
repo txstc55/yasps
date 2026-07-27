@@ -726,15 +726,18 @@ def _reduce_float(array: GPUArray, operation: str) -> GPUArray:
   source = array
   count = array.size
   kernel = _array_kernel(f"yasps_reduce_{operation}_float")
+  dispatches = []
   while True:
     group_count = (count + 255) // 256
     output = empty(group_count, np.float32)
-    kernel.dispatch(
+    dispatches.append((
+      kernel,
       [source, output, np.uint32(count)],
       group_count * 256,
       256,
-    )
+    ))
     if group_count == 1:
+      dispatch_batch(dispatches, f"reduce_{operation}")
       return output
     source = output
     count = group_count

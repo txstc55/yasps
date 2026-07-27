@@ -283,6 +283,7 @@ kernel void invert_diagonal_blocks_{attribute_size}_metal(
     self.__context.useDefaultContext()
     assert self.__kernel is not None, "diagonalBlockInverseKernel.computeDiagonalBlockInverse: Kernel not linked"
     if is_metal():
+      dispatches = []
       for attribute_index, block_size_value in enumerate(
         self.__diagonal_block_sizes
       ):
@@ -296,7 +297,8 @@ kernel void invert_diagonal_blocks_{attribute_size}_metal(
           self.__diagonal_blocks_start[attribute_index]
         )
         element_count = block_count * block_size * block_size
-        self.__metal_kernels[block_size].dispatch(
+        dispatches.append((
+          self.__metal_kernels[block_size],
           [
             diagonal_blocks[
               element_start:element_start + element_count
@@ -307,8 +309,12 @@ kernel void invert_diagonal_blocks_{attribute_size}_metal(
             np.uint32(block_count),
           ],
           block_count,
-          32
-        )
+          32,
+        ))
+      gpuarray.dispatch_batch(
+        dispatches,
+        "diagonal_block_inverse",
+      )
       return
     self.__kernel(
       self.__to_void_p(diagonal_blocks),
