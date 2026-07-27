@@ -1920,12 +1920,120 @@ class MetalCCD:
   def cd(self, vertices, dhat):
     start = time.perf_counter()
     self.last_timings = {}
-    self.reset()
+    dispatches = self._reset_dispatches()
     if self.face_bvh is not None:
-      self.cd_faces(vertices, dhat)
-    self._fill_words(self._cp_num)
+      self.face_vertices = vertices
+      dispatches.extend(self.face_bvh._construct_dispatches(
+        vertices,
+        self.faces,
+      ))
+      dispatches.append((
+        self.kernels["query_faces_cd"],
+        [
+          self._btypes,
+          vertices,
+          self.faces,
+          self.surface_vertices,
+          self.face_bvh.boxes,
+          self.face_bvh.nodes,
+          self._collision_pairs,
+          self._collision_pairs_ccd,
+          self._cp_num,
+          self._mesh_indices,
+          np.float32(dhat),
+          np.uint32(self.num_surface_vertices),
+        ],
+        self.num_surface_vertices,
+        0,
+      ))
+      gpuarray.dispatch_batch(
+        dispatches,
+        "ccd_discrete_faces",
+      )
+      face_pair_count = self._check_pair_capacity(False)
+      dispatches = []
+      if face_pair_count:
+        dispatches.append((
+          self.kernels["separate_face_pairs"],
+          [
+            self._collision_pairs,
+            self._pp,
+            self._pe,
+            self._pt,
+            self._cp_num,
+            self._separated_counts,
+          ],
+          face_pair_count,
+          0,
+        ))
     if self.edge_bvh is not None:
-      self.cd_edges(vertices, dhat)
+      dispatches.append((
+        self.kernels["fill_uint"],
+        [
+          self._cp_num,
+          np.uint32(0),
+          np.uint32(self._cp_num.size),
+        ],
+        self._cp_num.size,
+        0,
+      ))
+      self.edge_vertices = vertices
+      dispatches.extend(self.edge_bvh._construct_dispatches(
+        vertices,
+        self.edges,
+      ))
+      count = self.edge_bvh.count
+      dispatches.append((
+        self.kernels["query_edges_cd"],
+        [
+          self._btypes,
+          vertices,
+          self.rest_vertices,
+          self.edges,
+          self.edge_bvh.boxes,
+          self.edge_bvh.nodes,
+          self._collision_pairs,
+          self._collision_pairs_ccd,
+          self._cp_num,
+          self._mesh_indices,
+          np.float32(dhat),
+          np.uint32(count),
+        ],
+        count,
+        0,
+      ))
+      gpuarray.dispatch_batch(
+        dispatches,
+        "ccd_discrete_edges",
+      )
+      edge_pair_count = self._check_pair_capacity(False)
+      if edge_pair_count:
+        gpuarray.dispatch_batch(
+          [(
+            self.kernels["separate_edge_pairs"],
+            [
+              self._collision_pairs,
+              self._pp,
+              self._pe,
+              self._ee,
+              self._cp_num,
+              self._separated_counts,
+            ],
+            edge_pair_count,
+            0,
+          )],
+          "ccd_discrete_separate_edges",
+        )
+    elif self.face_bvh is not None and face_pair_count:
+      gpuarray.dispatch_batch(
+        dispatches,
+        "ccd_discrete_separate_faces",
+      )
+    elif self.face_bvh is None:
+      gpuarray.dispatch_batch(
+        dispatches,
+        "ccd_discrete_reset",
+      )
     elapsed = (time.perf_counter() - start) * 1000.0
     print(f"Collision detection took {elapsed:.2f} ms")
 
