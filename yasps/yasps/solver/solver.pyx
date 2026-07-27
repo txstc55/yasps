@@ -63,7 +63,6 @@ class solver:
     assert self.__solverKernel is not None
     self.__solverKernel.updateBlockDimensions(active_hessian.block_dimensions + active_hessian.block_dimensions_dynamic)
 
-    self.__d_p1_b.fill(0)
     self.__d_r.fill(0)
     self.__d_c.fill(0)
     self.__d_q.fill(0)
