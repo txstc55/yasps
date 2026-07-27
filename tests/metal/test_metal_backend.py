@@ -6,6 +6,56 @@ from yasps.backend import gpuarray
 from yasps.backend.metal_codegen import translate_device_kernel
 
 
+def test_array_arithmetic_fill_copy_and_reductions_stay_on_metal(
+  monkeypatch,
+):
+  left_host = np.linspace(-3.0, 5.0, 1025, dtype=np.float32)
+  right_host = np.linspace(2.0, -1.0, 1025, dtype=np.float32)
+  left = gpuarray.to_gpu(left_host)
+  right = gpuarray.to_gpu(right_host)
+  copied = gpuarray.empty_like(left)
+
+  original_numpy_view = gpuarray.GPUArray._numpy_view
+
+  def reject_host_array_access(_self):
+    raise AssertionError("array operation touched host storage")
+
+  monkeypatch.setattr(
+    gpuarray.GPUArray,
+    "_numpy_view",
+    reject_host_array_access,
+  )
+  combined = left + right * 2.0
+  absolute = abs(combined)
+  total = gpuarray.sum(combined)
+  maximum = gpuarray.max(absolute)
+  copied.set(combined)
+  right.fill(7.0)
+  monkeypatch.setattr(
+    gpuarray.GPUArray,
+    "_numpy_view",
+    original_numpy_view,
+  )
+
+  expected = left_host + right_host * 2.0
+  np.testing.assert_allclose(combined.get(), expected, rtol=1.0e-6)
+  np.testing.assert_allclose(copied.get(), expected, rtol=1.0e-6)
+  np.testing.assert_allclose(
+    total.get()[0],
+    expected.sum(dtype=np.float32),
+    rtol=2.0e-6,
+  )
+  np.testing.assert_allclose(
+    maximum.get()[0],
+    np.abs(expected).max(),
+    rtol=1.0e-6,
+  )
+  np.testing.assert_array_equal(
+    right.get(),
+    np.full(right.size, 7.0, dtype=np.float32),
+  )
+
+
 def test_shared_buffer_views_and_modular_kernel_link(tmp_path):
   fixture = Path(__file__).with_name("fixtures")
   library = gpuarray.compile_metal(

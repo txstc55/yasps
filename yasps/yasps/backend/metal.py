@@ -31,6 +31,8 @@ _RUNTIME_HASH = hashlib.sha256(
 ).hexdigest()[:16]
 _RUNTIME_PATH = _CACHE_ROOT / f"libyasps_metal_{_RUNTIME_HASH}.dylib"
 _BUILD_LOCK = threading.Lock()
+_ARRAY_KERNEL_LOCK = threading.Lock()
+_ARRAY_KERNELS: dict[str, "MetalKernel"] = {}
 
 
 class _Argument(ctypes.Structure):
@@ -167,8 +169,21 @@ class GPUArray:
     return self._numpy_view().copy()
 
   def set(self, value: Any) -> None:
-    source = value._numpy_view() if isinstance(value, GPUArray) else value
-    array = np.asarray(source, dtype=self.dtype)
+    if isinstance(value, GPUArray):
+      if value.size != self.size:
+        raise ValueError(
+          f"cannot copy {value.size} values into Metal array of size "
+          f"{self.size}"
+        )
+      if value.dtype != self.dtype:
+        value = value.astype(self.dtype)
+      _runtime.yasps_metal_memcpy(
+        ctypes.c_void_p(self.gpudata),
+        ctypes.c_void_p(value.gpudata),
+        self.nbytes,
+      )
+      return
+    array = np.asarray(value, dtype=self.dtype)
     if array.size != self.size:
       raise ValueError(
         f"cannot copy {array.size} values into Metal array of size "
@@ -177,7 +192,15 @@ class GPUArray:
     self._numpy_view()[...] = array.reshape(self.shape)
 
   def fill(self, value: Any) -> None:
-    self._numpy_view().fill(value)
+    if self.size == 0:
+      return
+    suffix = _dtype_suffix(self.dtype)
+    kernel = _array_kernel(f"yasps_fill_{suffix}")
+    scalar = self.dtype.type(value)
+    kernel.dispatch(
+      [self, scalar, np.uint32(self.size)],
+      self.size,
+    )
 
   def copy(self) -> "GPUArray":
     result = empty(self.shape, self.dtype)
@@ -189,7 +212,28 @@ class GPUArray:
     return result
 
   def astype(self, dtype) -> "GPUArray":
-    return to_gpu(self._numpy_view().astype(dtype))
+    target_dtype = _metal_dtype(dtype)
+    if target_dtype == self.dtype:
+      return self.copy()
+    source_suffix = _dtype_suffix(self.dtype)
+    target_suffix = _dtype_suffix(target_dtype)
+    supported = {"float", "int", "uint"}
+    if (
+      source_suffix not in supported
+      or target_suffix not in supported
+    ):
+      raise TypeError(
+        f"Metal conversion from {self.dtype} to {target_dtype} "
+        "is not supported"
+      )
+    result = empty(self.shape, target_dtype)
+    _array_kernel(
+      f"yasps_convert_{source_suffix}_to_{target_suffix}"
+    ).dispatch(
+      [self, result, np.uint32(self.size)],
+      self.size,
+    )
+    return result
 
   def reshape(self, *shape: int) -> "GPUArray":
     normalized = _normalize_shape(shape[0] if len(shape) == 1 else shape)
@@ -219,36 +263,95 @@ class GPUArray:
     source = value._numpy_view() if isinstance(value, GPUArray) else value
     target[...] = source
 
-  def _binary(self, other, operation) -> "GPUArray":
-    rhs = other._numpy_view() if isinstance(other, GPUArray) else other
-    return to_gpu(operation(self._numpy_view(), rhs))
+  def _binary(
+    self,
+    other,
+    operation,
+    reverse=False,
+  ) -> "GPUArray":
+    if self.size == 0:
+      return empty(self.shape, self.dtype)
+    suffix = _dtype_suffix(self.dtype)
+    if suffix not in {"float", "int", "uint"}:
+      raise TypeError(
+        f"Metal arithmetic is not supported for {self.dtype}"
+      )
+    result = empty(self.shape, self.dtype)
+    if isinstance(other, GPUArray):
+      if other.shape != self.shape:
+        raise ValueError(
+          "Metal GPUArray arithmetic requires equal shapes"
+        )
+      if other.dtype != self.dtype:
+        raise TypeError(
+          "Metal GPUArray arithmetic requires equal dtypes"
+        )
+      name = f"yasps_{operation}_{suffix}_array"
+      arguments = [
+        other if reverse else self,
+        self if reverse else other,
+        result,
+        np.uint32(self.size),
+      ]
+    else:
+      scalar = self.dtype.type(other)
+      direction = "reverse_scalar" if reverse else "scalar"
+      name = f"yasps_{operation}_{suffix}_{direction}"
+      arguments = (
+        [scalar, self, result, np.uint32(self.size)]
+        if reverse
+        else [self, scalar, result, np.uint32(self.size)]
+      )
+    _array_kernel(name).dispatch(arguments, self.size)
+    return result
 
   def __add__(self, other):
-    return self._binary(other, np.add)
+    return self._binary(other, "add")
 
   def __radd__(self, other):
     return self.__add__(other)
 
   def __sub__(self, other):
-    return self._binary(other, np.subtract)
+    return self._binary(other, "subtract")
 
   def __rsub__(self, other):
-    return to_gpu(np.subtract(other, self._numpy_view()))
+    return self._binary(other, "subtract", reverse=True)
 
   def __mul__(self, other):
-    return self._binary(other, np.multiply)
+    return self._binary(other, "multiply")
 
   def __rmul__(self, other):
     return self.__mul__(other)
 
   def __truediv__(self, other):
-    return self._binary(other, np.divide)
+    return self._binary(other, "divide")
 
   def __rtruediv__(self, other):
-    return to_gpu(np.divide(other, self._numpy_view()))
+    return self._binary(other, "divide", reverse=True)
 
   def __neg__(self):
-    return to_gpu(np.negative(self._numpy_view()))
+    suffix = _dtype_suffix(self.dtype)
+    if suffix not in {"float", "int"}:
+      raise TypeError(f"Metal negation is not supported for {self.dtype}")
+    result = empty(self.shape, self.dtype)
+    _array_kernel(f"yasps_negate_{suffix}").dispatch(
+      [self, result, np.uint32(self.size)],
+      self.size,
+    )
+    return result
+
+  def __abs__(self):
+    suffix = _dtype_suffix(self.dtype)
+    if suffix not in {"float", "int"}:
+      raise TypeError(
+        f"Metal absolute value is not supported for {self.dtype}"
+      )
+    result = empty(self.shape, self.dtype)
+    _array_kernel(f"yasps_abs_{suffix}").dispatch(
+      [self, result, np.uint32(self.size)],
+      self.size,
+    )
+    return result
 
 
 def _normalize_shape(shape: int | Iterable[int]) -> tuple[int, ...]:
@@ -262,6 +365,24 @@ def _metal_dtype(dtype) -> np.dtype:
   if result.kind == "f":
     return np.dtype(np.float32)
   return result
+
+
+def _dtype_suffix(dtype) -> str:
+  suffixes = {
+    np.dtype(np.float32): "float",
+    np.dtype(np.int32): "int",
+    np.dtype(np.uint32): "uint",
+    np.dtype(np.int64): "long",
+    np.dtype(np.uint64): "ulong",
+    np.dtype(np.int16): "short",
+    np.dtype(np.uint16): "ushort",
+    np.dtype(np.int8): "char",
+    np.dtype(np.uint8): "uchar",
+  }
+  try:
+    return suffixes[np.dtype(dtype)]
+  except KeyError as error:
+    raise TypeError(f"unsupported Metal dtype: {dtype}") from error
 
 
 def to_gpu(array: Any) -> GPUArray:
@@ -290,11 +411,11 @@ def zeros_like(array: GPUArray) -> GPUArray:
 
 
 def sum(array: GPUArray) -> GPUArray:
-  return to_gpu(np.asarray([np.sum(array._numpy_view())], dtype=array.dtype))
+  return _reduce_float(array, "sum")
 
 
 def max(array: GPUArray) -> GPUArray:
-  return to_gpu(np.asarray([np.max(array._numpy_view())], dtype=array.dtype))
+  return _reduce_float(array, "max")
 
 
 def device_name() -> str:
@@ -380,6 +501,10 @@ class MetalKernel:
 def _metal_scalar(value):
   if isinstance(value, (np.float32, float)):
     return ctypes.c_float(value)
+  if isinstance(value, np.uint8):
+    return ctypes.c_uint8(value)
+  if isinstance(value, np.int8):
+    return ctypes.c_int8(value)
   if isinstance(value, np.uint16):
     return ctypes.c_uint16(value)
   if isinstance(value, np.int16):
@@ -460,6 +585,49 @@ def compile_metal(
       )
       shutil.copy2(temporary_output, output_path)
   return output_path
+
+
+def _array_kernel(function_name: str) -> MetalKernel:
+  with _ARRAY_KERNEL_LOCK:
+    existing = _ARRAY_KERNELS.get(function_name)
+    if existing is not None:
+      return existing
+    source = Path(__file__).with_name("metal_array.metal")
+    digest = hashlib.sha256(
+      source.read_bytes() + platform.platform().encode()
+    ).hexdigest()[:16]
+    library = _CACHE_ROOT / f"metal_array_{digest}.metallib"
+    if not library.exists():
+      compile_metal([source], library)
+    kernel = MetalKernel(library, function_name)
+    _ARRAY_KERNELS[function_name] = kernel
+    return kernel
+
+
+def _reduce_float(array: GPUArray, operation: str) -> GPUArray:
+  if array.dtype != np.dtype(np.float32):
+    raise TypeError(
+      f"Metal {operation} reduction currently requires float32"
+    )
+  if array.size == 0:
+    if operation == "sum":
+      return zeros(1, np.float32)
+    raise ValueError("zero-size array has no maximum")
+  source = array
+  count = array.size
+  kernel = _array_kernel(f"yasps_reduce_{operation}_float")
+  while True:
+    group_count = (count + 255) // 256
+    output = empty(group_count, np.float32)
+    kernel.dispatch(
+      [source, output, np.uint32(count)],
+      group_count * 256,
+      256,
+    )
+    if group_count == 1:
+      return output
+    source = output
+    count = group_count
 
 
 class _Context:
