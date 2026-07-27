@@ -1,0 +1,331 @@
+Using mu =  156250.0  and lambda =  246803.97727272732
+NUM_FIXED_POINTS = 168
+NUM_ABD1 = 3239
+NUM_ABD2 = 3562
+NUM_SOFT = 12224
+NUM_RIGID_POINTS = 6801
+[gradientIndicesKernel.__generateKernel] Finished in 1.13 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.46 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 3.83 ms
+[gradientIndicesKernel.__generateKernel] Finished in 0.82 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.45 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 2.49 ms
+[gradientIndicesKernel.__generateKernel] Finished in 0.90 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.42 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 2.69 ms
+[gradientIndicesKernel.__generateKernel] Finished in 0.63 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.40 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 2.13 ms
+[gradientIndicesKernel.__generateKernel] Finished in 1.03 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.41 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 3.02 ms
+[gradientIndicesKernel.__generateKernel] Finished in 1.28 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.49 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 4.24 ms
+[gradientIndicesKernel.__generateKernel] Finished in 1.27 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.45 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 2.92 ms
+[gradientIndicesKernel.__generateKernel] Finished in 1.13 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.42 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 4.16 ms
+Autodiff computation: 6777.600049972534 ms
+[minimizer.generateHessianAndGradient] Finished in 6777.61 ms
+[globalKernel.__generateKernel] Finished in 0.59 ms
+[globalKernel.__init__] Finished in 0.61 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 6.74 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.81 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.68 ms
+[globalKernel.__generateKernel] Finished in 0.47 ms
+[globalKernel.__init__] Finished in 0.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.86 ms
+[gradientIndicesKernel.__reallocate] Finished in 14.22 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 3.24 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 95.10 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 1.60 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 3.01 ms
+[gradientIndicesKernel.computeIndices] Finished in 117.21 ms
+[gradientIndicesKernel.__reallocate] Finished in 6.24 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.84 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.22 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 1.79 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 2.93 ms
+[gradientIndicesKernel.computeIndices] Finished in 16.04 ms
+[gradientIndicesKernel.__reallocate] Finished in 7.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 2.37 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 33.85 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 5.94 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 1.15 ms
+[gradientIndicesKernel.computeIndices] Finished in 50.74 ms
+[gradientIndicesKernel.__reallocate] Finished in 8.83 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.44 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 76.01 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 3.30 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 2.34 ms
+[gradientIndicesKernel.computeIndices] Finished in 91.94 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 259.93 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 25.56 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 286.36 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 291.38 ms
+placement reorder kernels size: 4
+separate hessian jacobian size: 4
+project entire hessian size: 4
+[hessian.getSparseIndices] Finished in 570.95 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.01 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 1.30 ms
+[hessian.getSparseIndicesDynamic] Finished in 5.09 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 3.53 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 1.75 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 1.71 ms
+Max child gradient size before is 3
+Unique gradient sizes after is {3}
+[hessianAndGradientKernel.generateKernel] Finished in 1.56 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 1.96 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 2.21 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 2.49 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 2.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 124.83 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.64 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.69 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.39 ms
+[hessian.compute] Finished in 1625.68 ms
+[diagonalBlockInverseKernel.__generateKernel] Finished in 0.75 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 3.94 ms
+[minimizer.computeNumericValue] Finished in 1642.54 ms
+[solverKernel.__init_kernel] Finished in 0.78 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 22 iterations
+Solver time: 146.22783 ms
+[solverKernel.computeSolution] Finished in 146.26 ms
+[globalKernel.__generateKernel] Finished in 0.41 ms
+[globalKernel.__init__] Finished in 0.42 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 4.32 ms
+[globalKernel.__generateKernel] Finished in 0.30 ms
+[globalKernel.__init__] Finished in 0.31 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.66 ms
+[globalKernel.__generateKernel] Finished in 0.22 ms
+[globalKernel.__init__] Finished in 0.22 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.07 ms
+[globalKernel.__generateKernel] Finished in 0.30 ms
+[globalKernel.__init__] Finished in 0.47 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.84 ms
+max gradient at outer iteration 0, inner iteration 0 is [4.6184864]
+[[ 2.7939830e-06  7.7661034e-06  4.2253246e-06]
+ [-2.1697492e-04  9.6677531e-06 -1.7946035e-05]
+ [ 5.1211413e-07 -3.1498948e-07  8.1721907e-08]
+ [ 1.2390830e-06 -1.7070071e-05  8.7316977e-07]
+ [-1.6801820e-05 -2.3887540e-06 -5.8682622e-07]
+ [ 2.0528667e-07 -2.5511045e-07  1.5786904e-07]]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.71 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.72 ms
+Continuous collision detection took 170.79 ms
+number of collision pairs: 2651
+Computing largest step size took 6.68 ms
+largest step we can take is 1.0
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.99 ms
+Collision detection took 173.79 ms
+The separated counts are [0, 0, 0, 0]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 4.25 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.17 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.61 ms
+energy comparison: [-48.546635] vs [-48.542835]
+step taken is 1.0
+substep is 1
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.19 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.01 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 1.24 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 1.41 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 88.07 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.27 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.51 ms
+[hessian.compute] Finished in 103.53 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.47 ms
+[minimizer.computeNumericValue] Finished in 105.01 ms
+[solverKernel.__init_kernel] Finished in 0.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 143 iterations
+Solver time: 938.33100 ms
+[solverKernel.computeSolution] Finished in 938.35 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 5.66 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.51 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.35 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.80 ms
+max gradient at outer iteration 0, inner iteration 1 is [0.01719796]
+[[ 2.9277915e-06 -2.9407420e-06 -1.1221208e-06]
+ [ 1.7123332e-04 -4.3196856e-06  1.5325935e-05]
+ [-2.4918772e-06 -1.3069446e-07 -1.0696510e-06]
+ [-8.0408751e-07  4.1015537e-06  1.3587301e-07]
+ [ 4.6098790e-05 -2.8970076e-06  2.1611143e-06]
+ [-3.8142966e-07 -3.6597112e-07  1.1065561e-07]]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.59 ms
+Continuous collision detection took 176.29 ms
+number of collision pairs: 2610
+Computing largest step size took 2.91 ms
+largest step we can take is 1.0
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.09 ms
+Collision detection took 178.11 ms
+The separated counts are [0, 0, 0, 0]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.65 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.53 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.08 ms
+energy comparison: [-48.546646] vs [-48.546635]
+step taken is 1.0
+substep is 1
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.33 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.01 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 1.32 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 1.46 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 89.13 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.50 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.34 ms
+[hessian.compute] Finished in 103.96 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 2.82 ms
+[minimizer.computeNumericValue] Finished in 106.79 ms
+[solverKernel.__init_kernel] Finished in 0.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 267 iterations
+Solver time: 1746.46325 ms
+[solverKernel.computeSolution] Finished in 1746.49 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.94 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.51 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.17 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.07 ms
+max gradient at outer iteration 0, inner iteration 2 is [0.00018875]
+[[ 3.8661771e-08 -1.6716504e-08 -5.2529492e-09]
+ [-8.8582840e-07 -2.7860809e-08 -8.8420180e-08]
+ [-1.1852202e-07  1.9251393e-08 -5.7617640e-08]
+ [ 3.2344907e-08  2.2640352e-09 -3.0026621e-09]
+ [ 6.0298127e-08 -3.5298111e-08 -1.0847131e-08]
+ [-9.9483508e-08  1.4752436e-08 -1.9717540e-08]]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.49 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.48 ms
+Continuous collision detection took 175.74 ms
+number of collision pairs: 2547
+Computing largest step size took 4.11 ms
+largest step we can take is 1.0
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.91 ms
+Collision detection took 172.96 ms
+The separated counts are [0, 0, 0, 0]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 4.07 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.46 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.03 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.80 ms
+energy comparison: [-48.546646] vs [-48.546646]
+step taken is 1.0
+substep is 1
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.15 ms
+Iteration 2 exited with max gradient: [0.00018875]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.71 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.38 ms
+real 15.14
+user 11.64
+sys 1.77

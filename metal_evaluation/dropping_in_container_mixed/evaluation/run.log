@@ -1,0 +1,2871 @@
+Start | Free: 83493.78 MB / Total: 83494.17 MB
+Bunny bounding box:
+X:  -0.31117902998317637 0.31117902998317637
+Y:  0.6914325461648181 1.308567453835182
+Z:  -0.2412332825292628 0.2412332825292628
+Number of bunny vertices:  19193
+Number of bunny tets:  79935
+Number of bunny surface triangles:  20832
+Number of bunny edges:  31248
+Number of bunny surface indices:  10418
+[gradientIndicesKernel.__generateKernel] Finished in 0.80 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.78 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 3.31 ms
+[gradientIndicesKernel.__generateKernel] Finished in 1.64 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.36 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 3.54 ms
+[gradientIndicesKernel.__generateKernel] Finished in 0.64 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.40 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 2.85 ms
+[gradientIndicesKernel.__generateKernel] Finished in 0.55 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.42 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 2.66 ms
+[gradientIndicesKernel.__generateKernel] Finished in 0.50 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.42 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 2.25 ms
+[gradientIndicesKernel.__generateKernel] Finished in 1.77 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.38 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 4.19 ms
+[gradientIndicesKernel.__generateKernel] Finished in 1.08 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.54 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 3.69 ms
+[gradientIndicesKernel.__generateKernel] Finished in 1.18 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.38 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 5.15 ms
+[gradientIndicesKernel.__generateKernel] Finished in 1.86 ms
+[gradientIndicesKernel.__getCompressionKernel] Finished in 0.39 ms
+[gradientIndicesKernel.__getCoordinateKernel] Finished in 0.00 ms
+[gradientIndicesKernel.__init__] Finished in 5.40 ms
+Autodiff computation: 6013.9031410217285 ms
+[minimizer.generateHessianAndGradient] Finished in 6013.92 ms
+Before | Free: 83475.15 MB / Total: 83494.17 MB
+[globalKernel.__generateKernel] Finished in 0.48 ms
+[globalKernel.__init__] Finished in 0.49 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 6.34 ms
+After | Free: 80768.73 MB / Total: 83494.17 MB
+Memory used by CCD: 2706.42 MB
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 6.42 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 6.21 ms
+[globalKernel.__generateKernel] Finished in 0.54 ms
+[globalKernel.__init__] Finished in 0.55 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.49 ms
+Time taken for data transfer: 0.0026578903198242188 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 5.91 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.74 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 43.60 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 1.78 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 1.53 ms
+[gradientIndicesKernel.computeIndices] Finished in 53.58 ms
+[gradientIndicesKernel.__reallocate] Finished in 4.97 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.74 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 64.70 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 1.34 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.84 ms
+[gradientIndicesKernel.computeIndices] Finished in 72.61 ms
+[gradientIndicesKernel.__reallocate] Finished in 4.08 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.32 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 51.10 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.83 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.26 ms
+[gradientIndicesKernel.computeIndices] Finished in 56.60 ms
+[gradientIndicesKernel.__reallocate] Finished in 3.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.47 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 26.53 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 1.37 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.27 ms
+[gradientIndicesKernel.computeIndices] Finished in 33.10 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.53 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.25 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 0.95 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.58 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.16 ms
+[gradientIndicesKernel.computeIndices] Finished in 4.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 257.40 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 30.35 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 289.20 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 291.29 ms
+placement reorder kernels size: 5
+separate hessian jacobian size: 5
+project entire hessian size: 5
+[hessian.getSparseIndices] Finished in 516.17 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[gradientIndicesKernel.__reallocate] Finished in 0.00 ms
+[gradientIndicesKernel.computeIndices] Finished in 0.00 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 1.96 ms
+[hessian.getSparseIndicesDynamic] Finished in 8.31 ms
+Max child gradient size before is 3
+Unique gradient sizes after is {3}
+[hessianAndGradientKernel.generateKernel] Finished in 3.22 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 1.85 ms
+Max child gradient size before is 3
+Unique gradient sizes after is {3}
+[hessianAndGradientKernel.generateKernel] Finished in 1.45 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 1.56 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 1.48 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 1.75 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 1.89 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 2.09 ms
+Max child gradient size before is 9
+Unique gradient sizes after is {9}
+[hessianAndGradientKernel.generateKernel] Finished in 2.47 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 16.31 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.57 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.57 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.34 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.46 ms
+[hessian.compute] Finished in 1188.56 ms
+[diagonalBlockInverseKernel.__generateKernel] Finished in 0.58 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 3.12 ms
+[minimizer.computeNumericValue] Finished in 1207.72 ms
+[solverKernel.__init_kernel] Finished in 0.63 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 43 iterations
+Solver time: 158.60808 ms
+[solverKernel.computeSolution] Finished in 158.63 ms
+Time taken for solver: 1.3694138526916504 seconds
+==================================================================
+[globalKernel.__generateKernel] Finished in 0.41 ms
+[globalKernel.__init__] Finished in 0.41 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.60 ms
+[globalKernel.__generateKernel] Finished in 0.30 ms
+[globalKernel.__init__] Finished in 0.30 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.82 ms
+[globalKernel.__generateKernel] Finished in 0.22 ms
+[globalKernel.__init__] Finished in 0.23 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.97 ms
+[globalKernel.__generateKernel] Finished in 0.30 ms
+[globalKernel.__init__] Finished in 0.30 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.04 ms
+[globalKernel.__generateKernel] Finished in 0.24 ms
+[globalKernel.__init__] Finished in 0.24 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.39 ms
+Time taken for computation: 0.02410101890563965 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.18 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.89 ms
+Time taken for data transfer: 0.006614208221435547 seconds
+Time taken for direction compute: 0.0005099773406982422 seconds
+Time taken for max movement: 0.0015196800231933594 seconds
+Continuous collision detection took 125.50 ms
+Time taken for CCD: 0.12551188468933105 seconds
+number of collision pairs: 70282
+Computing largest step size took 1.50 ms
+largest step we can take is 1.0
+Time taken for largest step: 0.00150299072265625 seconds
+Time taken for data transfer: 0.002106904983520508 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.24 ms
+Collision detection took 117.50 ms
+Time taken for collision detection: 0.11994504928588867 seconds
+The separated counts are [360, 1659, 3, 39]
+Time taken for updating connectivity: 0.00025391578674316406 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.70 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.46 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.16 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.76 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.36 ms
+[globalKernel.__generateKernel] Finished in 0.44 ms
+[globalKernel.__init__] Finished in 0.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.34 ms
+[globalKernel.__generateKernel] Finished in 0.30 ms
+[globalKernel.__init__] Finished in 0.31 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.76 ms
+[globalKernel.__generateKernel] Finished in 0.30 ms
+[globalKernel.__init__] Finished in 0.30 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.77 ms
+[globalKernel.__generateKernel] Finished in 0.23 ms
+[globalKernel.__init__] Finished in 0.23 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.09 ms
+Time taken for computation: 0.034520864486694336 seconds
+energy comparison: [-0.02124419] vs [-0.02135494]
+Current | Free: 80625.99 MB / Total: 83494.17 MB
+Memory used total: 2867.79 MB
+Time taken for data transfer: 0.0017118453979492188 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.92 ms
+Collision detection took 111.72 ms
+Time taken for collision detection: 0.11391520500183105 seconds
+The separated counts are [360, 1660, 3, 38]
+Time taken for updating connectivity: 0.00020813941955566406 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.52 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.80 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.34 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.86 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.34 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.58 ms
+Time taken for computation: 0.028003692626953125 seconds
+energy comparison: [-0.02124376] vs [-0.02135494]
+Current | Free: 80625.99 MB / Total: 83494.17 MB
+Memory used total: 2867.79 MB
+Time taken for data transfer: 0.0016818046569824219 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.85 ms
+Collision detection took 112.64 ms
+Time taken for collision detection: 0.11469483375549316 seconds
+The separated counts are [360, 1660, 3, 38]
+Time taken for updating connectivity: 0.00015306472778320312 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.49 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.96 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.91 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.78 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.72 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.72 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.40 ms
+Time taken for computation: 0.028296947479248047 seconds
+energy comparison: [-0.0212432] vs [-0.02135494]
+Current | Free: 80625.99 MB / Total: 83494.17 MB
+Memory used total: 2867.79 MB
+Time taken for data transfer: 0.0019412040710449219 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.19 ms
+Collision detection took 114.48 ms
+Time taken for collision detection: 0.11687588691711426 seconds
+The separated counts are [360, 1660, 3, 38]
+Time taken for updating connectivity: 0.000164031982421875 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.52 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.34 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.81 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.66 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.92 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.43 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.29 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.54 ms
+Time taken for computation: 0.02910590171813965 seconds
+energy comparison: [-0.02124282] vs [-0.02135494]
+Current | Free: 80625.99 MB / Total: 83494.17 MB
+Memory used total: 2867.79 MB
+Time taken for data transfer: 0.001708984375 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.32 ms
+Collision detection took 111.71 ms
+Time taken for collision detection: 0.11425089836120605 seconds
+The separated counts are [360, 1660, 3, 38]
+Time taken for updating connectivity: 0.00013899803161621094 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.46 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.51 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.90 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.92 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.79 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.40 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.35 ms
+Time taken for computation: 0.027785778045654297 seconds
+energy comparison: [-0.02124261] vs [-0.02135494]
+Current | Free: 80625.99 MB / Total: 83494.17 MB
+Memory used total: 2867.79 MB
+Time taken for data transfer: 0.0017900466918945312 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.02 ms
+Collision detection took 114.05 ms
+Time taken for collision detection: 0.11627411842346191 seconds
+The separated counts are [360, 1660, 3, 38]
+Time taken for updating connectivity: 0.00016427040100097656 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.60 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.97 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.76 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.18 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.46 ms
+Time taken for computation: 0.02788710594177246 seconds
+energy comparison: [-0.0212425] vs [-0.02135494]
+Current | Free: 80625.99 MB / Total: 83494.17 MB
+Memory used total: 2867.79 MB
+Time taken for data transfer: 0.0016751289367675781 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.90 ms
+Collision detection took 110.01 ms
+Time taken for collision detection: 0.11210227012634277 seconds
+The separated counts are [360, 1660, 3, 38]
+Time taken for updating connectivity: 0.00018024444580078125 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.49 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.42 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.80 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.58 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.13 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.52 ms
+Time taken for computation: 0.027676105499267578 seconds
+energy comparison: [-0.02124244] vs [-0.02135494]
+Current | Free: 80625.99 MB / Total: 83494.17 MB
+Memory used total: 2867.79 MB
+Time taken for data transfer: 0.0016901493072509766 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.87 ms
+Collision detection took 112.55 ms
+Time taken for collision detection: 0.11462879180908203 seconds
+The separated counts are [360, 1660, 3, 38]
+Time taken for updating connectivity: 0.00020194053649902344 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.51 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.23 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.92 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 5.71 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.53 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.42 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.14 ms
+Time taken for computation: 0.0307769775390625 seconds
+energy comparison: [-0.02124241] vs [-0.02135494]
+Current | Free: 80625.99 MB / Total: 83494.17 MB
+Memory used total: 2867.79 MB
+step taken is 0.00390625
+substep is 9
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.57 ms
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 4.83 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.62 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 12.57 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 1.10 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.34 ms
+[gradientIndicesKernel.computeIndices] Finished in 20.47 ms
+[gradientIndicesKernel.__reallocate] Finished in 4.53 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.07 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 41.67 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 1.12 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.72 ms
+[gradientIndicesKernel.computeIndices] Finished in 49.13 ms
+[gradientIndicesKernel.__reallocate] Finished in 5.11 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.91 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.20 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.71 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.38 ms
+[gradientIndicesKernel.computeIndices] Finished in 10.32 ms
+[gradientIndicesKernel.__reallocate] Finished in 3.06 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.32 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 6.53 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 1.52 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.56 ms
+[gradientIndicesKernel.computeIndices] Finished in 13.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 37.34 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 4.24 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 41.62 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 44.51 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 137.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.03 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.68 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.16 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.29 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 1.96 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.99 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 8.77 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 28.42 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 8.81 ms
+[hessian.compute] Finished in 227.15 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 3.27 ms
+[minimizer.computeNumericValue] Finished in 230.44 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 7.73467 ms
+[solverKernel.computeSolution] Finished in 7.74 ms
+Time taken for solver: 0.23999881744384766 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.14 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.02 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.41 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.64 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.69 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.74 ms
+Time taken for computation: 0.03077387809753418 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.03 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.19 ms
+Time taken for data transfer: 0.00671696662902832 seconds
+Time taken for direction compute: 0.00029397010803222656 seconds
+Time taken for max movement: 0.002087116241455078 seconds
+Iteration 1 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.57 ms
+Time taken for velocity update: 0.005106925964355469 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.13 ms
+Time taken for data transfer: 0.0027501583099365234 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 2.02 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.34 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 14.70 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.60 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 19.08 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.80 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.77 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 44.46 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.57 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.78 ms
+[gradientIndicesKernel.computeIndices] Finished in 50.39 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.85 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.39 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.23 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.37 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.45 ms
+[gradientIndicesKernel.computeIndices] Finished in 8.31 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.12 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.83 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.69 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.84 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.62 ms
+[gradientIndicesKernel.computeIndices] Finished in 12.12 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 37.85 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 4.23 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 42.11 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 44.00 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 134.04 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.43 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.55 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.85 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.11 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.24 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.82 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.11 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.45 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.07 ms
+[hessian.compute] Finished in 193.64 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.86 ms
+[minimizer.computeNumericValue] Finished in 195.50 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.86817 ms
+[solverKernel.computeSolution] Finished in 6.87 ms
+Time taken for solver: 0.2036280632019043 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.51 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.43 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.99 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.73 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.72 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.41 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.62 ms
+Time taken for computation: 0.02692699432373047 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.90 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.11 ms
+Time taken for data transfer: 0.005736827850341797 seconds
+Time taken for direction compute: 0.0002810955047607422 seconds
+Time taken for max movement: 0.0016689300537109375 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.54 ms
+Time taken for velocity update: 0.0042569637298583984 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.19 ms
+Time taken for data transfer: 0.003909111022949219 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.87 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.78 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 14.22 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.60 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 17.88 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.64 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.46 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 43.68 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.58 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.82 ms
+[gradientIndicesKernel.computeIndices] Finished in 49.19 ms
+[gradientIndicesKernel.__reallocate] Finished in 3.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.35 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 4.18 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.34 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.43 ms
+[gradientIndicesKernel.computeIndices] Finished in 9.68 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.13 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.35 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 8.36 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.91 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.62 ms
+[gradientIndicesKernel.computeIndices] Finished in 13.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 48.11 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 7.56 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 55.71 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 57.75 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 148.05 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 16.22 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 15.23 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 8.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.29 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.35 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.05 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 8.30 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.88 ms
+[hessian.compute] Finished in 223.52 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 2.04 ms
+[minimizer.computeNumericValue] Finished in 225.56 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 8.19442 ms
+[solverKernel.computeSolution] Finished in 8.20 ms
+Time taken for solver: 0.2366042137145996 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.76 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.77 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.13 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.73 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.57 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.66 ms
+Time taken for computation: 0.03369593620300293 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.07 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.21 ms
+Time taken for data transfer: 0.006708860397338867 seconds
+Time taken for direction compute: 0.0005910396575927734 seconds
+Time taken for max movement: 0.002620220184326172 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.34 ms
+Time taken for velocity update: 0.004307270050048828 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.33 ms
+Time taken for data transfer: 0.0026102066040039062 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 2.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.68 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 14.04 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.55 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.computeIndices] Finished in 18.68 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.63 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 2.21 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 42.95 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.69 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.76 ms
+[gradientIndicesKernel.computeIndices] Finished in 49.26 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.57 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.79 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.60 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.38 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.42 ms
+[gradientIndicesKernel.computeIndices] Finished in 8.76 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.83 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.36 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.90 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.81 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.59 ms
+[gradientIndicesKernel.computeIndices] Finished in 12.51 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 34.86 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.80 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 38.68 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 40.45 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 129.77 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.22 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.21 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.96 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.92 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.11 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.63 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 11.44 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.08 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.56 ms
+[hessian.compute] Finished in 198.55 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 3.04 ms
+[minimizer.computeNumericValue] Finished in 201.60 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 7.18104 ms
+[solverKernel.computeSolution] Finished in 7.19 ms
+Time taken for solver: 0.2109060287475586 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.43 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.06 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 5.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.41 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.98 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.64 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.78 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.43 ms
+Time taken for computation: 0.03473997116088867 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.82 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.94 ms
+Time taken for data transfer: 0.00634312629699707 seconds
+Time taken for direction compute: 0.0002789497375488281 seconds
+Time taken for max movement: 0.0021948814392089844 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.48 ms
+Time taken for velocity update: 0.0039370059967041016 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.22 ms
+Time taken for data transfer: 0.0037581920623779297 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 2.05 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.31 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 14.44 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.68 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.46 ms
+[gradientIndicesKernel.computeIndices] Finished in 18.95 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.55 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.88 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 41.59 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.52 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.73 ms
+[gradientIndicesKernel.computeIndices] Finished in 47.28 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.47 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.16 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.11 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.34 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.computeIndices] Finished in 7.49 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.74 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.30 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 6.94 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.73 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.56 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.28 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.11 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 4.77 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 40.92 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 42.69 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 127.80 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.28 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.12 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.96 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.15 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.82 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.47 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.05 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.94 ms
+[hessian.compute] Finished in 186.69 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 2.17 ms
+[minimizer.computeNumericValue] Finished in 188.87 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.15837 ms
+[solverKernel.computeSolution] Finished in 6.16 ms
+Time taken for solver: 0.19625401496887207 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.58 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.99 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.72 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.69 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.39 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.08 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.50 ms
+Time taken for computation: 0.026781082153320312 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.86 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.60 ms
+Time taken for data transfer: 0.005339860916137695 seconds
+Time taken for direction compute: 0.0002570152282714844 seconds
+Time taken for max movement: 0.0015120506286621094 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.49 ms
+Time taken for velocity update: 0.004503965377807617 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.87 ms
+Time taken for data transfer: 0.0035402774810791016 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.94 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.81 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 15.75 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.69 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.38 ms
+[gradientIndicesKernel.computeIndices] Finished in 19.59 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.72 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.45 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 40.63 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.50 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.78 ms
+[gradientIndicesKernel.computeIndices] Finished in 46.08 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.62 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.94 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.17 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.36 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.41 ms
+[gradientIndicesKernel.computeIndices] Finished in 7.50 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.08 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.78 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.08 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.76 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.58 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.28 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.61 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.35 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 39.98 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 41.80 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 126.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.13 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.78 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.22 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.06 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.39 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.34 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.88 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.37 ms
+[hessian.compute] Finished in 187.82 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.71 ms
+[minimizer.computeNumericValue] Finished in 189.53 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.28092 ms
+[solverKernel.computeSolution] Finished in 6.29 ms
+Time taken for solver: 0.19719696044921875 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.09 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.40 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.64 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.75 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.50 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.66 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.35 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.67 ms
+Time taken for computation: 0.030876874923706055 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.13 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.22 ms
+Time taken for data transfer: 0.0068590641021728516 seconds
+Time taken for direction compute: 0.0005419254302978516 seconds
+Time taken for max movement: 0.002640247344970703 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.25 ms
+Time taken for velocity update: 0.0037059783935546875 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.82 ms
+Time taken for data transfer: 0.002335071563720703 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 2.03 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.58 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 15.23 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.62 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 19.87 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.97 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.95 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 42.48 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.54 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.71 ms
+[gradientIndicesKernel.computeIndices] Finished in 48.65 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.32 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.79 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 4.42 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.31 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.38 ms
+[gradientIndicesKernel.computeIndices] Finished in 9.23 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.65 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.50 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 6.87 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.74 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.56 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.31 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 35.65 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 4.07 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 39.75 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 44.11 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 133.34 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.34 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.52 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.13 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.72 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.00 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.94 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.97 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.49 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.88 ms
+[hessian.compute] Finished in 192.31 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.74 ms
+[minimizer.computeNumericValue] Finished in 194.06 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.26704 ms
+[solverKernel.computeSolution] Finished in 6.27 ms
+Time taken for solver: 0.2015678882598877 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.43 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.88 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.90 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.72 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.72 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.55 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.23 ms
+Time taken for computation: 0.03081989288330078 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.25 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.10 ms
+Time taken for data transfer: 0.00669407844543457 seconds
+Time taken for direction compute: 0.0003521442413330078 seconds
+Time taken for max movement: 0.0021178722381591797 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.57 ms
+Time taken for velocity update: 0.003761768341064453 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.65 ms
+Time taken for data transfer: 0.003288745880126953 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.78 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.54 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.31 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.56 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.34 ms
+[gradientIndicesKernel.computeIndices] Finished in 17.55 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.49 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.72 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 42.37 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.54 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.74 ms
+[gradientIndicesKernel.computeIndices] Finished in 47.87 ms
+[gradientIndicesKernel.__reallocate] Finished in 3.15 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.37 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.06 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.32 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.computeIndices] Finished in 8.30 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.95 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.40 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.34 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.76 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.58 ms
+[gradientIndicesKernel.computeIndices] Finished in 12.04 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 39.46 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.82 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 43.31 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 45.17 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 131.02 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.15 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.39 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.11 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.21 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.79 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.22 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.47 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.05 ms
+[hessian.compute] Finished in 190.89 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.75 ms
+[minimizer.computeNumericValue] Finished in 192.65 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.48212 ms
+[solverKernel.computeSolution] Finished in 6.49 ms
+Time taken for solver: 0.20036101341247559 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.49 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.25 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.82 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.41 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.68 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.05 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.38 ms
+Time taken for computation: 0.027289152145385742 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.86 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.77 ms
+Time taken for data transfer: 0.005315065383911133 seconds
+Time taken for direction compute: 0.00025200843811035156 seconds
+Time taken for max movement: 0.0009882450103759766 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.55 ms
+Time taken for velocity update: 0.004492998123168945 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.19 ms
+Time taken for data transfer: 0.002836942672729492 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 2.09 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.78 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.34 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.57 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 17.18 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.69 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.48 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 42.57 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.48 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.70 ms
+[gradientIndicesKernel.computeIndices] Finished in 47.94 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.61 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.80 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.08 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.32 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.computeIndices] Finished in 7.21 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.74 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.77 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 6.72 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.72 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.61 ms
+[gradientIndicesKernel.computeIndices] Finished in 10.56 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.42 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 4.87 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 41.32 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 43.09 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 126.13 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.30 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.67 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.40 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.16 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.24 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.80 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.25 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.78 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.89 ms
+[hessian.compute] Finished in 186.66 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 2.15 ms
+[minimizer.computeNumericValue] Finished in 188.83 ms
+[solverKernel.__init_kernel] Finished in 0.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 7.14108 ms
+[solverKernel.computeSolution] Finished in 7.15 ms
+Time taken for solver: 0.1977078914642334 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.64 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.14 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.86 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.19 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.63 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.52 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.70 ms
+Time taken for computation: 0.03371286392211914 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.42 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.20 ms
+Time taken for data transfer: 0.007765054702758789 seconds
+Time taken for direction compute: 0.0002970695495605469 seconds
+Time taken for max movement: 0.002256155014038086 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.52 ms
+Time taken for velocity update: 0.004907131195068359 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.92 ms
+Time taken for data transfer: 0.0024619102478027344 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 2.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.47 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 14.67 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.80 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 19.35 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.85 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.92 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 41.80 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.52 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.75 ms
+[gradientIndicesKernel.computeIndices] Finished in 47.85 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.53 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.23 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.41 ms
+[gradientIndicesKernel.computeIndices] Finished in 8.40 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.21 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.48 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 6.96 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.77 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.57 ms
+[gradientIndicesKernel.computeIndices] Finished in 12.05 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.30 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 4.26 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 40.58 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 42.26 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 130.03 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.23 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.32 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.78 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.06 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.13 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.17 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.00 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.25 ms
+[hessian.compute] Finished in 190.57 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.74 ms
+[minimizer.computeNumericValue] Finished in 192.32 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.35667 ms
+[solverKernel.computeSolution] Finished in 6.36 ms
+Time taken for solver: 0.1999208927154541 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.58 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.43 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.94 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.85 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.50 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.68 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.72 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.06 ms
+Time taken for computation: 0.03187990188598633 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.06 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.28 ms
+Time taken for data transfer: 0.006765842437744141 seconds
+Time taken for direction compute: 0.0002319812774658203 seconds
+Time taken for max movement: 0.0021581649780273438 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.51 ms
+Time taken for velocity update: 0.0044078826904296875 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.88 ms
+Time taken for data transfer: 0.0023720264434814453 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.52 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 14.44 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.73 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 18.95 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.86 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.49 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 41.99 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.53 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.74 ms
+[gradientIndicesKernel.computeIndices] Finished in 47.62 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.46 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.41 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.34 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.36 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.computeIndices] Finished in 7.97 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.83 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.49 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 6.66 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.68 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.55 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.22 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 35.45 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.91 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 39.39 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 40.97 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 126.82 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 9.66 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.43 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.12 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.11 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.02 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.00 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.09 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.51 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.03 ms
+[hessian.compute] Finished in 185.64 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.73 ms
+[minimizer.computeNumericValue] Finished in 187.38 ms
+[solverKernel.__init_kernel] Finished in 0.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.23417 ms
+[solverKernel.computeSolution] Finished in 6.24 ms
+Time taken for solver: 0.19487309455871582 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.53 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.94 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.06 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.43 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.56 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.63 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.39 ms
+Time taken for computation: 0.027575016021728516 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.27 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.90 ms
+Time taken for data transfer: 0.0062029361724853516 seconds
+Time taken for direction compute: 0.00024175643920898438 seconds
+Time taken for max movement: 0.0013949871063232422 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.65 ms
+Time taken for velocity update: 0.0042459964752197266 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.66 ms
+Time taken for data transfer: 0.0033206939697265625 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.91 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.92 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.93 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.53 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.38 ms
+[gradientIndicesKernel.computeIndices] Finished in 17.69 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.76 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.44 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 41.00 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.53 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.84 ms
+[gradientIndicesKernel.computeIndices] Finished in 46.58 ms
+[gradientIndicesKernel.__reallocate] Finished in 3.18 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.40 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.73 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.38 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.41 ms
+[gradientIndicesKernel.computeIndices] Finished in 9.11 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.85 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.83 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.61 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.76 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.59 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.65 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.32 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.83 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 40.18 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 42.08 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 127.22 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.28 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.17 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.35 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.08 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.23 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.20 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.12 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.07 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.91 ms
+[hessian.compute] Finished in 188.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 2.06 ms
+[minimizer.computeNumericValue] Finished in 190.91 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 7.10883 ms
+[solverKernel.computeSolution] Finished in 7.11 ms
+Time taken for solver: 0.20032215118408203 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.29 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.77 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.39 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.70 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.33 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.72 ms
+Time taken for computation: 0.03171563148498535 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.13 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.19 ms
+Time taken for data transfer: 0.006974935531616211 seconds
+Time taken for direction compute: 0.0002460479736328125 seconds
+Time taken for max movement: 0.0023810863494873047 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.33 ms
+Time taken for velocity update: 0.004106044769287109 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.88 ms
+Time taken for data transfer: 0.002164125442504883 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.96 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.67 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 14.10 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.79 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.37 ms
+[gradientIndicesKernel.computeIndices] Finished in 18.91 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.58 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.70 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 43.39 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.57 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.77 ms
+[gradientIndicesKernel.computeIndices] Finished in 49.02 ms
+[gradientIndicesKernel.__reallocate] Finished in 3.39 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.70 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.44 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.37 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.42 ms
+[gradientIndicesKernel.computeIndices] Finished in 9.36 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.86 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.40 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.13 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.73 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.62 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.75 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 35.99 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.74 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 39.76 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 41.43 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 130.65 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.18 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.28 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.22 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.30 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.80 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.75 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.20 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.20 ms
+[hessian.compute] Finished in 190.70 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.98 ms
+[minimizer.computeNumericValue] Finished in 192.69 ms
+[solverKernel.__init_kernel] Finished in 0.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 7.81142 ms
+[solverKernel.computeSolution] Finished in 7.82 ms
+Time taken for solver: 0.20186376571655273 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.57 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.87 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.76 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.71 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.58 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.78 ms
+Time taken for computation: 0.031769752502441406 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.09 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.84 ms
+Time taken for data transfer: 0.006201982498168945 seconds
+Time taken for direction compute: 0.0002448558807373047 seconds
+Time taken for max movement: 0.002104043960571289 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.56 ms
+Time taken for velocity update: 0.004052877426147461 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.07 ms
+Time taken for data transfer: 0.0027027130126953125 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.91 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.53 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.75 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.58 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.38 ms
+[gradientIndicesKernel.computeIndices] Finished in 18.16 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.56 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.79 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 41.77 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.52 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.75 ms
+[gradientIndicesKernel.computeIndices] Finished in 47.40 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.60 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.43 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.28 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.37 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.computeIndices] Finished in 8.07 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.89 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.42 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 6.67 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.72 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.57 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.28 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 35.91 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.77 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 39.71 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 41.37 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 126.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.18 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 12.96 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.17 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.14 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.19 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.56 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.11 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.61 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.92 ms
+[hessian.compute] Finished in 185.19 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 2.49 ms
+[minimizer.computeNumericValue] Finished in 187.69 ms
+[solverKernel.__init_kernel] Finished in 0.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 7.02579 ms
+[solverKernel.computeSolution] Finished in 7.03 ms
+Time taken for solver: 0.19600319862365723 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.63 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.87 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.57 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.55 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.53 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.33 ms
+Time taken for computation: 0.026556968688964844 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.88 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.96 ms
+Time taken for data transfer: 0.0058438777923583984 seconds
+Time taken for direction compute: 0.0002512931823730469 seconds
+Time taken for max movement: 0.0014789104461669922 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.24 ms
+Time taken for velocity update: 0.004518270492553711 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.01 ms
+Time taken for data transfer: 0.0022268295288085938 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.78 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.76 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.44 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.59 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.computeIndices] Finished in 16.98 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.76 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.35 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 41.07 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.50 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.71 ms
+[gradientIndicesKernel.computeIndices] Finished in 46.42 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.55 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.78 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.07 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.32 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 7.12 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.68 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.07 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 8.05 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.83 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.68 ms
+[gradientIndicesKernel.computeIndices] Finished in 12.32 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 40.94 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 5.39 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 46.36 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 48.51 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 131.53 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 11.14 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 15.61 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.16 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.69 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.54 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.00 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.53 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.94 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.68 ms
+[hessian.compute] Finished in 204.10 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.80 ms
+[minimizer.computeNumericValue] Finished in 205.91 ms
+[solverKernel.__init_kernel] Finished in 0.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 7.82508 ms
+[solverKernel.computeSolution] Finished in 7.83 ms
+Time taken for solver: 0.2149488925933838 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.63 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.92 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.85 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.83 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.28 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.65 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.65 ms
+Time taken for computation: 0.03254294395446777 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.32 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.17 ms
+Time taken for data transfer: 0.00770878791809082 seconds
+Time taken for direction compute: 0.00029397010803222656 seconds
+Time taken for max movement: 0.002805948257446289 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.52 ms
+Time taken for velocity update: 0.0045261383056640625 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.01 ms
+Time taken for data transfer: 0.002640247344970703 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.95 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.67 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.85 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.58 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 18.46 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.76 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.99 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 41.76 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.53 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.85 ms
+[gradientIndicesKernel.computeIndices] Finished in 47.91 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.51 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.65 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.20 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.36 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.56 ms
+[gradientIndicesKernel.computeIndices] Finished in 8.29 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.77 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.39 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.27 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.80 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.59 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.83 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.27 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 4.01 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 40.30 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 42.22 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 128.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 9.77 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.58 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.12 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.26 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.06 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.16 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.03 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.70 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.27 ms
+[hessian.compute] Finished in 188.71 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.71 ms
+[minimizer.computeNumericValue] Finished in 190.43 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.29800 ms
+[solverKernel.computeSolution] Finished in 6.30 ms
+Time taken for solver: 0.19803977012634277 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.10 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.41 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.94 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.83 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.35 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.66 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.75 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.67 ms
+Time taken for computation: 0.030302047729492188 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.05 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.25 ms
+Time taken for data transfer: 0.0066280364990234375 seconds
+Time taken for direction compute: 0.0002448558807373047 seconds
+Time taken for max movement: 0.0020890235900878906 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.54 ms
+Time taken for velocity update: 0.004942178726196289 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.85 ms
+Time taken for data transfer: 0.0026178359985351562 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.71 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.52 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 16.05 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.67 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 20.36 ms
+[gradientIndicesKernel.__reallocate] Finished in 3.04 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.92 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 43.48 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.59 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.75 ms
+[gradientIndicesKernel.computeIndices] Finished in 49.81 ms
+[gradientIndicesKernel.__reallocate] Finished in 3.27 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.52 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.23 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.37 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.43 ms
+[gradientIndicesKernel.computeIndices] Finished in 8.83 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.91 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.19 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.16 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.81 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.60 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.68 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 37.70 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 5.20 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 42.93 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 44.70 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 135.52 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.46 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.26 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.25 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 1.73 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.84 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.82 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.34 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.13 ms
+[hessian.compute] Finished in 194.91 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.72 ms
+[minimizer.computeNumericValue] Finished in 196.69 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.32779 ms
+[solverKernel.computeSolution] Finished in 6.33 ms
+Time taken for solver: 0.2044050693511963 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.11 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.88 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.90 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.56 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.88 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.61 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.55 ms
+Time taken for computation: 0.02723407745361328 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.04 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.86 ms
+Time taken for data transfer: 0.005980968475341797 seconds
+Time taken for direction compute: 0.00023818016052246094 seconds
+Time taken for max movement: 0.0015742778778076172 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.56 ms
+Time taken for velocity update: 0.004667758941650391 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.06 ms
+Time taken for data transfer: 0.0027840137481689453 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 2.15 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.46 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.65 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.80 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.computeIndices] Finished in 18.47 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.70 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.55 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 41.88 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.50 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.71 ms
+[gradientIndicesKernel.computeIndices] Finished in 47.34 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.55 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.84 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.03 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.46 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.38 ms
+[gradientIndicesKernel.computeIndices] Finished in 7.27 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.69 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.75 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.10 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.77 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.57 ms
+[gradientIndicesKernel.computeIndices] Finished in 10.88 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.48 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.77 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 40.28 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 42.11 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 126.17 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.49 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.35 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.25 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.07 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.34 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.17 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.53 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.88 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.19 ms
+[hessian.compute] Finished in 187.64 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.82 ms
+[minimizer.computeNumericValue] Finished in 189.47 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 7.42813 ms
+[solverKernel.computeSolution] Finished in 7.43 ms
+Time taken for solver: 0.19870615005493164 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.44 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.40 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.02 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.73 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.47 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.68 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.65 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.71 ms
+Time taken for computation: 0.03226494789123535 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.14 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.37 ms
+Time taken for data transfer: 0.007066965103149414 seconds
+Time taken for direction compute: 0.0002689361572265625 seconds
+Time taken for max movement: 0.002331972122192383 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.80 ms
+Time taken for velocity update: 0.0051000118255615234 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.96 ms
+Time taken for data transfer: 0.0025818347930908203 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.91 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.67 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.87 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.65 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 18.52 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.91 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.95 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 42.41 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.55 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.75 ms
+[gradientIndicesKernel.computeIndices] Finished in 48.62 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.57 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.59 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.31 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.36 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.41 ms
+[gradientIndicesKernel.computeIndices] Finished in 8.26 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.19 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.13 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.77 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.66 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.60 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 35.95 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.52 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 39.49 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 41.26 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 128.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.17 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.66 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.92 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.22 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.54 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.04 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.51 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.98 ms
+[hessian.compute] Finished in 188.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 2.18 ms
+[minimizer.computeNumericValue] Finished in 190.72 ms
+[solverKernel.__init_kernel] Finished in 0.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.36337 ms
+[solverKernel.computeSolution] Finished in 6.37 ms
+Time taken for solver: 0.19830083847045898 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.68 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.88 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.08 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.74 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.74 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.61 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.33 ms
+Time taken for computation: 0.03157997131347656 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.14 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.15 ms
+Time taken for data transfer: 0.006532907485961914 seconds
+Time taken for direction compute: 0.00023317337036132812 seconds
+Time taken for max movement: 0.0022280216217041016 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.56 ms
+Time taken for velocity update: 0.004034996032714844 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.05 ms
+Time taken for data transfer: 0.0026979446411132812 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 2.03 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.53 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 14.41 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.55 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 18.93 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.77 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 42.44 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.53 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.88 ms
+[gradientIndicesKernel.computeIndices] Finished in 48.17 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.68 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.41 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.17 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.37 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.43 ms
+[gradientIndicesKernel.computeIndices] Finished in 8.06 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.90 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.34 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.62 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.75 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.60 ms
+[gradientIndicesKernel.computeIndices] Finished in 12.21 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.06 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.82 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 39.91 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 41.76 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 129.25 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 9.80 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.21 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.23 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.24 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.04 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.14 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.05 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.64 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.99 ms
+[hessian.compute] Finished in 188.51 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.67 ms
+[minimizer.computeNumericValue] Finished in 190.19 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.22263 ms
+[solverKernel.computeSolution] Finished in 6.23 ms
+Time taken for solver: 0.19753694534301758 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.47 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.43 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.91 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.89 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.55 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.50 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.38 ms
+Time taken for computation: 0.02696681022644043 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.91 ms
+Time taken for data transfer: 0.005894184112548828 seconds
+Time taken for direction compute: 0.0002491474151611328 seconds
+Time taken for max movement: 0.0015406608581542969 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.58 ms
+Time taken for velocity update: 0.0050640106201171875 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.86 ms
+Time taken for data transfer: 0.0024597644805908203 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.85 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.76 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.61 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.58 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.computeIndices] Finished in 17.20 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.83 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.44 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 42.09 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.51 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.78 ms
+[gradientIndicesKernel.computeIndices] Finished in 47.67 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.56 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.82 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.70 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.34 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.42 ms
+[gradientIndicesKernel.computeIndices] Finished in 7.86 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.88 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.79 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 8.60 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.76 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.67 ms
+[gradientIndicesKernel.computeIndices] Finished in 12.71 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.60 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.94 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 40.58 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 43.22 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 128.77 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.19 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.46 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.17 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.14 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.24 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.84 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.39 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.86 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.17 ms
+[hessian.compute] Finished in 189.18 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.83 ms
+[minimizer.computeNumericValue] Finished in 191.02 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.78833 ms
+[solverKernel.computeSolution] Finished in 6.79 ms
+Time taken for solver: 0.19951891899108887 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.72 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 3.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.87 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.31 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.68 ms
+Time taken for computation: 0.032917022705078125 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.11 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.31 ms
+Time taken for data transfer: 0.0073697566986083984 seconds
+Time taken for direction compute: 0.0003161430358886719 seconds
+Time taken for max movement: 0.0023810863494873047 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.28 ms
+Time taken for velocity update: 0.00394892692565918 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.79 ms
+Time taken for data transfer: 0.002028942108154297 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 2.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.60 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 14.71 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.60 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 19.36 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.74 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 2.04 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 41.76 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.50 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.72 ms
+[gradientIndicesKernel.computeIndices] Finished in 47.78 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.42 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.45 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.32 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.34 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.39 ms
+[gradientIndicesKernel.computeIndices] Finished in 7.93 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.70 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.36 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 8.05 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.77 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.59 ms
+[gradientIndicesKernel.computeIndices] Finished in 12.47 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.46 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.81 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 40.29 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 42.13 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 129.77 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.28 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.11 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.33 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.88 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.35 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.38 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.07 ms
+[hessian.compute] Finished in 189.95 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.83 ms
+[minimizer.computeNumericValue] Finished in 191.79 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.37579 ms
+[solverKernel.computeSolution] Finished in 6.38 ms
+Time taken for solver: 0.1993720531463623 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.45 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.18 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.89 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.73 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.67 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.61 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.24 ms
+Time taken for computation: 0.03294181823730469 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.10 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.04 ms
+Time taken for data transfer: 0.006428718566894531 seconds
+Time taken for direction compute: 0.0003139972686767578 seconds
+Time taken for max movement: 0.0021848678588867188 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.59 ms
+Time taken for velocity update: 0.0043430328369140625 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.13 ms
+Time taken for data transfer: 0.0027511119842529297 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.91 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.52 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.71 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.53 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.36 ms
+[gradientIndicesKernel.computeIndices] Finished in 18.05 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.77 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.80 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 42.56 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.55 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.89 ms
+[gradientIndicesKernel.computeIndices] Finished in 48.59 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.66 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.44 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.18 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.35 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 8.03 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.09 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.44 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.49 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.75 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.58 ms
+[gradientIndicesKernel.computeIndices] Finished in 12.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 36.94 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 4.26 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 41.23 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 43.07 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 130.21 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.12 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.24 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.25 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.38 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.26 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.91 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.30 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.46 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.07 ms
+[hessian.compute] Finished in 190.20 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.78 ms
+[minimizer.computeNumericValue] Finished in 192.00 ms
+[solverKernel.__init_kernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.21821 ms
+[solverKernel.computeSolution] Finished in 6.22 ms
+Time taken for solver: 0.1994030475616455 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.51 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.42 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.76 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.70 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.36 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.51 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.35 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.46 ms
+Time taken for computation: 0.025982141494750977 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.95 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.99 ms
+Time taken for data transfer: 0.005766868591308594 seconds
+Time taken for direction compute: 0.0002658367156982422 seconds
+Time taken for max movement: 0.0015020370483398438 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.62 ms
+Time taken for velocity update: 0.0043451786041259766 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.88 ms
+Time taken for data transfer: 0.002499103546142578 seconds
+==================================================================
+[gradientIndicesKernel.__reallocate] Finished in 1.92 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.95 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 13.52 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.59 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.40 ms
+[gradientIndicesKernel.computeIndices] Finished in 17.39 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.92 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 1.49 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 42.69 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.49 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.74 ms
+[gradientIndicesKernel.computeIndices] Finished in 48.35 ms
+[gradientIndicesKernel.__reallocate] Finished in 2.41 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.79 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 3.20 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.33 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.38 ms
+[gradientIndicesKernel.computeIndices] Finished in 7.12 ms
+[gradientIndicesKernel.__reallocate] Finished in 1.84 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[gradientIndicesKernel.__computeIndices] Finished in 0.78 ms
+[gradientIndicesKernel.__compressIndicesLocal] Finished in 7.15 ms
+[gradientIndicesKernel.allocateSpaceForCoordinates] Finished in 0.75 ms
+[gradientIndicesKernel.generateCoordinates] Finished in 0.57 ms
+[gradientIndicesKernel.computeIndices] Finished in 11.10 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions] Finished in 37.03 ms
+[coordinateCompressionKernel.__getUniqueCoordinatesStartAndEnd] Finished in 3.80 ms
+[coordinateCompressionKernel.__compressCoordinatesAndDimensions] Finished in 40.86 ms
+[coordinateCompressionKernel.compressCoordinatesAndDimensions] Finished in 42.48 ms
+[hessian.getSparseIndicesDynamicAgain] Finished in 126.54 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 10.15 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 13.28 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 3.24 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 7.19 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 2.31 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 4.16 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 5.87 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.66 ms
+[hessianAndGradientKernel.generateKernel] Finished in 0.00 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[hessianAndGradientKernel.compute] Finished in 6.19 ms
+[hessian.compute] Finished in 187.69 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[diagonalBlockInverseKernel.computeDiagonalBlockInverse] Finished in 1.93 ms
+[minimizer.computeNumericValue] Finished in 189.63 ms
+[solverKernel.__init_kernel] Finished in 0.01 ms
+[context.useDefaultContext] Finished in 0.00 ms
+Solver converged in 0 iterations
+Solver time: 6.60812 ms
+[solverKernel.computeSolution] Finished in 6.62 ms
+Time taken for solver: 0.19747614860534668 seconds
+==================================================================
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.48 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.89 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.46 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 0.37 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.85 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.95 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.65 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.94 ms
+Time taken for computation: 0.033296823501586914 seconds
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.19 ms
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 2.37 ms
+Time taken for data transfer: 0.006991863250732422 seconds
+Time taken for direction compute: 0.0002751350402832031 seconds
+Time taken for max movement: 0.0023429393768310547 seconds
+Iteration 0 exited with max movement: [0.]
+[context.useDefaultContext] Finished in 0.00 ms
+[globalKernel.compute] Finished in 1.37 ms
+Time taken for velocity update: 0.005048036575317383 seconds
+Total time:  9.086216926574707
+real 17.11
+user 12.66
+sys 1.70
