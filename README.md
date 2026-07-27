@@ -32,6 +32,28 @@ YASPS generates all the code on GPU, and is very fast, so fast that we directly 
 
 As long as you can write the energy correctly, you can trust YASPS to do the differentiation efficiently.
 
+### CUDA and Metal
+
+YASPS supports both CUDA and Apple Metal. Backend selection defaults to
+Metal on macOS and CUDA on other platforms, or it can be set explicitly:
+
+```bash
+YASPS_BACKEND=metal python your_simulation.py
+YASPS_BACKEND=cuda python your_simulation.py
+```
+
+The CUDA backend retains the original double-precision PyCUDA, C++,
+Eigen, and CUDA path. The Metal backend uses float32 throughout because
+Metal does not provide double precision. It translates the same symbolic
+graphs into fused Metal source, compiles the generated translation units,
+and dispatches them through the native Metal runtime. Sparse index
+generation, Hessian assembly, block CG, LBVH collision detection, ACCD,
+and GPUArray arithmetic remain GPU-resident.
+
+Metal requires macOS with the Xcode command-line tools. The recorded M2
+Max evaluation, including exact per-stage timings, logs, 120 frames, and
+five videos, is in [metal_evaluation](metal_evaluation/README.md).
+
 ### CG Solver
 YASPS already includes a conjugate gradient solver. It directly works with the Hessian and the gradient that YASPS computes, and gives you the solution of $$Hx = g$$. This is standard for Newton based minimizer.
 
