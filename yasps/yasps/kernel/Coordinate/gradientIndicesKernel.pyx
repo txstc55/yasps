@@ -1402,7 +1402,8 @@ kernel void {self.__energy.fullName}_get_indices_metal(
   def __compressIndicesLocal(self):
     assert self.__compression_kernel is not None
     if is_metal():
-      self.__compression_kernel.dispatch(
+      dispatches = [(
+        self.__compression_kernel,
         [
           self.__outputIndices,
           self.__outputIndexSizes,
@@ -1416,14 +1417,15 @@ kernel void {self.__energy.fullName}_get_indices_metal(
           np.uint32(1 if self.__no_local_permutation else 0),
         ],
         self.__paddedInstances,
-        256
-      )
+        256,
+      )]
 
       sequence_length = 2
       while sequence_length <= self.__paddedInstances:
         compare_distance = sequence_length // 2
         while compare_distance > 0:
-          self.__bitonic_kernel.dispatch(
+          dispatches.append((
+            self.__bitonic_kernel,
             [
               self.__outputGradientSizes,
               self.__outputGroupedIndicesInner,
@@ -1432,12 +1434,13 @@ kernel void {self.__energy.fullName}_get_indices_metal(
               np.uint32(self.__paddedInstances),
             ],
             self.__paddedInstances,
-            256
-          )
+            256,
+          ))
           compare_distance //= 2
         sequence_length *= 2
 
-      self.__group_sizes_kernel.dispatch(
+      dispatches.append((
+        self.__group_sizes_kernel,
         [
           self.__outputGradientSizes,
           self.__outputUniqueGradientSizes,
@@ -1446,15 +1449,16 @@ kernel void {self.__energy.fullName}_get_indices_metal(
           np.uint32(self.__numInstances),
         ],
         1,
-        1
-      )
+        1,
+      ))
 
       scan_count = self.__numInstances + 1
       scan_input = self.__outputCompressedCoordinateCountsOuter
       scan_output = self.__scanScratch
       scan_offset = 1
       while scan_offset < scan_count:
-        self.__scan_kernel.dispatch(
+        dispatches.append((
+          self.__scan_kernel,
           [
             scan_input,
             scan_output,
@@ -1462,20 +1466,25 @@ kernel void {self.__energy.fullName}_get_indices_metal(
             np.uint32(scan_offset),
           ],
           scan_count,
-          256
-        )
+          256,
+        ))
         scan_input, scan_output = scan_output, scan_input
         scan_offset *= 2
       if scan_input is not self.__outputCompressedCoordinateCountsOuter:
-        self.__copy_uint_kernel.dispatch(
+        dispatches.append((
+          self.__copy_uint_kernel,
           [
             scan_input,
             self.__outputCompressedCoordinateCountsOuter,
             np.uint32(scan_count),
           ],
           scan_count,
-          256
-        )
+          256,
+        ))
+      gpuarray.dispatch_batch(
+        dispatches,
+        "gradient_index_compression",
+      )
       error_code = 0
     else:
       error_code = self.__compression_kernel(

@@ -545,9 +545,10 @@ kernel void copy_aabb(
 kernel void calculate_morton_hashes(
   device ulong* hashes [[buffer(0)]],
   device uint* indices [[buffer(1)]],
-  device const AABB* boxes [[buffer(2)]],
-  constant uint& count [[buffer(3)]],
-  constant uint& padded_count [[buffer(4)]],
+  device const AABB* scene_box [[buffer(2)]],
+  device const AABB* leaf_boxes [[buffer(3)]],
+  constant uint& count [[buffer(4)]],
+  constant uint& padded_count [[buffer(5)]],
   uint index [[thread_position_in_grid]]
 ) {
   if (index >= padded_count) {
@@ -558,8 +559,8 @@ kernel void calculate_morton_hashes(
     indices[index] = 0xffffffffu;
     return;
   }
-  AABB scene = boxes[0];
-  AABB leaf = boxes[index + count - 1];
+  AABB scene = scene_box[0];
+  AABB leaf = leaf_boxes[index];
   float3 scene_size = scene.upper - scene.lower;
   float3 center = (leaf.upper + leaf.lower) * 0.5f;
   float3 normalized = (center - scene.lower) / scene_size;
@@ -1384,6 +1385,7 @@ class _MetalBVH:
     alpha=0.0,
   ):
     self.last_timings = {}
+    dispatches = []
     swept = directions is not None
     direction_buffer = (
       directions if swept else self.dummy_directions
@@ -1393,37 +1395,32 @@ class _MetalBVH:
       if self.kind == "face"
       else "calculate_edge_leaf_boxes"
     )
-    self._dispatch(
-      leaf_kernel,
+    dispatches.append((
+      self.kernels[leaf_kernel],
       [
         vertices,
         primitives,
         direction_buffer,
-        self.leaf_boxes,
+        self.original_boxes,
         np.float32(alpha),
         np.uint32(self.count),
         np.uint32(swept),
       ],
       self.count,
-    )
+      0,
+    ))
 
-    # Keep the unsorted leaf boxes while the reduction ping-pongs.
-    cuda.memcpy_dtod(
-      self.original_boxes.gpudata,
-      self.leaf_boxes.gpudata,
-      self.original_boxes.nbytes,
-    )
     source = self.original_boxes
     target = self.reduction_a
     reduction_count = self.count
     while reduction_count > 1:
       output_count = (reduction_count + 255) // 256
-      self._dispatch(
-        "reduce_aabbs",
+      dispatches.append((
+        self.kernels["reduce_aabbs"],
         [source, target, np.uint32(reduction_count)],
         output_count * 256,
         256,
-      )
+      ))
       reduction_count = output_count
       source, target = (
         target,
@@ -1431,25 +1428,32 @@ class _MetalBVH:
         if target is self.reduction_a
         else self.reduction_a,
       )
-    self._dispatch("copy_aabb", [source, self.boxes], 1)
+    dispatches.append((
+      self.kernels["copy_aabb"],
+      [source, self.boxes],
+      1,
+      0,
+    ))
 
-    self._dispatch(
-      "calculate_morton_hashes",
+    dispatches.append((
+      self.kernels["calculate_morton_hashes"],
       [
         self.hashes,
         self.indices,
         self.boxes,
+        self.original_boxes,
         np.uint32(self.count),
         np.uint32(self.padded_count),
       ],
       self.padded_count,
-    )
+      0,
+    ))
     sequence_length = 2
     while sequence_length <= self.padded_count:
       compare_distance = sequence_length // 2
       while compare_distance:
-        self._dispatch(
-          "bitonic_morton_step",
+        dispatches.append((
+          self.kernels["bitonic_morton_step"],
           [
             self.hashes,
             self.indices,
@@ -1458,12 +1462,13 @@ class _MetalBVH:
             np.uint32(self.padded_count),
           ],
           self.padded_count,
-        )
+          0,
+        ))
         compare_distance //= 2
       sequence_length *= 2
 
-    self._dispatch(
-      "sort_leaf_boxes",
+    dispatches.append((
+      self.kernels["sort_leaf_boxes"],
       [
         self.indices,
         self.original_boxes,
@@ -1471,27 +1476,35 @@ class _MetalBVH:
         np.uint32(self.count),
       ],
       self.count,
-    )
-    self._dispatch(
-      "calculate_leaf_nodes",
+      0,
+    ))
+    dispatches.append((
+      self.kernels["calculate_leaf_nodes"],
       [self.nodes, self.indices, np.uint32(self.count)],
       self.count,
-    )
-    self._dispatch(
-      "calculate_internal_nodes",
+      0,
+    ))
+    dispatches.append((
+      self.kernels["calculate_internal_nodes"],
       [self.nodes, self.hashes, np.uint32(self.count)],
       max(self.count - 1, 1),
-    )
+      0,
+    ))
     if self.count > 1:
-      self._dispatch(
-        "calculate_internal_boxes_independent",
+      dispatches.append((
+        self.kernels["calculate_internal_boxes_independent"],
         [
           self.hashes,
           self.boxes,
           np.uint32(self.count),
         ],
         self.count - 1,
-      )
+        0,
+      ))
+    gpuarray.dispatch_batch(
+      dispatches,
+      f"ccd_construct_{self.kind}",
+    )
 
   def scene_size_squared(self):
     self._dispatch(
