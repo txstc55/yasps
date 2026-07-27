@@ -1,0 +1,541 @@
+{
+  "backend": "metal",
+  "device": "Apple M2 Max",
+  "dtype": "float32",
+  "evaluated_on": "2026-07-26",
+  "policy": {
+    "frames": 24,
+    "nonlinear_stopping": "example defaults; no iteration cap",
+    "render_resolution": [
+      960,
+      540
+    ],
+    "shader_cache": "warm",
+    "timing_scope": "MTLCommandBuffer GPU time; compilation and rendering excluded",
+    "video_fps": 12
+  },
+  "variants": {
+    "dropping_in_container": {
+      "cg_iterations": {
+        "maximum": 81,
+        "mean": 71.96363636363637,
+        "minimum": 51,
+        "total": 3958
+      },
+      "collision_candidates": {
+        "maximum": 98906,
+        "mean": 29838.327272727274
+      },
+      "configuration": "1 soft bunny",
+      "description": "Soft bunny dropped in a container",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 43424.37267920468,
+      "frames": 24,
+      "kernel_calls": 72874,
+      "kernel_gpu_ms": 4199.8053445713595,
+      "kernel_gpu_ms_per_frame": 174.99188935713997,
+      "line_search_substeps": {
+        "maximum": 1,
+        "mean": 1.0
+      },
+      "nonlinear_solves": 55,
+      "stage_gpu_ms": {
+        "array_runtime": 51.653251284733415,
+        "ccd": 2564.881961676292,
+        "fused_compute": 10.577125241979957,
+        "hessian_assembly": 491.07070825994015,
+        "linear_solver": 881.8397556897253,
+        "sparse_indices": 199.78254241868854
+      },
+      "top_kernels": [
+        {
+          "calls": 220,
+          "gpu_ms": 1758.8407910661772,
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 4013,
+          "gpu_ms": 522.603040910326,
+          "name": "spmv_blocks_3_3_metal"
+        },
+        {
+          "calls": 110,
+          "gpu_ms": 491.07070825994015,
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_3"
+        },
+        {
+          "calls": 440,
+          "gpu_ms": 444.3896666634828,
+          "name": "fill_uint"
+        },
+        {
+          "calls": 26400,
+          "gpu_ms": 256.09554443508387,
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 1,
+          "gpu_ms": 146.1168749956414,
+          "name": "unique_coord_dims_metal"
+        },
+        {
+          "calls": 11929,
+          "gpu_ms": 93.32800121046603,
+          "name": "vec_add_with_scalar_metal"
+        },
+        {
+          "calls": 8026,
+          "gpu_ms": 87.50067267101258,
+          "name": "dot_product_partial_metal"
+        },
+        {
+          "calls": 8026,
+          "gpu_ms": 81.98120712768286,
+          "name": "sum_partial_metal"
+        },
+        {
+          "calls": 4068,
+          "gpu_ms": 67.85337522160262,
+          "name": "block_jacobi_metal"
+        }
+      ],
+      "video": "evaluation/dropping_in_container.mp4",
+      "wall_seconds": 50.42
+    },
+    "dropping_in_container_mixed": {
+      "cg_iterations": {
+        "maximum": 43,
+        "mean": 1.72,
+        "minimum": 0,
+        "total": 43
+      },
+      "collision_candidates": {
+        "maximum": 70282,
+        "mean": 70282.0
+      },
+      "configuration": "1 soft + 1 affine bunny",
+      "description": "Mixed soft/affine container drop",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 8005.3259247215465,
+      "frames": 24,
+      "kernel_calls": 15214,
+      "kernel_gpu_ms": 1276.9325429107994,
+      "kernel_gpu_ms_per_frame": 53.20552262128331,
+      "line_search_substeps": {
+        "maximum": 9,
+        "mean": 9.0
+      },
+      "nonlinear_solves": 25,
+      "stage_gpu_ms": {
+        "array_runtime": 52.89666261523962,
+        "ccd": 177.91699967347085,
+        "fused_compute": 6.870332290418446,
+        "hessian_assembly": 640.4419572791085,
+        "linear_solver": 23.79967039451003,
+        "sparse_indices": 375.00692065805197
+      },
+      "top_kernels": [
+        {
+          "calls": 171,
+          "gpu_ms": 465.59395734220743,
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_9"
+        },
+        {
+          "calls": 25,
+          "gpu_ms": 248.53604193776846,
+          "name": "unique_coord_dims_metal"
+        },
+        {
+          "calls": 50,
+          "gpu_ms": 174.84799993690103,
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_3"
+        },
+        {
+          "calls": 18,
+          "gpu_ms": 106.55866679735482,
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 43,
+          "gpu_ms": 42.64687479007989,
+          "name": "fill_uint"
+        },
+        {
+          "calls": 25,
+          "gpu_ms": 35.710208234377205,
+          "name": "build_coordinate_metadata_metal"
+        },
+        {
+          "calls": 101,
+          "gpu_ms": 31.846125260926783,
+          "name": "group_gradient_sizes_metal"
+        },
+        {
+          "calls": 2751,
+          "gpu_ms": 27.51562965568155,
+          "name": "bitonic_coord_dim_step_metal"
+        },
+        {
+          "calls": 3,
+          "gpu_ms": 24.213291704654694,
+          "name": "yasps_fill_int"
+        },
+        {
+          "calls": 2448,
+          "gpu_ms": 20.65391663927585,
+          "name": "bitonic_morton_step"
+        }
+      ],
+      "video": "evaluation/dropping_in_container_mixed.mp4",
+      "wall_seconds": 17.11
+    },
+    "dropping_in_container_mixed_separation": {
+      "cg_iterations": {
+        "maximum": 69,
+        "mean": 57.605633802816904,
+        "minimum": 43,
+        "total": 4090
+      },
+      "collision_candidates": {
+        "maximum": 102350,
+        "mean": 26207.267605633802
+      },
+      "configuration": "1 soft + 1 affine bunny",
+      "description": "Mixed container drop with separation",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 52284.04899290763,
+      "frames": 24,
+      "kernel_calls": 108210,
+      "kernel_gpu_ms": 6943.204092560336,
+      "kernel_gpu_ms_per_frame": 289.30017052334733,
+      "line_search_substeps": {
+        "maximum": 1,
+        "mean": 1.0
+      },
+      "nonlinear_solves": 71,
+      "stage_gpu_ms": {
+        "array_runtime": 69.1436673514545,
+        "ccd": 3887.96514517162,
+        "fused_compute": 19.662747741676867,
+        "hessian_assembly": 1957.2527930140495,
+        "linear_solver": 742.4564070533961,
+        "sparse_indices": 266.72333222813904
+      },
+      "top_kernels": [
+        {
+          "calls": 284,
+          "gpu_ms": 2599.074083031155,
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 213,
+          "gpu_ms": 1411.4805838325992,
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_9"
+        },
+        {
+          "calls": 568,
+          "gpu_ms": 732.6156232738867,
+          "name": "fill_uint"
+        },
+        {
+          "calls": 142,
+          "gpu_ms": 545.7722091814503,
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_3"
+        },
+        {
+          "calls": 38624,
+          "gpu_ms": 429.6954399906099,
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 4161,
+          "gpu_ms": 363.19517041556537,
+          "name": "spmv_blocks_3_3_metal"
+        },
+        {
+          "calls": 1,
+          "gpu_ms": 201.11133332829922,
+          "name": "unique_coord_dims_metal"
+        },
+        {
+          "calls": 12696,
+          "gpu_ms": 109.25482830498368,
+          "name": "block_jacobi_metal"
+        },
+        {
+          "calls": 12341,
+          "gpu_ms": 63.450585352256894,
+          "name": "vec_add_with_scalar_metal"
+        },
+        {
+          "calls": 8322,
+          "gpu_ms": 51.85824923682958,
+          "name": "dot_product_partial_metal"
+        }
+      ],
+      "video": "evaluation/dropping_in_container_mixed_separation.mp4",
+      "wall_seconds": 64.8
+    },
+    "dropping_in_container_no_save": {
+      "cg_iterations": {
+        "maximum": 80,
+        "mean": 3.2,
+        "minimum": 0,
+        "total": 80
+      },
+      "collision_candidates": {
+        "maximum": 70253,
+        "mean": 70253.0
+      },
+      "configuration": "1 soft bunny",
+      "description": "Soft container drop without rendering",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 4289.866127306595,
+      "frames": 24,
+      "kernel_calls": 13767,
+      "kernel_gpu_ms": 692.0596689451486,
+      "kernel_gpu_ms_per_frame": 28.83581953938119,
+      "line_search_substeps": {
+        "maximum": 9,
+        "mean": 9.0
+      },
+      "nonlinear_solves": 25,
+      "stage_gpu_ms": {
+        "array_runtime": 37.60166349820793,
+        "ccd": 117.62970965355635,
+        "fused_compute": 3.0760002555325627,
+        "hessian_assembly": 227.85366780590266,
+        "linear_solver": 14.891376602463424,
+        "sparse_indices": 291.00725112948567
+      },
+      "top_kernels": [
+        {
+          "calls": 146,
+          "gpu_ms": 227.85366780590266,
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_3"
+        },
+        {
+          "calls": 25,
+          "gpu_ms": 191.92516710609198,
+          "name": "unique_coord_dims_metal"
+        },
+        {
+          "calls": 18,
+          "gpu_ms": 53.33745805546641,
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 43,
+          "gpu_ms": 41.70512477867305,
+          "name": "fill_uint"
+        },
+        {
+          "calls": 25,
+          "gpu_ms": 33.593083382584155,
+          "name": "build_coordinate_metadata_metal"
+        },
+        {
+          "calls": 2730,
+          "gpu_ms": 22.365085664205253,
+          "name": "bitonic_coord_dim_step_metal"
+        },
+        {
+          "calls": 3513,
+          "gpu_ms": 18.79224879667163,
+          "name": "bitonic_gradient_size_step_metal"
+        },
+        {
+          "calls": 2160,
+          "gpu_ms": 16.652252059429884,
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 98,
+          "gpu_ms": 16.51737466454506,
+          "name": "group_gradient_sizes_metal"
+        },
+        {
+          "calls": 3,
+          "gpu_ms": 14.2246667528525,
+          "name": "yasps_fill_int"
+        }
+      ],
+      "video": null,
+      "wall_seconds": 7.49
+    },
+    "one_bunny_partial_abd": {
+      "cg_iterations": {
+        "maximum": 322,
+        "mean": 159.80434782608697,
+        "minimum": 16,
+        "total": 14702
+      },
+      "collision_candidates": {
+        "maximum": 4741,
+        "mean": 3200.521739130435
+      },
+      "configuration": "1 bunny",
+      "description": "Partial ABD with combined Jacobian/Hessian",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 114577.8396523092,
+      "frames": 24,
+      "kernel_calls": 284989,
+      "kernel_gpu_ms": 12083.932654932141,
+      "kernel_gpu_ms_per_frame": 503.4971939555059,
+      "line_search_substeps": {
+        "maximum": 8,
+        "mean": 1.2173913043478262
+      },
+      "nonlinear_solves": 92,
+      "stage_gpu_ms": {
+        "array_runtime": 55.23983563762158,
+        "ccd": 3887.5780741218477,
+        "fused_compute": 22.72512251511216,
+        "hessian_assembly": 5504.644916974939,
+        "linear_solver": 2469.8536215582862,
+        "sparse_indices": 143.89108412433416
+      },
+      "top_kernels": [
+        {
+          "calls": 552,
+          "gpu_ms": 5496.883166837506,
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_9"
+        },
+        {
+          "calls": 408,
+          "gpu_ms": 2928.642831509933,
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 14794,
+          "gpu_ms": 826.7397882882506,
+          "name": "spmv_blocks_3_3_metal"
+        },
+        {
+          "calls": 48960,
+          "gpu_ms": 427.3584099719301,
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 44658,
+          "gpu_ms": 378.90194240026176,
+          "name": "block_jacobi_metal"
+        },
+        {
+          "calls": 836,
+          "gpu_ms": 376.3018741738051,
+          "name": "fill_uint"
+        },
+        {
+          "calls": 14794,
+          "gpu_ms": 361.80938174948096,
+          "name": "spmv_blocks_3_9_metal"
+        },
+        {
+          "calls": 44198,
+          "gpu_ms": 208.87149940244853,
+          "name": "vec_add_with_scalar_metal"
+        },
+        {
+          "calls": 29588,
+          "gpu_ms": 192.34624132514,
+          "name": "dot_product_partial_metal"
+        },
+        {
+          "calls": 29588,
+          "gpu_ms": 177.9666537186131,
+          "name": "sum_partial_metal"
+        }
+      ],
+      "video": "evaluation/one_bunny_partial_abd.mp4",
+      "wall_seconds": 128.93
+    },
+    "one_bunny_partial_abd_separate_jacobian": {
+      "cg_iterations": {
+        "maximum": 321,
+        "mean": 158.72527472527472,
+        "minimum": 16,
+        "total": 14444
+      },
+      "collision_candidates": {
+        "maximum": 4741,
+        "mean": 3213.21978021978
+      },
+      "configuration": "1 bunny",
+      "description": "Partial ABD with separate Jacobian",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 185952.1276933374,
+      "frames": 24,
+      "kernel_calls": 282919,
+      "kernel_gpu_ms": 12274.907519808039,
+      "kernel_gpu_ms_per_frame": 511.4544799920016,
+      "line_search_substeps": {
+        "maximum": 6,
+        "mean": 1.3076923076923077
+      },
+      "nonlinear_solves": 91,
+      "stage_gpu_ms": {
+        "array_runtime": 59.179038857109845,
+        "ccd": 3224.7403248911723,
+        "fused_compute": 22.819081670604646,
+        "hessian_assembly": 5966.922957333736,
+        "linear_solver": 2682.8126590698957,
+        "sparse_indices": 318.43345798552036
+      },
+      "top_kernels": [
+        {
+          "calls": 637,
+          "gpu_ms": 5959.44129046984,
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_9"
+        },
+        {
+          "calls": 420,
+          "gpu_ms": 2184.23166743014,
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 14535,
+          "gpu_ms": 911.5474239224568,
+          "name": "spmv_blocks_3_3_metal"
+        },
+        {
+          "calls": 50400,
+          "gpu_ms": 476.9503728020936,
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 43878,
+          "gpu_ms": 448.77893466036767,
+          "name": "block_jacobi_metal"
+        },
+        {
+          "calls": 868,
+          "gpu_ms": 419.2686243914068,
+          "name": "fill_uint"
+        },
+        {
+          "calls": 14535,
+          "gpu_ms": 282.37724385689944,
+          "name": "spmv_blocks_3_9_metal"
+        },
+        {
+          "calls": 1,
+          "gpu_ms": 273.18395825568587,
+          "name": "unique_coord_dims_metal"
+        },
+        {
+          "calls": 43423,
+          "gpu_ms": 261.89715589862317,
+          "name": "vec_add_with_scalar_metal"
+        },
+        {
+          "calls": 29070,
+          "gpu_ms": 217.93379820883274,
+          "name": "dot_product_partial_metal"
+        }
+      ],
+      "video": "evaluation/one_bunny_partial_abd_separate_jacobian.mp4",
+      "wall_seconds": 200.65
+    }
+  }
+}

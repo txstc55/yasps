@@ -1,0 +1,746 @@
+{
+  "backend": "metal",
+  "device": "Apple M2 Max",
+  "kernels": {
+    "bitonic_coord_dim_step_metal": {
+      "calls": 2751,
+      "gpu_ms": 27.51562965568155,
+      "max_gpu_ms": 0.08404173422604799,
+      "mean_gpu_ms": 0.010002046403373882,
+      "mean_wall_ms": 0.30932185335388807,
+      "min_gpu_ms": 0.0038750004023313522,
+      "threads": 525729792,
+      "wall_ms": 850.944418576546
+    },
+    "bitonic_gradient_size_step_metal": {
+      "calls": 3786,
+      "gpu_ms": 20.393456681631505,
+      "max_gpu_ms": 0.06404158193618059,
+      "mean_gpu_ms": 0.005386544289918517,
+      "mean_wall_ms": 0.31657357086667104,
+      "min_gpu_ms": 0.003166729584336281,
+      "threads": 51801888,
+      "wall_ms": 1198.5475393012166
+    },
+    "bitonic_morton_step": {
+      "calls": 2448,
+      "gpu_ms": 20.65391663927585,
+      "max_gpu_ms": 0.01425005029886961,
+      "mean_gpu_ms": 0.00843705745068458,
+      "mean_wall_ms": 0.298633880400041,
+      "min_gpu_ms": 0.007125083357095718,
+      "threads": 160432128,
+      "wall_ms": 731.0557392193004
+    },
+    "block_jacobi_metal": {
+      "calls": 279,
+      "gpu_ms": 2.4625847581773996,
+      "max_gpu_ms": 0.017125043086707592,
+      "mean_gpu_ms": 0.008826468667302507,
+      "mean_wall_ms": 0.4430373435452794,
+      "min_gpu_ms": 0.004375004209578037,
+      "threads": 1785135,
+      "wall_ms": 123.60741884913296
+    },
+    "build_coordinate_metadata_metal": {
+      "calls": 25,
+      "gpu_ms": 35.710208234377205,
+      "max_gpu_ms": 25.630249991081655,
+      "mean_gpu_ms": 1.4284083293750882,
+      "mean_wall_ms": 3.445970038883388,
+      "min_gpu_ms": 0.38691668305546045,
+      "threads": 25,
+      "wall_ms": 86.1492509720847
+    },
+    "calculate_edge_leaf_boxes": {
+      "calls": 9,
+      "gpu_ms": 0.1246246974915266,
+      "max_gpu_ms": 0.023708329536020756,
+      "mean_gpu_ms": 0.013847188610169623,
+      "mean_wall_ms": 0.3437734493571851,
+      "min_gpu_ms": 0.011249911040067673,
+      "threads": 562617,
+      "wall_ms": 3.093961044214666
+    },
+    "calculate_face_leaf_boxes": {
+      "calls": 9,
+      "gpu_ms": 0.11100003030151129,
+      "max_gpu_ms": 0.016708276234567165,
+      "mean_gpu_ms": 0.01233333670016792,
+      "mean_wall_ms": 0.28467587091856533,
+      "min_gpu_ms": 0.011416617780923843,
+      "threads": 375066,
+      "wall_ms": 2.562082838267088
+    },
+    "calculate_internal_boxes_independent": {
+      "calls": 18,
+      "gpu_ms": 106.55866679735482,
+      "max_gpu_ms": 7.107583340257406,
+      "mean_gpu_ms": 5.919925933186379,
+      "mean_wall_ms": 6.218969906007664,
+      "min_gpu_ms": 4.73562499973923,
+      "threads": 937665,
+      "wall_ms": 111.94145830813795
+    },
+    "calculate_internal_nodes": {
+      "calls": 18,
+      "gpu_ms": 0.3432916710153222,
+      "max_gpu_ms": 0.021708314307034016,
+      "mean_gpu_ms": 0.019071759500851233,
+      "mean_wall_ms": 0.4171506152488291,
+      "min_gpu_ms": 0.01608335878700018,
+      "threads": 937665,
+      "wall_ms": 7.508711074478924
+    },
+    "calculate_leaf_nodes": {
+      "calls": 18,
+      "gpu_ms": 0.12000009883195162,
+      "max_gpu_ms": 0.0116666778922081,
+      "mean_gpu_ms": 0.006666672157330645,
+      "mean_wall_ms": 0.44827544156254995,
+      "min_gpu_ms": 0.005583395250141621,
+      "threads": 937683,
+      "wall_ms": 8.068957948125899
+    },
+    "calculate_morton_hashes": {
+      "calls": 18,
+      "gpu_ms": 0.2350417198613286,
+      "max_gpu_ms": 0.019749975763261318,
+      "mean_gpu_ms": 0.013057873325629367,
+      "mean_wall_ms": 0.32915965291774935,
+      "min_gpu_ms": 0.008208327926695347,
+      "threads": 1179648,
+      "wall_ms": 5.924873752519488
+    },
+    "calculate_step_reciprocals": {
+      "calls": 1,
+      "gpu_ms": 0.030916649848222733,
+      "max_gpu_ms": 0.030916649848222733,
+      "mean_gpu_ms": 0.030916649848222733,
+      "mean_wall_ms": 0.7178329396992922,
+      "min_gpu_ms": 0.030916649848222733,
+      "threads": 70282,
+      "wall_ms": 0.7178329396992922
+    },
+    "compute_coordinates_metal": {
+      "calls": 101,
+      "gpu_ms": 2.2444574860855937,
+      "max_gpu_ms": 0.08941662963479757,
+      "mean_gpu_ms": 0.022222351347382117,
+      "mean_wall_ms": 0.5295861692232365,
+      "min_gpu_ms": 0.004625064320862293,
+      "threads": 247721,
+      "wall_ms": 53.48820309154689
+    },
+    "compute_hessian_and_gradient_global_function_final_gradient_size_3": {
+      "calls": 50,
+      "gpu_ms": 174.84799993690103,
+      "max_gpu_ms": 12.124125030823052,
+      "mean_gpu_ms": 3.4969599987380207,
+      "mean_wall_ms": 6.998712480999529,
+      "min_gpu_ms": 0.0868749339133501,
+      "threads": 2478200,
+      "wall_ms": 349.93562404997647
+    },
+    "compute_hessian_and_gradient_global_function_final_gradient_size_9": {
+      "calls": 171,
+      "gpu_ms": 465.59395734220743,
+      "max_gpu_ms": 10.662333341315389,
+      "mean_gpu_ms": 2.722771680363786,
+      "mean_wall_ms": 6.648338932887111,
+      "min_gpu_ms": 0.1221667043864727,
+      "threads": 2527689,
+      "wall_ms": 1136.8659575236961
+    },
+    "compute_permutation_metal": {
+      "calls": 101,
+      "gpu_ms": 1.5472086379304528,
+      "max_gpu_ms": 0.026958296075463295,
+      "mean_gpu_ms": 0.015318897405252009,
+      "mean_wall_ms": 0.5560569121677539,
+      "min_gpu_ms": 0.004624947905540466,
+      "threads": 390753,
+      "wall_ms": 56.161748128943145
+    },
+    "copy_aabb": {
+      "calls": 18,
+      "gpu_ms": 0.06920821033418179,
+      "max_gpu_ms": 0.004416564479470253,
+      "mean_gpu_ms": 0.0038449005741212103,
+      "mean_wall_ms": 0.271601764123059,
+      "min_gpu_ms": 0.003291759639978409,
+      "threads": 18,
+      "wall_ms": 4.888831754215062
+    },
+    "copy_uint_metal": {
+      "calls": 53,
+      "gpu_ms": 0.32187532633543015,
+      "max_gpu_ms": 0.009124982170760632,
+      "mean_gpu_ms": 0.006073119364819437,
+      "mean_wall_ms": 0.4713946606366421,
+      "min_gpu_ms": 0.003291643224656582,
+      "threads": 246790,
+      "wall_ms": 24.98391701374203
+    },
+    "dot_product_partial_metal": {
+      "calls": 136,
+      "gpu_ms": 0.8694167481735349,
+      "max_gpu_ms": 0.012125005014240742,
+      "mean_gpu_ms": 0.006392770207158345,
+      "mean_wall_ms": 0.24004196337259867,
+      "min_gpu_ms": 0.005666632205247879,
+      "threads": 7833600,
+      "wall_ms": 32.64570701867342
+    },
+    "extract_unique_coordinates_metal": {
+      "calls": 25,
+      "gpu_ms": 0.09804137516766787,
+      "max_gpu_ms": 0.00825000461190939,
+      "mean_gpu_ms": 0.003921655006706715,
+      "mean_wall_ms": 0.32101829536259174,
+      "min_gpu_ms": 0.003374996595084667,
+      "threads": 174963,
+      "wall_ms": 8.025457384064794
+    },
+    "fill_float_metal": {
+      "calls": 68,
+      "gpu_ms": 0.28004241175949574,
+      "max_gpu_ms": 0.008999952115118504,
+      "mean_gpu_ms": 0.004118270761169055,
+      "mean_wall_ms": 0.19081613144782536,
+      "min_gpu_ms": 0.003541703335940838,
+      "threads": 3916188,
+      "wall_ms": 12.975496938452125
+    },
+    "fill_uint": {
+      "calls": 43,
+      "gpu_ms": 42.64687479007989,
+      "max_gpu_ms": 3.426375100389123,
+      "mean_gpu_ms": 0.9917877858158114,
+      "mean_wall_ms": 1.302294571190899,
+      "min_gpu_ms": 0.002874992787837982,
+      "threads": 1220000121,
+      "wall_ms": 55.998666561208665
+    },
+    "group_gradient_sizes_metal": {
+      "calls": 101,
+      "gpu_ms": 31.846125260926783,
+      "max_gpu_ms": 8.628249983303249,
+      "mean_gpu_ms": 0.3153081709002652,
+      "mean_wall_ms": 1.295481053512949,
+      "min_gpu_ms": 0.004166620783507824,
+      "threads": 101,
+      "wall_ms": 130.84358640480787
+    },
+    "inclusive_scan_uint_step_metal": {
+      "calls": 737,
+      "gpu_ms": 4.570875782519579,
+      "max_gpu_ms": 0.009750016033649445,
+      "mean_gpu_ms": 0.00620200241861544,
+      "mean_wall_ms": 0.4664113231096796,
+      "min_gpu_ms": 0.003249966539442539,
+      "threads": 3815934,
+      "wall_ms": 343.74514513183385
+    },
+    "invert_diagonal_blocks_3_metal": {
+      "calls": 50,
+      "gpu_ms": 0.6041666492819786,
+      "max_gpu_ms": 0.026541645638644695,
+      "mean_gpu_ms": 0.012083332985639572,
+      "mean_wall_ms": 0.5202091950923204,
+      "min_gpu_ms": 0.004583387635648251,
+      "threads": 479850,
+      "wall_ms": 26.010459754616022
+    },
+    "invert_diagonal_blocks_9_metal": {
+      "calls": 25,
+      "gpu_ms": 10.708166984841228,
+      "max_gpu_ms": 0.6688333814963698,
+      "mean_gpu_ms": 0.4283266793936491,
+      "mean_wall_ms": 0.8966016303747892,
+      "min_gpu_ms": 0.39612501859664917,
+      "threads": 25,
+      "wall_ms": 22.41504075936973
+    },
+    "lookup_coordinate_offsets_metal": {
+      "calls": 25,
+      "gpu_ms": 0.4258336266502738,
+      "max_gpu_ms": 0.1551249297335744,
+      "mean_gpu_ms": 0.017033345066010952,
+      "mean_wall_ms": 1.4685683650895953,
+      "min_gpu_ms": 0.007958384230732918,
+      "threads": 1390728,
+      "wall_ms": 36.71420912723988
+    },
+    "pack_coord_dims_metal": {
+      "calls": 25,
+      "gpu_ms": 0.27470814529806376,
+      "max_gpu_ms": 0.08054159115999937,
+      "mean_gpu_ms": 0.01098832581192255,
+      "mean_wall_ms": 0.4946549655869603,
+      "min_gpu_ms": 0.00400003045797348,
+      "threads": 2490368,
+      "wall_ms": 12.366374139674008
+    },
+    "query_edges_ccd": {
+      "calls": 1,
+      "gpu_ms": 0.440958421677351,
+      "max_gpu_ms": 0.440958421677351,
+      "mean_gpu_ms": 0.440958421677351,
+      "mean_wall_ms": 1.099540968425572,
+      "min_gpu_ms": 0.440958421677351,
+      "threads": 62513,
+      "wall_ms": 1.099540968425572
+    },
+    "query_edges_cd": {
+      "calls": 8,
+      "gpu_ms": 4.039958352223039,
+      "max_gpu_ms": 0.519041670486331,
+      "mean_gpu_ms": 0.5049947940278798,
+      "mean_wall_ms": 1.9821511377813295,
+      "min_gpu_ms": 0.4926250549033284,
+      "threads": 500104,
+      "wall_ms": 15.857209102250636
+    },
+    "query_faces_ccd": {
+      "calls": 1,
+      "gpu_ms": 0.21075003314763308,
+      "max_gpu_ms": 0.21075003314763308,
+      "mean_gpu_ms": 0.21075003314763308,
+      "mean_wall_ms": 13.00625002477318,
+      "min_gpu_ms": 0.21075003314763308,
+      "threads": 20844,
+      "wall_ms": 13.00625002477318
+    },
+    "query_faces_cd": {
+      "calls": 8,
+      "gpu_ms": 1.8305416451767087,
+      "max_gpu_ms": 0.2373333554714918,
+      "mean_gpu_ms": 0.2288177056470886,
+      "mean_wall_ms": 1.9589896546676755,
+      "min_gpu_ms": 0.20970834884792566,
+      "threads": 166752,
+      "wall_ms": 15.671917237341404
+    },
+    "reduce_aabbs": {
+      "calls": 36,
+      "gpu_ms": 0.2514999359846115,
+      "max_gpu_ms": 0.01325004268437624,
+      "mean_gpu_ms": 0.0069861093329058755,
+      "mean_wall_ms": 0.2553518505818728,
+      "min_gpu_ms": 0.005291658453643322,
+      "threads": 944640,
+      "wall_ms": 9.19266662094742
+    },
+    "reduce_max_float": {
+      "calls": 3,
+      "gpu_ms": 0.018916791304945946,
+      "max_gpu_ms": 0.007125083357095718,
+      "mean_gpu_ms": 0.006305597101648648,
+      "mean_wall_ms": 0.1792780046040813,
+      "min_gpu_ms": 0.005875015631318092,
+      "threads": 71168,
+      "wall_ms": 0.5378340138122439
+    },
+    "scene0_bunnies_abd_affine_bodies_affine_energy_get_indices_metal": {
+      "calls": 1,
+      "gpu_ms": 0.00500003807246685,
+      "max_gpu_ms": 0.00500003807246685,
+      "mean_gpu_ms": 0.00500003807246685,
+      "mean_wall_ms": 0.202000024728477,
+      "min_gpu_ms": 0.00500003807246685,
+      "threads": 1,
+      "wall_ms": 0.202000024728477
+    },
+    "scene0_bunnies_abd_affine_bodies_affine_energy_global_function": {
+      "calls": 33,
+      "gpu_ms": 0.14254183042794466,
+      "max_gpu_ms": 0.005916692316532135,
+      "mean_gpu_ms": 0.0043194494069074135,
+      "mean_wall_ms": 0.38400889995197457,
+      "min_gpu_ms": 0.0037499703466892242,
+      "threads": 33,
+      "wall_ms": 12.67229369841516
+    },
+    "scene0_bunnies_abd_deformation_gradient_snh_abds_get_indices_metal": {
+      "calls": 1,
+      "gpu_ms": 0.010541756637394428,
+      "max_gpu_ms": 0.010541756637394428,
+      "mean_gpu_ms": 0.010541756637394428,
+      "mean_wall_ms": 0.6725420244038105,
+      "min_gpu_ms": 0.010541756637394428,
+      "threads": 79935,
+      "wall_ms": 0.6725420244038105
+    },
+    "scene0_bunnies_abd_deformation_gradient_snh_abds_global_function": {
+      "calls": 33,
+      "gpu_ms": 1.3647498562932014,
+      "max_gpu_ms": 0.04416669253259897,
+      "mean_gpu_ms": 0.041356056251309135,
+      "mean_wall_ms": 2.4980834903985714,
+      "min_gpu_ms": 0.03687490243464708,
+      "threads": 2637855,
+      "wall_ms": 82.43675518315285
+    },
+    "scene0_bunnies_abd_vertices_abd_inertia_abds_get_indices_metal": {
+      "calls": 1,
+      "gpu_ms": 0.009499955922365189,
+      "max_gpu_ms": 0.009499955922365189,
+      "mean_gpu_ms": 0.009499955922365189,
+      "mean_wall_ms": 1.3970840955153108,
+      "min_gpu_ms": 0.009499955922365189,
+      "threads": 19193,
+      "wall_ms": 1.3970840955153108
+    },
+    "scene0_bunnies_abd_vertices_abd_inertia_abds_global_function": {
+      "calls": 33,
+      "gpu_ms": 0.4226664314046502,
+      "max_gpu_ms": 0.01633330248296261,
+      "mean_gpu_ms": 0.012808073678928795,
+      "mean_wall_ms": 2.9442512190364525,
+      "min_gpu_ms": 0.00925001222640276,
+      "threads": 633369,
+      "wall_ms": 97.16029022820294
+    },
+    "scene0_bunnies_abd_vertices_abd_position_global_function": {
+      "calls": 49,
+      "gpu_ms": 0.5335415480658412,
+      "max_gpu_ms": 0.021583284251391888,
+      "mean_gpu_ms": 0.010888603021751861,
+      "mean_wall_ms": 1.8062924643104175,
+      "min_gpu_ms": 0.005375011824071407,
+      "threads": 940457,
+      "wall_ms": 88.50833075121045
+    },
+    "scene0_bunnies_soft_deformation_gradient_snh_softs_get_indices_metal": {
+      "calls": 1,
+      "gpu_ms": 0.013333279639482498,
+      "max_gpu_ms": 0.013333279639482498,
+      "mean_gpu_ms": 0.013333279639482498,
+      "mean_wall_ms": 0.6857500411570072,
+      "min_gpu_ms": 0.013333279639482498,
+      "threads": 79935,
+      "wall_ms": 0.6857500411570072
+    },
+    "scene0_bunnies_soft_deformation_gradient_snh_softs_global_function": {
+      "calls": 33,
+      "gpu_ms": 1.3816248392686248,
+      "max_gpu_ms": 0.07279170677065849,
+      "mean_gpu_ms": 0.04186741937177651,
+      "mean_wall_ms": 2.4373498039715216,
+      "min_gpu_ms": 0.03612495493143797,
+      "threads": 2637855,
+      "wall_ms": 80.43254353106022
+    },
+    "scene0_bunnies_soft_vertices_soft_inertia_softs_get_indices_metal": {
+      "calls": 1,
+      "gpu_ms": 0.004958361387252808,
+      "max_gpu_ms": 0.004958361387252808,
+      "mean_gpu_ms": 0.004958361387252808,
+      "mean_wall_ms": 0.26345800142735243,
+      "min_gpu_ms": 0.004958361387252808,
+      "threads": 19193,
+      "wall_ms": 0.26345800142735243
+    },
+    "scene0_bunnies_soft_vertices_soft_inertia_softs_global_function": {
+      "calls": 33,
+      "gpu_ms": 0.3362500574439764,
+      "max_gpu_ms": 0.01591665204614401,
+      "mean_gpu_ms": 0.010189395680120497,
+      "mean_wall_ms": 1.9543219999777097,
+      "min_gpu_ms": 0.008624978363513947,
+      "threads": 633369,
+      "wall_ms": 64.49262599926442
+    },
+    "scene0_collision_mesh_ee_edge_edge_get_indices_metal": {
+      "calls": 24,
+      "gpu_ms": 0.38925011176615953,
+      "max_gpu_ms": 0.02150004729628563,
+      "mean_gpu_ms": 0.016218754656923313,
+      "mean_wall_ms": 1.1219584800225373,
+      "min_gpu_ms": 0.008541624993085861,
+      "threads": 912,
+      "wall_ms": 26.927003520540893
+    },
+    "scene0_collision_mesh_ee_edge_edge_global_function": {
+      "calls": 32,
+      "gpu_ms": 0.5015833303332329,
+      "max_gpu_ms": 0.030125025659799576,
+      "mean_gpu_ms": 0.015674479072913527,
+      "mean_wall_ms": 2.485053384589264,
+      "min_gpu_ms": 0.012500095181167126,
+      "threads": 1217,
+      "wall_ms": 79.52170830685645
+    },
+    "scene0_collision_mesh_pe_point_edge_get_indices_metal": {
+      "calls": 24,
+      "gpu_ms": 0.30516658443957567,
+      "max_gpu_ms": 0.0226249685510993,
+      "mean_gpu_ms": 0.012715274351648986,
+      "mean_wall_ms": 1.6134773662391428,
+      "min_gpu_ms": 0.0074999406933784485,
+      "threads": 39840,
+      "wall_ms": 38.72345678973943
+    },
+    "scene0_collision_mesh_pe_point_edge_global_function": {
+      "calls": 32,
+      "gpu_ms": 0.42591639794409275,
+      "max_gpu_ms": 0.018874998204410076,
+      "mean_gpu_ms": 0.013309887435752898,
+      "mean_wall_ms": 2.558183616201859,
+      "min_gpu_ms": 0.011166674084961414,
+      "threads": 53119,
+      "wall_ms": 81.86187571845949
+    },
+    "scene0_collision_mesh_pp_point_point_get_indices_metal": {
+      "calls": 24,
+      "gpu_ms": 0.2907498273998499,
+      "max_gpu_ms": 0.019583269022405148,
+      "mean_gpu_ms": 0.012114576141660413,
+      "mean_wall_ms": 1.255859305577663,
+      "min_gpu_ms": 0.006624963134527206,
+      "threads": 8640,
+      "wall_ms": 30.140623333863914
+    },
+    "scene0_collision_mesh_pp_point_point_global_function": {
+      "calls": 32,
+      "gpu_ms": 0.4024580121040344,
+      "max_gpu_ms": 0.015125027857720852,
+      "mean_gpu_ms": 0.012576812878251076,
+      "mean_wall_ms": 2.6637500050128438,
+      "min_gpu_ms": 0.010624993592500687,
+      "threads": 11520,
+      "wall_ms": 85.240000160411
+    },
+    "scene0_collision_mesh_pt_point_triangle_get_indices_metal": {
+      "calls": 24,
+      "gpu_ms": 0.49395859241485596,
+      "max_gpu_ms": 0.12712494935840368,
+      "mean_gpu_ms": 0.020581608017285664,
+      "mean_wall_ms": 1.2171337196681027,
+      "min_gpu_ms": 0.008625094778835773,
+      "threads": 72,
+      "wall_ms": 29.211209272034466
+    },
+    "scene0_collision_mesh_pt_point_triangle_global_function": {
+      "calls": 32,
+      "gpu_ms": 0.47683354932814837,
+      "max_gpu_ms": 0.025583314709365368,
+      "mean_gpu_ms": 0.014901048416504636,
+      "mean_wall_ms": 2.4530143055017106,
+      "min_gpu_ms": 0.01141673419624567,
+      "threads": 96,
+      "wall_ms": 78.49645777605474
+    },
+    "scene0_collision_mesh_vertices_position_global_function": {
+      "calls": 61,
+      "gpu_ms": 0.8821664378046989,
+      "max_gpu_ms": 0.07958326023072004,
+      "mean_gpu_ms": 0.014461744882044245,
+      "mean_wall_ms": 2.2327957510734433,
+      "min_gpu_ms": 0.007875030860304832,
+      "threads": 2342034,
+      "wall_ms": 136.20054081548005
+    },
+    "separate_edge_pairs": {
+      "calls": 8,
+      "gpu_ms": 0.04254165105521679,
+      "max_gpu_ms": 0.00600004568696022,
+      "mean_gpu_ms": 0.005317706381902099,
+      "mean_wall_ms": 0.6561720074387267,
+      "min_gpu_ms": 0.00500003807246685,
+      "threads": 11808,
+      "wall_ms": 5.249376059509814
+    },
+    "separate_face_pairs": {
+      "calls": 8,
+      "gpu_ms": 0.04212488420307636,
+      "max_gpu_ms": 0.005583395250141621,
+      "mean_gpu_ms": 0.005265610525384545,
+      "mean_wall_ms": 0.8300783520098776,
+      "min_gpu_ms": 0.00500003807246685,
+      "threads": 4680,
+      "wall_ms": 6.6406268160790205
+    },
+    "sort_leaf_boxes": {
+      "calls": 18,
+      "gpu_ms": 0.14616665430366993,
+      "max_gpu_ms": 0.0116666778922081,
+      "mean_gpu_ms": 0.008120369683537219,
+      "mean_wall_ms": 0.2262292158169051,
+      "min_gpu_ms": 0.006749993190169334,
+      "threads": 937683,
+      "wall_ms": 4.072125884704292
+    },
+    "spmv_blocks_3_3_metal": {
+      "calls": 92,
+      "gpu_ms": 6.265499978326261,
+      "max_gpu_ms": 0.1561250537633896,
+      "mean_gpu_ms": 0.0681032606339811,
+      "mean_wall_ms": 0.40486366260270384,
+      "min_gpu_ms": 0.005249981768429279,
+      "threads": 8800340,
+      "wall_ms": 37.247456959448755
+    },
+    "spmv_blocks_9_3_metal": {
+      "calls": 68,
+      "gpu_ms": 0.4947502166032791,
+      "max_gpu_ms": 0.0108333770185709,
+      "mean_gpu_ms": 0.007275738479459987,
+      "mean_wall_ms": 0.30259007026496176,
+      "min_gpu_ms": 0.006375019438564777,
+      "threads": 68,
+      "wall_ms": 20.5761247780174
+    },
+    "spmv_blocks_9_9_metal": {
+      "calls": 68,
+      "gpu_ms": 0.5308749387040734,
+      "max_gpu_ms": 0.012541771866381168,
+      "mean_gpu_ms": 0.007806984392706962,
+      "mean_wall_ms": 0.29499258380383253,
+      "min_gpu_ms": 0.006666639819741249,
+      "threads": 68,
+      "wall_ms": 20.059495698660612
+    },
+    "sum_partial_metal": {
+      "calls": 136,
+      "gpu_ms": 0.816750805824995,
+      "max_gpu_ms": 0.011249911040067673,
+      "mean_gpu_ms": 0.00600552063106614,
+      "mean_wall_ms": 0.16887132711845504,
+      "min_gpu_ms": 0.005291658453643322,
+      "threads": 34816,
+      "wall_ms": 22.966500488109887
+    },
+    "unique_coord_dims_metal": {
+      "calls": 25,
+      "gpu_ms": 248.53604193776846,
+      "max_gpu_ms": 199.31550009641796,
+      "mean_gpu_ms": 9.941441677510738,
+      "mean_wall_ms": 10.469971597194672,
+      "min_gpu_ms": 1.8878750270232558,
+      "threads": 25,
+      "wall_ms": 261.7492899298668
+    },
+    "vec_add_with_scalar_metal": {
+      "calls": 154,
+      "gpu_ms": 0.7674169028177857,
+      "max_gpu_ms": 0.009958283044397831,
+      "mean_gpu_ms": 0.004983226641673933,
+      "mean_wall_ms": 0.23352253770866951,
+      "min_gpu_ms": 0.004041707143187523,
+      "threads": 8869014,
+      "wall_ms": 35.962470807135105
+    },
+    "yasps_abs_float": {
+      "calls": 25,
+      "gpu_ms": 0.2656664000824094,
+      "max_gpu_ms": 0.01779163721948862,
+      "mean_gpu_ms": 0.010626656003296375,
+      "mean_wall_ms": 0.518991663120687,
+      "min_gpu_ms": 0.007999944500625134,
+      "threads": 2879550,
+      "wall_ms": 12.974791578017175
+    },
+    "yasps_divide_float_scalar": {
+      "calls": 48,
+      "gpu_ms": 0.3675831248983741,
+      "max_gpu_ms": 0.014041666872799397,
+      "mean_gpu_ms": 0.007657981768716127,
+      "mean_wall_ms": 0.4703671414366302,
+      "min_gpu_ms": 0.005500041879713535,
+      "threads": 2763792,
+      "wall_ms": 22.57762278895825
+    },
+    "yasps_fill_float": {
+      "calls": 723,
+      "gpu_ms": 9.15729021653533,
+      "max_gpu_ms": 3.39225004427135,
+      "mean_gpu_ms": 0.01266568494679852,
+      "mean_wall_ms": 0.33079448509008147,
+      "min_gpu_ms": 0.002916669473052025,
+      "threads": 163431487,
+      "wall_ms": 239.1644127201289
+    },
+    "yasps_fill_int": {
+      "calls": 3,
+      "gpu_ms": 24.213291704654694,
+      "max_gpu_ms": 20.713708363473415,
+      "mean_gpu_ms": 8.071097234884897,
+      "mean_wall_ms": 23.41623600417127,
+      "min_gpu_ms": 0.006458372808992863,
+      "threads": 440038394,
+      "wall_ms": 70.24870801251382
+    },
+    "yasps_fill_short": {
+      "calls": 110,
+      "gpu_ms": 0.7207915186882019,
+      "max_gpu_ms": 0.035708420909941196,
+      "mean_gpu_ms": 0.006552650169892745,
+      "mean_wall_ms": 0.18529737664555962,
+      "min_gpu_ms": 0.003125052899122238,
+      "threads": 1514180,
+      "wall_ms": 20.382711431011558
+    },
+    "yasps_fill_uint": {
+      "calls": 751,
+      "gpu_ms": 9.768790798261762,
+      "max_gpu_ms": 1.5060834120959044,
+      "mean_gpu_ms": 0.013007710783304609,
+      "mean_wall_ms": 0.3081624910480947,
+      "min_gpu_ms": 0.002874992787837982,
+      "threads": 143049830,
+      "wall_ms": 231.4300307771191
+    },
+    "yasps_fill_ushort": {
+      "calls": 481,
+      "gpu_ms": 3.194791032001376,
+      "max_gpu_ms": 0.09558338206261396,
+      "mean_gpu_ms": 0.006641977197508059,
+      "mean_wall_ms": 0.33119169602135734,
+      "min_gpu_ms": 0.002874992787837982,
+      "threads": 10057051,
+      "wall_ms": 159.30320578627288
+    },
+    "yasps_multiply_float_scalar": {
+      "calls": 24,
+      "gpu_ms": 0.11450028978288174,
+      "max_gpu_ms": 0.007500057108700275,
+      "mean_gpu_ms": 0.004770845407620072,
+      "mean_wall_ms": 0.2339079558926945,
+      "min_gpu_ms": 0.0032082898542284966,
+      "threads": 460728,
+      "wall_ms": 5.613790941424668
+    },
+    "yasps_reduce_max_float": {
+      "calls": 75,
+      "gpu_ms": 0.5994999082759023,
+      "max_gpu_ms": 0.019875005818903446,
+      "mean_gpu_ms": 0.007993332110345364,
+      "mean_wall_ms": 0.4463545170923074,
+      "min_gpu_ms": 0.005249981768429279,
+      "threads": 2899200,
+      "wall_ms": 33.476588781923056
+    },
+    "yasps_reduce_sum_float": {
+      "calls": 555,
+      "gpu_ms": 3.2702914904803038,
+      "max_gpu_ms": 0.014541670680046082,
+      "mean_gpu_ms": 0.005892417099964511,
+      "mean_wall_ms": 0.3508096793666482,
+      "min_gpu_ms": 0.005041714757680893,
+      "threads": 6738176,
+      "wall_ms": 194.69937204848975
+    },
+    "yasps_subtract_float_array": {
+      "calls": 172,
+      "gpu_ms": 1.2241661315783858,
+      "max_gpu_ms": 0.019999919459223747,
+      "mean_gpu_ms": 0.007117244951037127,
+      "mean_wall_ms": 0.535654567376992,
+      "min_gpu_ms": 0.0031249364838004112,
+      "threads": 7543845,
+      "wall_ms": 92.13258558884263
+    }
+  }
+}
