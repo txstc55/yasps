@@ -1396,7 +1396,7 @@ class _MetalBVH:
     timing["gpu_ms"] += kernel.last_gpu_time_ms
     timing["calls"] += 1
 
-  def construct(
+  def _construct_dispatches(
     self,
     vertices,
     primitives,
@@ -1520,8 +1520,22 @@ class _MetalBVH:
         (self.count - 1) * 32,
         32,
       ))
+    return dispatches
+
+  def construct(
+    self,
+    vertices,
+    primitives,
+    directions=None,
+    alpha=0.0,
+  ):
     gpuarray.dispatch_batch(
-      dispatches,
+      self._construct_dispatches(
+        vertices,
+        primitives,
+        directions,
+        alpha,
+      ),
       f"ccd_construct_{self.kind}",
     )
 
@@ -1873,30 +1887,33 @@ class MetalCCD:
     )
     self._check_pair_capacity(True)
 
+  def _reset_dispatches(self):
+    return [
+      (
+        self.kernels["fill_uint"],
+        [
+          self._separated_counts,
+          np.uint32(0),
+          np.uint32(self._separated_counts.size),
+        ],
+        self._separated_counts.size,
+        0,
+      ),
+      (
+        self.kernels["fill_uint"],
+        [
+          self._cp_num,
+          np.uint32(0),
+          np.uint32(self._cp_num.size),
+        ],
+        self._cp_num.size,
+        0,
+      ),
+    ]
+
   def reset(self):
     gpuarray.dispatch_batch(
-      [
-        (
-          self.kernels["fill_uint"],
-          [
-            self._separated_counts,
-            np.uint32(0),
-            np.uint32(self._separated_counts.size),
-          ],
-          self._separated_counts.size,
-          0,
-        ),
-        (
-          self.kernels["fill_uint"],
-          [
-            self._cp_num,
-            np.uint32(0),
-            np.uint32(self._cp_num.size),
-          ],
-          self._cp_num.size,
-          0,
-        ),
-      ],
+      self._reset_dispatches(),
       "ccd_reset",
     )
 
@@ -1921,11 +1938,66 @@ class MetalCCD:
   ):
     start = time.perf_counter()
     self.last_timings = {}
-    self.reset()
+    dispatches = self._reset_dispatches()
     if self.face_bvh is not None:
-      self.ccd_faces(vertices, dhat, moving_directions, alpha)
+      self.face_vertices = vertices
+      dispatches.extend(self.face_bvh._construct_dispatches(
+        vertices,
+        self.faces,
+        moving_directions,
+        alpha,
+      ))
+      dispatches.append((
+        self.kernels["query_faces_ccd"],
+        [
+          self._btypes,
+          vertices,
+          moving_directions,
+          self.faces,
+          self.surface_vertices,
+          self.face_bvh.boxes,
+          self.face_bvh.nodes,
+          self._collision_pairs_ccd,
+          self._cp_num,
+          self._mesh_indices,
+          np.float32(dhat),
+          np.float32(alpha),
+          np.uint32(self.num_surface_vertices),
+        ],
+        self.num_surface_vertices,
+        0,
+      ))
     if self.edge_bvh is not None:
-      self.ccd_edges(vertices, dhat, moving_directions, alpha)
+      self.edge_vertices = vertices
+      dispatches.extend(self.edge_bvh._construct_dispatches(
+        vertices,
+        self.edges,
+        moving_directions,
+        alpha,
+      ))
+      count = self.edge_bvh.count
+      dispatches.append((
+        self.kernels["query_edges_ccd"],
+        [
+          self._btypes,
+          vertices,
+          self.edges,
+          self.edge_bvh.boxes,
+          self.edge_bvh.nodes,
+          self._collision_pairs_ccd,
+          self._cp_num,
+          self._mesh_indices,
+          np.float32(dhat),
+          np.uint32(count),
+        ],
+        count,
+        0,
+      ))
+    gpuarray.dispatch_batch(
+      dispatches,
+      "ccd_continuous",
+    )
+    self._check_pair_capacity(True)
     elapsed = (time.perf_counter() - start) * 1000.0
     print(
       f"Continuous collision detection took {elapsed:.2f} ms"
