@@ -13,6 +13,7 @@ SOFT_BUNNIES="${YASPS_EVAL_SOFT_BUNNIES:-1}"
 MIXED_BUNNIES="${YASPS_EVAL_MIXED_BUNNIES:-2}"
 MAX_INNER_ITERATIONS="${YASPS_EVAL_MAX_INNER_ITERATIONS:-0}"
 SOLVER_DIAGNOSTICS="${YASPS_EVAL_SOLVER_DIAGNOSTICS:-0}"
+RUN_PARTIAL="${YASPS_EVAL_RUN_PARTIAL:-1}"
 YASPS_PATH="$REPOSITORY_ROOT/yasps"
 mkdir -p "$ARTIFACT_ROOT"
 ARTIFACT_ROOT="$(cd "$ARTIFACT_ROOT" && pwd)"
@@ -48,15 +49,17 @@ run_rendered() {
   )
 }
 
-run_rendered \
-  one_bunny_partial_abd \
-  "$REPOSITORY_ROOT/examples/one_bunny_partial_abd" \
-  one_bunny_partial_abd.py
+if [[ "$RUN_PARTIAL" == "1" ]]; then
+  run_rendered \
+    one_bunny_partial_abd \
+    "$REPOSITORY_ROOT/examples/one_bunny_partial_abd" \
+    one_bunny_partial_abd.py
 
-run_rendered \
-  one_bunny_partial_abd_separate_jacobian \
-  "$REPOSITORY_ROOT/examples/one_bunny_partial_abd_separate_jacobian" \
-  one_bunny_partial_abd.py
+  run_rendered \
+    one_bunny_partial_abd_separate_jacobian \
+    "$REPOSITORY_ROOT/examples/one_bunny_partial_abd_separate_jacobian" \
+    one_bunny_partial_abd.py
+fi
 
 run_rendered \
   dropping_in_container \
