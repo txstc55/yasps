@@ -208,6 +208,11 @@ def summarize_variant(name, metadata):
     log,
     int,
   )
+  converged_frames = len(re.findall(
+    r"^Iteration \d+ exited with max (?:gradient|movement):",
+    log,
+    re.MULTILINE,
+  ))
   frame_directory = directory / "frames"
   frame_count = (
     len(list(frame_directory.glob("frame_*.png")))
@@ -220,6 +225,12 @@ def summarize_variant(name, metadata):
     **metadata,
     "device": timing["device"],
     "frames": frame_count,
+    "converged_frames": converged_frames,
+    "safety_capped_frames": (
+      max(frame_count - converged_frames, 0)
+      if MAX_INNER_ITERATIONS > 0
+      else 0
+    ),
     "wall_seconds": wall_seconds,
     "kernel_gpu_ms": total_gpu_ms,
     "kernel_gpu_ms_per_frame": total_gpu_ms / frame_count,
@@ -284,6 +295,8 @@ def write_csv(summary):
     "variant",
     "configuration",
     "frames",
+    "converged_frames",
+    "safety_capped_frames",
     "wall_seconds",
     "kernel_gpu_ms",
     "kernel_gpu_ms_per_frame",
@@ -308,6 +321,10 @@ def write_csv(summary):
         "variant": name,
         "configuration": result["configuration"],
         "frames": result["frames"],
+        "converged_frames": result["converged_frames"],
+        "safety_capped_frames": (
+          result["safety_capped_frames"]
+        ),
         "wall_seconds": result["wall_seconds"],
         "kernel_gpu_ms": result["kernel_gpu_ms"],
         "kernel_gpu_ms_per_frame": (
