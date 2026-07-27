@@ -6,7 +6,7 @@ import os
 import sys
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
 NUM_FRAMES = int(os.environ.get("YASPS_NUM_FRAMES", "500"))
@@ -19,6 +19,10 @@ WINDOW_SIZE = [
   int(os.environ.get("YASPS_RENDER_WIDTH", "3840")),
   int(os.environ.get("YASPS_RENDER_HEIGHT", "2160")),
 ]
+GRADIENT_TOLERANCE = float(os.environ.get(
+  "YASPS_GRADIENT_TOLERANCE",
+  "1e-3" if is_metal() else "1e-4",
+))
 if FRAME_DIRECTORY:
   os.makedirs(FRAME_DIRECTORY, exist_ok=True)
 
@@ -284,7 +288,8 @@ plotter = pv.Plotter(
   off_screen=OFF_SCREEN,
 )
 plotter.add_mesh(bunny_poly, scalars="colors", rgba=True)
-plotter.camera_position = [(0, 0, 20), (0, 0, 0), (0, 1, 0)]
+CAMERA_POSITION = [(0, 0, 20), (0, 0, 0), (0, 1, 0)]
+plotter.camera_position = CAMERA_POSITION
 plotter.show(
   interactive_update=not OFF_SCREEN,
   auto_close=False,
@@ -382,7 +387,7 @@ for i in range(NUM_FRAMES):
     plotter.update()
 
     # print(f"Iteration {inner_iteration} max gradient: {max_grad}")
-    if max_grad < 1e-4:
+    if max_grad < GRADIENT_TOLERANCE:
       print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
       break
     inner_iteration += 1
@@ -401,6 +406,8 @@ for i in range(NUM_FRAMES):
   bunny_poly.points = new_positions
   # # export the current positions to obj
   bunny_poly.save(f"outputs/bunny1_{i:04d}.obj")
+  if OFF_SCREEN:
+    plotter.camera_position = CAMERA_POSITION
   plotter.render()
   plotter.update()
   if FRAME_DIRECTORY:
