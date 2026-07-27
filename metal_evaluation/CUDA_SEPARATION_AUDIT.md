@@ -105,7 +105,8 @@ branches.
 Verification results:
 
 - Cython/native extension build: passed.
-- Metal plus separation tests: `28 passed`.
+- Metal regression suite: `24 passed`.
+- CUDA-separation and evaluator tests: `5 passed`.
 - `git diff --check`: passed.
 
 This Apple Silicon host has neither `nvcc` nor PyCUDA, so it cannot execute a
@@ -113,3 +114,36 @@ CUDA kernel. CUDA verification here is therefore source-level and
 control-flow-level, including exact generated-source comparison. A CUDA host
 should still run the existing numerical examples before merge as the final
 hardware confirmation.
+
+## Post-separation Metal verification
+
+The optimized Metal paths were rerun after commit `8596980`, not inferred
+from the earlier 200-frame artifacts. The fresh sweep used one frame, one
+nonlinear solve per frame, five bunnies in every container variant, solver
+diagnostics, a warm shader cache, and Metal GPU timing.
+
+| Variant | CG iterations | Four-iteration batch calls | Printed solver time |
+|---|---:|---:|---:|
+| Partial ABD | 22 | 6 | 7.20 ms |
+| Partial ABD, separate Jacobian | 22 | 6 | 6.82 ms |
+| Container drop, five soft | 81 | 21 | 45.93 ms |
+| Container drop, four soft + one affine | 50 | 13 | 23.88 ms |
+| Container drop, mixed separation | 50 | 13 | 26.44 ms |
+| Container drop, no save | 81 | 21 | 38.60 ms |
+
+For every variant, the recorded `cg_iterations` batch-call count is
+`ceil(CG iterations / 4)`. This proves that the reusable four-iteration
+`MetalBatch` optimization remains active after restoring the CUDA solver.
+The same timing files contain the optimized batch labels for:
+
+- continuous and discrete CCD;
+- coordinate sort/unique and metadata construction;
+- gradient-index compression;
+- diagonal-block inversion; and
+- multi-level array reductions.
+
+All six runs completed with zero solver errors, zero preconditioner
+fallbacks, zero false zero-iteration solves, and no non-finite exits. The five
+rendered variants each produced a valid 960×540 frame and one-frame H.264
+video; representative partial-ABD and five-bunny container frames were also
+visually inspected.

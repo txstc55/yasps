@@ -126,9 +126,14 @@ STAGES = (
 
 
 def classify_kernel(name):
-  if name.startswith("yasps_"):
+  if (
+    name.startswith(("yasps_", "reduce_"))
+    or name == "fill"
+  ):
     return "array_runtime"
   if name.startswith("cg_"):
+    return "linear_solver"
+  if name == "diagonal_block_inverse":
     return "linear_solver"
   if name.startswith("compute_hessian_and_gradient"):
     return "hessian_assembly"
@@ -144,11 +149,19 @@ def classify_kernel(name):
     or name == "fill_float_metal"
   ):
     return "linear_solver"
-  if name.endswith("_get_indices_metal") or name in INDEX_KERNELS:
+  if (
+    name.endswith("_get_indices_metal")
+    or name in INDEX_KERNELS
+    or name in {
+      "coordinate_metadata",
+      "coordinate_sort_unique",
+      "gradient_index_compression",
+    }
+  ):
     return "sparse_indices"
   if name.endswith("_global_function"):
     return "fused_compute"
-  if name in CCD_KERNELS:
+  if name.startswith("ccd_") or name in CCD_KERNELS:
     return "ccd"
   raise ValueError(f"Unclassified Metal kernel: {name}")
 

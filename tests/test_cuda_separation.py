@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 from pathlib import Path
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,3 +103,30 @@ def test_cuda_dtype_and_eigen_codegen_are_backend_specific():
     "hessianKernelSeparateJacobian.pyx"
   )
   assert 'map_const = "const " if is_metal() else ""' in separate_source
+
+
+def test_optimized_metal_batch_labels_are_reported(monkeypatch):
+  monkeypatch.setattr(sys, "argv", ["summarize.py"])
+  module_path = ROOT / "metal_evaluation/summarize.py"
+  spec = importlib.util.spec_from_file_location(
+    "yasps_evaluation_summary",
+    module_path,
+  )
+  module = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(module)
+
+  assert module.classify_kernel("cg_iterations") == "linear_solver"
+  assert (
+    module.classify_kernel("diagonal_block_inverse")
+    == "linear_solver"
+  )
+  assert (
+    module.classify_kernel("coordinate_sort_unique")
+    == "sparse_indices"
+  )
+  assert (
+    module.classify_kernel("gradient_index_compression")
+    == "sparse_indices"
+  )
+  assert module.classify_kernel("ccd_continuous") == "ccd"
+  assert module.classify_kernel("reduce_sum") == "array_runtime"
