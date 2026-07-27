@@ -1129,15 +1129,21 @@ class coordinateCompressionKernel:
     # first we check if we need to reallocate space
     self.__total_coordinates = sum(self.__num_coordinates)
     # do a reset
-    self.__uniqueCoordinates.fill(0)
-    # self.__uncompressedCoordinatesAndDimensionsTmp.fill(0)
-    self.__uncompressedCoordinates.fill(0)
-    self.__uncompressedDimensions.fill(0)
-    self.__lookupArray.fill(0)
+    buffers_to_clear = [
+      self.__uniqueCoordinates,
+      self.__uncompressedCoordinates,
+      self.__uncompressedDimensions,
+      self.__lookupArray,
+      self.__uniqueDimensionsBlockCounts,
+      self.__uniqueDimensionsOuterIndices,
+    ]
+    if is_metal():
+      gpuarray.fill_batch(buffers_to_clear)
+    else:
+      for buffer in buffers_to_clear:
+        buffer.fill(0)
     self.__num_unique_coords = 0
     self.__num_unique_dimensions = 0
-    self.__uniqueDimensionsBlockCounts.fill(0)
-    self.__uniqueDimensionsOuterIndices.fill(0)
     if self.__total_coordinates == 0:
       return # nothing we need to do
     # allocate space if needed

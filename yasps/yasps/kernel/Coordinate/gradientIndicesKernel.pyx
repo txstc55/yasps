@@ -1338,14 +1338,21 @@ kernel void {self.__energy.fullName}_get_indices_metal(
       self.__numInstances = 0
       return
     # we clear the output arrays
-    self.__outputIndices.fill(0)
-    self.__outputIndexSizes.fill(0)
-    self.__outputPermutations.fill(0)
-    self.__outputGradientSizes.fill(0)
-    self.__outputGroupedIndicesInner.fill(0)
-    self.__outputUniqueGradientSizes.fill(0)
-    self.__outputGroupedIndicesOuter.fill(0)
-    self.__outputCompressedCoordinateCountsOuter.fill(0)
+    buffers_to_clear = [
+      self.__outputIndices,
+      self.__outputIndexSizes,
+      self.__outputPermutations,
+      self.__outputGradientSizes,
+      self.__outputGroupedIndicesInner,
+      self.__outputUniqueGradientSizes,
+      self.__outputGroupedIndicesOuter,
+      self.__outputCompressedCoordinateCountsOuter,
+    ]
+    if is_metal():
+      gpuarray.fill_batch(buffers_to_clear)
+    else:
+      for buffer in buffers_to_clear:
+        buffer.fill(0)
 
   @timed("gradientIndicesKernel.__computeIndices")
   def __computeIndices(self, wrt_start_indices: List[int]):
@@ -1530,8 +1537,14 @@ kernel void {self.__energy.fullName}_get_indices_metal(
       self.__outputCoordinates = gpuarray.zeros(int(spaceNeeded * 1), dtype=np.uint32)
       self.__outputBlockDimensions = gpuarray.zeros(int(spaceNeeded * 1), dtype=np.uint16)
     # fill in 0
-    self.__outputCoordinates.fill(0)
-    self.__outputBlockDimensions.fill(0)
+    if is_metal():
+      gpuarray.fill_batch([
+        self.__outputCoordinates,
+        self.__outputBlockDimensions,
+      ])
+    else:
+      self.__outputCoordinates.fill(0)
+      self.__outputBlockDimensions.fill(0)
 
   @timed("gradientIndicesKernel.generateCoordinates")
   def __generateCoordinates(self):
