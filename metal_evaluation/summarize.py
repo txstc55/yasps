@@ -99,6 +99,8 @@ STAGES = (
 def classify_kernel(name):
   if name.startswith("yasps_"):
     return "array_runtime"
+  if name.startswith("cg_"):
+    return "linear_solver"
   if name.startswith("compute_hessian_and_gradient"):
     return "hessian_assembly"
   if (
@@ -140,7 +142,11 @@ def summarize_variant(name, metadata):
   kernel_calls = 0
   dispatch_wall_ms = 0.0
   for kernel_name, values in timing["kernels"].items():
-    stages[classify_kernel(kernel_name)] += values["gpu_ms"]
+    function_name = values.get(
+      "function",
+      kernel_name.rsplit("::", 1)[-1],
+    )
+    stages[classify_kernel(function_name)] += values["gpu_ms"]
     kernel_calls += values["calls"]
     dispatch_wall_ms += values["wall_ms"]
 
@@ -210,7 +216,8 @@ def summarize_variant(name, metadata):
     "stage_gpu_ms": stages,
     "top_kernels": [
       {
-        "name": kernel_name,
+        "name": values.get("function", kernel_name),
+        "library": values.get("library"),
         "calls": values["calls"],
         "gpu_ms": values["gpu_ms"],
       }

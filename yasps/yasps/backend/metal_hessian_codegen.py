@@ -27,6 +27,8 @@ def translate_hessian_kernel(
   cuda_source: str,
   function_name: str,
   header_include: str | None = "yasps_hessian_headers.metal",
+  collapse_groups: bool = False,
+  max_threads_per_threadgroup: int | None = None,
 ) -> str:
   """Lower one generated CUDA global Hessian function to MSL."""
 
@@ -61,6 +63,16 @@ def translate_hessian_kernel(
     for item in _split_top_level(raw_parameters)
     if item.strip()
   ]
+  if collapse_groups:
+    nth_index = next(
+      index
+      for index, declaration in enumerate(declarations)
+      if declaration.endswith("nth_gradient_size")
+    )
+    declarations.insert(
+      nth_index + 1,
+      "const unsigned int total_instance_count",
+    )
 
   fields = []
   aliases = []
@@ -70,6 +82,26 @@ def translate_hessian_kernel(
     aliases.append(f"  {field_type} {name} = arguments.{name};")
 
   body = cuda_source[body_start + 1:body_end]
+  if collapse_groups:
+    body, replacements = re.subn(
+      (
+        r"const\s+unsigned\s+int\s+start\s*=\s*"
+        r"groupedIndicesOuter\[nth_gradient_size\]\s*;\s*"
+        r"const\s+unsigned\s+int\s+end\s*=\s*"
+        r"groupedIndicesOuter\[nth_gradient_size\s*\+\s*1\]\s*;"
+      ),
+      (
+        "const unsigned int start = 0;\n"
+        "  const unsigned int end = total_instance_count;"
+      ),
+      body,
+      count=1,
+    )
+    if replacements != 1:
+      raise ValueError(
+        "CUDA Hessian kernel does not contain the expected "
+        "gradient-size dispatch bounds"
+      )
   body = re.sub(
     r"unsigned\s+int\s+([A-Za-z_]\w*)\s*=\s*"
     r"blockIdx\.x\s*\*\s*blockDim\.x\s*\+\s*threadIdx\.x\s*;",
@@ -106,6 +138,13 @@ def translate_hessian_kernel(
     "\n".join(fields),
     "};",
     "",
+  ])
+  if max_threads_per_threadgroup is not None:
+    pieces.append(
+      "[[max_total_threads_per_threadgroup("
+      f"{max_threads_per_threadgroup})]]"
+    )
+  pieces.extend([
     f"kernel void {function_name}(",
     (
       f"  device const {argument_struct}& arguments "

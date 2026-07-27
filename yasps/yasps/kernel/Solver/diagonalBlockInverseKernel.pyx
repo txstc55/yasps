@@ -243,15 +243,19 @@ kernel void invert_diagonal_blocks_{attribute_size}_metal(
         / "metalMatrix.metal"
       ).read_bytes()
     ).hexdigest()[:16]
-    source_path = Path(f"{file_name}_{source_hash}.metal")
+    source_path = Path(f"{file_name}.metal")
     library_path = Path(f"{file_name}_{source_hash}.metallib")
     matrix_dir = (
       Path(metal_codegen.__file__).resolve().parents[1]
       / "kernel"
       / "Compute"
     )
-    if not library_path.exists():
+    if (
+      not source_path.exists()
+      or source_path.read_text(encoding="utf-8") != source
+    ):
       source_path.write_text(source, encoding="utf-8")
+    if not library_path.exists():
       gpuarray.compile_metal(
         [source_path],
         library_path,

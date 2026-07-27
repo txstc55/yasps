@@ -4,6 +4,9 @@ import numpy as np
 
 from yasps.backend import gpuarray
 from yasps.backend.metal_codegen import translate_device_kernel
+from yasps.backend.metal_hessian_codegen import (
+  translate_hessian_kernel,
+)
 
 
 def test_array_arithmetic_fill_copy_and_reductions_stay_on_metal(
@@ -78,6 +81,42 @@ def test_shared_buffer_views_and_modular_kernel_link(tmp_path):
   np.testing.assert_array_equal(
     output_array.get(),
     np.array([1, 3, 9, 9, 9, 9, 13, 15], dtype=np.float32),
+  )
+
+
+def test_batched_dispatch_preserves_cross_kernel_dependencies(tmp_path):
+  fixture = Path(__file__).with_name("fixtures")
+  library = gpuarray.compile_metal(
+    [fixture / "twice.metal", fixture / "add_twice.metal"],
+    tmp_path / "batched.metallib",
+  )
+  kernel = gpuarray.MetalKernel(library, "yasps_test_add_twice")
+  input_array = gpuarray.to_gpu(np.arange(1025, dtype=np.float32))
+  intermediate = gpuarray.empty_like(input_array)
+  output = gpuarray.empty_like(input_array)
+
+  arguments = np.uint32(input_array.size)
+  gpuarray.dispatch_batch(
+    [
+      (
+        kernel,
+        [input_array, intermediate, arguments],
+        input_array.size,
+        32,
+      ),
+      (
+        kernel,
+        [intermediate, output, arguments],
+        input_array.size,
+        32,
+      ),
+    ],
+    "test_dependency",
+  )
+
+  np.testing.assert_array_equal(
+    output.get(),
+    np.arange(1025, dtype=np.float32) * 4.0 + 3.0,
   )
 
 
@@ -231,6 +270,75 @@ __device__ void generated_resize(
     "resized = yasps_matrix_from_pointer<3, 1>"
     "((temporary).data());"
   ) in metal_source
+
+
+def test_generated_const_matrix_map_uses_pointer_backed_view():
+  cuda_header = """
+__device__ void generated_map(
+ double* input,
+ double* result
+)""".strip()
+  cuda_source = f"""
+{cuda_header}{{
+ using RowMat = Eigen::Matrix<double, 1, 1, Eigen::RowMajor>;
+ Eigen::Map<RowMat> out(result);
+ Eigen::Map<const Eigen::Matrix<double, 12, 12, Eigen::RowMajor>>
+     mapped(input);
+ out(0, 0) = mapped(3, 4);
+}}
+"""
+
+  metal_source, _ = translate_device_kernel(
+    cuda_source,
+    cuda_header,
+    1,
+    1,
+  )
+
+  assert (
+    "YaspsMatrixView<12, 12> mapped = "
+    "yasps_matrix_view<12, 12>(input);"
+  ) in metal_source
+  assert "yasps_matrix_from_pointer<12, 12>(input)" not in metal_source
+
+
+def test_implicit_hessian_translation_collapses_size_groups():
+  cuda_source = """
+extern "C" {
+__global__ void compute_hessian(
+  const unsigned int* groupedIndicesInner,
+  const unsigned int* groupedIndicesOuter,
+  const unsigned int nth_gradient_size,
+  const unsigned int projection_method
+) {
+  const unsigned int start =
+    groupedIndicesOuter[nth_gradient_size];
+  const unsigned int end =
+    groupedIndicesOuter[nth_gradient_size + 1];
+  unsigned int index =
+    blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= end - start) {
+    return;
+  }
+  index = start + index;
+  const unsigned int instance = groupedIndicesInner[index];
+}
+}
+"""
+
+  metal_source = translate_hessian_kernel(
+    cuda_source,
+    "compute_hessian",
+    header_include=None,
+    collapse_groups=True,
+    max_threads_per_threadgroup=32,
+  )
+
+  assert "[[max_total_threads_per_threadgroup(32)]]" in metal_source
+  assert "uint total_instance_count [[id(3)]];" in metal_source
+  assert "const uint start = 0;" in metal_source
+  assert "const uint end = total_instance_count;" in metal_source
+  assert "groupedIndicesOuter[nth_gradient_size + 1]" not in metal_source
 
 
 def test_generated_scalar_matrix_product_unwraps():

@@ -37,6 +37,10 @@ class hessianAndGradientKernel:
     self.__gradient_only = gradeient_only
     self.__att = att
     self.__clear_separation = clear_separation
+    self.__metal_collapse_groups = (
+      not project_entire_hessian
+      and not clear_separation
+    )
     self.__jacobian_rows = jacobian_rows
     self.__jacobian_cols = jacobian_cols
     self.__hessian_row_size = hessian_row_size
@@ -354,7 +358,9 @@ extern "C"{{
         )
       global_sources[specialized_size] = translate_hessian_kernel(
         cuda_source,
-        function_name
+        function_name,
+        collapse_groups=self.__metal_collapse_groups,
+        max_threads_per_threadgroup=32,
       )
 
     all_device_kernels = (
@@ -472,6 +478,34 @@ extern "C"{{
       outer_indices = giKernel.outputGroupedIndicesOuter.get()[
         :giKernel.numUniqueGradientSizesCPU + 1
       ]
+      if self.__metal_collapse_groups:
+        total_instance_count = int(outer_indices[-1])
+        if total_instance_count == 0:
+          return
+        kernel = self.__metal_kernels[self.__metal_default_size]
+        kernel.dispatch(
+          attributeArgs + [
+            giKernel.outputIndices,
+            giKernel.outputSizes,
+            giKernel.outputPermutations,
+            lookups,
+            giKernel.outputCompressedCoordinateCountsOuter,
+            giKernel.outputGroupedIndicesInner,
+            giKernel.outputGroupedIndicesOuter,
+            np.uint32(0),
+            np.uint32(total_instance_count),
+            np.uint32(self.__projection_method),
+            gradient,
+            hessian_blocks,
+            diagonal,
+            diagonal_blocks,
+            diagonal_blocks_start,
+            gradient_segments_start,
+          ],
+          total_instance_count,
+          32
+        )
+        return
       for size_index, unique_size in enumerate(unique_sizes):
         instance_count = int(
           outer_indices[size_index + 1] - outer_indices[size_index]

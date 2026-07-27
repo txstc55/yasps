@@ -307,6 +307,28 @@ struct YaspsMatrix {
   }
 };
 
+// Pointer-backed equivalent of Eigen::Map<const Matrix<...>>. Generated
+// helper functions use this for read-only inputs so large local matrices are
+// not copied into every helper's private storage.
+template <uint Rows, uint Cols>
+struct YaspsMatrixView {
+  thread const float *values;
+
+  thread const float *data() const thread {
+    return values;
+  }
+
+  float operator()(uint row, uint col) const thread {
+    return values[row * Cols + col];
+  }
+};
+
+template <uint Rows, uint Cols>
+YaspsMatrixView<Rows, Cols> yasps_matrix_view(
+    thread const float *source) {
+  return {source};
+}
+
 inline float yasps_scalar_value(float value) {
   return value;
 }

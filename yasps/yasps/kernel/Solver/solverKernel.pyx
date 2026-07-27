@@ -883,13 +883,30 @@ kernel void fill_float_metal(
     )
     self.__cg_kernel = self.__metal_spmv_kernels
 
-  def __metalFill(self, output, value):
+  def __metalDispatch(
+    self,
+    kernel,
+    arguments,
+    grid_size,
+    threadgroup_size,
+    dispatches=None,
+  ):
+    if dispatches is None:
+      kernel.dispatch(arguments, grid_size, threadgroup_size)
+    else:
+      dispatches.append(
+        (kernel, arguments, grid_size, threadgroup_size)
+      )
+
+  def __metalFill(self, output, value, dispatches=None):
     if output.size == 0:
       return
-    self.__metal_fill_kernel.dispatch(
+    self.__metalDispatch(
+      self.__metal_fill_kernel,
       [output, np.float32(value), np.uint32(output.size)],
       output.size,
-      256
+      256,
+      dispatches,
     )
 
   def __metalVecAdd(
@@ -898,8 +915,10 @@ kernel void fill_float_metal(
     right,
     output,
     scalar,
+    dispatches=None,
   ):
-    self.__metal_vec_add_kernel.dispatch(
+    self.__metalDispatch(
+      self.__metal_vec_add_kernel,
       [
         left,
         right,
@@ -908,10 +927,11 @@ kernel void fill_float_metal(
         np.uint32(output.size),
       ],
       output.size,
-      256
+      256,
+      dispatches,
     )
 
-  def __metalDot(self, left, right):
+  def __appendMetalDot(self, left, right, dispatches):
     count = left.size
     group_count = (count + 255) // 256
     if self.__dot_scratch_a.size < group_count:
@@ -923,24 +943,28 @@ kernel void fill_float_metal(
         group_count,
         dtype=np.float32
       )
-    self.__metal_dot_kernel.dispatch(
+    self.__metalDispatch(
+      self.__metal_dot_kernel,
       [left, right, self.__dot_scratch_a, np.uint32(count)],
       group_count * 256,
-      256
+      256,
+      dispatches,
     )
     current = self.__dot_scratch_a
     temporary = self.__dot_scratch_b
     current_count = group_count
     while current_count > 1:
       next_count = (current_count + 255) // 256
-      self.__metal_sum_kernel.dispatch(
+      self.__metalDispatch(
+        self.__metal_sum_kernel,
         [current, temporary, np.uint32(current_count)],
         next_count * 256,
-        256
+        256,
+        dispatches,
       )
       current, temporary = temporary, current
       current_count = next_count
-    return float(current.get()[0])
+    return current
 
   def __metalSpmv(
     self,
@@ -951,6 +975,7 @@ kernel void fill_float_metal(
     block_dimensions,
     x,
     y,
+    dispatches=None,
   ):
     positions_start = 0
     for dimension_index in range(len(block_dimensions) // 2):
@@ -958,7 +983,8 @@ kernel void fill_float_metal(
       col_size = int(block_dimensions[dimension_index * 2 + 1])
       block_count = int(block_counts[dimension_index])
       if block_count > 0:
-        self.__metal_spmv_kernels[(row_size, col_size)].dispatch(
+        self.__metalDispatch(
+          self.__metal_spmv_kernels[(row_size, col_size)],
           [
             block_values,
             np.uint32(block_values_start[dimension_index]),
@@ -969,7 +995,8 @@ kernel void fill_float_metal(
             y,
           ],
           block_count,
-          32
+          32,
+          dispatches,
         )
       positions_start += block_count
 
@@ -987,6 +1014,7 @@ kernel void fill_float_metal(
     block_dimensions_dynamic,
     x,
     y,
+    dispatches=None,
   ):
     self.__metalSpmv(
       block_values,
@@ -995,7 +1023,8 @@ kernel void fill_float_metal(
       block_counts,
       block_dimensions,
       x,
-      y
+      y,
+      dispatches,
     )
     self.__metalSpmv(
       block_values_dynamic,
@@ -1004,7 +1033,8 @@ kernel void fill_float_metal(
       block_counts_dynamic,
       block_dimensions_dynamic,
       x,
-      y
+      y,
+      dispatches,
     )
 
   def __metalBlockJacobi(
@@ -1016,6 +1046,7 @@ kernel void fill_float_metal(
     block_counts,
     block_sizes,
     segment_starts,
+    dispatches=None,
   ):
     for attribute_index in range(len(block_sizes)):
       block_count = int(block_counts[attribute_index])
@@ -1026,7 +1057,8 @@ kernel void fill_float_metal(
       segment_start = int(segment_starts[attribute_index])
       matrix_count = block_count * block_size * block_size
       vector_count = block_count * block_size
-      self.__metal_block_jacobi_kernel.dispatch(
+      self.__metalDispatch(
+        self.__metal_block_jacobi_kernel,
         [
           diagonal_inverse[
             block_start:block_start + matrix_count
@@ -1037,7 +1069,8 @@ kernel void fill_float_metal(
           np.uint32(block_size),
         ],
         block_count,
-        32
+        32,
+        dispatches,
       )
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -1086,6 +1119,7 @@ kernel void fill_float_metal(
         initial_guess.gpudata,
         solution.nbytes
       )
+      initial_rhs_dispatches = []
       self.__metalBlockJacobi(
         diagonal_blocks_inverse,
         gradient,
@@ -1093,11 +1127,22 @@ kernel void fill_float_metal(
         diagonal_blocks_start,
         diagonal_blocks_count,
         diagonal_blocks_size,
-        gradient_segments_start
+        gradient_segments_start,
+        initial_rhs_dispatches,
       )
-      delta_zero = self.__metalDot(d_p1_b, gradient)
+      delta_zero_result = self.__appendMetalDot(
+        d_p1_b,
+        gradient,
+        initial_rhs_dispatches,
+      )
+      gpuarray.dispatch_batch(
+        initial_rhs_dispatches,
+        "cg_initial_preconditioned_rhs",
+      )
+      delta_zero = float(delta_zero_result.get()[0])
 
-      self.__metalFill(d_r, 0.0)
+      initial_residual_dispatches = []
+      self.__metalFill(d_r, 0.0, initial_residual_dispatches)
       self.__metalSpmvWithSystem(
         block_values,
         block_positions,
@@ -1110,9 +1155,16 @@ kernel void fill_float_metal(
         block_counts_dynamic,
         block_dimensions_dynamic,
         initial_guess,
-        d_r
+        d_r,
+        initial_residual_dispatches,
       )
-      self.__metalVecAdd(gradient, d_r, d_r, -1.0)
+      self.__metalVecAdd(
+        gradient,
+        d_r,
+        d_r,
+        -1.0,
+        initial_residual_dispatches,
+      )
       self.__metalBlockJacobi(
         diagonal_blocks_inverse,
         d_r,
@@ -1120,16 +1172,36 @@ kernel void fill_float_metal(
         diagonal_blocks_start,
         diagonal_blocks_count,
         diagonal_blocks_size,
-        gradient_segments_start
+        gradient_segments_start,
+        initial_residual_dispatches,
       )
-      delta_new = self.__metalDot(d_r, d_c)
+      delta_new_result = self.__appendMetalDot(
+        d_r,
+        d_c,
+        initial_residual_dispatches,
+      )
+      gpuarray.dispatch_batch(
+        initial_residual_dispatches,
+        "cg_initial_residual",
+      )
+      delta_new = float(delta_new_result.get()[0])
       relative_tolerance = threshold * delta_zero
       result = 0
 
       if delta_new > relative_tolerance:
         result = maxIteration + 1
+        direction_scalar = None
         for iteration in range(1, maxIteration + 1):
-          self.__metalFill(d_q, 0.0)
+          denominator_dispatches = []
+          if direction_scalar is not None:
+            self.__metalVecAdd(
+              d_s,
+              d_c,
+              d_c,
+              direction_scalar,
+              denominator_dispatches,
+            )
+          self.__metalFill(d_q, 0.0, denominator_dispatches)
           self.__metalSpmvWithSystem(
             block_values,
             block_positions,
@@ -1142,15 +1214,38 @@ kernel void fill_float_metal(
             block_counts_dynamic,
             block_dimensions_dynamic,
             d_c,
-            d_q
+            d_q,
+            denominator_dispatches,
           )
-          denominator = self.__metalDot(d_c, d_q)
+          denominator_result = self.__appendMetalDot(
+            d_c,
+            d_q,
+            denominator_dispatches,
+          )
+          gpuarray.dispatch_batch(
+            denominator_dispatches,
+            "cg_denominator",
+          )
+          denominator = float(denominator_result.get()[0])
           if denominator < 0.0:
             result = -iteration - 4
             break
           alpha = delta_new / denominator
-          self.__metalVecAdd(solution, d_c, solution, alpha)
-          self.__metalVecAdd(d_r, d_q, d_r, -alpha)
+          residual_dispatches = []
+          self.__metalVecAdd(
+            solution,
+            d_c,
+            solution,
+            alpha,
+            residual_dispatches,
+          )
+          self.__metalVecAdd(
+            d_r,
+            d_q,
+            d_r,
+            -alpha,
+            residual_dispatches,
+          )
           self.__metalBlockJacobi(
             diagonal_blocks_inverse,
             d_r,
@@ -1158,19 +1253,24 @@ kernel void fill_float_metal(
             diagonal_blocks_start,
             diagonal_blocks_count,
             diagonal_blocks_size,
-            gradient_segments_start
+            gradient_segments_start,
+            residual_dispatches,
           )
           delta_old = delta_new
-          delta_new = self.__metalDot(d_r, d_s)
-          self.__metalVecAdd(
+          delta_new_result = self.__appendMetalDot(
+            d_r,
             d_s,
-            d_c,
-            d_c,
-            delta_new / delta_old
+            residual_dispatches,
           )
+          gpuarray.dispatch_batch(
+            residual_dispatches,
+            "cg_residual",
+          )
+          delta_new = float(delta_new_result.get()[0])
           if delta_new <= relative_tolerance:
             result = iteration
             break
+          direction_scalar = delta_new / delta_old
 
       if result == -5:
         self.__metalFill(solution, 0.0)

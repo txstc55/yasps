@@ -94,6 +94,20 @@ def translate_device_kernel(
 
 
 def _translate_matrix_maps(source: str) -> str:
+  const_pattern = re.compile(
+    r"Eigen::Map<const\s+YaspsMatrix<(\d+),\s*(\d+)>>\s+"
+    r"(\w+)\s*\(([^;]+)\)\s*;"
+  )
+  source = const_pattern.sub(
+    lambda match: (
+      f"YaspsMatrixView<{match.group(1)}, {match.group(2)}> "
+      f"{match.group(3)} = "
+      "yasps_matrix_view"
+      f"<{match.group(1)}, {match.group(2)}>"
+      f"({match.group(4)});"
+    ),
+    source,
+  )
   pattern = re.compile(
     r"Eigen::Map<YaspsMatrix<(\d+),\s*(\d+)>>\s+"
     r"(\w+)\s*\(([^;]+)\)\s*;"

@@ -125,9 +125,9 @@ class hessianKernelSeparateJacobian:
             if computed_attribute.size == 1:
               redone_line += f"float {intermediate_name} = {computed_attribute.fullName}_data[0];"
             elif computed_attribute.rows == 1 or computed_attribute.cols == 1:
-              redone_line += f"Eigen::Map<Eigen::Matrix<double, {computed_attribute.rows}, {computed_attribute.cols}>> {intermediate_name}({computed_attribute.fullName}_data);"
+              redone_line += f"Eigen::Map<const Eigen::Matrix<double, {computed_attribute.rows}, {computed_attribute.cols}>> {intermediate_name}({computed_attribute.fullName}_data);"
             else:
-              redone_line += f"Eigen::Map<Eigen::Matrix<double, {computed_attribute.rows}, {computed_attribute.cols}, Eigen::RowMajor>> {intermediate_name}({computed_attribute.fullName}_data);"
+              redone_line += f"Eigen::Map<const Eigen::Matrix<double, {computed_attribute.rows}, {computed_attribute.cols}, Eigen::RowMajor>> {intermediate_name}({computed_attribute.fullName}_data);"
             corrected_lines.append(redone_line)
           else:
             corrected_lines.append(line)
@@ -155,6 +155,20 @@ class hessianKernelSeparateJacobian:
           item.deviceKernel.kernelHeader,
           item.rows,
           item.cols
+        )
+        declaration = f"void {item.fullName}_device_function("
+        noinline_declaration = (
+          f"__attribute__((noinline)) {declaration}"
+        )
+        metal_source = metal_source.replace(
+          declaration,
+          noinline_declaration,
+          1
+        )
+        metal_header = metal_header.replace(
+          declaration,
+          noinline_declaration,
+          1
         )
         item.deviceKernel.metalKernelString = metal_source
         item.deviceKernel.metalKernelHeader = metal_header
