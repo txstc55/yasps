@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import atexit
 import builtins
 from concurrent.futures import ThreadPoolExecutor
 import ctypes
 import hashlib
+import json
 import os
 from pathlib import Path
 import platform
@@ -13,6 +15,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from typing import Any, Iterable
 
 import numpy as np
@@ -33,6 +36,9 @@ _RUNTIME_PATH = _CACHE_ROOT / f"libyasps_metal_{_RUNTIME_HASH}.dylib"
 _BUILD_LOCK = threading.Lock()
 _ARRAY_KERNEL_LOCK = threading.Lock()
 _ARRAY_KERNELS: dict[str, "MetalKernel"] = {}
+_TIMING_LOCK = threading.Lock()
+_TIMING_PATH = os.environ.get("YASPS_METAL_TIMING_JSON")
+_KERNEL_TIMINGS: dict[str, dict[str, float | int]] = {}
 
 
 class _Argument(ctypes.Structure):
@@ -71,6 +77,10 @@ def _build_runtime() -> None:
 _build_runtime()
 _runtime = ctypes.CDLL(str(_RUNTIME_PATH))
 _runtime.yasps_metal_device_name.restype = ctypes.c_char_p
+_runtime.yasps_metal_current_allocated_size.restype = ctypes.c_uint64
+_runtime.yasps_metal_recommended_working_set_size.restype = (
+  ctypes.c_uint64
+)
 _runtime.yasps_metal_alloc.argtypes = [ctypes.c_size_t]
 _runtime.yasps_metal_alloc.restype = ctypes.c_void_p
 _runtime.yasps_metal_free.argtypes = [ctypes.c_void_p]
@@ -485,6 +495,7 @@ class MetalKernel:
       if self.argument_buffer
       else _runtime.yasps_metal_dispatch
     )
+    start = time.perf_counter()
     result = dispatch_function(
       self._pipeline,
       argument_array,
@@ -494,8 +505,15 @@ class MetalKernel:
       error,
       len(error),
     )
+    wall_ms = (time.perf_counter() - start) * 1000.0
     if result != 0:
       raise RuntimeError(error.value.decode(errors="replace"))
+    _record_kernel_timing(
+      self.function_name,
+      wall_ms,
+      self.last_gpu_time_ms,
+      grid_size,
+    )
 
 
 def _metal_scalar(value):
@@ -630,6 +648,76 @@ def _reduce_float(array: GPUArray, operation: str) -> GPUArray:
     count = group_count
 
 
+def _record_kernel_timing(
+  function_name,
+  wall_ms,
+  gpu_ms,
+  grid_size,
+):
+  if _TIMING_PATH is None:
+    return
+  with _TIMING_LOCK:
+    timing = _KERNEL_TIMINGS.setdefault(
+      function_name,
+      {
+        "calls": 0,
+        "threads": 0,
+        "wall_ms": 0.0,
+        "gpu_ms": 0.0,
+        "min_gpu_ms": float("inf"),
+        "max_gpu_ms": 0.0,
+      },
+    )
+    timing["calls"] += 1
+    timing["threads"] += int(grid_size)
+    timing["wall_ms"] += float(wall_ms)
+    timing["gpu_ms"] += float(gpu_ms)
+    timing["min_gpu_ms"] = builtins.min(
+      timing["min_gpu_ms"],
+      gpu_ms,
+    )
+    timing["max_gpu_ms"] = builtins.max(
+      timing["max_gpu_ms"],
+      gpu_ms,
+    )
+
+
+def _write_kernel_timings():
+  if _TIMING_PATH is None:
+    return
+  destination = Path(_TIMING_PATH)
+  destination.parent.mkdir(parents=True, exist_ok=True)
+  kernels = {}
+  with _TIMING_LOCK:
+    for name, timing in sorted(_KERNEL_TIMINGS.items()):
+      calls = int(timing["calls"])
+      kernels[name] = {
+        **timing,
+        "mean_gpu_ms": (
+          float(timing["gpu_ms"]) / calls if calls else 0.0
+        ),
+        "mean_wall_ms": (
+          float(timing["wall_ms"]) / calls if calls else 0.0
+        ),
+      }
+  destination.write_text(
+    json.dumps(
+      {
+        "backend": "metal",
+        "device": device_name(),
+        "kernels": kernels,
+      },
+      indent=2,
+      sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+  )
+
+
+atexit.register(_write_kernel_timings)
+
+
 class _Context:
   @staticmethod
   def get_current():
@@ -663,6 +751,14 @@ class _CudaCompatibility:
       ctypes.c_void_p(int(source)),
       int(length),
     )
+
+  @staticmethod
+  def mem_get_info():
+    total = int(
+      _runtime.yasps_metal_recommended_working_set_size()
+    )
+    allocated = int(_runtime.yasps_metal_current_allocated_size())
+    return builtins.max(total - allocated, 0), total
 
 
 cuda = _CudaCompatibility()

@@ -71,6 +71,12 @@ def translate_device_kernel(
   result = result.replace("double", "float")
   result = _float_literals(result)
 
+  if rows * cols == 1:
+    result = re.sub(
+      r"result\[0\]\s*=\s*([^;]+);",
+      r"result[0] = yasps_scalar_value(\1);",
+      result,
+    )
   if rows * cols > 1 and re.search(r"\bRowMat\s+out\b", result):
     closing = result.rfind("}")
     if closing < 0:
@@ -107,7 +113,7 @@ def _translate_matrix_maps(source: str) -> str:
 def _translate_pointer_constructors(source: str) -> str:
   pattern = re.compile(
     r"YaspsMatrix<(\d+),\s*(\d+)>\s+(\w+)\s*"
-    r"\(\s*(\([^;]+?\.data\(\)\))\s*\)\s*;"
+    r"\(\s*(\(?[A-Za-z_]\w*\)?\.data\(\))\s*\)\s*;"
   )
   return pattern.sub(
     lambda match: (

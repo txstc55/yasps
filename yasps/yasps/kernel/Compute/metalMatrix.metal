@@ -307,6 +307,14 @@ struct YaspsMatrix {
   }
 };
 
+inline float yasps_scalar_value(float value) {
+  return value;
+}
+
+inline float yasps_scalar_value(YaspsMatrix<1, 1> value) {
+  return value.values[0];
+}
+
 template <uint Rows, uint Cols>
 YaspsMatrix<Rows, Cols> operator*(
     float scalar, thread const YaspsMatrix<Rows, Cols> &matrix) {

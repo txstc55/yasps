@@ -196,3 +196,68 @@ kernel void generated_global(
     rtol=2e-6,
     atol=2e-6,
   )
+
+
+def test_generated_resize_pointer_constructor_translates():
+  cuda_header = """
+__device__ void generated_resize(
+ const double* input,
+ const unsigned int instance,
+ double* result
+)""".strip()
+  cuda_source = f"""
+{cuda_header}{{
+ using RowMat = Eigen::Matrix<double, 3, 1, Eigen::RowMajor>;
+ Eigen::Map<RowMat> out(result);
+ Eigen::Matrix<double, 1, 3, Eigen::RowMajor> temporary;
+ temporary << input[instance * 3],
+     input[instance * 3 + 1],
+     input[instance * 3 + 2];
+ Eigen::Matrix<double, 3, 1, Eigen::RowMajor>
+     resized((temporary).data());
+ out.noalias() = resized;
+}}
+"""
+
+  metal_source, _ = translate_device_kernel(
+    cuda_source,
+    cuda_header,
+    3,
+    1,
+  )
+
+  assert "resized((temporary).data())" not in metal_source
+  assert (
+    "resized = yasps_matrix_from_pointer<3, 1>"
+    "((temporary).data());"
+  ) in metal_source
+
+
+def test_generated_scalar_matrix_product_unwraps():
+  cuda_header = """
+__device__ void generated_scalar_product(
+ const double* input,
+ const unsigned int instance,
+ double* result
+)""".strip()
+  cuda_source = f"""
+{cuda_header}{{
+ Eigen::Matrix<double, 1, 3, Eigen::RowMajor> left;
+ Eigen::Matrix<double, 3, 1, Eigen::RowMajor> right;
+ left << input[0], input[1], input[2];
+ right << input[3], input[4], input[5];
+ result[0] = left * right;
+}}
+"""
+
+  metal_source, _ = translate_device_kernel(
+    cuda_source,
+    cuda_header,
+    1,
+    1,
+  )
+
+  assert (
+    "result[0] = yasps_scalar_value(left * right);"
+    in metal_source
+  )

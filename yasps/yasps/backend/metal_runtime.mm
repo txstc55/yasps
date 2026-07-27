@@ -135,6 +135,9 @@ int dispatch_pipeline(Pipeline *pipeline,
             return -1;
           }
           [argument_encoder setBuffer:buffer offset:offset atIndex:index];
+          [encoder useResource:buffer
+                         usage:MTLResourceUsageRead |
+                               MTLResourceUsageWrite];
         } else if (argument.kind == YASPS_METAL_BYTES) {
           void *destination = [argument_encoder constantDataAtIndex:index];
           if (destination == nullptr) {
@@ -225,6 +228,25 @@ const char *yasps_metal_device_name() {
       return nullptr;
     }
     return device.name.UTF8String;
+  }
+}
+
+uint64_t yasps_metal_current_allocated_size() {
+  @autoreleasepool {
+    if (!ensure_runtime(nullptr, 0)) {
+      return 0;
+    }
+    return static_cast<uint64_t>(device.currentAllocatedSize);
+  }
+}
+
+uint64_t yasps_metal_recommended_working_set_size() {
+  @autoreleasepool {
+    if (!ensure_runtime(nullptr, 0)) {
+      return 0;
+    }
+    return static_cast<uint64_t>(
+        device.recommendedMaxWorkingSetSize);
   }
 }
 
