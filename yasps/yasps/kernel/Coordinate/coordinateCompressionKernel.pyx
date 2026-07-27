@@ -10,6 +10,9 @@ import os
 from yasps.backend import cuda
 from yasps.context import context
 import time
+from yasps.backend import is_metal
+from pathlib import Path
+import hashlib
 
 coord_dim_dtype = np.dtype([
   ('row', np.uint32),
@@ -18,6 +21,228 @@ coord_dim_dtype = np.dtype([
   ('w', np.uint16),
   ('placeholder', np.uint32)
 ])
+
+metal_coordinate_compression_kernel_string: str = '''
+#include <metal_stdlib>
+using namespace metal;
+
+struct CoordDim {
+  uint row;
+  uint col;
+  ushort h;
+  ushort w;
+  uint placeholder;
+};
+
+inline bool coord_less(CoordDim left, CoordDim right) {
+  if (left.h != right.h) {
+    return left.h < right.h;
+  }
+  if (left.w != right.w) {
+    return left.w < right.w;
+  }
+  if (left.row != right.row) {
+    return left.row < right.row;
+  }
+  return left.col < right.col;
+}
+
+inline bool coord_equal(CoordDim left, CoordDim right) {
+  return left.row == right.row
+    && left.col == right.col
+    && left.h == right.h
+    && left.w == right.w;
+}
+
+kernel void pack_coord_dims_metal(
+  device CoordDim* output [[buffer(0)]],
+  device const uint* coordinates [[buffer(1)]],
+  device const ushort* dimensions [[buffer(2)]],
+  constant uint& count [[buffer(3)]],
+  constant uint& padded_count [[buffer(4)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (index >= padded_count) {
+    return;
+  }
+  if (index < count) {
+    output[index] = CoordDim{
+      coordinates[index * 2],
+      coordinates[index * 2 + 1],
+      dimensions[index * 2],
+      dimensions[index * 2 + 1],
+      0
+    };
+  } else {
+    output[index] = CoordDim{
+      0xffffffffu,
+      0xffffffffu,
+      0xffffu,
+      0xffffu,
+      0
+    };
+  }
+}
+
+kernel void bitonic_coord_dim_step_metal(
+  device CoordDim* values [[buffer(0)]],
+  constant uint& compare_distance [[buffer(1)]],
+  constant uint& sequence_length [[buffer(2)]],
+  constant uint& count [[buffer(3)]],
+  uint index [[thread_position_in_grid]]
+) {
+  uint other = index ^ compare_distance;
+  if (index >= count || other >= count || other <= index) {
+    return;
+  }
+  bool ascending = (index & sequence_length) == 0;
+  CoordDim left = values[index];
+  CoordDim right = values[other];
+  bool swap_values = ascending
+    ? coord_less(right, left)
+    : coord_less(left, right);
+  if (swap_values) {
+    values[index] = right;
+    values[other] = left;
+  }
+}
+
+kernel void unique_coord_dims_metal(
+  device CoordDim* values [[buffer(0)]],
+  device uint* unique_count [[buffer(1)]],
+  constant uint& count [[buffer(2)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (index != 0) {
+    return;
+  }
+  if (count == 0) {
+    unique_count[0] = 0;
+    return;
+  }
+  uint output = 1;
+  CoordDim previous = values[0];
+  for (uint input = 1; input < count; ++input) {
+    CoordDim current = values[input];
+    if (!coord_equal(previous, current)) {
+      values[output++] = current;
+      previous = current;
+    }
+  }
+  unique_count[0] = output;
+}
+
+kernel void extract_unique_coordinates_metal(
+  device const CoordDim* values [[buffer(0)]],
+  device uint* coordinates [[buffer(1)]],
+  constant uint& count [[buffer(2)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (index >= count) {
+    return;
+  }
+  coordinates[index * 2] = values[index].row;
+  coordinates[index * 2 + 1] = values[index].col;
+}
+
+kernel void build_coordinate_metadata_metal(
+  device const CoordDim* values [[buffer(0)]],
+  device ushort* unique_dimensions [[buffer(1)]],
+  device uint* coordinate_block_starts [[buffer(2)]],
+  device uint* data_block_starts [[buffer(3)]],
+  device uint* block_counts [[buffer(4)]],
+  device uint* unique_dimension_count [[buffer(5)]],
+  constant uint& count [[buffer(6)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (index != 0) {
+    return;
+  }
+  if (count == 0) {
+    unique_dimension_count[0] = 0;
+    coordinate_block_starts[0] = 0;
+    data_block_starts[0] = 0;
+    return;
+  }
+
+  uint dimension_index = 0;
+  uint block_start = 0;
+  uint data_start = 0;
+  while (block_start < count) {
+    CoordDim first = values[block_start];
+    uint block_end = block_start + 1;
+    while (
+      block_end < count
+      && values[block_end].h == first.h
+      && values[block_end].w == first.w
+    ) {
+      ++block_end;
+    }
+    uint block_count = block_end - block_start;
+    unique_dimensions[dimension_index * 2] = first.h;
+    unique_dimensions[dimension_index * 2 + 1] = first.w;
+    coordinate_block_starts[dimension_index] = block_start;
+    data_block_starts[dimension_index] = data_start;
+    block_counts[dimension_index] = block_count;
+    data_start += uint(first.h) * uint(first.w) * block_count;
+    block_start = block_end;
+    ++dimension_index;
+  }
+  coordinate_block_starts[dimension_index] = count;
+  data_block_starts[dimension_index] = data_start;
+  unique_dimension_count[0] = dimension_index;
+}
+
+kernel void lookup_coordinate_offsets_metal(
+  device const uint* coordinates [[buffer(0)]],
+  device const ushort* dimensions [[buffer(1)]],
+  device const CoordDim* unique_values [[buffer(2)]],
+  device const uint* coordinate_block_starts [[buffer(3)]],
+  device const uint* data_block_starts [[buffer(4)]],
+  device const ushort* unique_dimensions [[buffer(5)]],
+  device uint* lookup [[buffer(6)]],
+  constant uint& coordinate_count [[buffer(7)]],
+  constant uint& unique_count [[buffer(8)]],
+  constant uint& dimension_count [[buffer(9)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (index >= coordinate_count) {
+    return;
+  }
+  CoordDim target{
+    coordinates[index * 2],
+    coordinates[index * 2 + 1],
+    dimensions[index * 2],
+    dimensions[index * 2 + 1],
+    0
+  };
+
+  uint low = 0;
+  uint high = unique_count;
+  while (low < high) {
+    uint middle = low + (high - low) / 2;
+    if (coord_less(unique_values[middle], target)) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  uint dimension_index = 0;
+  while (
+    dimension_index + 1 < dimension_count
+    && low >= coordinate_block_starts[dimension_index + 1]
+  ) {
+    ++dimension_index;
+  }
+  uint block_offset = low - coordinate_block_starts[dimension_index];
+  uint block_size =
+    uint(unique_dimensions[dimension_index * 2])
+    * uint(unique_dimensions[dimension_index * 2 + 1]);
+  lookup[index] =
+    data_block_starts[dimension_index] + block_offset * block_size;
+}
+'''
 
 get_unique_coords_kernel_string: str = '''
 #include <thrust/device_vector.h>
@@ -394,6 +619,10 @@ class coordinateCompressionKernel:
     self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = gpuarray.empty(1, coord_dim_dtype)
     self.__uncompressedCoordinates = gpuarray.zeros(2, np.uint32)
     self.__uncompressedDimensions = gpuarray.zeros(2, np.uint16)
+    self.__coordinateBlockStarts = gpuarray.zeros(2, np.uint32)
+    self.__numUniqueCoordinatesGPU = gpuarray.zeros(1, np.uint32)
+    self.__numUniqueDimensionsGPU = gpuarray.zeros(1, np.uint32)
+    self.__paddedCoordinateCount: int = 1
 
     self.__uniqueDimensions: gpuarray.GPUArray
     self.__uniqueDimensionsOuterIndices: gpuarray.GPUArray # for each dimension, whats the start and end position inside the data array
@@ -411,10 +640,20 @@ class coordinateCompressionKernel:
     self.__uniqueDimensions = gpuarray.zeros(largest_num_unique_dimensions * 2, np.uint16)
     self.__uniqueDimensionsOuterIndices = gpuarray.zeros(largest_num_unique_dimensions + 1, np.uint32)
     self.__uniqueDimensionsBlockCounts = gpuarray.zeros(largest_num_unique_dimensions, np.uint32)
+    self.__coordinateBlockStarts = gpuarray.zeros(
+      largest_num_unique_dimensions + 1,
+      np.uint32
+    )
 
     # kernels
     self.__get_unique_coords_kernel = None # the kernel that gets the unique coordinates as well as the unique number of coordinates
     self.__compress_unique_coords_kernel = None # the kernel that compresses the unique coordinates and check the position in the actual data
+    self.__pack_coord_dims_kernel = None
+    self.__bitonic_coord_dim_kernel = None
+    self.__unique_coord_dims_kernel = None
+    self.__extract_unique_coordinates_kernel = None
+    self.__build_coordinate_metadata_kernel = None
+    self.__lookup_coordinate_offsets_kernel = None
     # invoke functions
     self.__context = context()
 
@@ -486,11 +725,97 @@ class coordinateCompressionKernel:
       return 0
     return self.__uniqueDimensionsOuterIndices.get()[self.__num_unique_dimensions]
 
+  def __getMetalKernels(self):
+    if self.__pack_coord_dims_kernel is not None:
+      return
+    source_hash = hashlib.sha256(
+      metal_coordinate_compression_kernel_string.encode("utf-8")
+    ).hexdigest()[:16]
+    source_path = Path(
+      f".yasps_constant/coordinate_compression_{source_hash}.metal"
+    )
+    library_path = Path(
+      f".yasps_constant/coordinate_compression_{source_hash}.metallib"
+    )
+    if not library_path.exists():
+      source_path.write_text(
+        metal_coordinate_compression_kernel_string,
+        encoding="utf-8"
+      )
+      gpuarray.compile_metal([source_path], library_path)
+    self.__pack_coord_dims_kernel = gpuarray.MetalKernel(
+      library_path,
+      "pack_coord_dims_metal"
+    )
+    self.__bitonic_coord_dim_kernel = gpuarray.MetalKernel(
+      library_path,
+      "bitonic_coord_dim_step_metal"
+    )
+    self.__unique_coord_dims_kernel = gpuarray.MetalKernel(
+      library_path,
+      "unique_coord_dims_metal"
+    )
+    self.__extract_unique_coordinates_kernel = gpuarray.MetalKernel(
+      library_path,
+      "extract_unique_coordinates_metal"
+    )
+    self.__build_coordinate_metadata_kernel = gpuarray.MetalKernel(
+      library_path,
+      "build_coordinate_metadata_metal"
+    )
+    self.__lookup_coordinate_offsets_kernel = gpuarray.MetalKernel(
+      library_path,
+      "lookup_coordinate_offsets_metal"
+    )
+
   @timed("coordinateCompressionKernel.__getUniqueCoordinatesAndDimensions")
   def __getUniqueCoordinatesAndDimensions(self, uncompressedCoordinates, uncompressedDimensions, total_coordinates, uncompressedCoordinatesAndDimensionsTmp):
     # in this function we will get the unqique coordinates in the uncompressedCoordinatesAndDimensionsTmp
     # we will later on use this array in another function to allocate the space for actual unique coordinates
     # as well as determining the number of blocks for each dimension
+    if is_metal():
+      self.__getMetalKernels()
+      self.__pack_coord_dims_kernel.dispatch(
+        [
+          uncompressedCoordinatesAndDimensionsTmp,
+          uncompressedCoordinates,
+          uncompressedDimensions,
+          np.uint32(total_coordinates),
+          np.uint32(self.__paddedCoordinateCount),
+        ],
+        self.__paddedCoordinateCount,
+        256
+      )
+      sequence_length = 2
+      while sequence_length <= self.__paddedCoordinateCount:
+        compare_distance = sequence_length // 2
+        while compare_distance > 0:
+          self.__bitonic_coord_dim_kernel.dispatch(
+            [
+              uncompressedCoordinatesAndDimensionsTmp,
+              np.uint32(compare_distance),
+              np.uint32(sequence_length),
+              np.uint32(self.__paddedCoordinateCount),
+            ],
+            self.__paddedCoordinateCount,
+            256
+          )
+          compare_distance //= 2
+        sequence_length *= 2
+      self.__unique_coord_dims_kernel.dispatch(
+        [
+          uncompressedCoordinatesAndDimensionsTmp,
+          self.__numUniqueCoordinatesGPU,
+          np.uint32(total_coordinates),
+        ],
+        1,
+        1
+      )
+      self.__num_unique_coords = int(
+        self.__numUniqueCoordinatesGPU.get()[0]
+      )
+      return
+
     # now we check if kernel exists
     if self.__get_unique_coords_kernel is None:
       file_name = ".yasps_constant/get_unique_coords_kernel"
@@ -534,6 +859,50 @@ class coordinateCompressionKernel:
     # now we allocate two arrays for unique dimensions and unique coordinates
     if self.__num_unique_coords * 2 > self.__uniqueCoordinates.size:
       self.__uniqueCoordinates = gpuarray.GPUArray(int(self.__num_unique_coords * 3), dtype=np.uint32)
+    if is_metal():
+      self.__getMetalKernels()
+      self.__extract_unique_coordinates_kernel.dispatch(
+        [
+          uncompressedCoordinatesAndDimensionsTmp,
+          self.__uniqueCoordinates,
+          np.uint32(self.__num_unique_coords),
+        ],
+        self.__num_unique_coords,
+        256
+      )
+      self.__build_coordinate_metadata_kernel.dispatch(
+        [
+          uncompressedCoordinatesAndDimensionsTmp,
+          self.__uniqueDimensions,
+          self.__coordinateBlockStarts,
+          self.__uniqueDimensionsOuterIndices,
+          self.__uniqueDimensionsBlockCounts,
+          self.__numUniqueDimensionsGPU,
+          np.uint32(self.__num_unique_coords),
+        ],
+        1,
+        1
+      )
+      self.__num_unique_dimensions = int(
+        self.__numUniqueDimensionsGPU.get()[0]
+      )
+      self.__lookup_coordinate_offsets_kernel.dispatch(
+        [
+          uncompressedCoordinates,
+          uncompressedDimensions,
+          uncompressedCoordinatesAndDimensionsTmp,
+          self.__coordinateBlockStarts,
+          self.__uniqueDimensionsOuterIndices,
+          self.__uniqueDimensions,
+          self.__lookupArray,
+          np.uint32(total_coordinates),
+          np.uint32(self.__num_unique_coords),
+          np.uint32(self.__num_unique_dimensions),
+        ],
+        total_coordinates,
+        256
+      )
+      return
     if self.__compress_unique_coords_kernel is None:
       file_name = ".yasps_constant/compress_unique_coords_kernel"
       if not os.path.exists(f'{file_name}.so'):
@@ -610,7 +979,15 @@ class coordinateCompressionKernel:
       return # nothing we need to do
     # allocate space if needed
     if self.__total_coordinates > self.__lookupArray.size:
-      self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = gpuarray.empty(self.__total_coordinates, coord_dim_dtype)
+      self.__paddedCoordinateCount = 1
+      while self.__paddedCoordinateCount < self.__total_coordinates:
+        self.__paddedCoordinateCount *= 2
+      temporary_count = (
+        self.__paddedCoordinateCount
+        if is_metal()
+        else self.__total_coordinates
+      )
+      self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = gpuarray.empty(temporary_count, coord_dim_dtype)
       self.__uncompressedCoordinates = gpuarray.zeros(self.__total_coordinates * 2, np.uint32)
       self.__uncompressedDimensions = gpuarray.zeros(self.__total_coordinates * 2, np.uint16)
       self.__lookupArray = gpuarray.zeros(self.__total_coordinates, np.uint32)

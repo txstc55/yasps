@@ -152,6 +152,10 @@ class GPUArray:
   def ptr(self) -> int:
     return self.gpudata
 
+  @property
+  def ndim(self) -> int:
+    return len(self.shape)
+
   def _numpy_view(self) -> np.ndarray:
     byte_count = builtins.max(self.nbytes, 1)
     storage = (ctypes.c_ubyte * byte_count).from_address(self.gpudata)
@@ -194,6 +198,9 @@ class GPUArray:
     return self._view(
       self._allocation, self._offset, normalized, self.dtype
     )
+
+  def ravel(self) -> "GPUArray":
+    return self.reshape(self.size)
 
   def __len__(self) -> int:
     return self.shape[0]

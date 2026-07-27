@@ -12,6 +12,9 @@ from yasps.backend import cuda
 from yasps.helper import prune_duplicate_functions
 from yasps.context import context
 import time
+from yasps.backend import is_metal
+from pathlib import Path
+import hashlib
 
 ########################################################################
 # The gradient indices kernel has multiple functions
@@ -319,6 +322,232 @@ int computeCoordinates(
 }
 }'''
 
+metal_coordinate_kernel_string = '''
+#include <metal_stdlib>
+using namespace metal;
+
+kernel void compute_permutation_metal(
+  device const uint* indices [[buffer(0)]],
+  device const ushort* index_sizes [[buffer(1)]],
+  device short* permutation [[buffer(2)]],
+  device ushort* total_gradient_sizes [[buffer(3)]],
+  device uint* coordinate_counts [[buffer(4)]],
+  device uint* grouped_indices [[buffer(5)]],
+  constant uint& num_instances [[buffer(6)]],
+  constant uint& padded_instances [[buffer(7)]],
+  constant uint& indices_per_instance [[buffer(8)]],
+  constant uint& no_local_permutation [[buffer(9)]],
+  uint instance [[thread_position_in_grid]]
+) {
+  if (instance >= padded_instances) {
+    return;
+  }
+  grouped_indices[instance] = instance;
+  if (instance >= num_instances) {
+    total_gradient_sizes[instance] = ushort(65535);
+    return;
+  }
+
+  int gradient_offset = 0;
+  ushort total_gradient_size = 0;
+  uint compressed_index_size = 0;
+  for (ushort index = 0; index < indices_per_instance; ++index) {
+    uint current = indices[instance * indices_per_instance + index];
+    if (current == 0) {
+      continue;
+    }
+    bool found = false;
+    if (no_local_permutation == 0 && current >= 2) {
+      for (ushort previous = 0; previous < index; ++previous) {
+        uint previous_index =
+          indices[instance * indices_per_instance + previous];
+        if (previous_index == current) {
+          permutation[instance * indices_per_instance + index] =
+            -permutation[instance * indices_per_instance + previous];
+          found = true;
+          break;
+        }
+      }
+    }
+    if (!found) {
+      short placement = short(gradient_offset + 1);
+      if (no_local_permutation != 0 && current == 1) {
+        placement = -placement;
+      }
+      permutation[instance * indices_per_instance + index] = placement;
+      gradient_offset += index_sizes[
+        instance * indices_per_instance + index
+      ];
+      total_gradient_size += index_sizes[
+        instance * indices_per_instance + index
+      ];
+      if (current >= 2) {
+        ++compressed_index_size;
+      }
+    }
+  }
+  total_gradient_sizes[instance] = total_gradient_size;
+  coordinate_counts[instance + 1] =
+    compressed_index_size * (compressed_index_size + 1) / 2;
+  if (instance == 0) {
+    coordinate_counts[0] = 0;
+  }
+}
+
+kernel void bitonic_gradient_size_step_metal(
+  device ushort* keys [[buffer(0)]],
+  device uint* values [[buffer(1)]],
+  constant uint& compare_distance [[buffer(2)]],
+  constant uint& sequence_length [[buffer(3)]],
+  constant uint& count [[buffer(4)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (index >= count) {
+    return;
+  }
+  uint partner = index ^ compare_distance;
+  if (partner <= index || partner >= count) {
+    return;
+  }
+  bool ascending = (index & sequence_length) == 0;
+  bool swap_values = ascending
+    ? keys[index] > keys[partner]
+    : keys[index] < keys[partner];
+  if (swap_values) {
+    ushort temporary_key = keys[index];
+    keys[index] = keys[partner];
+    keys[partner] = temporary_key;
+    uint temporary_value = values[index];
+    values[index] = values[partner];
+    values[partner] = temporary_value;
+  }
+}
+
+kernel void group_gradient_sizes_metal(
+  device const ushort* sorted_sizes [[buffer(0)]],
+  device ushort* unique_sizes [[buffer(1)]],
+  device uint* offsets [[buffer(2)]],
+  device ushort* unique_count [[buffer(3)]],
+  constant uint& num_instances [[buffer(4)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (index != 0) {
+    return;
+  }
+  if (num_instances == 0) {
+    unique_count[0] = 0;
+    offsets[0] = 0;
+    return;
+  }
+  ushort count = 1;
+  unique_sizes[0] = sorted_sizes[0];
+  offsets[0] = 0;
+  for (uint instance = 1; instance < num_instances; ++instance) {
+    if (sorted_sizes[instance] != sorted_sizes[instance - 1]) {
+      unique_sizes[count] = sorted_sizes[instance];
+      offsets[count] = instance;
+      ++count;
+    }
+  }
+  offsets[count] = num_instances;
+  unique_count[0] = count;
+}
+
+kernel void inclusive_scan_uint_step_metal(
+  device const uint* input [[buffer(0)]],
+  device uint* output [[buffer(1)]],
+  constant uint& count [[buffer(2)]],
+  constant uint& offset [[buffer(3)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (index >= count) {
+    return;
+  }
+  uint value = input[index];
+  if (index >= offset) {
+    value += input[index - offset];
+  }
+  output[index] = value;
+}
+
+kernel void copy_uint_metal(
+  device const uint* input [[buffer(0)]],
+  device uint* output [[buffer(1)]],
+  constant uint& count [[buffer(2)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (index < count) {
+    output[index] = input[index];
+  }
+}
+
+inline void compute_coordinates_device_metal(
+  device const uint* indices,
+  device const short* permutations,
+  device const ushort* index_sizes,
+  device uint* coordinates,
+  device ushort* dimensions,
+  uint indices_per_instance
+) {
+  uint total_coordinates = 0;
+  for (uint row = 0; row < indices_per_instance; ++row) {
+    uint row_index = indices[row];
+    int row_permutation = permutations[row];
+    if (row_permutation <= 0 || row_index < 2) {
+      continue;
+    }
+    uint true_row = row_index - 2;
+    ushort row_dimension = index_sizes[row];
+    for (uint col = row; col < indices_per_instance; ++col) {
+      uint col_index = indices[col];
+      int col_permutation = permutations[col];
+      if (col_permutation <= 0 || col_index < 2) {
+        continue;
+      }
+      uint true_col = col_index - 2;
+      ushort col_dimension = index_sizes[col];
+      if (row_index < col_index) {
+        coordinates[total_coordinates] = true_row;
+        coordinates[total_coordinates + 1] = true_col;
+        dimensions[total_coordinates] = row_dimension;
+        dimensions[total_coordinates + 1] = col_dimension;
+      } else {
+        coordinates[total_coordinates] = true_col;
+        coordinates[total_coordinates + 1] = true_row;
+        dimensions[total_coordinates] = col_dimension;
+        dimensions[total_coordinates + 1] = row_dimension;
+      }
+      total_coordinates += 2;
+    }
+  }
+}
+
+kernel void compute_coordinates_metal(
+  device const uint* indices [[buffer(0)]],
+  device const short* permutations [[buffer(1)]],
+  device const ushort* index_sizes [[buffer(2)]],
+  device uint* coordinates [[buffer(3)]],
+  device ushort* dimensions [[buffer(4)]],
+  device const uint* coordinate_offsets [[buffer(5)]],
+  constant uint& indices_per_instance [[buffer(6)]],
+  constant uint& num_instances [[buffer(7)]],
+  uint instance [[thread_position_in_grid]]
+) {
+  if (instance >= num_instances) {
+    return;
+  }
+  uint coordinate_start = coordinate_offsets[instance] * 2;
+  compute_coordinates_device_metal(
+    indices + instance * indices_per_instance,
+    permutations + instance * indices_per_instance,
+    index_sizes + instance * indices_per_instance,
+    coordinates + coordinate_start,
+    dimensions + coordinate_start,
+    indices_per_instance
+  );
+}
+'''
+
 # The gradient indices kernel needs to produce couple of things:
 # The most obvious one is globally, how to map each block to the global matrix
 # The not so obvious one is locally, within this local hessian, how can I compress iter
@@ -362,6 +591,7 @@ class gradientIndicesKernel:
     self.__kernelString = ""
     self.__numInstances: int = 0 # for checking the number of instances
     self.__maxInstances: int = 0 # for allocating the largest gpu array
+    self.__paddedInstances: int = 1
     # the output data
     ####################################################
     # Here are the uncompressed output indices
@@ -382,6 +612,7 @@ class gradientIndicesKernel:
     self.__outputNumUniqueGradientSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the number of unique sizes of the gradients after compression
     self.__outputNumUniqueGradientSizesCPU = None
     self.__outputCompressedCoordinateCountsOuter: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
+    self.__scanScratch: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32)
     ####################################################
     # Here are information needed for coordinate generation
     # we will have 1 array of uint32 which stores the uncompressed coordinates
@@ -396,6 +627,10 @@ class gradientIndicesKernel:
     self.__indices_kernel = None # the kernel for computing the indices
     self.__compression_kernel = None # the kernel for compressing the indices
     self.__coordinate_kernel = None # the kernel for compressing the indices
+    self.__bitonic_kernel = None
+    self.__group_sizes_kernel = None
+    self.__scan_kernel = None
+    self.__copy_uint_kernel = None
     self.__generateKernel() # generate and compile the kernel
     self.__getCompressionKernel() # generate or just get the compression kernel
     self.__getCoordinateKernel() # generate or just get the coordinate kernel
@@ -475,6 +710,9 @@ class gradientIndicesKernel:
 
   @timed("gradientIndicesKernel.__getCompressionKernel")
   def __getCompressionKernel(self):
+    if is_metal():
+      self.__getMetalCoordinateKernels()
+      return
     if self.__compression_kernel is None:
       file_name = ".yasps_constant/compression_kernel" + ("" if not self.__no_local_permutation else "_no_perm")
       # check if the file exists
@@ -494,6 +732,9 @@ class gradientIndicesKernel:
 
   @timed("gradientIndicesKernel.__getCoordinateKernel")
   def __getCoordinateKernel(self):
+    if is_metal():
+      self.__getMetalCoordinateKernels()
+      return
     if self.__coordinate_kernel is None:
       file_name = ".yasps_constant/coordinate_kernel"
       # check if the file exists
@@ -510,6 +751,49 @@ class gradientIndicesKernel:
         self.__coordinate_kernel = ctypes.CDLL(f"{file_name}.so").computeCoordinates # get the compiled kernel
         self.__coordinate_kernel.restype = ctypes.c_int # set the return type to None
         self.__coordinate_kernel.argtypes = [ctypes.c_void_p] * 6 + [ctypes.c_uint32] * 2
+
+  def __getMetalCoordinateKernels(self):
+    if self.__compression_kernel is not None:
+      return
+    source_hash = hashlib.sha256(
+      metal_coordinate_kernel_string.encode("utf-8")
+    ).hexdigest()[:16]
+    source_path = Path(
+      f".yasps_constant/gradient_indices_{source_hash}.metal"
+    )
+    library_path = Path(
+      f".yasps_constant/gradient_indices_{source_hash}.metallib"
+    )
+    if not library_path.exists():
+      source_path.write_text(
+        metal_coordinate_kernel_string,
+        encoding="utf-8"
+      )
+      gpuarray.compile_metal([source_path], library_path)
+    self.__compression_kernel = gpuarray.MetalKernel(
+      library_path,
+      "compute_permutation_metal"
+    )
+    self.__bitonic_kernel = gpuarray.MetalKernel(
+      library_path,
+      "bitonic_gradient_size_step_metal"
+    )
+    self.__group_sizes_kernel = gpuarray.MetalKernel(
+      library_path,
+      "group_gradient_sizes_metal"
+    )
+    self.__scan_kernel = gpuarray.MetalKernel(
+      library_path,
+      "inclusive_scan_uint_step_metal"
+    )
+    self.__copy_uint_kernel = gpuarray.MetalKernel(
+      library_path,
+      "copy_uint_metal"
+    )
+    self.__coordinate_kernel = gpuarray.MetalKernel(
+      library_path,
+      "compute_coordinates_metal"
+    )
 
   def __to_void_p(self, x: gpuarray.GPUArray):
     if x is None or x.size == 0:
@@ -598,7 +882,7 @@ class gradientIndicesKernel:
   def __generateKernel(self):
     # ok now we compile the kernel by saving it to a file and then calling nvcc
     file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"
-    if os.path.exists(f'{file_name}.so'):
+    if not is_metal() and os.path.exists(f'{file_name}.so'):
       # we just use that file?
       self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
       self.__indices_kernel.restype = ctypes.c_int # set the return type to None
@@ -898,24 +1182,156 @@ extern "C" int get_indices(
     self.__kernelString = prune_duplicate_functions(self.__kernelString) # just in case we have duplicated functions
     f.write(self.__kernelString)
     f.close()
+    if is_metal():
+      self.__compileMetalIndexKernel(file_name)
+      return
     # we will now compile this kernel
     os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda")
     self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
     self.__indices_kernel.restype = ctypes.c_int # set the return type to None
     self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_primitive_unions) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
 
+  def __compileMetalIndexKernel(self, file_name: str):
+    global_marker = (
+      f"__global__ void "
+      f"{self.__energy.fullName}_get_indices_global_function"
+    )
+    helper_start = self.__kernelString.find("__device__")
+    helper_end = self.__kernelString.find(global_marker)
+    if helper_start < 0 or helper_end < 0:
+      raise RuntimeError(
+        "gradientIndicesKernel: generated CUDA index helpers are incomplete"
+      )
+    helpers = self.__kernelString[helper_start:helper_end]
+    helpers = helpers.replace("__device__ inline", "inline")
+    helpers = helpers.replace(
+      "const unsigned int*",
+      "device const uint*"
+    )
+    helpers = helpers.replace(
+      "const unsigned short int*",
+      "device const ushort*"
+    )
+    helpers = helpers.replace(
+      "const short unsigned int*",
+      "device const ushort*"
+    )
+    helpers = helpers.replace("unsigned int*", "device uint*")
+    helpers = helpers.replace(
+      "unsigned short int*",
+      "device ushort*"
+    )
+    helpers = helpers.replace("short int*", "device short*")
+    helpers = helpers.replace("unsigned short int", "ushort")
+    helpers = helpers.replace("short unsigned int", "ushort")
+    helpers = helpers.replace("unsigned int", "uint")
+    helpers = helpers.replace("short int", "short")
+
+    argument_fields = []
+    argument_index = 0
+    for item in self.__used_join_attributes:
+      argument_fields.append(
+        f"  device const uint* {item.fullName}_indices "
+        f"[[id({argument_index})]];"
+      )
+      argument_index += 1
+    for item in self.__used_primitive_unions:
+      argument_fields.append(
+        f"  device const uint* {item.code_generation_counts_name} "
+        f"[[id({argument_index})]];"
+      )
+      argument_index += 1
+    for declaration in (
+      "device const uint* wrtStartIndices",
+      "device uint* outputIndices",
+      "device ushort* outputSizes",
+    ):
+      argument_fields.append(
+        f"  {declaration} [[id({argument_index})]];"
+      )
+      argument_index += 1
+    argument_fields.append(
+      f"  uint numInstances [[id({argument_index})]];"
+    )
+
+    call_arguments = (
+      [f"arguments.{item.fullName}_indices"
+       for item in self.__used_join_attributes]
+      + [f"arguments.{item.code_generation_counts_name}"
+         for item in self.__used_primitive_unions]
+      + [
+        "arguments.wrtStartIndices",
+        (
+          "arguments.outputIndices + index * "
+          f"{self.maxNumIndicesNeeded}"
+        ),
+        (
+          "arguments.outputSizes + index * "
+          f"{self.maxNumIndicesNeeded}"
+        ),
+        "index",
+      ]
+    )
+    metal_source = f'''
+#include <metal_stdlib>
+using namespace metal;
+
+{helpers}
+
+struct {self.__energy.fullName}_index_arguments {{
+{chr(10).join(argument_fields)}
+}};
+
+kernel void {self.__energy.fullName}_get_indices_metal(
+  device const {self.__energy.fullName}_index_arguments& arguments
+    [[buffer(0)]],
+  uint index [[thread_position_in_grid]]
+) {{
+  if (index >= arguments.numInstances) {{
+    return;
+  }}
+  {self.__energy.fullName}_get_indices(
+    {", ".join(call_arguments)}
+  );
+}}
+'''
+    source_hash = hashlib.sha256(
+      metal_source.encode("utf-8")
+    ).hexdigest()[:16]
+    source_path = Path(f"{file_name}_{source_hash}.metal")
+    library_path = Path(f"{file_name}_{source_hash}.metallib")
+    if not library_path.exists():
+      source_path.write_text(metal_source, encoding="utf-8")
+      gpuarray.compile_metal([source_path], library_path)
+    self.__indices_kernel = gpuarray.MetalKernel(
+      library_path,
+      f"{self.__energy.fullName}_get_indices_metal",
+      argument_buffer=True
+    )
+
 
   @timed("gradientIndicesKernel.__reallocate")
   def __reallocate(self):
     newNumInstances: int = self.__energy.correspondance.numInstances
     if newNumInstances > self.__maxInstances:
+      self.__paddedInstances = 1
+      while self.__paddedInstances < newNumInstances:
+        self.__paddedInstances *= 2
       # resize the gpu arrays
       self.__outputIndices = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
       self.__outputIndexSizes = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint16)
       self.__outputPermutations = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.int16)
-      self.__outputGradientSizes = gpuarray.zeros(newNumInstances, dtype=np.uint16)
-      self.__outputGroupedIndicesInner = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
+      gradient_size_capacity = (
+        self.__paddedInstances if is_metal() else newNumInstances
+      )
+      grouped_index_capacity = max(
+        self.maxNumIndicesNeeded * newNumInstances,
+        gradient_size_capacity
+      )
+      self.__outputGradientSizes = gpuarray.zeros(gradient_size_capacity, dtype=np.uint16)
+      self.__outputGroupedIndicesInner = gpuarray.zeros(grouped_index_capacity, dtype=np.uint32)
       self.__outputCompressedCoordinateCountsOuter = gpuarray.zeros(newNumInstances + 1, dtype=np.uint32)
+      self.__scanScratch = gpuarray.zeros(newNumInstances + 1, dtype=np.uint32)
       self.__maxInstances = newNumInstances # update the maximum size
     self.__numInstances = newNumInstances # update the number of instances
     if newNumInstances == 0:
@@ -936,20 +1352,48 @@ extern "C" int get_indices(
     # first let's convert wrt_start_indices to a pycuda array
     wrt_start_indices_gpu = gpuarray.to_gpu(np.array(wrt_start_indices, dtype=np.uint32)) # this has to be non empty
     # then we get all the gpu arrays for the connectivity
-    connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
+    if is_metal():
+      connectivity_list_gpu = [
+        x.through.value for x in self.__used_join_attributes
+      ]
+    else:
+      connectivity_list_gpu = [
+        self.__to_void_p(x.through.value)
+        for x in self.__used_join_attributes
+      ]
     self.__union_counts = [x.children_primitive_counts_gpu for x in self.__used_primitive_unions]
-    union_count_list_gpu = [self.__to_void_p(x) for x in self.__union_counts]
+    if is_metal():
+      union_count_list_gpu = self.__union_counts
+    else:
+      union_count_list_gpu = [
+        self.__to_void_p(x) for x in self.__union_counts
+      ]
     # now we invoke the kernel
 
     assert self.__indices_kernel is not None
-    error_code = self.__indices_kernel(
-      *connectivity_list_gpu,
-      *union_count_list_gpu,
-      self.__to_void_p(wrt_start_indices_gpu),
-      self.__to_void_p(self.__outputIndices),
-      self.__to_void_p(self.__outputIndexSizes),
-      self.__numInstances
-    )
+    if is_metal():
+      self.__indices_kernel.dispatch(
+        connectivity_list_gpu
+        + union_count_list_gpu
+        + [
+          wrt_start_indices_gpu,
+          self.__outputIndices,
+          self.__outputIndexSizes,
+          np.uint32(self.__numInstances),
+        ],
+        self.__numInstances,
+        32
+      )
+      error_code = 0
+    else:
+      error_code = self.__indices_kernel(
+        *connectivity_list_gpu,
+        *union_count_list_gpu,
+        self.__to_void_p(wrt_start_indices_gpu),
+        self.__to_void_p(self.__outputIndices),
+        self.__to_void_p(self.__outputIndexSizes),
+        self.__numInstances
+      )
 
     if error_code != 0:
       raise RuntimeError(f"gradientIndiciesKernel.__computeIndices: Error in computing indices: {error_code}")
@@ -957,18 +1401,96 @@ extern "C" int get_indices(
   @timed("gradientIndicesKernel.__compressIndicesLocal")
   def __compressIndicesLocal(self):
     assert self.__compression_kernel is not None
-    error_code = self.__compression_kernel(
-      self.__to_void_p(self.__outputIndices),
-      self.__to_void_p(self.__outputIndexSizes),
-      self.__to_void_p(self.__outputPermutations),
-      self.__to_void_p(self.__outputGradientSizes),
-      self.__to_void_p(self.__outputCompressedCoordinateCountsOuter),
-      self.__to_void_p(self.__outputUniqueGradientSizes),
-      self.__to_void_p(self.__outputGroupedIndicesInner),
-      self.__to_void_p(self.__outputGroupedIndicesOuter),
-      self.__to_void_p(self.__outputNumUniqueGradientSizes),
-      self.__numInstances,
-      self.maxNumIndicesNeeded)
+    if is_metal():
+      self.__compression_kernel.dispatch(
+        [
+          self.__outputIndices,
+          self.__outputIndexSizes,
+          self.__outputPermutations,
+          self.__outputGradientSizes,
+          self.__outputCompressedCoordinateCountsOuter,
+          self.__outputGroupedIndicesInner,
+          np.uint32(self.__numInstances),
+          np.uint32(self.__paddedInstances),
+          np.uint32(self.maxNumIndicesNeeded),
+          np.uint32(1 if self.__no_local_permutation else 0),
+        ],
+        self.__paddedInstances,
+        256
+      )
+
+      sequence_length = 2
+      while sequence_length <= self.__paddedInstances:
+        compare_distance = sequence_length // 2
+        while compare_distance > 0:
+          self.__bitonic_kernel.dispatch(
+            [
+              self.__outputGradientSizes,
+              self.__outputGroupedIndicesInner,
+              np.uint32(compare_distance),
+              np.uint32(sequence_length),
+              np.uint32(self.__paddedInstances),
+            ],
+            self.__paddedInstances,
+            256
+          )
+          compare_distance //= 2
+        sequence_length *= 2
+
+      self.__group_sizes_kernel.dispatch(
+        [
+          self.__outputGradientSizes,
+          self.__outputUniqueGradientSizes,
+          self.__outputGroupedIndicesOuter,
+          self.__outputNumUniqueGradientSizes,
+          np.uint32(self.__numInstances),
+        ],
+        1,
+        1
+      )
+
+      scan_count = self.__numInstances + 1
+      scan_input = self.__outputCompressedCoordinateCountsOuter
+      scan_output = self.__scanScratch
+      scan_offset = 1
+      while scan_offset < scan_count:
+        self.__scan_kernel.dispatch(
+          [
+            scan_input,
+            scan_output,
+            np.uint32(scan_count),
+            np.uint32(scan_offset),
+          ],
+          scan_count,
+          256
+        )
+        scan_input, scan_output = scan_output, scan_input
+        scan_offset *= 2
+      if scan_input is not self.__outputCompressedCoordinateCountsOuter:
+        self.__copy_uint_kernel.dispatch(
+          [
+            scan_input,
+            self.__outputCompressedCoordinateCountsOuter,
+            np.uint32(scan_count),
+          ],
+          scan_count,
+          256
+        )
+      error_code = 0
+    else:
+      error_code = self.__compression_kernel(
+        self.__to_void_p(self.__outputIndices),
+        self.__to_void_p(self.__outputIndexSizes),
+        self.__to_void_p(self.__outputPermutations),
+        self.__to_void_p(self.__outputGradientSizes),
+        self.__to_void_p(self.__outputCompressedCoordinateCountsOuter),
+        self.__to_void_p(self.__outputUniqueGradientSizes),
+        self.__to_void_p(self.__outputGroupedIndicesInner),
+        self.__to_void_p(self.__outputGroupedIndicesOuter),
+        self.__to_void_p(self.__outputNumUniqueGradientSizes),
+        self.__numInstances,
+        self.maxNumIndicesNeeded
+      )
     if error_code != 0:
       raise RuntimeError(f"gradientIndiciesKernel.__compressIndicesLocal: Error in compressing indices: {error_code}")
 
@@ -979,6 +1501,12 @@ extern "C" int get_indices(
       return 0
     result = np.zeros(1, dtype=np.uint32)
     assert self.__outputCompressedCoordinateCountsOuter is not None
+    if is_metal():
+      return int(
+        self.__outputCompressedCoordinateCountsOuter.get()[
+          self.__numInstances
+        ]
+      )
     cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
     # return int(self.__outputCompressedCoordinateCountsOuter[self.__numInstances])
     return int(result[0])
@@ -999,16 +1527,33 @@ extern "C" int get_indices(
   @timed("gradientIndicesKernel.generateCoordinates")
   def __generateCoordinates(self):
     assert self.__coordinate_kernel is not None
-    error_code = self.__coordinate_kernel(
-      self.__to_void_p(self.__outputIndices),
-      self.__to_void_p(self.__outputPermutations),
-      self.__to_void_p(self.__outputIndexSizes),
-      self.__to_void_p(self.__outputCoordinates),
-      self.__to_void_p(self.__outputBlockDimensions),
-      self.__to_void_p(self.__outputCompressedCoordinateCountsOuter),
-      self.maxNumIndicesNeeded,
-      self.__numInstances
-    )
+    if is_metal():
+      self.__coordinate_kernel.dispatch(
+        [
+          self.__outputIndices,
+          self.__outputPermutations,
+          self.__outputIndexSizes,
+          self.__outputCoordinates,
+          self.__outputBlockDimensions,
+          self.__outputCompressedCoordinateCountsOuter,
+          np.uint32(self.maxNumIndicesNeeded),
+          np.uint32(self.__numInstances),
+        ],
+        self.__numInstances,
+        256
+      )
+      error_code = 0
+    else:
+      error_code = self.__coordinate_kernel(
+        self.__to_void_p(self.__outputIndices),
+        self.__to_void_p(self.__outputPermutations),
+        self.__to_void_p(self.__outputIndexSizes),
+        self.__to_void_p(self.__outputCoordinates),
+        self.__to_void_p(self.__outputBlockDimensions),
+        self.__to_void_p(self.__outputCompressedCoordinateCountsOuter),
+        self.maxNumIndicesNeeded,
+        self.__numInstances
+      )
     if error_code != 0:
       raise RuntimeError(f"gradientIndiciesKernel.__generateCoordinates: Error in generating coordinates: {error_code}")
 
