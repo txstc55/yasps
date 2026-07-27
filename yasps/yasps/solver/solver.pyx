@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 
 from yasps.solverKernel import solverKernel
 
@@ -63,11 +63,12 @@ class solver:
     assert self.__solverKernel is not None
     self.__solverKernel.updateBlockDimensions(active_hessian.block_dimensions + active_hessian.block_dimensions_dynamic)
 
-    self.__d_r.fill(0)
-    self.__d_c.fill(0)
-    self.__d_q.fill(0)
-    self.__d_s.fill(0)
-    self.__solution.fill(0)
+    if not is_metal():
+      self.__d_r.fill(0)
+      self.__d_c.fill(0)
+      self.__d_q.fill(0)
+      self.__d_s.fill(0)
+      self.__solution.fill(0)
 
     return self.__solverKernel.computeSolution(
       maxIterations,
