@@ -5,9 +5,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <string>
-#include <unordered_map>
 
 enum YaspsMetalArgumentKind : uint32_t {
   YASPS_METAL_BUFFER = 0,
@@ -41,7 +41,7 @@ struct Pipeline {
 };
 
 std::mutex allocation_mutex;
-std::unordered_map<uintptr_t, Allocation> allocations;
+std::map<uintptr_t, Allocation> allocations;
 id<MTLDevice> device;
 id<MTLCommandQueue> command_queue;
 id<MTLBuffer> dummy_buffer;
@@ -79,12 +79,16 @@ bool resolve_buffer(const void *pointer, id<MTLBuffer> *buffer, NSUInteger *offs
 
   const uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
   std::lock_guard<std::mutex> lock(allocation_mutex);
-  for (const auto &[base, allocation] : allocations) {
-    if (address >= base && address < base + allocation.length) {
-      *buffer = allocation.buffer;
-      *offset = static_cast<NSUInteger>(address - base);
-      return true;
-    }
+  auto allocation = allocations.upper_bound(address);
+  if (allocation == allocations.begin()) {
+    return false;
+  }
+  --allocation;
+  const uintptr_t base = allocation->first;
+  if (address < base + allocation->second.length) {
+    *buffer = allocation->second.buffer;
+    *offset = static_cast<NSUInteger>(address - base);
+    return true;
   }
   return false;
 }
