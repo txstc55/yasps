@@ -1,0 +1,664 @@
+{
+  "backend": "metal",
+  "device": "Apple M2 Max",
+  "dtype": "float32",
+  "evaluated_on": "2026-07-27",
+  "policy": {
+    "frames": 200,
+    "max_inner_iterations": 25,
+    "nonlinear_stopping": "example stopping criteria with a per-frame iteration cap",
+    "render_resolution": [
+      960,
+      540
+    ],
+    "shader_cache": "warm",
+    "solver_diagnostics": true,
+    "timing_scope": "MTLCommandBuffer GPU time; compilation and rendering excluded",
+    "video_fps": 12
+  },
+  "variants": {
+    "dropping_in_container": {
+      "cg_iterations": {
+        "maximum": 162,
+        "mean": 87.47570332480818,
+        "minimum": 12,
+        "total": 342030
+      },
+      "collision_candidates": {
+        "maximum": 697560,
+        "mean": 168613.31074168798
+      },
+      "configuration": "5 soft bunnies",
+      "converged_frames": 78,
+      "description": "Soft bunny dropped in a container",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 1830355.1737071248,
+      "frames": 200,
+      "kernel_calls": 7371715,
+      "kernel_gpu_ms": 708796.4849007549,
+      "kernel_gpu_ms_per_frame": 3543.9824245037744,
+      "line_search_substeps": {
+        "maximum": 9,
+        "mean": 1.111764705882353
+      },
+      "nonlinear_solves": 3910,
+      "preconditioner_fallbacks": 0,
+      "safety_capped_frames": 122,
+      "solver_error_codes": [],
+      "solver_failures": 0,
+      "stage_gpu_ms": {
+        "array_runtime": 5047.21153061837,
+        "ccd": 359383.78095964435,
+        "fused_compute": 1744.8142252396792,
+        "hessian_assembly": 148659.22675211914,
+        "linear_solver": 131735.02871976234,
+        "sparse_indices": 62226.422713370994
+      },
+      "top_kernels": [
+        {
+          "calls": 8245,
+          "gpu_ms": 146818.2266280055,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 3910,
+          "gpu_ms": 131345.22083261982,
+          "library": "hessian_att_28858ee5483fd2a4_996ed66e84297911.metallib",
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_3"
+        },
+        {
+          "calls": 8245,
+          "gpu_ms": 97542.94158215635,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 3816,
+          "gpu_ms": 35812.06750276033,
+          "library": "coordinate_compression_3757b8ea26e88003.metallib",
+          "name": "unique_coord_dims_metal"
+        },
+        {
+          "calls": 1409895,
+          "gpu_ms": 30594.20164313633,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 4335,
+          "gpu_ms": 22820.35303756129,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "query_edges_cd"
+        },
+        {
+          "calls": 3910,
+          "gpu_ms": 19143.751416006126,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "query_edges_ccd"
+        },
+        {
+          "calls": 342030,
+          "gpu_ms": 19037.70042397082,
+          "library": "metal_batch",
+          "name": "cg_residual"
+        },
+        {
+          "calls": 4335,
+          "gpu_ms": 17529.398714657873,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "fill_uint"
+        },
+        {
+          "calls": 1261485,
+          "gpu_ms": 15935.8162303688,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "bitonic_morton_step"
+        }
+      ],
+      "video": "evaluation/dropping_in_container.mp4",
+      "wall_seconds": 1986.4,
+      "zero_iteration_solves": 0
+    },
+    "dropping_in_container_mixed": {
+      "cg_iterations": {
+        "maximum": 147,
+        "mean": 48.78603148970529,
+        "minimum": 14,
+        "total": 241686
+      },
+      "collision_candidates": {
+        "maximum": 2621867,
+        "mean": 461247.611898017
+      },
+      "configuration": "4 soft + 1 affine bunny",
+      "converged_frames": 12,
+      "description": "Mixed soft/affine container drop",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 2589146.4278487256,
+      "frames": 200,
+      "kernel_calls": 9297501,
+      "kernel_gpu_ms": 1070962.2596275294,
+      "kernel_gpu_ms_per_frame": 5354.811298137647,
+      "line_search_substeps": {
+        "maximum": 9,
+        "mean": 1.9461756373937678
+      },
+      "nonlinear_solves": 4954,
+      "preconditioner_fallbacks": 0,
+      "safety_capped_frames": 188,
+      "solver_error_codes": [],
+      "solver_failures": 0,
+      "stage_gpu_ms": {
+        "array_runtime": 6710.6298371218145,
+        "ccd": 644018.9585743938,
+        "fused_compute": 3338.463868247345,
+        "hessian_assembly": 246955.26663097553,
+        "linear_solver": 89312.88026436232,
+        "sparse_indices": 80626.06045242865
+      },
+      "top_kernels": [
+        {
+          "calls": 14525,
+          "gpu_ms": 260875.6762931589,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 14525,
+          "gpu_ms": 172883.41057207435,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 4954,
+          "gpu_ms": 133501.9362922758,
+          "library": "hessian_att_cf22db99064557aa_990b87aa92e64872.metallib",
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_3"
+        },
+        {
+          "calls": 4954,
+          "gpu_ms": 60957.730838796124,
+          "library": "hessian_att_8ece58daca62fc43_f0e7ac955302fba5.metallib",
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_9"
+        },
+        {
+          "calls": 2483775,
+          "gpu_ms": 55211.41352353152,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 14525,
+          "gpu_ms": 49631.37649954297,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "fill_uint"
+        },
+        {
+          "calls": 4954,
+          "gpu_ms": 47522.099586436525,
+          "library": "coordinate_compression_3757b8ea26e88003.metallib",
+          "name": "unique_coord_dims_metal"
+        },
+        {
+          "calls": 9583,
+          "gpu_ms": 32629.226700635627,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "query_edges_cd"
+        },
+        {
+          "calls": 2222325,
+          "gpu_ms": 29282.62206958607,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 4942,
+          "gpu_ms": 18248.420462361537,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "query_edges_ccd"
+        }
+      ],
+      "video": "evaluation/dropping_in_container_mixed.mp4",
+      "wall_seconds": 2783.84,
+      "zero_iteration_solves": 0
+    },
+    "dropping_in_container_mixed_separation": {
+      "cg_iterations": {
+        "maximum": 138,
+        "mean": 73.69973190348526,
+        "minimum": 8,
+        "total": 247410
+      },
+      "collision_candidates": {
+        "maximum": 705373,
+        "mean": 165058.76943699733
+      },
+      "configuration": "4 soft + 1 affine bunny",
+      "converged_frames": 110,
+      "description": "Mixed container drop with separation",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 1378065.5939334538,
+      "frames": 200,
+      "kernel_calls": 4804658,
+      "kernel_gpu_ms": 589065.4512309702,
+      "kernel_gpu_ms_per_frame": 2945.327256154851,
+      "line_search_substeps": {
+        "maximum": 9,
+        "mean": 1.0670241286863271
+      },
+      "nonlinear_solves": 3357,
+      "preconditioner_fallbacks": 0,
+      "safety_capped_frames": 90,
+      "solver_error_codes": [],
+      "solver_failures": 0,
+      "stage_gpu_ms": {
+        "array_runtime": 3582.7404116280377,
+        "ccd": 308630.9005677467,
+        "fused_compute": 1566.0654496168718,
+        "hessian_assembly": 165932.49762337655,
+        "linear_solver": 89976.23633441981,
+        "sparse_indices": 19377.010844182223
+      },
+      "top_kernels": [
+        {
+          "calls": 6934,
+          "gpu_ms": 124640.40208014194,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 3357,
+          "gpu_ms": 90440.8069117926,
+          "library": "hessian_att_cf22db99064557aa_990b87aa92e64872.metallib",
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_3"
+        },
+        {
+          "calls": 6934,
+          "gpu_ms": 82778.5335034132,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 3357,
+          "gpu_ms": 41862.15324874502,
+          "library": "hessian_att_8ece58daca62fc43_f0e7ac955302fba5.metallib",
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_9"
+        },
+        {
+          "calls": 1185714,
+          "gpu_ms": 26525.31231509056,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 6934,
+          "gpu_ms": 23707.818583701737,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "fill_uint"
+        },
+        {
+          "calls": 247410,
+          "gpu_ms": 15586.824403842911,
+          "library": "metal_batch",
+          "name": "cg_residual"
+        },
+        {
+          "calls": 3577,
+          "gpu_ms": 14167.254041763954,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "query_edges_cd"
+        },
+        {
+          "calls": 1060902,
+          "gpu_ms": 14133.243080461398,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 3357,
+          "gpu_ms": 12560.02096249722,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "query_edges_ccd"
+        }
+      ],
+      "video": "evaluation/dropping_in_container_mixed_separation.mp4",
+      "wall_seconds": 1532.0,
+      "zero_iteration_solves": 0
+    },
+    "dropping_in_container_no_save": {
+      "cg_iterations": {
+        "maximum": 178,
+        "mean": 54.79571399959944,
+        "minimum": 14,
+        "total": 273595
+      },
+      "collision_candidates": {
+        "maximum": 3277376,
+        "mean": 591680.2645290581
+      },
+      "configuration": "5 soft bunnies",
+      "converged_frames": 3,
+      "description": "Soft container drop without rendering",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 2590068.3017768897,
+      "frames": 200,
+      "kernel_calls": 9309043,
+      "kernel_gpu_ms": 1049780.4183182307,
+      "kernel_gpu_ms_per_frame": 5248.902091591153,
+      "line_search_substeps": {
+        "maximum": 9,
+        "mean": 1.8797595190380763
+      },
+      "nonlinear_solves": 4993,
+      "preconditioner_fallbacks": 0,
+      "safety_capped_frames": 197,
+      "solver_error_codes": [],
+      "solver_failures": 0,
+      "stage_gpu_ms": {
+        "array_runtime": 6459.267306374386,
+        "ccd": 640685.4681103723,
+        "fused_compute": 2513.9730973169208,
+        "hessian_assembly": 182242.37663659733,
+        "linear_solver": 108210.90540336445,
+        "sparse_indices": 109668.42776420526
+      },
+      "top_kernels": [
+        {
+          "calls": 14351,
+          "gpu_ms": 256336.44371456467,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 14351,
+          "gpu_ms": 169800.32421590295,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 4993,
+          "gpu_ms": 166068.2708735112,
+          "library": "hessian_att_28858ee5483fd2a4_996ed66e84297911.metallib",
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_3"
+        },
+        {
+          "calls": 4993,
+          "gpu_ms": 63599.92933436297,
+          "library": "coordinate_compression_3757b8ea26e88003.metallib",
+          "name": "unique_coord_dims_metal"
+        },
+        {
+          "calls": 2454021,
+          "gpu_ms": 54024.95296741836,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 14351,
+          "gpu_ms": 49040.629137307405,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "fill_uint"
+        },
+        {
+          "calls": 9361,
+          "gpu_ms": 37046.83833522722,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "query_edges_cd"
+        },
+        {
+          "calls": 2195703,
+          "gpu_ms": 28399.26103653852,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 4990,
+          "gpu_ms": 20964.521287591197,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "query_edges_ccd"
+        },
+        {
+          "calls": 4993,
+          "gpu_ms": 15637.124291271903,
+          "library": "coordinate_compression_3757b8ea26e88003.metallib",
+          "name": "build_coordinate_metadata_metal"
+        }
+      ],
+      "video": null,
+      "wall_seconds": 2730.08,
+      "zero_iteration_solves": 0
+    },
+    "one_bunny_partial_abd": {
+      "cg_iterations": {
+        "maximum": 941,
+        "mean": 142.84259634888437,
+        "minimum": 3,
+        "total": 352107
+      },
+      "collision_candidates": {
+        "maximum": 9342,
+        "mean": 4680.059634888438
+      },
+      "configuration": "1 bunny",
+      "converged_frames": 160,
+      "description": "Partial ABD with combined Jacobian/Hessian",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 3455205.2689607954,
+      "frames": 200,
+      "kernel_calls": 3372368,
+      "kernel_gpu_ms": 366166.5266661439,
+      "kernel_gpu_ms_per_frame": 1830.8326333307195,
+      "line_search_substeps": {
+        "maximum": 9,
+        "mean": 1.5513184584178499
+      },
+      "nonlinear_solves": 2465,
+      "preconditioner_fallbacks": 0,
+      "safety_capped_frames": 40,
+      "solver_error_codes": [],
+      "solver_failures": 0,
+      "stage_gpu_ms": {
+        "array_runtime": 2634.105384000577,
+        "ccd": 91790.19877221435,
+        "fused_compute": 1502.3063929984346,
+        "hessian_assembly": 153825.9272123687,
+        "linear_solver": 110658.27590611298,
+        "sparse_indices": 5755.712998448871
+      },
+      "top_kernels": [
+        {
+          "calls": 2465,
+          "gpu_ms": 133090.48587677535,
+          "library": "hessian_att_5c726aa7db6140fd_71f7fdcc8d0d75e2.metallib",
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_9"
+        },
+        {
+          "calls": 352107,
+          "gpu_ms": 34158.9110060595,
+          "library": "metal_batch",
+          "name": "cg_residual"
+        },
+        {
+          "calls": 6253,
+          "gpu_ms": 30769.83004109934,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 6253,
+          "gpu_ms": 25449.33787465561,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 1500720,
+          "gpu_ms": 19901.299549965188,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 3788,
+          "gpu_ms": 7494.616169598885,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "fill_uint"
+        },
+        {
+          "calls": 26898,
+          "gpu_ms": 5953.141574980691,
+          "library": "metal_batch",
+          "name": "cg_denominator"
+        },
+        {
+          "calls": 17599,
+          "gpu_ms": 4653.099785558879,
+          "library": "metal_batch",
+          "name": "cg_denominator"
+        },
+        {
+          "calls": 22895,
+          "gpu_ms": 3302.4308920139447,
+          "library": "metal_batch",
+          "name": "cg_denominator"
+        },
+        {
+          "calls": 6253,
+          "gpu_ms": 3222.1606683451682,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "fill_uint"
+        }
+      ],
+      "video": "evaluation/one_bunny_partial_abd.mp4",
+      "wall_seconds": 3597.55,
+      "zero_iteration_solves": 0
+    },
+    "one_bunny_partial_abd_separate_jacobian": {
+      "cg_iterations": {
+        "maximum": 1452,
+        "mean": 184.86936184430337,
+        "minimum": 4,
+        "total": 553314
+      },
+      "collision_candidates": {
+        "maximum": 386817,
+        "mean": 4693.055684454756
+      },
+      "configuration": "1 bunny",
+      "converged_frames": 138,
+      "description": "Partial ABD with separate Jacobian",
+      "device": "Apple M2 Max",
+      "dispatch_wall_ms": 7300036.185458186,
+      "frames": 200,
+      "kernel_calls": 4680561,
+      "kernel_gpu_ms": 614314.0378654934,
+      "kernel_gpu_ms_per_frame": 3071.5701893274672,
+      "line_search_substeps": {
+        "maximum": 9,
+        "mean": 1.8097447795823667
+      },
+      "nonlinear_solves": 3017,
+      "preconditioner_fallbacks": 0,
+      "safety_capped_frames": 62,
+      "solver_error_codes": [
+        -23,
+        -25,
+        -24,
+        -13,
+        -27,
+        -21,
+        -10,
+        -34,
+        -19,
+        -58,
+        -14,
+        -756,
+        -326,
+        -743,
+        -1037,
+        -278,
+        -690,
+        -174,
+        -915,
+        -380,
+        -230,
+        -778,
+        -57,
+        -53
+      ],
+      "solver_failures": 24,
+      "stage_gpu_ms": {
+        "array_runtime": 3091.61541366484,
+        "ccd": 193231.50969680864,
+        "fused_compute": 1975.6954140029848,
+        "hessian_assembly": 215550.03667145502,
+        "linear_solver": 192750.99011824932,
+        "sparse_indices": 7714.19055131264
+      },
+      "top_kernels": [
+        {
+          "calls": 3017,
+          "gpu_ms": 131185.4500839254,
+          "library": "hessian_att_5c726aa7db6140fd_c2dee9017591ba7f.metallib",
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_9"
+        },
+        {
+          "calls": 8413,
+          "gpu_ms": 80349.55196082592,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 559879,
+          "gpu_ms": 57626.39397953171,
+          "library": "metal_batch",
+          "name": "cg_residual"
+        },
+        {
+          "calls": 8413,
+          "gpu_ms": 51886.57874788623,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "calculate_internal_boxes_independent"
+        },
+        {
+          "calls": 3017,
+          "gpu_ms": 37825.32320928294,
+          "library": "hessian_att_5c726aa7db6140fd_c2dee9017591ba7f.metallib",
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_9"
+        },
+        {
+          "calls": 2019120,
+          "gpu_ms": 24297.474339604378,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "bitonic_morton_step"
+        },
+        {
+          "calls": 5396,
+          "gpu_ms": 12245.611413847655,
+          "library": "ccd_metal_a12c9e2e00c37d09.metallib",
+          "name": "fill_uint"
+        },
+        {
+          "calls": 47899,
+          "gpu_ms": 10235.19887845032,
+          "library": "metal_batch",
+          "name": "cg_denominator"
+        },
+        {
+          "calls": 22250,
+          "gpu_ms": 9382.812502561137,
+          "library": "metal_batch",
+          "name": "cg_denominator"
+        },
+        {
+          "calls": 3017,
+          "gpu_ms": 9159.829165204428,
+          "library": "hessian_att_5c726aa7db6140fd_c2dee9017591ba7f.metallib",
+          "name": "compute_hessian_and_gradient_global_function_final_gradient_size_9"
+        }
+      ],
+      "video": "evaluation/one_bunny_partial_abd_separate_jacobian.mp4",
+      "wall_seconds": 7483.93,
+      "zero_iteration_solves": 0
+    }
+  }
+}
