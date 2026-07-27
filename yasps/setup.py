@@ -48,7 +48,10 @@ setup(
     long_description_content_type='text/markdown',  # The content type of the long description
     url='https://github.com/yourusername/yasps',  # The URL to the repository
     packages=find_packages(),  # Finds all packages in the directory
-    package_data={'yasps': ['*.txt', '*.cuh', '*.cu']},
+    package_data={
+        'yasps': ['*.txt', '*.cuh', '*.cu'],
+        'yasps.backend': ['*.mm', '*.metal', '*.inc'],
+    },
     ext_modules=cythonize(
       extensions,
       annotate=False,        # Generates the HTML .html annotation files
@@ -63,10 +66,8 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
     ],
-    install_requires=[
-        'numpy',
-        'pycuda'
-    ],
+    install_requires=['numpy'],
+    extras_require={'cuda': ['pycuda']},
     python_requires='>=3.6',  # Minimum version requirement of the package
     include_package_data=True,  # Includes files described by MANIFEST.in
 )
