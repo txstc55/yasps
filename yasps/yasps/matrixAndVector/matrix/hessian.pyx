@@ -11,6 +11,7 @@ from yasps.codeGenerator import codeGenerator
 import numpy as np
 from yasps.backend import autoinit
 from yasps.backend import gpuarray
+from yasps.backend import is_metal
 from yasps.helper import timed
 from yasps.placementReorderKernel import placementReorderKernel
 
@@ -1055,11 +1056,18 @@ class hessian(matrix):
     elif len(self.__indices_kernels_dynamic) > 0:
       self.getSparseIndicesDynamicAgain()
 
-    self.__gradient.value.fill(0)
-    self.__diagonal.fill(0)
-    self.__diagonal_blocks.fill(0)
-    self.blocks_flattened.fill(0)
-    self.blocks_flattened_dynamic.fill(0)
+    buffers_to_clear = [
+      self.__gradient.value,
+      self.__diagonal,
+      self.__diagonal_blocks,
+      self.blocks_flattened,
+      self.blocks_flattened_dynamic,
+    ]
+    if is_metal():
+      gpuarray.fill_batch(buffers_to_clear)
+    else:
+      for buffer in buffers_to_clear:
+        buffer.fill(0)
 
     for index, indices_kernel in enumerate(self.__indices_kernels):
       if index >= len(self.__block_indices_gpu):

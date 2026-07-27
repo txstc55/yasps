@@ -589,6 +589,21 @@ def dispatch_batch(
   )
 
 
+def fill_batch(arrays: Iterable[GPUArray], value=0) -> None:
+  dispatches = []
+  for array in arrays:
+    if array.size == 0:
+      continue
+    suffix = _dtype_suffix(array.dtype)
+    dispatches.append((
+      _array_kernel(f"yasps_fill_{suffix}"),
+      [array, array.dtype.type(value), np.uint32(array.size)],
+      array.size,
+      0,
+    ))
+  dispatch_batch(dispatches, "fill")
+
+
 def _encode_arguments(arguments):
   encoded: list[_Argument] = []
   keepalive: list[Any] = []
@@ -872,6 +887,7 @@ __all__ = [
   "dispatch_batch",
   "empty",
   "empty_like",
+  "fill_batch",
   "max",
   "sum",
   "to_gpu",
