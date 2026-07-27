@@ -223,6 +223,45 @@ def test_small_matrix_guards_preserve_finite_path(tmp_path):
   )
 
 
+def test_stable_neo_hookean_size_projection_matches_eigh(tmp_path):
+  fixture = Path(__file__).with_name("fixtures")
+  matrix_include = (
+    Path(__file__).parents[2]
+    / "yasps"
+    / "yasps"
+    / "kernel"
+    / "Compute"
+  )
+  library = gpuarray.compile_metal(
+    [fixture / "matrix_ops.metal"],
+    tmp_path / "matrix_projection_12.metallib",
+    include_dirs=[matrix_include],
+  )
+  kernel = gpuarray.MetalKernel(
+    library,
+    "yasps_test_projection_12",
+  )
+
+  rng = np.random.default_rng(1234)
+  source = rng.standard_normal((12, 12)).astype(np.float32)
+  source = (source + source.T) * np.float32(0.5)
+  eigenvalues, eigenvectors = np.linalg.eigh(source)
+  expected = (
+    eigenvectors
+    * np.maximum(eigenvalues, np.float32(0.0))
+  ) @ eigenvectors.T
+  input_array = gpuarray.to_gpu(source.ravel())
+  output = gpuarray.empty(144, np.float32)
+  kernel.dispatch([input_array, output], 1)
+
+  np.testing.assert_allclose(
+    output.get().reshape(12, 12),
+    expected,
+    rtol=3.0e-4,
+    atol=3.0e-4,
+  )
+
+
 def test_generated_eigen_source_translates_and_links(tmp_path):
   cuda_header = """
 __device__ void generated_device_function(
@@ -344,6 +383,59 @@ __device__ void generated_resize(
   ) in metal_source
 
 
+def test_complete_generated_output_writes_directly_to_result():
+  cuda_header = """
+__device__ void generated_complete_output(
+ const double* input,
+ double* result
+)""".strip()
+  cuda_source = f"""
+{cuda_header}{{
+ using RowMat = Eigen::Matrix<double, 2, 2, Eigen::RowMajor>;
+ Eigen::Map<RowMat> out(result);
+ out << input[0], input[1], input[2], input[3];
+}}
+"""
+
+  metal_source, _ = translate_device_kernel(
+    cuda_source,
+    cuda_header,
+    2,
+    2,
+  )
+
+  assert "RowMat out" not in metal_source
+  assert "result[0] = input[0];" in metal_source
+  assert "result[3] = input[3];" in metal_source
+  assert "yasps_output_index" not in metal_source
+
+
+def test_nested_generated_output_keeps_local_matrix():
+  cuda_header = """
+__device__ void generated_nested_output(
+ double* result
+)""".strip()
+  cuda_source = f"""
+{cuda_header}{{
+ using RowMat = Eigen::Matrix<double, 2, 2, Eigen::RowMajor>;
+ Eigen::Map<RowMat> out(result);
+ nested_device_function(out.data());
+ out << 1.0, 2.0, 3.0, 4.0;
+}}
+"""
+
+  metal_source, _ = translate_device_kernel(
+    cuda_source,
+    cuda_header,
+    2,
+    2,
+  )
+
+  assert "RowMat out = {};" in metal_source
+  assert "nested_device_function(out.data());" in metal_source
+  assert "yasps_output_index" in metal_source
+
+
 def test_generated_const_matrix_map_uses_pointer_backed_view():
   cuda_header = """
 __device__ void generated_map(
@@ -411,6 +503,30 @@ __global__ void compute_hessian(
   assert "const uint start = 0;" in metal_source
   assert "const uint end = total_instance_count;" in metal_source
   assert "groupedIndicesOuter[nth_gradient_size + 1]" not in metal_source
+
+
+def test_implicit_hessian_translation_skips_redundant_output_zeroing():
+  cuda_source = """
+extern "C" {
+__global__ void compute_hessian(
+  double* output
+) {
+  Eigen::Matrix<double, 49, 48, Eigen::RowMajor> hg_mat =
+    Eigen::Matrix<double, 49, 48, Eigen::RowMajor>::Zero();
+  generated_device_function(hg_mat.data());
+  output[0] = hg_mat(0, 0);
+}
+}
+"""
+
+  metal_source = translate_hessian_kernel(
+    cuda_source,
+    "compute_hessian",
+    header_include=None,
+  )
+
+  assert "YaspsMatrix<49, 48> hg_mat;" in metal_source
+  assert "YaspsMatrix<49, 48> hg_mat = {};" not in metal_source
 
 
 def test_generated_scalar_matrix_product_unwraps():

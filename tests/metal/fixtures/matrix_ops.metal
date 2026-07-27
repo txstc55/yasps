@@ -47,3 +47,20 @@ kernel void yasps_test_matrix_guards(
     inverse[element] = local_inverse[element];
   }
 }
+
+kernel void yasps_test_projection_12(
+    device const float *input [[buffer(0)]],
+    device float *output [[buffer(1)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index != 0) {
+    return;
+  }
+  float local[144];
+  for (uint element = 0; element < 144; ++element) {
+    local[element] = input[element];
+  }
+  yasps_spd_projection_inplace<12>(local, 2);
+  for (uint element = 0; element < 144; ++element) {
+    output[element] = local[element];
+  }
+}

@@ -109,6 +109,11 @@ def translate_hessian_kernel(
     body,
   )
   body = _translate_common(body)
+  body = re.sub(
+    r"\b(YaspsMatrix<\d+,\s*\d+>\s+hg_mat)\s*=\s*\{\};",
+    r"\1;",
+    body,
+  )
 
   argument_struct = f"{function_name}_arguments"
   pieces = [

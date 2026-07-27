@@ -71,13 +71,71 @@ def translate_device_kernel(
   result = result.replace("double", "float")
   result = _float_literals(result)
 
+  writes_directly_to_result = False
+  if rows * cols > 1 and re.search(r"\bRowMat\s+out\b", result):
+    output_accesses = re.findall(
+      r"\bout\.values\[(\d+)\]",
+      result,
+    )
+    output_assignments = re.findall(
+      r"\bout\.values\[(\d+)\]\s*=",
+      result,
+    )
+    other_output_uses = re.sub(
+      r"^\s*RowMat\s+out\s*=\s*\{\};\s*$",
+      "",
+      result,
+      count=1,
+      flags=re.MULTILINE,
+    )
+    other_output_uses = re.sub(
+      r"\bout\.values\[\d+\]\s*=",
+      "",
+      other_output_uses,
+    )
+    other_output_uses = re.sub(
+      r"^\s*out\s*;\s*$",
+      "",
+      other_output_uses,
+      flags=re.MULTILINE,
+    )
+    expected_outputs = {str(index) for index in range(rows * cols)}
+    if (
+      len(output_accesses) == len(output_assignments)
+      and set(output_assignments) == expected_outputs
+      and not re.search(r"\bout\b", other_output_uses)
+    ):
+      result = re.sub(
+        r"^\s*RowMat\s+out\s*=\s*\{\};\s*$",
+        "",
+        result,
+        count=1,
+        flags=re.MULTILINE,
+      )
+      result = re.sub(
+        r"^\s*out\s*;\s*$",
+        "",
+        result,
+        flags=re.MULTILINE,
+      )
+      result = re.sub(
+        r"\bout\.values\[(\d+)\]\s*=",
+        r"result[\1] =",
+        result,
+      )
+      writes_directly_to_result = True
+
   if rows * cols == 1:
     result = re.sub(
       r"result\[0\]\s*=\s*([^;]+);",
       r"result[0] = yasps_scalar_value(\1);",
       result,
     )
-  if rows * cols > 1 and re.search(r"\bRowMat\s+out\b", result):
+  if (
+    rows * cols > 1
+    and not writes_directly_to_result
+    and re.search(r"\bRowMat\s+out\b", result)
+  ):
     closing = result.rfind("}")
     if closing < 0:
       raise ValueError("generated device kernel has no closing brace")
