@@ -1,13 +1,34 @@
 #!/usr/bin/env python3
 
+import argparse
 import csv
+from datetime import date
 import json
 import re
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parent
-FRAMES = 24
+PARSER = argparse.ArgumentParser()
+PARSER.add_argument(
+  "--root",
+  type=Path,
+  default=Path(__file__).resolve().parent,
+)
+PARSER.add_argument("--frames", type=int, default=24)
+PARSER.add_argument("--soft-bunnies", type=int, default=1)
+PARSER.add_argument("--mixed-bunnies", type=int, default=2)
+ARGS = PARSER.parse_args()
+
+ROOT = ARGS.root.resolve()
+FRAMES = ARGS.frames
+SOFT_BUNNIES = ARGS.soft_bunnies
+MIXED_BUNNIES = ARGS.mixed_bunnies
+
+
+def bunny_label(count, kind):
+  noun = "bunny" if count == 1 else "bunnies"
+  return f"{count} {kind} {noun}"
+
 
 VARIANTS = {
   "one_bunny_partial_abd": {
@@ -25,17 +46,21 @@ VARIANTS = {
   },
   "dropping_in_container": {
     "description": "Soft bunny dropped in a container",
-    "configuration": "1 soft bunny",
+    "configuration": bunny_label(SOFT_BUNNIES, "soft"),
     "video": "evaluation/dropping_in_container.mp4",
   },
   "dropping_in_container_mixed": {
     "description": "Mixed soft/affine container drop",
-    "configuration": "1 soft + 1 affine bunny",
+    "configuration": (
+      f"{MIXED_BUNNIES - 1} soft + 1 affine bunny"
+    ),
     "video": "evaluation/dropping_in_container_mixed.mp4",
   },
   "dropping_in_container_mixed_separation": {
     "description": "Mixed container drop with separation",
-    "configuration": "1 soft + 1 affine bunny",
+    "configuration": (
+      f"{MIXED_BUNNIES - 1} soft + 1 affine bunny"
+    ),
     "video": (
       "evaluation/"
       "dropping_in_container_mixed_separation.mp4"
@@ -43,7 +68,7 @@ VARIANTS = {
   },
   "dropping_in_container_no_save": {
     "description": "Soft container drop without rendering",
-    "configuration": "1 soft bunny",
+    "configuration": bunny_label(SOFT_BUNNIES, "soft"),
     "video": None,
   },
 }
@@ -283,7 +308,7 @@ def main():
   if len(devices) != 1:
     raise ValueError(f"Expected one Metal device, got {devices}")
   summary = {
-    "evaluated_on": "2026-07-26",
+    "evaluated_on": date.today().isoformat(),
     "backend": "metal",
     "device": devices.pop(),
     "dtype": "float32",
