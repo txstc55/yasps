@@ -14,12 +14,12 @@ End-to-end wall time includes all of those activities.
 
 | Variant | Configuration | Wall (s) | GPU total (ms) | GPU/frame (ms) | Nonlinear solves | CG iterations |
 |---|---|---:|---:|---:|---:|---:|
-| Partial ABD | 1 bunny | 128.93 | 12,083.93 | 503.50 | 92 | 14,702 |
-| Partial ABD, separate Jacobian | 1 bunny | 200.65 | 12,274.91 | 511.45 | 91 | 14,444 |
-| Container drop | 1 soft bunny | 50.42 | 4,199.81 | 174.99 | 55 | 3,958 |
-| Container drop, mixed | 1 soft + 1 affine | 17.11 | 1,276.93 | 53.21 | 25 | 43 |
-| Container drop, mixed separation | 1 soft + 1 affine | 64.80 | 6,943.20 | 289.30 | 71 | 4,090 |
-| Container drop, no save | 1 soft bunny | 7.49 | 692.06 | 28.84 | 25 | 80 |
+| Partial ABD | 1 bunny | 85.73 | 12,667.26 | 527.80 | 99 | 16,263 |
+| Partial ABD, separate Jacobian | 1 bunny | 144.19 | 13,936.35 | 580.68 | 91 | 14,414 |
+| Container drop | 1 soft bunny | 32.58 | 2,691.43 | 112.14 | 55 | 3,956 |
+| Container drop, mixed | 1 soft + 1 affine | 22.17 | 1,407.69 | 58.65 | 25 | 43 |
+| Container drop, mixed separation | 1 soft + 1 affine | 69.40 | 7,421.69 | 309.24 | 71 | 4,088 |
+| Container drop, no save | 1 soft bunny | 7.29 | 715.73 | 29.82 | 25 | 80 |
 
 The no-save wall time is not directly comparable to rendered variants:
 it intentionally omits PyVista, screenshots, and mesh output.
@@ -30,12 +30,12 @@ All values are milliseconds accumulated across 24 timesteps.
 
 | Variant | Fused compute | Sparse indices | Hessian | CG solver | CCD | Array/runtime |
 |---|---:|---:|---:|---:|---:|---:|
-| Partial ABD | 22.73 | 143.89 | 5,504.64 | 2,469.85 | 3,887.58 | 55.24 |
-| Partial ABD, separate Jacobian | 22.82 | 318.43 | 5,966.92 | 2,682.81 | 3,224.74 | 59.18 |
-| Container drop | 10.58 | 199.78 | 491.07 | 881.84 | 2,564.88 | 51.65 |
-| Container drop, mixed | 6.87 | 375.01 | 640.44 | 23.80 | 177.92 | 52.90 |
-| Container drop, mixed separation | 19.66 | 266.72 | 1,957.25 | 742.46 | 3,887.97 | 69.14 |
-| Container drop, no save | 3.08 | 291.01 | 227.85 | 14.89 | 117.63 | 37.60 |
+| Partial ABD | 37.52 | 157.59 | 5,691.57 | 2,839.48 | 3,791.97 | 149.13 |
+| Partial ABD, separate Jacobian | 26.51 | 321.64 | 5,717.19 | 3,260.55 | 4,543.41 | 67.04 |
+| Container drop | 7.82 | 198.87 | 579.99 | 639.30 | 1,216.91 | 48.54 |
+| Container drop, mixed | 7.39 | 386.96 | 698.70 | 27.80 | 234.65 | 52.19 |
+| Container drop, mixed separation | 34.00 | 270.06 | 1,796.92 | 1,167.95 | 4,064.54 | 88.21 |
+| Container drop, no save | 2.74 | 282.90 | 251.68 | 12.86 | 122.24 | 43.31 |
 
 The stage groups correspond to the port's major subsystems:
 
@@ -48,6 +48,55 @@ The stage groups correspond to the port's major subsystems:
 - CCD: LBVH construction, Morton sorting, traversal, separation, and
   ACCD step computation.
 - Array/runtime: generic Metal GPUArray operations.
+
+### Hessian mode audit
+
+The three code-generation paths remain distinct:
+
+- Entire-Hessian projection compiles one entry kernel for each observed
+  compressed gradient size. It materializes that size's global square
+  Hessian and projects it.
+- Direct implicit projection compiles one maximum-child specialization.
+  It evaluates the generated global Hessian/gradient expression on the
+  fly. Metal now dispatches all runtime size groups together because
+  this path does not need a size-uniform local matrix.
+- Separate H/J projection also compiles one maximum-child
+  specialization. Its main term materializes a 12×12 local Hessian,
+  56 packed Jacobian values, and the global gradient for the partial-ABD
+  stable term. Independently compiled, non-inlined helpers compute each
+  upper child-block `JᵀHᵢⱼJ`; their live temporary requirements are
+  therefore not additive. This path retains its five runtime size
+  groups because collapsing unlike active block patterns was slower.
+
+In a controlled four-step, one-nonlinear-solve-per-step profile,
+collapsing the direct implicit groups reduced its stable-term Hessian
+GPU time from 248.39 ms to 208.48 ms (16.1%) and dispatch wall time from
+368.21 ms to 255.05 ms (30.7%). Applying the same grouping to the
+separate path increased GPU time from 253.64 ms to 294.00 ms, so it was
+not retained.
+
+The full 24-step run does not show a separate-H/J speedup on the M2 Max.
+The stable-term kernel averages 55.76 ms per nonlinear solve in direct
+mode and 61.44 ms in separate mode. The smaller local H/J computation is
+offset by five group dispatches, uncompressed local placement, and
+additional atomic block assembly; sparse-index work is also 321.64 ms
+versus 157.59 ms. These are measured Metal results, not an assumption
+that CUDA helper register use adds across independent helpers.
+
+### CG submission audit
+
+CG still uses the same generated block sparse matvec, block-Jacobi,
+dot/reduction, and vector-update kernels. The Metal runtime now encodes
+each dependency-safe phase into one command buffer, with separate
+compute encoders preserving ordering. Host synchronization remains only
+where CG needs a reduced scalar for `alpha`, the new residual, or its
+convergence test.
+
+In the controlled four-step profile this reduced solver submissions
+from 1,620 individual dispatch-and-wait calls to 194 phase batches.
+Recorded solver dispatch wall time fell from 729.46 ms to 252.95 ms in
+direct mode and from 841.23 ms to 477.73 ms in separate mode. No
+preconditioner, stopping rule, or CG recurrence was replaced.
 
 Exact per-kernel call counts, GPU/wall timings, top kernels, solver
 statistics, and collision candidate statistics are in
@@ -69,8 +118,8 @@ both files from the retained logs and per-kernel timing records.
 Every video has 24 frames, a 960×540 frame size, and a two-second
 duration. The two fully converged partial-ABD implementations also
 agree closely after 24 timesteps: the final meshes have a maximum
-per-coordinate difference of 1.80×10⁻⁴ and RMS difference of
-1.43×10⁻⁵.
+per-coordinate difference of 2.20×10⁻⁴ and RMS difference of
+1.75×10⁻⁵.
 
 ## Float32 convergence note
 
