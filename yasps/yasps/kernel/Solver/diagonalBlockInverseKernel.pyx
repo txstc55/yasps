@@ -7,6 +7,9 @@ import numpy as np
 from yasps.helper import timed
 from yasps.context import context
 import time
+from yasps.backend import is_metal
+from pathlib import Path
+import hashlib
 
 # the diagonalBlockInverseKernel
 # will be responsible for computing the explicit inverse of the diagonal blocks
@@ -24,6 +27,7 @@ class diagonalBlockInverseKernel:
     self.__diagonal_blocks_start = np.array(diagonal_blocks_start, dtype=np.uint32)
     self.__diagonal_blocks_count = np.array(diagonal_blocks_count, dtype=np.uint32)
     self.__diagonal_block_sizes = np.array(diagonal_block_sizes, dtype=np.uint32)
+    self.__metal_kernels = {}
     self.__generateKernel()
     # print("diagonal blocks start", self.__diagonal_blocks_start)
     # print("diagonal blocks count", self.__diagonal_blocks_count)
@@ -35,6 +39,9 @@ class diagonalBlockInverseKernel:
     # first we check if the kernel exists
     size_ordered_string = "_".join([str(size) for size in sorted(self.__unique_attribute_sizes)])
     file_name = f".yasps_constant/diagonal_inverse_for_size_{size_ordered_string}"
+    if is_metal():
+      self.__generateMetalKernel(file_name)
+      return
     if not os.path.exists(f'{file_name}.so'):
       # generate and compile the kernel
       inverse_kernel_string = """
@@ -191,6 +198,72 @@ void invert_diagonal_blocks(
       ctypes.c_int # num_attributes
     ]
 
+  def __generateMetalKernel(self, file_name):
+    from yasps.backend import metal_codegen
+
+    source_parts = [
+      '#include "metalMatrix.metal"',
+      "",
+    ]
+    for attribute_size in sorted(self.__unique_attribute_sizes):
+      source_parts.append(f'''
+kernel void invert_diagonal_blocks_{attribute_size}_metal(
+  device const float* diagonal_blocks [[buffer(0)]],
+  device float* output_blocks [[buffer(1)]],
+  constant uint& block_count [[buffer(2)]],
+  uint index [[thread_position_in_grid]]
+) {{
+  if (index >= block_count) {{
+    return;
+  }}
+  constexpr uint block_size = {attribute_size};
+  thread float input_block[block_size * block_size];
+  thread float output_block[block_size * block_size];
+  for (uint element = 0; element < block_size * block_size; ++element) {{
+    input_block[element] =
+      diagonal_blocks[index * block_size * block_size + element];
+  }}
+  yasps_symmetric_pseudoinverse<block_size>(
+    input_block,
+    output_block
+  );
+  for (uint element = 0; element < block_size * block_size; ++element) {{
+    output_blocks[index * block_size * block_size + element] =
+      output_block[element];
+  }}
+}}
+''')
+    source = "\n".join(source_parts)
+    source_hash = hashlib.sha256(
+      source.encode("utf-8")
+      + (
+        Path(metal_codegen.__file__).resolve().parents[1]
+        / "kernel"
+        / "Compute"
+        / "metalMatrix.metal"
+      ).read_bytes()
+    ).hexdigest()[:16]
+    source_path = Path(f"{file_name}_{source_hash}.metal")
+    library_path = Path(f"{file_name}_{source_hash}.metallib")
+    matrix_dir = (
+      Path(metal_codegen.__file__).resolve().parents[1]
+      / "kernel"
+      / "Compute"
+    )
+    if not library_path.exists():
+      source_path.write_text(source, encoding="utf-8")
+      gpuarray.compile_metal(
+        [source_path],
+        library_path,
+        include_dirs=[matrix_dir],
+      )
+    for attribute_size in self.__unique_attribute_sizes:
+      self.__metal_kernels[attribute_size] = gpuarray.MetalKernel(
+        library_path,
+        f"invert_diagonal_blocks_{attribute_size}_metal"
+      )
+    self.__kernel = self.__metal_kernels
+
   def __to_void_p(self, x: gpuarray.GPUArray):
     if x is None or x.size == 0:
       # Return a NULL pointer if array is empty
@@ -205,6 +278,34 @@ void invert_diagonal_blocks(
   ):
     self.__context.useDefaultContext()
     assert self.__kernel is not None, "diagonalBlockInverseKernel.computeDiagonalBlockInverse: Kernel not linked"
+    if is_metal():
+      for attribute_index, block_size_value in enumerate(
+        self.__diagonal_block_sizes
+      ):
+        block_size = int(block_size_value)
+        block_count = int(
+          self.__diagonal_blocks_count[attribute_index]
+        )
+        if block_count == 0:
+          continue
+        element_start = int(
+          self.__diagonal_blocks_start[attribute_index]
+        )
+        element_count = block_count * block_size * block_size
+        self.__metal_kernels[block_size].dispatch(
+          [
+            diagonal_blocks[
+              element_start:element_start + element_count
+            ],
+            output_blocks[
+              element_start:element_start + element_count
+            ],
+            np.uint32(block_count),
+          ],
+          block_count,
+          32
+        )
+      return
     self.__kernel(
       self.__to_void_p(diagonal_blocks),
       self.__to_void_p(output_blocks),

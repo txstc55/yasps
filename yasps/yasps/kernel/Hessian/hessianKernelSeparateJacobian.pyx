@@ -5,6 +5,7 @@ from yasps.codeGenerator import codeGenerator
 from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
+from yasps.backend import is_metal
 class hessianKernelSeparateJacobian:
   def __init__(
     self,
@@ -134,6 +135,29 @@ class hessianKernelSeparateJacobian:
           if (line.strip().startswith(");") or line.strip().startswith("){")) and do_skip_lines:
             do_skip_lines = False
       item.deviceKernel.kernelString = "\n".join(corrected_lines) # recreate the device kernel string with the corrected lines
+      if is_metal():
+        from yasps.backend.metal_codegen import translate_device_kernel
+
+        function_start = item.deviceKernel.kernelString.find(
+          f"__device__ void {item.fullName}_device_function("
+        )
+        function_body = item.deviceKernel.kernelString.find(
+          "{",
+          function_start
+        )
+        normalized_source = (
+          item.deviceKernel.kernelString[:function_start]
+          + item.deviceKernel.kernelHeader
+          + item.deviceKernel.kernelString[function_body:]
+        )
+        metal_source, metal_header = translate_device_kernel(
+          normalized_source,
+          item.deviceKernel.kernelHeader,
+          item.rows,
+          item.cols
+        )
+        item.deviceKernel.metalKernelString = metal_source
+        item.deviceKernel.metalKernelHeader = metal_header
       self.__dependents.append(item.deviceKernel) # add the device kernel
 
 

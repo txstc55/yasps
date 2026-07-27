@@ -16,6 +16,9 @@ from yasps.helper import prune_duplicate_functions, timed
 from yasps.backend import gpuarray
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 import numpy as np
+from yasps.backend import is_metal
+from pathlib import Path
+import hashlib
 class placementReorderKernel:
   def __init__(self):
     self.__energy: Optional[attribute] = None
@@ -188,6 +191,14 @@ int reorderPlacementIndices(
     self.__energy = energy
     # ok now we compile the kernel by saving it to a file and then calling nvcc
     file_name = f".yasps_tmp/{energy.fullName}_reorder_placement"
+    if is_metal():
+      self.__generate_kernel_string(
+        global_jacobian_children_spans,
+        max_num_indices,
+        energy
+      )
+      self.__generateMetalKernel(file_name)
+      return
     if os.path.exists(f'{file_name}.so'):
       # we just use that file?
       self.__kernel = ctypes.CDLL(f"{file_name}.so").reorderPlacementIndices # get the compiled kernel
@@ -217,6 +228,31 @@ int reorderPlacementIndices(
         ctypes.c_void_p, # lookupsPermuted
         ctypes.c_uint32 # numInstances
       ]
+
+  def __generateMetalKernel(self, file_name):
+    from yasps.backend.metal_hessian_codegen import (
+      translate_hessian_kernel,
+    )
+
+    function_name = "reorderPlacementIndicesGlobal"
+    source = translate_hessian_kernel(
+      self.__kernelString,
+      function_name,
+      header_include=None
+    )
+    source_hash = hashlib.sha256(
+      source.encode("utf-8")
+    ).hexdigest()[:16]
+    source_path = Path(f"{file_name}_{source_hash}.metal")
+    library_path = Path(f"{file_name}_{source_hash}.metallib")
+    if not library_path.exists():
+      source_path.write_text(source, encoding="utf-8")
+      gpuarray.compile_metal([source_path], library_path)
+    self.__kernel = gpuarray.MetalKernel(
+      library_path,
+      function_name,
+      argument_buffer=True
+    )
   def generateKernel(
     self,
     global_jacobian_children_spans: List[int],
@@ -245,6 +281,20 @@ int reorderPlacementIndices(
     assert self.__kernel is not None, "placementReorderKernel.reorderPlacementindices: Kernel has not been compiled yet"
     if lookups.size > self.__reordered_lookups.size:
       self.__reordered_lookups = gpuarray.zeros(lookups.size, dtype=np.uint32)
+    if is_metal():
+      self.__kernel.dispatch(
+        [
+          giKernel.outputSizes,
+          giKernel.outputPermutations,
+          lookups,
+          giKernel.outputCompressedCoordinateCountsOuter,
+          self.__reordered_lookups,
+          np.uint32(self.__energy.correspondance.numInstances),
+        ],
+        self.__energy.correspondance.numInstances,
+        256
+      )
+      return
     self.__kernel(
       self.__to_void_p(giKernel.outputSizes),
       self.__to_void_p(giKernel.outputPermutations),

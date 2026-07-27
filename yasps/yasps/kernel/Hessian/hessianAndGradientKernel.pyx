@@ -19,6 +19,8 @@ from yasps.hessianKernelFullProject import hessianKernelFullProject
 from yasps.hessianKernelNoProject import hessianKernelNoProject
 from yasps.hessianKernelHost import hessianKernelHost
 from yasps.hessianKernelSeparateJacobian import hessianKernelSeparateJacobian
+from yasps.backend import is_metal
+from pathlib import Path
 
 class hessianAndGradientKernel:
   att_name_to_gradient_sizes: dict[str, Set[int]] = {}  # maps attribute names to their unique gradient sizes, this way we only need to generate unique gradient sizes once
@@ -41,6 +43,8 @@ class hessianAndGradientKernel:
     self.__additional_compile_flags = []  # --ptxas-options=-v,-warn-spills,-warn-lmem-usage  use this for memory checking
     self.__dynamic_terms = dynamic_term
     self.__context = context()
+    self.__metal_kernels = {}
+    self.__metal_default_size = 0
     # self.__generateKernel(att)
 
   def __to_void_p(self, x: gpuarray.GPUArray):
@@ -99,6 +103,19 @@ class hessianAndGradientKernel:
     full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullName}_wrt_{wrt_names}_with_sizes_{size_names}"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}" + ("" if self.__project_entire_hessian else "_no_proj")
+    if is_metal():
+      self.__generateMetalKernel(
+        sortedDependency,
+        separate_jacobian_kernel,
+        max_child_gradient_size,
+        max_num_indices,
+        attributeName=(
+          f'att_{self.__att.hash}'.replace("-", "_neg_")
+          if self.__att.name == ""
+          else self.__att.fullName
+        )
+      )
+      return
     # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
     # print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
@@ -286,6 +303,148 @@ extern "C"{{
         ctypes.c_uint,      # num_unique_gradient_sizes
       ]
 
+  def __generateMetalKernel(
+    self,
+    sorted_dependency,
+    separate_jacobian_kernel,
+    max_child_gradient_size,
+    max_num_indices,
+    attributeName,
+  ):
+    from yasps.backend import metal_codegen
+    from yasps.backend.metal_hessian_codegen import (
+      translate_hessian_kernel,
+    )
+
+    if self.__project_entire_hessian:
+      specialized_sizes = sorted(
+        size for size in self.__unique_gradient_sizes if size != 0
+      )
+    else:
+      specialized_sizes = [max_child_gradient_size]
+      self.__metal_default_size = max_child_gradient_size
+
+    global_sources = {}
+    for specialized_size in specialized_sizes:
+      function_name = (
+        "compute_hessian_and_gradient_global_function_"
+        f"final_gradient_size_{specialized_size}"
+      )
+      if self.__project_entire_hessian:
+        cuda_source = hessianKernelFullProject(
+          self.__att,
+          specialized_size,
+          self.__gradient_only,
+          max_num_indices,
+          attributeName
+        ).kernelString
+      elif not self.__clear_separation:
+        cuda_source = hessianKernelNoProject(
+          self.__att,
+          specialized_size,
+          self.__gradient_only,
+          max_num_indices,
+          attributeName
+        ).kernelString
+      else:
+        cuda_source = separate_jacobian_kernel.generateKernelString(
+          specialized_size,
+          max_num_indices,
+          attributeName
+        )
+      global_sources[specialized_size] = translate_hessian_kernel(
+        cuda_source,
+        function_name
+      )
+
+    all_device_kernels = (
+      list(sorted_dependency) + [self.__att.deviceKernel]
+    )
+    for item in all_device_kernels:
+      if not item.metalKernelString or not item.metalKernelHeader:
+        raise RuntimeError(
+          "hessianAndGradientKernel: generated Metal dependency "
+          f"{item.attributeName!r} is incomplete"
+        )
+
+    matrix_path = (
+      Path(metal_codegen.__file__).resolve().parents[1]
+      / "kernel"
+      / "Compute"
+      / "metalMatrix.metal"
+    )
+    source_material = [
+      matrix_path.read_text(encoding="utf-8"),
+      *(item.metalKernelString for item in all_device_kernels),
+      *(global_sources[size] for size in specialized_sizes),
+    ]
+    source_digest = hashlib.sha256(
+      "\n".join(source_material).encode("utf-8")
+    ).hexdigest()[:16]
+    file_name = Path(
+      f".yasps_tmp/hessian_{self.__att.fullNameWithHash}_"
+      f"{source_digest}"
+    )
+    library_path = file_name.with_suffix(".metallib")
+    header_path = file_name.parent / "yasps_hessian_headers.metal"
+
+    if not library_path.exists():
+      header_lines = ['#include "metalMatrix.metal"', ""]
+      seen_headers = set()
+      for item in all_device_kernels:
+        if item.metalKernelHeader in seen_headers:
+          continue
+        header_lines.append(f"extern {item.metalKernelHeader};")
+        seen_headers.add(item.metalKernelHeader)
+      header_path.write_text(
+        "\n".join(header_lines) + "\n",
+        encoding="utf-8"
+      )
+
+      source_paths = []
+      seen_sources = set()
+      for item in all_device_kernels:
+        if item.metalKernelString in seen_sources:
+          continue
+        item_digest = hashlib.sha256(
+          item.metalKernelString.encode("utf-8")
+        ).hexdigest()[:12]
+        source_path = Path(
+          f"{file_name}_{item.attributeName}_{item_digest}.metal"
+        )
+        source_path.write_text(
+          f'#include "{header_path.name}"\n'
+          f"{item.metalKernelString}\n",
+          encoding="utf-8"
+        )
+        source_paths.append(source_path)
+        seen_sources.add(item.metalKernelString)
+
+      for specialized_size, source in global_sources.items():
+        source_path = Path(
+          f"{file_name}_size_{specialized_size}.metal"
+        )
+        source_path.write_text(source, encoding="utf-8")
+        source_paths.append(source_path)
+
+      gpuarray.compile_metal(
+        source_paths,
+        library_path,
+        include_dirs=[file_name.parent, matrix_path.parent],
+      )
+
+    for specialized_size in specialized_sizes:
+      function_name = (
+        "compute_hessian_and_gradient_global_function_"
+        f"final_gradient_size_{specialized_size}"
+      )
+      self.__metal_kernels[specialized_size] = gpuarray.MetalKernel(
+        library_path,
+        function_name,
+        argument_buffer=True
+      )
+    self.__kernel = self.__metal_kernels
+
   @timed("hessianAndGradientKernel.compute")
   def compute(
     self,
@@ -308,6 +467,50 @@ extern "C"{{
     # self.__context.useNamedContext("dynamic_hessian" if self.__dynamic_terms else "static_hessian")
     self.__context.useDefaultContext()
     # self.__context.useNamedContext("hessian")
+    if is_metal():
+      unique_sizes = giKernel.outputUniqueGradientSizesCPU
+      outer_indices = giKernel.outputGroupedIndicesOuter.get()[
+        :giKernel.numUniqueGradientSizesCPU + 1
+      ]
+      for size_index, unique_size in enumerate(unique_sizes):
+        instance_count = int(
+          outer_indices[size_index + 1] - outer_indices[size_index]
+        )
+        if instance_count == 0:
+          continue
+        specialized_size = (
+          int(unique_size)
+          if self.__project_entire_hessian
+          else self.__metal_default_size
+        )
+        kernel = self.__metal_kernels.get(specialized_size)
+        if kernel is None:
+          raise RuntimeError(
+            "hessianAndGradientKernel: no Metal specialization for "
+            f"gradient size {specialized_size}"
+          )
+        kernel.dispatch(
+          attributeArgs + [
+            giKernel.outputIndices,
+            giKernel.outputSizes,
+            giKernel.outputPermutations,
+            lookups,
+            giKernel.outputCompressedCoordinateCountsOuter,
+            giKernel.outputGroupedIndicesInner,
+            giKernel.outputGroupedIndicesOuter,
+            np.uint32(size_index),
+            np.uint32(self.__projection_method),
+            gradient,
+            hessian_blocks,
+            diagonal,
+            diagonal_blocks,
+            diagonal_blocks_start,
+            gradient_segments_start,
+          ],
+          instance_count,
+          32
+        )
+      return
     error_code = self.__kernel(
       *[self.__to_void_p(x) for x in attributeArgs],
       self.__to_void_p(giKernel.outputIndices),

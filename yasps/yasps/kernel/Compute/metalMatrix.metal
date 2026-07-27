@@ -127,7 +127,7 @@ struct YaspsMatrix {
   }
 
   float norm() const thread {
-    return sqrt(dot(*this));
+    return metal::sqrt(dot(*this));
   }
 
   YaspsMatrix<Rows, Cols> cross(
@@ -450,6 +450,81 @@ void spd_projection_small(
     output[index] = source[index];
   }
   yasps_spd_projection_inplace<Size>(output, choice);
+}
+
+template <uint Size>
+void yasps_symmetric_pseudoinverse(
+    thread const float *source,
+    thread float *output) {
+  YaspsMatrix<Size, Size> matrix =
+      yasps_matrix_from_pointer<Size, Size>(source);
+  YaspsMatrix<Size, Size> eigenvectors = {};
+  for (uint index = 0; index < Size; ++index) {
+    eigenvectors(index, index) = 1.0f;
+  }
+
+  for (uint sweep = 0; sweep < 12; ++sweep) {
+    float off_diagonal = 0.0f;
+    for (uint p = 0; p + 1 < Size; ++p) {
+      for (uint q = p + 1; q < Size; ++q) {
+        float apq = matrix(p, q);
+        off_diagonal = max(off_diagonal, fabs(apq));
+        if (fabs(apq) <= 1.0e-7f) {
+          continue;
+        }
+        float app = matrix(p, p);
+        float aqq = matrix(q, q);
+        float tau = (aqq - app) / (2.0f * apq);
+        float tangent =
+            (tau >= 0.0f ? 1.0f : -1.0f) /
+            (fabs(tau) + sqrt(1.0f + tau * tau));
+        float cosine = rsqrt(1.0f + tangent * tangent);
+        float sine = tangent * cosine;
+
+        for (uint index = 0; index < Size; ++index) {
+          float aip = matrix(index, p);
+          float aiq = matrix(index, q);
+          matrix(index, p) = cosine * aip - sine * aiq;
+          matrix(index, q) = sine * aip + cosine * aiq;
+        }
+        for (uint index = 0; index < Size; ++index) {
+          float api = matrix(p, index);
+          float aqi = matrix(q, index);
+          matrix(p, index) = cosine * api - sine * aqi;
+          matrix(q, index) = sine * api + cosine * aqi;
+        }
+        for (uint index = 0; index < Size; ++index) {
+          float vip = eigenvectors(index, p);
+          float viq = eigenvectors(index, q);
+          eigenvectors(index, p) = cosine * vip - sine * viq;
+          eigenvectors(index, q) = sine * vip + cosine * viq;
+        }
+      }
+    }
+    if (off_diagonal <= 1.0e-6f) {
+      break;
+    }
+  }
+
+  float inverse_eigenvalues[Size];
+  for (uint index = 0; index < Size; ++index) {
+    float eigenvalue = matrix(index, index);
+    inverse_eigenvalues[index] =
+        fabs(eigenvalue) < 1.0e-6f
+        ? fabs(eigenvalue)
+        : fabs(1.0f / eigenvalue);
+  }
+  for (uint row = 0; row < Size; ++row) {
+    for (uint col = 0; col < Size; ++col) {
+      float value = 0.0f;
+      for (uint inner = 0; inner < Size; ++inner) {
+        value += eigenvectors(row, inner)
+          * inverse_eigenvalues[inner]
+          * eigenvectors(col, inner);
+      }
+      output[row * Size + col] = value;
+    }
+  }
 }
 
 #endif
