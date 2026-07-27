@@ -23,6 +23,10 @@ GRADIENT_TOLERANCE = float(os.environ.get(
   "YASPS_GRADIENT_TOLERANCE",
   "1e-3" if is_metal() else "1e-4",
 ))
+SNH_PROJECTION_METHOD = int(os.environ.get(
+  "YASPS_SNH_PROJECTION_METHOD",
+  "2",
+))
 if FRAME_DIRECTORY:
   os.makedirs(FRAME_DIRECTORY, exist_ok=True)
 
@@ -264,7 +268,10 @@ ee = edge_edge(ee_positions, dhat, kappa)
 ee_energy = bunny.ee.addAttribute("edge_edge", computed_attribute = ee)
 
 
-s0.addEnergy(snh_energy, projection_method = 2)
+s0.addEnergy(
+  snh_energy,
+  projection_method=SNH_PROJECTION_METHOD,
+)
 s0.addEnergy(affine_energy, projection_method = 2)
 s0.addEnergy(inertia_energy_abd, projection_method = -1)
 s0.addEnergy(inertia_energy_moving, projection_method = -1)
