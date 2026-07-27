@@ -6,9 +6,11 @@ from yasps.primitiveUnion import primitiveUnion
 from typing import List, Set
 
 class deviceKernel:
-  def __init__(self, kernel_string: str, kernel_header: str, kernel_datas: List[attribute], kernel_connectivity: List[connectivity], kernel_union_primitives: List[primitiveUnion], dependents: List[deviceKernel], allEvdSizes: Set[int] = set(), attributeName: str = ""):
+  def __init__(self, kernel_string: str, kernel_header: str, kernel_datas: List[attribute], kernel_connectivity: List[connectivity], kernel_union_primitives: List[primitiveUnion], dependents: List[deviceKernel], allEvdSizes: Set[int] = set(), attributeName: str = "", metal_kernel_string: str = "", metal_kernel_header: str = ""):
     self.__kernelString: str = kernel_string
     self.__kernelHeader: str = kernel_header
+    self.__metalKernelString: str = metal_kernel_string
+    self.__metalKernelHeader: str = metal_kernel_header
     self.__kernelDatas: List[attribute] = sorted(set(kernel_datas), key = lambda x: x.fullName) # all the data needed for the kernel
     self.__kernelConnectivity: List[connectivity] = sorted(set(kernel_connectivity), key = lambda x: x.fullName) # all the connectivity needed for the kernel
     self.__kernelPrimitiveUnions: List[primitiveUnion] = sorted(set(kernel_union_primitives), key = lambda x: x.fullName) # all the union primitives needed for the kernel
@@ -38,6 +40,14 @@ class deviceKernel:
     return self.__kernelHeader
 
   @property
+  def metalKernelString(self)->str:
+    return self.__metalKernelString
+
+  @property
+  def metalKernelHeader(self)->str:
+    return self.__metalKernelHeader
+
+  @property
   def dependents(self)->List[deviceKernel]:
     return self.__dependents
 
@@ -60,3 +70,11 @@ class deviceKernel:
   @kernelHeader.setter
   def kernelHeader(self, new_kernel_header: str):
     self.__kernelHeader = new_kernel_header
+
+  @metalKernelString.setter
+  def metalKernelString(self, new_kernel_string: str):
+    self.__metalKernelString = new_kernel_string
+
+  @metalKernelHeader.setter
+  def metalKernelHeader(self, new_kernel_header: str):
+    self.__metalKernelHeader = new_kernel_header

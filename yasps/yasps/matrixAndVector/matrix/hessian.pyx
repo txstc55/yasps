@@ -9,8 +9,8 @@ from yasps.attribute import attribute
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.codeGenerator import codeGenerator
 import numpy as np
-import pycuda.autoinit
-import pycuda.gpuarray as gpuarray
+from yasps.backend import autoinit
+from yasps.backend import gpuarray
 from yasps.helper import timed
 from yasps.placementReorderKernel import placementReorderKernel
 

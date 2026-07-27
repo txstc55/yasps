@@ -13,7 +13,7 @@ from yasps.attribute import attribute
 import os
 import ctypes
 from yasps.helper import prune_duplicate_functions, timed
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 import numpy as np
 class placementReorderKernel:

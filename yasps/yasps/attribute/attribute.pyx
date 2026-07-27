@@ -1,11 +1,11 @@
 # cython: language_level=3
 from __future__ import annotations
-import pycuda.autoinit
+from yasps.backend import autoinit
 import numpy as np
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 from typing import Optional, List, Union, Tuple, Dict
 from typing import TYPE_CHECKING
-import pycuda.driver as cuda
+from yasps.backend import cuda
 import time
 import hashlib
 from yasps.operator import operator

@@ -1,4 +1,4 @@
-import pycuda.driver as cuda
+from yasps.backend import cuda
 from yasps.helper import timed
 
 class context:

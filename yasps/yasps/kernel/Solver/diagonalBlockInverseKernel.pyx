@@ -1,6 +1,6 @@
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 import os
-import pycuda.driver as cuda
+from yasps.backend import cuda
 from typing import Set, List
 import ctypes
 import numpy as np

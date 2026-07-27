@@ -8,10 +8,14 @@ from yasps.helper import prune_duplicate_functions
 import os
 import ctypes
 from yasps.helper import timed
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 from yasps.primitiveUnion import primitiveUnion
 import subprocess
 from yasps.context import context
+from yasps.backend import is_metal
+import hashlib
+from pathlib import Path
+import numpy as np
 
 class globalKernel:
   @timed("globalKernel.__init__")
@@ -33,6 +37,10 @@ class globalKernel:
 
   @timed("globalKernel.__generateKernel")
   def __generateKernel(self) -> None:
+    if is_metal():
+      self.__generateMetalKernel()
+      return
+
     ## first we get all the header functions
     sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
@@ -330,22 +338,175 @@ int compute(
       ]
       self.__kernel.restype = ctypes.c_int
 
+  def __generateMetalKernel(self) -> None:
+    from yasps.backend import gpuarray as metal_gpuarray
+    from yasps.backend import metal_codegen
+
+    sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
+    sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
+    sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
+    sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
+    all_device_kernels = sortedDependency + [self.__att.deviceKernel]
+
+    source_digest = hashlib.sha256(
+      "\n".join(item.metalKernelString for item in all_device_kernels).encode("utf-8")
+    ).hexdigest()[:16]
+    file_name = Path(
+      f".yasps_tmp/compute_{self.__att.fullNameWithHash}_metal_{source_digest}"
+    )
+    metallib_path = file_name.with_suffix(".metallib")
+    header_path = Path(f"{file_name}_headers.metal")
+    matrix_dir = (
+      Path(metal_codegen.__file__).resolve().parents[1]
+      / "kernel"
+      / "Compute"
+    )
+
+    attributeName = self.__att.fullName.replace("-", "_neg_")
+    argument_index = 0
+    argument_fields = []
+    for item in sortedDatas:
+      argument_fields.append(
+        f"  device const float* {item.code_generation_data_name} "
+        f"[[id({argument_index})]];"
+      )
+      argument_index += 1
+    for item in sortedConnectivities:
+      argument_fields.append(
+        f"  device const uint* {item.code_generation_index_name} "
+        f"[[id({argument_index})]];"
+      )
+      argument_index += 1
+    for item in sortedConnectivities:
+      if item.dimension == 0:
+        argument_fields.append(
+          f"  device const uint* {item.code_generation_csr_name} "
+          f"[[id({argument_index})]];"
+        )
+        argument_index += 1
+    for item in sortedPrimitiveUnions:
+      argument_fields.append(
+        f"  device const uint* {item.code_generation_counts_name} "
+        f"[[id({argument_index})]];"
+      )
+      argument_index += 1
+    argument_fields.append(
+      f"  device float* result [[id({argument_index})]];"
+    )
+    argument_index += 1
+    argument_fields.append(
+      f"  uint MAX_INDEX [[id({argument_index})]];"
+    )
+
+    call_arguments = (
+      [item.code_generation_data_name for item in sortedDatas]
+      + [item.code_generation_index_name for item in sortedConnectivities]
+      + [
+        item.code_generation_csr_name
+        for item in sortedConnectivities
+        if item.dimension == 0
+      ]
+      + [item.code_generation_counts_name for item in sortedPrimitiveUnions]
+    )
+    call_arguments_string = "".join(f"    arguments.{item},\n" for item in call_arguments)
+    output_size = self.__att.size
+    global_source = f'''
+#include "{header_path.name}"
+
+struct {attributeName}_arguments {{
+{chr(10).join(argument_fields)}
+}};
+
+kernel void {attributeName}_global_function(
+  device const {attributeName}_arguments& arguments [[buffer(0)]],
+  uint index [[thread_position_in_grid]]
+) {{
+  if (index >= arguments.MAX_INDEX) {{
+    return;
+  }}
+  float local_result[{output_size}];
+  {attributeName}_device_function(
+{call_arguments_string}    index,
+    local_result
+  );
+  for (uint output_index = 0; output_index < {output_size}; ++output_index) {{
+    arguments.result[index * {output_size} + output_index] = local_result[output_index];
+  }}
+}}
+'''
+    self.__kernelString = global_source
+
+    if not metallib_path.exists():
+      header_lines = ['#include "metalMatrix.metal"', ""]
+      seen_headers = set()
+      for item in all_device_kernels:
+        if item.metalKernelHeader not in seen_headers:
+          header_lines.append(f"extern {item.metalKernelHeader};")
+          seen_headers.add(item.metalKernelHeader)
+      header_path.write_text("\n".join(header_lines) + "\n", encoding="utf-8")
+
+      source_paths = []
+      seen_sources = set()
+      for item in all_device_kernels:
+        if item.metalKernelString in seen_sources:
+          continue
+        item_digest = hashlib.sha256(
+          item.metalKernelString.encode("utf-8")
+        ).hexdigest()[:12]
+        source_path = Path(
+          f"{file_name}_{item.attributeName}_{item_digest}.metal"
+        )
+        source_path.write_text(
+          f'#include "{header_path.name}"\n'
+          f"{item.metalKernelString}\n",
+          encoding="utf-8"
+        )
+        source_paths.append(source_path)
+        seen_sources.add(item.metalKernelString)
+
+      global_path = Path(f"{file_name}_global.metal")
+      global_path.write_text(global_source, encoding="utf-8")
+      source_paths.append(global_path)
+      metal_gpuarray.compile_metal(
+        source_paths,
+        metallib_path,
+        include_dirs=[file_name.parent, matrix_dir],
+      )
+
+    self.__kernel = metal_gpuarray.MetalKernel(
+      metallib_path,
+      f"{attributeName}_global_function",
+      argument_buffer=True
+    )
+
   @timed("globalKernel.compute")
   def compute(self, output):
     assert self.__kernel is not None
     if self.__att.correspondance.numInstances == 0:
       return # there is nothing to compute
     counts_gpu = [x.children_primitive_counts_gpu for x in self.__att.deviceKernel.kernelPrimitiveUnions]
-    args = [self.__to_void_p(x.value) for x in self.__att.deviceKernel.kernelDatas]
-    args += [self.__to_void_p(x.value) for x in self.__att.deviceKernel.kernelConnectivity]
-    args += [self.__to_void_p(x.compressedRows) for x in self.__att.deviceKernel.kernelConnectivity if x.dimension == 0]
-    args += [self.__to_void_p(x) for x in counts_gpu]
-    args += [self.__to_void_p(output)]
-    args += [ctypes.c_uint32(self.__att.correspondance.numInstances)]
     self.__context.useDefaultContext()
-    error_code = self.__kernel(*args)
-    if error_code != 0:
-      raise RuntimeError(f"globalKernel.compute: Kernel execution failed with error code {error_code}")
+    if is_metal():
+      args = [x.value for x in self.__att.deviceKernel.kernelDatas]
+      args += [x.value for x in self.__att.deviceKernel.kernelConnectivity]
+      args += [x.compressedRows for x in self.__att.deviceKernel.kernelConnectivity if x.dimension == 0]
+      args += counts_gpu
+      args += [output, np.uint32(self.__att.correspondance.numInstances)]
+      self.__kernel.dispatch(
+        args,
+        self.__att.correspondance.numInstances,
+        32
+      )
+    else:
+      args = [self.__to_void_p(x.value) for x in self.__att.deviceKernel.kernelDatas]
+      args += [self.__to_void_p(x.value) for x in self.__att.deviceKernel.kernelConnectivity]
+      args += [self.__to_void_p(x.compressedRows) for x in self.__att.deviceKernel.kernelConnectivity if x.dimension == 0]
+      args += [self.__to_void_p(x) for x in counts_gpu]
+      args += [self.__to_void_p(output)]
+      args += [ctypes.c_uint32(self.__att.correspondance.numInstances)]
+      error_code = self.__kernel(*args)
+      if error_code != 0:
+        raise RuntimeError(f"globalKernel.compute: Kernel execution failed with error code {error_code}")
 
 
 

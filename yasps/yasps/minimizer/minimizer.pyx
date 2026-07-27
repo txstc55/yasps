@@ -3,9 +3,9 @@ from __future__ import annotations
 import time
 from typing import List, Set, Optional, Tuple
 
-import pycuda.autoinit
+from yasps.backend import autoinit
 import numpy as np
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 
 from yasps.attribute import attribute, DATA
 from yasps.differentiator import differentiator

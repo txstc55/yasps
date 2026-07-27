@@ -3,9 +3,9 @@ from typing import Optional, Any, List
 
 from yasps.vector import vector
 from yasps.attribute import attribute
-import pycuda.autoinit
+from yasps.backend import autoinit
 import numpy as np
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 
 
 class gradient(vector):

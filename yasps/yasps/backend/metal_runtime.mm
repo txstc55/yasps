@@ -9,6 +9,17 @@
 #include <string>
 #include <unordered_map>
 
+enum YaspsMetalArgumentKind : uint32_t {
+  YASPS_METAL_BUFFER = 0,
+  YASPS_METAL_BYTES = 1,
+};
+
+struct YaspsMetalArgument {
+  uint32_t kind;
+  const void *data;
+  size_t length;
+};
+
 namespace {
 
 struct Allocation {
@@ -18,6 +29,7 @@ struct Allocation {
 
 struct Pipeline {
   __strong id<MTLComputePipelineState> state;
+  __strong id<MTLFunction> function;
 };
 
 std::mutex allocation_mutex;
@@ -69,20 +81,143 @@ bool resolve_buffer(const void *pointer, id<MTLBuffer> *buffer, NSUInteger *offs
   return false;
 }
 
+int dispatch_pipeline(Pipeline *pipeline,
+                      const YaspsMetalArgument *arguments,
+                      size_t argument_count,
+                      size_t grid_size,
+                      size_t threadgroup_size,
+                      bool use_argument_buffer,
+                      char *error,
+                      size_t error_size) {
+  @autoreleasepool {
+    if (pipeline == nullptr) {
+      copy_error(error, error_size, @"Cannot dispatch a null Metal pipeline");
+      return -1;
+    }
+    if (grid_size == 0) {
+      last_gpu_time_ms = 0.0;
+      return 0;
+    }
+    if (!ensure_runtime(error, error_size)) {
+      return -1;
+    }
+
+    id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
+    id<MTLComputeCommandEncoder> encoder =
+        [command_buffer computeCommandEncoder];
+    [encoder setComputePipelineState:pipeline->state];
+
+    if (use_argument_buffer) {
+      id<MTLArgumentEncoder> argument_encoder =
+          [pipeline->function newArgumentEncoderWithBufferIndex:0];
+      if (argument_encoder == nil) {
+        copy_error(error, error_size,
+                   @"Metal could not create the generated argument encoder");
+        [encoder endEncoding];
+        return -1;
+      }
+      id<MTLBuffer> encoded_arguments =
+          [device newBufferWithLength:argument_encoder.encodedLength
+                              options:MTLResourceStorageModeShared];
+      [argument_encoder setArgumentBuffer:encoded_arguments offset:0];
+      for (size_t index = 0; index < argument_count; ++index) {
+        const YaspsMetalArgument &argument = arguments[index];
+        if (argument.kind == YASPS_METAL_BUFFER) {
+          id<MTLBuffer> buffer = nil;
+          NSUInteger offset = 0;
+          if (!resolve_buffer(argument.data, &buffer, &offset)) {
+            copy_error(error, error_size,
+                       [NSString stringWithFormat:
+                                     @"Argument %zu does not belong to a YASPS "
+                                      "Metal allocation",
+                                     index]);
+            [encoder endEncoding];
+            return -1;
+          }
+          [argument_encoder setBuffer:buffer offset:offset atIndex:index];
+        } else if (argument.kind == YASPS_METAL_BYTES) {
+          void *destination = [argument_encoder constantDataAtIndex:index];
+          if (destination == nullptr) {
+            copy_error(error, error_size,
+                       [NSString stringWithFormat:
+                                     @"Argument-buffer constant %zu was not "
+                                      "found",
+                                     index]);
+            [encoder endEncoding];
+            return -1;
+          }
+          std::memcpy(destination, argument.data, argument.length);
+        } else {
+          copy_error(error, error_size,
+                     [NSString stringWithFormat:@"Unknown argument kind %u",
+                                                argument.kind]);
+          [encoder endEncoding];
+          return -1;
+        }
+      }
+      [encoder setBuffer:encoded_arguments offset:0 atIndex:0];
+    } else {
+      for (size_t index = 0; index < argument_count; ++index) {
+        const YaspsMetalArgument &argument = arguments[index];
+        if (argument.kind == YASPS_METAL_BUFFER) {
+          id<MTLBuffer> buffer = nil;
+          NSUInteger offset = 0;
+          if (!resolve_buffer(argument.data, &buffer, &offset)) {
+            copy_error(error, error_size,
+                       [NSString stringWithFormat:
+                                     @"Argument %zu does not belong to a YASPS "
+                                      "Metal allocation",
+                                     index]);
+            [encoder endEncoding];
+            return -1;
+          }
+          [encoder setBuffer:buffer offset:offset atIndex:index];
+        } else if (argument.kind == YASPS_METAL_BYTES) {
+          [encoder setBytes:argument.data
+                     length:argument.length
+                    atIndex:index];
+        } else {
+          copy_error(error, error_size,
+                     [NSString stringWithFormat:@"Unknown argument kind %u",
+                                                argument.kind]);
+          [encoder endEncoding];
+          return -1;
+        }
+      }
+    }
+
+    const NSUInteger maximum =
+        pipeline->state.maxTotalThreadsPerThreadgroup;
+    NSUInteger width = threadgroup_size == 0
+                           ? pipeline->state.threadExecutionWidth
+                           : threadgroup_size;
+    width = std::max<NSUInteger>(1, std::min<NSUInteger>(width, maximum));
+    width = std::min<NSUInteger>(width, grid_size);
+    [encoder dispatchThreads:MTLSizeMake(grid_size, 1, 1)
+        threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
+    [encoder endEncoding];
+    [command_buffer commit];
+    [command_buffer waitUntilCompleted];
+
+    if (command_buffer.status == MTLCommandBufferStatusError) {
+      copy_error(error, error_size,
+                 command_buffer.error.localizedDescription);
+      return -1;
+    }
+
+    if (command_buffer.GPUEndTime >= command_buffer.GPUStartTime) {
+      last_gpu_time_ms =
+          (command_buffer.GPUEndTime - command_buffer.GPUStartTime) * 1000.0;
+    } else {
+      last_gpu_time_ms = 0.0;
+    }
+    return 0;
+  }
+}
+
 }  // namespace
 
 extern "C" {
-
-enum YaspsMetalArgumentKind : uint32_t {
-  YASPS_METAL_BUFFER = 0,
-  YASPS_METAL_BYTES = 1,
-};
-
-struct YaspsMetalArgument {
-  uint32_t kind;
-  const void *data;
-  size_t length;
-};
 
 const char *yasps_metal_device_name() {
   @autoreleasepool {
@@ -163,7 +298,7 @@ void *yasps_metal_pipeline_create(const char *metallib_path,
       copy_error(error, error_size, pipeline_error.localizedDescription);
       return nullptr;
     }
-    return new Pipeline{state};
+    return new Pipeline{state, function};
   }
 }
 
@@ -178,80 +313,22 @@ int yasps_metal_dispatch(void *opaque_pipeline,
                          size_t threadgroup_size,
                          char *error,
                          size_t error_size) {
-  @autoreleasepool {
-    if (opaque_pipeline == nullptr) {
-      copy_error(error, error_size, @"Cannot dispatch a null Metal pipeline");
-      return -1;
-    }
-    if (grid_size == 0) {
-      last_gpu_time_ms = 0.0;
-      return 0;
-    }
-    if (!ensure_runtime(error, error_size)) {
-      return -1;
-    }
+  return dispatch_pipeline(static_cast<Pipeline *>(opaque_pipeline),
+                           arguments, argument_count, grid_size,
+                           threadgroup_size, false, error, error_size);
+}
 
-    Pipeline *pipeline = static_cast<Pipeline *>(opaque_pipeline);
-    id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
-    id<MTLComputeCommandEncoder> encoder =
-        [command_buffer computeCommandEncoder];
-    [encoder setComputePipelineState:pipeline->state];
-
-    for (size_t index = 0; index < argument_count; ++index) {
-      const YaspsMetalArgument &argument = arguments[index];
-      if (argument.kind == YASPS_METAL_BUFFER) {
-        id<MTLBuffer> buffer = nil;
-        NSUInteger offset = 0;
-        if (!resolve_buffer(argument.data, &buffer, &offset)) {
-          copy_error(error, error_size,
-                     [NSString stringWithFormat:
-                                   @"Argument %zu does not belong to a YASPS "
-                                    "Metal allocation",
-                                   index]);
-          [encoder endEncoding];
-          return -1;
-        }
-        [encoder setBuffer:buffer offset:offset atIndex:index];
-      } else if (argument.kind == YASPS_METAL_BYTES) {
-        [encoder setBytes:argument.data
-                   length:argument.length
-                  atIndex:index];
-      } else {
-        copy_error(error, error_size,
-                   [NSString stringWithFormat:@"Unknown argument kind %u",
-                                              argument.kind]);
-        [encoder endEncoding];
-        return -1;
-      }
-    }
-
-    const NSUInteger maximum =
-        pipeline->state.maxTotalThreadsPerThreadgroup;
-    NSUInteger width = threadgroup_size == 0
-                           ? pipeline->state.threadExecutionWidth
-                           : threadgroup_size;
-    width = std::max<NSUInteger>(1, std::min<NSUInteger>(width, maximum));
-    width = std::min<NSUInteger>(width, grid_size);
-    [encoder dispatchThreads:MTLSizeMake(grid_size, 1, 1)
-        threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
-    [encoder endEncoding];
-    [command_buffer commit];
-    [command_buffer waitUntilCompleted];
-
-    if (command_buffer.status == MTLCommandBufferStatusError) {
-      copy_error(error, error_size,
-                 command_buffer.error.localizedDescription);
-      return -1;
-    }
-
-    if (command_buffer.GPUEndTime >= command_buffer.GPUStartTime) {
-      last_gpu_time_ms =
-          (command_buffer.GPUEndTime - command_buffer.GPUStartTime) * 1000.0;
-    } else {
-      last_gpu_time_ms = 0.0;
-    }
-    return 0;
-  }
+int yasps_metal_dispatch_argument_buffer(
+    void *opaque_pipeline,
+    const YaspsMetalArgument *arguments,
+    size_t argument_count,
+    size_t grid_size,
+    size_t threadgroup_size,
+    char *error,
+    size_t error_size) {
+  return dispatch_pipeline(static_cast<Pipeline *>(opaque_pipeline),
+                           arguments, argument_count, grid_size,
+                           threadgroup_size, true, error, error_size);
 }
 
 double yasps_metal_last_gpu_time_ms() {

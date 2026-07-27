@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 
 from yasps.solverKernel import solverKernel
 

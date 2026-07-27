@@ -49,14 +49,19 @@ setup(
     url='https://github.com/yourusername/yasps',  # The URL to the repository
     packages=find_packages(),  # Finds all packages in the directory
     package_data={
-        'yasps': ['*.txt', '*.cuh', '*.cu'],
+        'yasps': [
+            '*.txt',
+            '*.cuh',
+            '*.cu',
+            'kernel/Compute/*.metal',
+        ],
         'yasps.backend': ['*.mm', '*.metal', '*.inc'],
     },
     ext_modules=cythonize(
       extensions,
       annotate=False,        # Generates the HTML .html annotation files
       compiler_directives={"language_level": "3"},
-      nthreads=16,       # optional, parallel compile
+      nthreads=0,        # extension compilation is parallelized by build_ext
       force=False       # important! only rebuild changed files
     ),
     classifiers=[

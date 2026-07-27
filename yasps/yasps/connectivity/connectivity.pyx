@@ -1,7 +1,7 @@
 # cython: language_level=3
 from __future__ import annotations
 import numpy as np
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 from itertools import accumulate
 from typing import TYPE_CHECKING, List, Union
 if TYPE_CHECKING:
