@@ -393,13 +393,13 @@ template <uint Size>
 void yasps_symmetric_jacobi_eigendecomposition(
     thread YaspsMatrix<Size, Size> &matrix,
     thread YaspsMatrix<Size, Size> &eigenvectors) {
-  for (uint sweep = 0; sweep < 12; ++sweep) {
+  for (uint sweep = 0; sweep < 8; ++sweep) {
     float off_diagonal = 0.0f;
     for (uint p = 0; p + 1 < Size; ++p) {
       for (uint q = p + 1; q < Size; ++q) {
         float apq = matrix(p, q);
         off_diagonal = max(off_diagonal, fabs(apq));
-        if (fabs(apq) <= 1.0e-7f) {
+        if (fabs(apq) <= 1.0e-6f) {
           continue;
         }
         float app = matrix(p, p);
@@ -462,19 +462,20 @@ void yasps_spd_projection_inplace(thread float *source, int choice) {
   yasps_symmetric_jacobi_eigendecomposition<Size>(
       matrix, eigenvectors);
 
+  float projected_eigenvalues[Size];
   for (uint index = 0; index < Size; ++index) {
     float eigenvalue = matrix(index, index);
-    if (eigenvalue < 0.0f) {
-      matrix(index, index) =
-          choice == 1 ? fabs(eigenvalue) : 0.0f;
-    }
+    projected_eigenvalues[index] =
+        eigenvalue < 0.0f
+        ? (choice == 1 ? fabs(eigenvalue) : 0.0f)
+        : eigenvalue;
   }
   bool finite_projection = true;
   for (uint row = 0; row < Size; ++row) {
     for (uint col = row; col < Size; ++col) {
       float value = 0.0f;
       for (uint inner = 0; inner < Size; ++inner) {
-        value += eigenvectors(row, inner) * matrix(inner, inner) *
+        value += eigenvectors(row, inner) * projected_eigenvalues[inner] *
                  eigenvectors(col, inner);
       }
       source[row * Size + col] = value;

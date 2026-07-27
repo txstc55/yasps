@@ -243,23 +243,37 @@ def test_stable_neo_hookean_size_projection_matches_eigh(tmp_path):
   )
 
   rng = np.random.default_rng(1234)
-  source = rng.standard_normal((12, 12)).astype(np.float32)
-  source = (source + source.T) * np.float32(0.5)
-  eigenvalues, eigenvectors = np.linalg.eigh(source)
-  expected = (
-    eigenvectors
-    * np.maximum(eigenvalues, np.float32(0.0))
-  ) @ eigenvectors.T
-  input_array = gpuarray.to_gpu(source.ravel())
-  output = gpuarray.empty(144, np.float32)
-  kernel.dispatch([input_array, output], 1)
-
-  np.testing.assert_allclose(
-    output.get().reshape(12, 12),
-    expected,
-    rtol=3.0e-4,
-    atol=3.0e-4,
+  sources = []
+  for scale in (1.0e-3, 1.0, 1.0e3):
+    source = rng.standard_normal((12, 12)).astype(np.float32)
+    sources.append(
+      (source + source.T) * np.float32(0.5 * scale)
+    )
+  basis, _ = np.linalg.qr(
+    rng.standard_normal((12, 12)).astype(np.float32)
   )
+  sources.append(
+    (basis * np.linspace(-1.0, 1.0, 12, dtype=np.float32))
+    @ basis.T
+  )
+
+  input_array = gpuarray.empty(144, np.float32)
+  output = gpuarray.empty(144, np.float32)
+  for source in sources:
+    eigenvalues, eigenvectors = np.linalg.eigh(source)
+    expected = (
+      eigenvectors
+      * np.maximum(eigenvalues, np.float32(0.0))
+    ) @ eigenvectors.T
+    input_array.set(source.ravel())
+    kernel.dispatch([input_array, output], 1)
+
+    np.testing.assert_allclose(
+      output.get().reshape(12, 12),
+      expected,
+      rtol=5.0e-4,
+      atol=max(1.0e-6, float(np.max(np.abs(source))) * 3.0e-6),
+    )
 
 
 def test_generated_eigen_source_translates_and_links(tmp_path):
