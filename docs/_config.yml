@@ -1,0 +1,18 @@
+title: YASPS Documentation
+description: Symbolic, GPU-first physical simulation with explicit JOIN and UNION relations.
+url: https://txstc55.github.io
+baseurl: /yasps
+repository: txstc55/yasps
+markdown: kramdown
+highlighter: rouge
+permalink: pretty
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+
+exclude:
+  - README.md
+  - scripts
