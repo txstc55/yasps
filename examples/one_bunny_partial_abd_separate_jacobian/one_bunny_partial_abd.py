@@ -2,12 +2,25 @@ from yasps import scene
 from helpers import extract_surface_triangles, stable_neo_hookean, inertia, extract_edges_from_triangles, abs_max_reduce
 from helpers import point_point, point_edge, point_triangle, edge_edge, affine_energy
 import numpy as np
+import os
 import sys
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
+NUM_FRAMES = int(os.environ.get("YASPS_NUM_FRAMES", "500"))
+MAX_INNER_ITERATIONS = int(
+  os.environ.get("YASPS_MAX_INNER_ITERATIONS", "0")
+)
+OFF_SCREEN = os.environ.get("YASPS_OFF_SCREEN", "0") == "1"
+FRAME_DIRECTORY = os.environ.get("YASPS_FRAME_DIRECTORY")
+WINDOW_SIZE = [
+  int(os.environ.get("YASPS_RENDER_WIDTH", "3840")),
+  int(os.environ.get("YASPS_RENDER_HEIGHT", "2160")),
+]
+if FRAME_DIRECTORY:
+  os.makedirs(FRAME_DIRECTORY, exist_ok=True)
 
 NUM_RIGID_POINTS = 1500
 KAPPA_VALUE = 10000.0 # for collision
@@ -266,11 +279,18 @@ cells = np.hstack([np.full((triangles.shape[0], 1), 3), triangles])
 bunny_poly = pv.PolyData(position, cells)
 colors = np.array([[66, 135, 245, 255]] * NUM_FIXED_POINTS + [[66, 135, 245, 200]] * NUM_RIGID_POINTS + [[66, 135, 245, 80]] * (position.shape[0] - NUM_RIGID_POINTS - NUM_FIXED_POINTS), dtype=np.uint8)
 bunny_poly.point_data["colors"] = colors
-plotter = pv.Plotter(window_size=(3840, 2160))
+plotter = pv.Plotter(
+  window_size=WINDOW_SIZE,
+  off_screen=OFF_SCREEN,
+)
 plotter.add_mesh(bunny_poly, scalars="colors", rgba=True)
 plotter.camera_position = [(0, 0, 20), (0, 0, 0), (0, 1, 0)]
-plotter.show(interactive_update=True)
+plotter.show(
+  interactive_update=not OFF_SCREEN,
+  auto_close=False,
+)
 
+os.makedirs("outputs", exist_ok=True)
 bunny_poly.save(f"outputs/bunny1_base.obj")
 
 position_copy = gpuarray.zeros_like(bunny.vertices["position"].compute().value)
@@ -278,7 +298,7 @@ position_copy.set(bunny.vertices["position"].compute().value)
 direction_copy = gpuarray.zeros_like(bunny.vertices["position"].compute().value)
 rotation_copy = bunny.affine_body["affine_matrix"].value.copy()
 translation_copy = bunny.affine_body["translation"].value.copy()
-for i in range(500):
+for i in range(NUM_FRAMES):
   # for all the moving vertices we will copy the position to last_position
   bunny.abd_vertices["last_position"].updateValue(bunny.abd_vertices["position"].compute().value, deepCopy = True)
   bunny.moving_vertices["last_position"].updateValue(bunny.moving_vertices["position"].value, deepCopy = True)
@@ -366,6 +386,11 @@ for i in range(500):
       print(f"Iteration {inner_iteration} exited with max gradient: {max_grad}")
       break
     inner_iteration += 1
+    if (
+      MAX_INNER_ITERATIONS > 0
+      and inner_iteration >= MAX_INNER_ITERATIONS
+    ):
+      break
   new_velocities = (bunny.moving_vertices["position"].value - bunny.moving_vertices["last_position"].value) / DT_VALUE
   bunny.moving_vertices["velocity"].updateValue(new_velocities)
 
@@ -378,4 +403,7 @@ for i in range(500):
   bunny_poly.save(f"outputs/bunny1_{i:04d}.obj")
   plotter.render()
   plotter.update()
-  # plotter.screenshot(f"outputs/bunny1_partial_abd_{i:04d}.jpg")
+  if FRAME_DIRECTORY:
+    plotter.screenshot(
+      os.path.join(FRAME_DIRECTORY, f"frame_{i:04d}.png")
+    )

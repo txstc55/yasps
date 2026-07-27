@@ -3,10 +3,11 @@ from yasps import attribute
 from helpers import extract_surface_triangles, inertia, extract_edges_from_triangles, abs_max_reduce
 
 import numpy as np
+import os
 import sys
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
-import pycuda.gpuarray as gpuarray
+from yasps.backend import gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
@@ -25,6 +26,18 @@ parser.add_argument(
 args = parser.parse_args()
 
 NUM_BUNNIES = args.num_bunnies
+NUM_FRAMES = int(os.environ.get("YASPS_NUM_FRAMES", "500"))
+MAX_INNER_ITERATIONS = int(
+  os.environ.get("YASPS_MAX_INNER_ITERATIONS", "0")
+)
+OFF_SCREEN = os.environ.get("YASPS_OFF_SCREEN", "0") == "1"
+FRAME_DIRECTORY = os.environ.get("YASPS_FRAME_DIRECTORY")
+WINDOW_SIZE = [
+  int(os.environ.get("YASPS_RENDER_WIDTH", "3840")),
+  int(os.environ.get("YASPS_RENDER_HEIGHT", "2160")),
+]
+if FRAME_DIRECTORY:
+  os.makedirs(FRAME_DIRECTORY, exist_ok=True)
 
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
@@ -352,12 +365,16 @@ triangle_indices_all.append((container_surface_triangles + (NUM_BUNNIES) * NUM_B
 surface_indices_all.append((np.array(range(container_positions.shape[0])) + (NUM_BUNNIES) * NUM_BUNNY_VERTICES).astype(np.uint32))
 
 
-triangle_indices_all = np.vstack(triangle_indices_all, dtype = np.uint32)
+triangle_indices_all = np.vstack(
+  triangle_indices_all
+).astype(np.uint32, copy=False)
 surface_indices_all = np.hstack(surface_indices_all).astype(np.uint32)
 
 edge_indices_all = edges_list
 edge_indices_all.append((container_edge_indices + (NUM_BUNNIES) * NUM_BUNNY_VERTICES).astype(np.uint32))
-edge_indices_all = np.vstack(edge_indices_all, dtype = np.uint32)
+edge_indices_all = np.vstack(
+  edge_indices_all
+).astype(np.uint32, copy=False)
 
 surface_indices_gpu = gpuarray.to_gpu(surface_indices_all.flatten())
 edge_indices_gpu = gpuarray.to_gpu(edge_indices_all.flatten())
@@ -373,7 +390,10 @@ ccd.init_edges(position_gpu, position_gpu, edge_indices_gpu, edge_indices_all.sh
 ## plot the bunnies
 ##################################################################
 import pyvista as pv
-plotter = pv.Plotter(window_size=[3840, 2160])
+plotter = pv.Plotter(
+  window_size=WINDOW_SIZE,
+  off_screen=OFF_SCREEN,
+)
 all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
 triangles = triangle_indices_all
 soft_triangles = triangles[0 :(NUM_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES]
@@ -397,15 +417,20 @@ plotter.camera_position = [(0, 3, 15),
  (0, 1, 0)
 ]
 # plotter.show()
-plotter.show(interactive_update=True, auto_close=False)
+plotter.show(
+  interactive_update=not OFF_SCREEN,
+  auto_close=False,
+)
 # exit()
+os.makedirs("outputs", exist_ok=True)
+os.makedirs("meshes", exist_ok=True)
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
 bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
 
 
 
 start = time.time()
-for i in range(500):
+for i in range(NUM_FRAMES):
   start_data_transfer = time.time()
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   end_data_transfer = time.time()
@@ -604,6 +629,11 @@ for i in range(500):
       print(f"Iteration {inner_iteration} exited with max movement: {max_movement}")
       break
     inner_iteration += 1
+    if (
+      MAX_INNER_ITERATIONS > 0
+      and inner_iteration >= MAX_INNER_ITERATIONS
+    ):
+      break
   start_velocity_update = time.time()
   new_velocities_soft = (vertices_soft_position.value - vertices_soft_last_position.value) / DT_VALUE
   vertices_soft_velocity.updateValue(new_velocities_soft, deepCopy = True)
@@ -617,7 +647,12 @@ for i in range(500):
   # container_poly.points = container_vertices_computed
   # plotter.render()
   # plotter.update()
-  plotter.screenshot(f"outputs/bunny_drop_in_container_{i:04d}.jpg")
+  frame_path = (
+    os.path.join(FRAME_DIRECTORY, f"frame_{i:04d}.png")
+    if FRAME_DIRECTORY
+    else f"outputs/bunny_drop_in_container_{i:04d}.jpg"
+  )
+  plotter.screenshot(frame_path)
   # save the mesh obj file
   # abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
   soft_poly.save(f"meshes/bunny_drop_in_container_{i:04d}.obj")

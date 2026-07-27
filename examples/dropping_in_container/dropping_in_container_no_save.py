@@ -3,10 +3,11 @@ from yasps import attribute
 from helpers import extract_surface_triangles, inertia, extract_edges_from_triangles, abs_max_reduce
 
 import numpy as np
+import os
 import sys
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
-import pycuda.gpuarray as gpuarray
+from yasps.backend import cuda, gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
@@ -22,8 +23,6 @@ parser.add_argument(
     help="Number of bunnies (default: 25)"
 )
 
-import pycuda.driver as cuda
-
 def print_mem(tag):
   free, total = cuda.mem_get_info()
   print(f"{tag} | Free: {free/1e6:.2f} MB / Total: {total/1e6:.2f} MB")
@@ -32,6 +31,10 @@ def print_mem(tag):
 args = parser.parse_args()
 
 NUM_BUNNIES = args.num_bunnies
+NUM_FRAMES = int(os.environ.get("YASPS_NUM_FRAMES", "200"))
+MAX_INNER_ITERATIONS = int(
+  os.environ.get("YASPS_MAX_INNER_ITERATIONS", "0")
+)
 
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-5 # for collision detection
@@ -298,12 +301,16 @@ triangle_indices_all.append((container_surface_triangles + (NUM_BUNNIES) * NUM_B
 surface_indices_all.append((np.array(range(container_positions.shape[0])) + (NUM_BUNNIES) * NUM_BUNNY_VERTICES).astype(np.uint32))
 
 
-triangle_indices_all = np.vstack(triangle_indices_all, dtype = np.uint32)
+triangle_indices_all = np.vstack(
+  triangle_indices_all
+).astype(np.uint32, copy=False)
 surface_indices_all = np.hstack(surface_indices_all).astype(np.uint32)
 
 edge_indices_all = edges_list
 edge_indices_all.append((container_edge_indices + (NUM_BUNNIES) * NUM_BUNNY_VERTICES).astype(np.uint32))
-edge_indices_all = np.vstack(edge_indices_all, dtype = np.uint32)
+edge_indices_all = np.vstack(
+  edge_indices_all
+).astype(np.uint32, copy=False)
 
 surface_indices_gpu = gpuarray.to_gpu(surface_indices_all.flatten())
 edge_indices_gpu = gpuarray.to_gpu(edge_indices_all.flatten())
@@ -352,7 +359,7 @@ bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
 
 
 start = time.time()
-for i in range(200):
+for i in range(NUM_FRAMES):
   start_data_transfer = time.time()
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   end_data_transfer = time.time()
@@ -472,6 +479,11 @@ for i in range(200):
     #   print(f"Iteration {inner_iteration} exited with max movement: {max_grad}")
     #   break
     inner_iteration += 1
+    if (
+      MAX_INNER_ITERATIONS > 0
+      and inner_iteration >= MAX_INNER_ITERATIONS
+    ):
+      break
   start_velocity_update = time.time()
   new_velocities_soft = (vertices_soft_position.value - vertices_soft_last_position.value) / DT_VALUE
   vertices_soft_velocity.updateValue(new_velocities_soft, deepCopy = True)

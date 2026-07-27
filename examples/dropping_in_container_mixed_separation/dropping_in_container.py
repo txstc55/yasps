@@ -3,10 +3,11 @@ from yasps import attribute
 from helpers import extract_surface_triangles, inertia, extract_edges_from_triangles, abs_max_reduce
 
 import numpy as np
+import os
 import sys
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
-import pycuda.gpuarray as gpuarray
+from yasps.backend import cuda, gpuarray
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
@@ -28,8 +29,6 @@ parser.add_argument(
   help="Whether to save the obj files for each frame (default: False)"
 )
 
-import pycuda.driver as cuda
-
 def print_mem(tag):
   free, total = cuda.mem_get_info()
   print(f"{tag} | Free: {free/1e6:.2f} MB / Total: {total/1e6:.2f} MB")
@@ -40,6 +39,19 @@ args = parser.parse_args()
 
 NUM_BUNNIES = args.num_bunnies
 SAVE_OBJ = args.save_obj
+NUM_FRAMES = int(os.environ.get("YASPS_NUM_FRAMES", "200"))
+MAX_INNER_ITERATIONS = int(
+  os.environ.get("YASPS_MAX_INNER_ITERATIONS", "0")
+)
+OFF_SCREEN = os.environ.get("YASPS_OFF_SCREEN", "0") == "1"
+FRAME_DIRECTORY = os.environ.get("YASPS_FRAME_DIRECTORY")
+RENDER_OUTPUT = SAVE_OBJ or FRAME_DIRECTORY is not None
+WINDOW_SIZE = [
+  int(os.environ.get("YASPS_RENDER_WIDTH", "3840")),
+  int(os.environ.get("YASPS_RENDER_HEIGHT", "2160")),
+]
+if FRAME_DIRECTORY:
+  os.makedirs(FRAME_DIRECTORY, exist_ok=True)
 NUM_AFFINE_BUNNIES = 1
 
 DT_VALUE = 0.01 # for time step
@@ -421,12 +433,16 @@ triangle_indices_all.append((container_surface_triangles + (NUM_BUNNIES) * NUM_B
 surface_indices_all.append((np.array(range(container_positions.shape[0])) + (NUM_BUNNIES) * NUM_BUNNY_VERTICES).astype(np.uint32))
 
 
-triangle_indices_all = np.vstack(triangle_indices_all, dtype = np.uint32)
+triangle_indices_all = np.vstack(
+  triangle_indices_all
+).astype(np.uint32, copy=False)
 surface_indices_all = np.hstack(surface_indices_all).astype(np.uint32)
 
 edge_indices_all = edges_list
 edge_indices_all.append((container_edge_indices + (NUM_BUNNIES) * NUM_BUNNY_VERTICES).astype(np.uint32))
-edge_indices_all = np.vstack(edge_indices_all, dtype = np.uint32)
+edge_indices_all = np.vstack(
+  edge_indices_all
+).astype(np.uint32, copy=False)
 
 surface_indices_gpu = gpuarray.to_gpu(surface_indices_all.flatten())
 edge_indices_gpu = gpuarray.to_gpu(edge_indices_all.flatten())
@@ -443,8 +459,11 @@ print(f"Memory used by CCD: {(before - after) / 1e6:.2f} MB")
 ## plot the bunnies
 ##################################################################
 import pyvista as pv
-if SAVE_OBJ:
-  plotter = pv.Plotter(window_size=[3840, 2160])
+if RENDER_OUTPUT:
+  plotter = pv.Plotter(
+    window_size=WINDOW_SIZE,
+    off_screen=OFF_SCREEN,
+  )
   all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
   triangles = triangle_indices_all
   soft_triangles = triangles[0 : (NUM_BUNNIES - NUM_AFFINE_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES]
@@ -473,7 +492,10 @@ if SAVE_OBJ:
     (0, 1, 0)
   ]
   # plotter.show()
-  plotter.show(interactive_update=True, auto_close=False)
+  plotter.show(
+    interactive_update=not OFF_SCREEN,
+    auto_close=False,
+  )
 # exit()
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
 bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
@@ -483,7 +505,7 @@ bunny_translations_copy = translations.compute().value.copy()
 
 
 start = time.time()
-for i in range(200):
+for i in range(NUM_FRAMES):
   start_data_transfer = time.time()
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   bunnies_abd.vertices_abd["last_position"].updateValue(bunnies_abd.vertices_abd["position"].compute().value, deepCopy = True)
@@ -599,7 +621,7 @@ for i in range(200):
     print("step taken is", step_taken)
     print("substep is", substep)
 
-    if SAVE_OBJ:
+    if RENDER_OUTPUT:
       soft_vertices_computed = vertices_soft_position.compute().value.get().reshape((-1, 3))
       abd_vertices_computed = vertices_abd_position.compute().value.get().reshape((-1, 3))
       soft_poly.points = soft_vertices_computed
@@ -619,6 +641,11 @@ for i in range(200):
     #   print(f"Iteration {inner_iteration} exited with max movement: {max_grad}")
     #   break
     inner_iteration += 1
+    if (
+      MAX_INNER_ITERATIONS > 0
+      and inner_iteration >= MAX_INNER_ITERATIONS
+    ):
+      break
   start_velocity_update = time.time()
   new_velocities_soft = (vertices_soft_position.value - vertices_soft_last_position.value) / DT_VALUE
   vertices_soft_velocity.updateValue(new_velocities_soft, deepCopy = True)
@@ -639,6 +666,10 @@ for i in range(200):
   #   # save the mesh obj file
   #   abd_poly.save(f"meshes/bunny_abd_{i:04d}.obj")
   #   soft_poly.save(f"meshes/bunny_drop_in_container_{i:04d}.obj")
+  if FRAME_DIRECTORY:
+    plotter.screenshot(
+      os.path.join(FRAME_DIRECTORY, f"frame_{i:04d}.png")
+    )
   # container_poly.save(f"meshes/cloth_3_cloth_{i:04d}.obj")
   # # save the mesh obj file
   # bunny_poly0.save(f"outputs/bunny_abd_soft0_{i:04d}.obj")
