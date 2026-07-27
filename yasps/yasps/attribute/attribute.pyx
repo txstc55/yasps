@@ -2,7 +2,7 @@
 from __future__ import annotations
 from yasps.backend import autoinit
 import numpy as np
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 from typing import Optional, List, Union, Tuple, Dict
 from typing import TYPE_CHECKING
 from yasps.backend import cuda
@@ -928,7 +928,7 @@ class attribute:
     assert self.__correspondance is not None # cannot be none
     if self.__value.size < self.__correspondance.numInstances * self.size:
       self.__value = gpuarray.empty(self.__correspondance.numInstances * self.size, dtype=np.float64)
-    if self.__value.size > 0:
+    if self.__value.size > 0 and not is_metal():
       self.__value.fill(0)
     assert self.__globalKernel is not None
     assert self.__value is not None
