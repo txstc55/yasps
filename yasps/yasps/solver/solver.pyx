@@ -64,6 +64,7 @@ class solver:
     self.__solverKernel.updateBlockDimensions(active_hessian.block_dimensions + active_hessian.block_dimensions_dynamic)
 
     if not is_metal():
+      self.__d_p1_b.fill(0)
       self.__d_r.fill(0)
       self.__d_c.fill(0)
       self.__d_q.fill(0)

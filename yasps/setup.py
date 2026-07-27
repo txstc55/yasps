@@ -1,5 +1,6 @@
 from setuptools import setup, find_packages, Extension
 from Cython.Build import cythonize
+import sys
 
 extensions = [
     Extension("yasps.scene", ["yasps/scene/scene.pyx"]),
@@ -61,7 +62,7 @@ setup(
       extensions,
       annotate=False,        # Generates the HTML .html annotation files
       compiler_directives={"language_level": "3"},
-      nthreads=0,        # extension compilation is parallelized by build_ext
+      nthreads=0 if sys.platform == "darwin" else 16,
       force=False       # important! only rebuild changed files
     ),
     classifiers=[
@@ -71,7 +72,10 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
     ],
-    install_requires=['numpy'],
+    install_requires=[
+        'numpy',
+        "pycuda; platform_system != 'Darwin'",
+    ],
     extras_require={'cuda': ['pycuda']},
     python_requires='>=3.6',  # Minimum version requirement of the package
     include_package_data=True,  # Includes files described by MANIFEST.in

@@ -15,8 +15,6 @@ from yasps.backend import is_metal
 from pathlib import Path
 
 class solverKernel:
-  __cuda_cache_version = "relative_residual_v1"
-
   def __init__(self, blockDimensions: List[int]):
     self.__max_row_size = 0
     self.__cg_kernel = None
@@ -31,10 +29,15 @@ class solverKernel:
     self.__metal_cg_update_kernel = None
     self.__metal_cg_finalize_kernel = None
     self.__metal_fill_kernel = None
-    self.__dot_scratch_a = gpuarray.empty(0, dtype=np.float32)
-    self.__dot_scratch_b = gpuarray.empty(0, dtype=np.float32)
-    self.__cg_state = gpuarray.empty(4, dtype=np.float32)
-    self.__cg_status = gpuarray.empty(3, dtype=np.int32)
+    self.__dot_scratch_a = None
+    self.__dot_scratch_b = None
+    self.__cg_state = None
+    self.__cg_status = None
+    if is_metal():
+      self.__dot_scratch_a = gpuarray.empty(0, dtype=np.float32)
+      self.__dot_scratch_b = gpuarray.empty(0, dtype=np.float32)
+      self.__cg_state = gpuarray.empty(4, dtype=np.float32)
+      self.__cg_status = gpuarray.empty(3, dtype=np.int32)
 
   def updateBlockDimensions(self, blockDimensions: List[int]):
     self.__init_kernel(blockDimensions)
@@ -61,10 +64,7 @@ class solverKernel:
       dimension_to_text = [f'{dim[0]}_{dim[1]}' for dim in blockDimensionsTuplesSet]
       dimension_to_text = '__'.join(dimension_to_text)
       file_original_name = f".yasps_constant/cg_dims_{dimension_to_text}"
-      cache_key = (
-        f"{self.__cuda_cache_version}:{dimension_to_text}"
-      )
-      file_hashed_name = f".yasps_constant/cg_dims_{int(hashlib.sha256(cache_key.encode('utf-8')).hexdigest(), 16)}"
+      file_hashed_name = f".yasps_constant/cg_dims_{int(hashlib.sha256(dimension_to_text.encode('utf-8')).hexdigest(), 16)}"
       # now we first record this information in a json file
       if not os.path.exists(".yasps_constant/cg_dimension_to_file.json"):
         file_to_dimensions = []
@@ -76,11 +76,6 @@ class solverKernel:
         items = json.load(f)
         in_json_but_no_so = False # false means not in file, true means in file but so file not found
         for item in items:
-          if (
-            item.get("solver_version")
-            != self.__cuda_cache_version
-          ):
-            continue
           # we check if the current dimensions has been compiled to a file before
           seen_dimensions = item["dimensions"]
           seen_dimensions = [tuple(dim) for dim in seen_dimensions]
@@ -412,7 +407,7 @@ int computeSolution(unsigned int maxIteration,
                             const int numAttributes,
                             const double* gradient,
                             const unsigned int MATRIX_SIZE,
-                            double* d_p1_b, // retained for generated-kernel ABI compatibility
+                            double* d_p1_b, // for the computation of P^-1 * b
                             double* d_r, // for residual
                             double* d_c,
                             double* d_q,
@@ -436,7 +431,33 @@ int computeSolution(unsigned int maxIteration,
   // set the initial guess
   CUDA_CHECK_ERROR(cudaMemcpy(solution, initial_guess, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
 
-  // Compute the actual initial residual: r = gradient - A * initial_guess.
+  // now we compute P^-1 * b where P is the preconditioner
+  // jacobiPreconditioner<<<MATRIX_SIZE / 32 + 1, 32>>>(diagonal, gradient, d_p1_b, MATRIX_SIZE);
+  blockJacobiPreconditioner(
+    diagonalBlockInverse,
+    gradient,
+    d_p1_b,
+    diagonalBlocksStart,
+    diagonalBlocksCount,
+    diagonalBlocksSize,
+    gradientSegmentsStart,
+    numAttributes,
+    preconditioner_streams
+  );
+  // delta0 = b * A^-1 b
+  double* d_delta0; // for device
+  double h_delta_0; // for host
+  cudaMalloc(&d_delta0, sizeof(double));
+  cudaMemset(d_delta0, 0, sizeof(double));
+  // compute delta0
+  dotProduct<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_p1_b, gradient, d_delta0, MATRIX_SIZE);
+  CUDA_CHECK_ERROR(cudaMemcpy(&h_delta_0, d_delta0, sizeof(double), cudaMemcpyDeviceToHost));
+
+  // set residual equal to the gradient since our initial guess is 0
+  // CUDA_CHECK_ERROR(cudaMemcpy(d_r, gradient, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
+
+
+  // we need to compute d_r = gradient - A * initial_guess
   spmvWithSystem(block_values,
                  block_positions,
                  block_values_start,
@@ -479,43 +500,23 @@ int computeSolution(unsigned int maxIteration,
   dotProduct<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_r, d_c, d_delta_new, MATRIX_SIZE);
   CUDA_CHECK_ERROR(cudaMemcpy(&h_delta_new, d_delta_new, sizeof(double), cudaMemcpyDeviceToHost));
 
-  // Convergence is relative to the actual initial residual, not the RHS.
-  // Use the raw residual only if the preconditioned metric degenerates.
-  double* d_residual_norm;
-  double h_residual_norm;
-  cudaMalloc(&d_residual_norm, sizeof(double));
+  // check tolerance
+  double relativeTolerance = threshold * h_delta_0;
+  // printf("Initial residual %lf, relative tolerance: %lf\\n", h_delta_new, relativeTolerance);
+  if (h_delta_new <= relativeTolerance){
+    // printf("Converged in 0 iterations with residual %lf\\n", h_delta_new);
+    for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
+      cudaStreamDestroy(streams[i]);
+    }
+    for (unsigned int i = 0; i < numAttributes; ++i) {
+      cudaStreamDestroy(preconditioner_streams[i]);
+    }
 
-  bool useIdentityPreconditioner = !isfinite(h_delta_new) || h_delta_new <= 0.0;
-  if (useIdentityPreconditioner){
-    cudaMemset(d_residual_norm, 0, sizeof(double));
-    dotProduct<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_r, d_r, d_residual_norm, MATRIX_SIZE);
-    CUDA_CHECK_ERROR(cudaMemcpy(&h_residual_norm, d_residual_norm, sizeof(double), cudaMemcpyDeviceToHost));
-    if (!isfinite(h_residual_norm)){
-      for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
-        cudaStreamDestroy(streams[i]);
-      }
-      for (unsigned int i = 0; i < numAttributes; ++i) {
-        cudaStreamDestroy(preconditioner_streams[i]);
-      }
-      cudaFree(d_delta_new);
-      cudaFree(d_residual_norm);
-      return -4;
-    }
-    if (h_residual_norm == 0.0){
-      for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
-        cudaStreamDestroy(streams[i]);
-      }
-      for (unsigned int i = 0; i < numAttributes; ++i) {
-        cudaStreamDestroy(preconditioner_streams[i]);
-      }
-      cudaFree(d_delta_new);
-      cudaFree(d_residual_norm);
-      return 0;
-    }
-    CUDA_CHECK_ERROR(cudaMemcpy(d_c, d_r, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
-    h_delta_new = h_residual_norm;
+    // free
+    cudaFree(d_delta0);
+    cudaFree(d_delta_new);
+    return 0;
   }
-  double relativeTolerance = threshold * h_delta_new;
   // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
   // for setting alpha
   double* d_alpha; // for device
@@ -548,19 +549,7 @@ int computeSolution(unsigned int maxIteration,
     // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(&h_alpha, d_alpha, sizeof(double), cudaMemcpyDeviceToHost);
 
-    if (!isfinite(h_alpha)){
-      for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
-        cudaStreamDestroy(streams[i]);
-      }
-      for (unsigned int i = 0; i < numAttributes; ++i) {
-        cudaStreamDestroy(preconditioner_streams[i]);
-      }
-      cudaFree(d_delta_new);
-      cudaFree(d_residual_norm);
-      cudaFree(d_alpha);
-      return -4;
-    }
-    if (h_alpha <= 0.0){
+    if (h_alpha < 0){
       printf("Non SPD matrix detected in %d iterations with residual %lf and alpha %lf\\n", iteration, h_delta_new, h_alpha);
       for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
         cudaStreamDestroy(streams[i]);
@@ -570,8 +559,8 @@ int computeSolution(unsigned int maxIteration,
       }
 
       // free
+      cudaFree(d_delta0);
       cudaFree(d_delta_new);
-      cudaFree(d_residual_norm);
       cudaFree(d_alpha);
       return -iteration - 4;
     }
@@ -586,21 +575,19 @@ int computeSolution(unsigned int maxIteration,
     vecAddWithScalar<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_r, d_q, d_r, -h_alpha, MATRIX_SIZE);
     // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 
-    if (useIdentityPreconditioner){
-      CUDA_CHECK_ERROR(cudaMemcpy(d_s, d_r, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
-    }else{
-      blockJacobiPreconditioner(
-        diagonalBlockInverse,
-        d_r,
-        d_s,
-        diagonalBlocksStart,
-        diagonalBlocksCount,
-        diagonalBlocksSize,
-        gradientSegmentsStart,
-        numAttributes,
-        preconditioner_streams
-      );
-    }
+    // s = P^-1 * r
+    // jacobiPreconditioner<<<(MATRIX_SIZE + 255) / 256, 256>>>(diagonal, d_r, d_s, MATRIX_SIZE);
+    blockJacobiPreconditioner(
+      diagonalBlockInverse,
+      d_r,
+      d_s,
+      diagonalBlocksStart,
+      diagonalBlocksCount,
+      diagonalBlocksSize,
+      gradientSegmentsStart,
+      numAttributes,
+      preconditioner_streams
+    );
 
     CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 
@@ -613,44 +600,10 @@ int computeSolution(unsigned int maxIteration,
     cudaMemcpy(&h_delta_new, d_delta_new, sizeof(double), cudaMemcpyDeviceToHost);
     // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
 
-    bool converged = false;
-    bool restartWithIdentity = false;
-    if (useIdentityPreconditioner){
-      if (!isfinite(h_delta_new)){
-        for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
-          cudaStreamDestroy(streams[i]);
-        }
-        for (unsigned int i = 0; i < numAttributes; ++i) {
-          cudaStreamDestroy(preconditioner_streams[i]);
-        }
-        cudaFree(d_delta_new);
-        cudaFree(d_residual_norm);
-        cudaFree(d_alpha);
-        return -4;
-      }
-      converged = h_delta_new <= relativeTolerance;
-    }else if (!isfinite(h_delta_new) || h_delta_new <= 0.0){
-      cudaMemset(d_residual_norm, 0, sizeof(double));
-      dotProduct<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_r, d_r, d_residual_norm, MATRIX_SIZE);
-      CUDA_CHECK_ERROR(cudaMemcpy(&h_residual_norm, d_residual_norm, sizeof(double), cudaMemcpyDeviceToHost));
-      if (!isfinite(h_residual_norm)){
-        for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
-          cudaStreamDestroy(streams[i]);
-        }
-        for (unsigned int i = 0; i < numAttributes; ++i) {
-          cudaStreamDestroy(preconditioner_streams[i]);
-        }
-        cudaFree(d_delta_new);
-        cudaFree(d_residual_norm);
-        cudaFree(d_alpha);
-        return -4;
-      }
-      converged = h_residual_norm == 0.0;
-      restartWithIdentity = h_residual_norm > 0.0;
-    }else{
-      converged = h_delta_new <= relativeTolerance;
-    }
-    if (converged){
+    // c = s + (delta_new / delta_old) * c
+    vecAddWithScalar<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_s, d_c, d_c, h_delta_new / h_delta_old, MATRIX_SIZE);
+    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
+    if (h_delta_new <= relativeTolerance){
       printf("Converged in %d iterations with residual %lf\\n", iteration, h_delta_new);
       for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
         cudaStreamDestroy(streams[i]);
@@ -660,22 +613,11 @@ int computeSolution(unsigned int maxIteration,
       }
 
       // free
+      cudaFree(d_delta0);
       cudaFree(d_delta_new);
-      cudaFree(d_residual_norm);
       cudaFree(d_alpha);
       return iteration;
     }
-    if (restartWithIdentity){
-      useIdentityPreconditioner = true;
-      h_delta_new = h_residual_norm;
-      relativeTolerance = threshold * h_residual_norm;
-      CUDA_CHECK_ERROR(cudaMemcpy(d_c, d_r, MATRIX_SIZE * sizeof(double), cudaMemcpyDeviceToDevice));
-      continue;
-    }
-
-    // c = s + (delta_new / delta_old) * c
-    vecAddWithScalar<<<(MATRIX_SIZE + 255) / 256, 256>>>(d_s, d_c, d_c, h_delta_new / h_delta_old, MATRIX_SIZE);
-    // CUDA_CHECK_ERROR(cudaDeviceSynchronize());
   }
   // after the two for‑loops that synchronize the streams
   for (unsigned int i = 0; i < NUM_BLOCK_DIMENSIONS + NUM_BLOCK_DIMENSIONS_DYNAMIC; ++i) {
@@ -687,8 +629,8 @@ int computeSolution(unsigned int maxIteration,
   }
 
   // free
+  cudaFree(d_delta0);
   cudaFree(d_delta_new);
-  cudaFree(d_residual_norm);
   cudaFree(d_alpha);
   cudaDeviceSynchronize();
   cudaError_t err = cudaGetLastError();
@@ -749,12 +691,7 @@ int computeSolution(unsigned int maxIteration,
         if item["file_hashed_name"] == file_hashed_name:
           # already exists
           return
-      data.append({
-        "dimensions": [dim for dim in self.__saved_block_dimensions],
-        "file_hashed_name": file_hashed_name,
-        "file_original_name": file_original_name,
-        "solver_version": self.__cuda_cache_version,
-      })
+      data.append({"dimensions": [dim for dim in self.__saved_block_dimensions], "file_hashed_name": file_hashed_name, "file_original_name": file_original_name})
       with open(".yasps_constant/cg_dimension_to_file.json", "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 

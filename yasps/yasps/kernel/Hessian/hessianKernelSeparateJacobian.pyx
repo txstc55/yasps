@@ -125,9 +125,11 @@ class hessianKernelSeparateJacobian:
             if computed_attribute.size == 1:
               redone_line += f"float {intermediate_name} = {computed_attribute.fullName}_data[0];"
             elif computed_attribute.rows == 1 or computed_attribute.cols == 1:
-              redone_line += f"Eigen::Map<const Eigen::Matrix<double, {computed_attribute.rows}, {computed_attribute.cols}>> {intermediate_name}({computed_attribute.fullName}_data);"
+              map_const = "const " if is_metal() else ""
+              redone_line += f"Eigen::Map<{map_const}Eigen::Matrix<double, {computed_attribute.rows}, {computed_attribute.cols}>> {intermediate_name}({computed_attribute.fullName}_data);"
             else:
-              redone_line += f"Eigen::Map<const Eigen::Matrix<double, {computed_attribute.rows}, {computed_attribute.cols}, Eigen::RowMajor>> {intermediate_name}({computed_attribute.fullName}_data);"
+              map_const = "const " if is_metal() else ""
+              redone_line += f"Eigen::Map<{map_const}Eigen::Matrix<double, {computed_attribute.rows}, {computed_attribute.cols}, Eigen::RowMajor>> {intermediate_name}({computed_attribute.fullName}_data);"
             corrected_lines.append(redone_line)
           else:
             corrected_lines.append(line)

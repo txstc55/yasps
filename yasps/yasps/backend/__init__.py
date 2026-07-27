@@ -16,7 +16,7 @@ if _requested_backend == "auto":
   _requested_backend = "metal" if platform.system() == "Darwin" else "cuda"
 
 name = _requested_backend
-real_dtype = np.float32
+real_dtype = np.float32 if name == "metal" else np.float64
 
 if name == "metal":
   from . import metal as gpuarray

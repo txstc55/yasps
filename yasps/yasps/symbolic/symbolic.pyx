@@ -1,4 +1,7 @@
 from __future__ import annotations
+from yasps.backend import is_metal
+if not is_metal():
+  import pycuda
 import numpy as np
 from .operator import operator
 

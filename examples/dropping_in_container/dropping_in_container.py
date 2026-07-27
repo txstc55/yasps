@@ -7,7 +7,7 @@ import os
 import sys
 sys.path.append('../ccd')  # or an absolute path
 from ccd import CCD
-from yasps.backend import gpuarray
+from yasps.backend import gpuarray, is_metal
 import random
 random.seed(1313)
 np.random.seed(13)      # for numpy
@@ -365,16 +365,28 @@ triangle_indices_all.append((container_surface_triangles + (NUM_BUNNIES) * NUM_B
 surface_indices_all.append((np.array(range(container_positions.shape[0])) + (NUM_BUNNIES) * NUM_BUNNY_VERTICES).astype(np.uint32))
 
 
-triangle_indices_all = np.vstack(
-  triangle_indices_all
-).astype(np.uint32, copy=False)
+if is_metal():
+  triangle_indices_all = np.vstack(
+    triangle_indices_all
+  ).astype(np.uint32, copy=False)
+else:
+  triangle_indices_all = np.vstack(
+    triangle_indices_all,
+    dtype=np.uint32
+  )
 surface_indices_all = np.hstack(surface_indices_all).astype(np.uint32)
 
 edge_indices_all = edges_list
 edge_indices_all.append((container_edge_indices + (NUM_BUNNIES) * NUM_BUNNY_VERTICES).astype(np.uint32))
-edge_indices_all = np.vstack(
-  edge_indices_all
-).astype(np.uint32, copy=False)
+if is_metal():
+  edge_indices_all = np.vstack(
+    edge_indices_all
+  ).astype(np.uint32, copy=False)
+else:
+  edge_indices_all = np.vstack(
+    edge_indices_all,
+    dtype=np.uint32
+  )
 
 surface_indices_gpu = gpuarray.to_gpu(surface_indices_all.flatten())
 edge_indices_gpu = gpuarray.to_gpu(edge_indices_all.flatten())

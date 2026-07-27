@@ -677,15 +677,21 @@ class coordinateCompressionKernel:
     self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = gpuarray.empty(1, coord_dim_dtype)
     self.__uncompressedCoordinates = gpuarray.zeros(2, np.uint32)
     self.__uncompressedDimensions = gpuarray.zeros(2, np.uint16)
-    self.__coordinateBlockStarts = gpuarray.zeros(2, np.uint32)
-    self.__uniqueCoordinateDimensions = gpuarray.empty(
-      1, coord_dim_dtype
-    )
-    self.__scanA = gpuarray.empty(1, np.uint32)
-    self.__scanB = gpuarray.empty(1, np.uint32)
-    self.__numUniqueCoordinatesGPU = gpuarray.zeros(1, np.uint32)
-    self.__numUniqueDimensionsGPU = gpuarray.zeros(1, np.uint32)
+    self.__coordinateBlockStarts = None
+    self.__uniqueCoordinateDimensions = None
+    self.__scanA = None
+    self.__scanB = None
+    self.__numUniqueCoordinatesGPU = None
+    self.__numUniqueDimensionsGPU = None
     self.__paddedCoordinateCount: int = 1
+    if is_metal():
+      self.__uniqueCoordinateDimensions = gpuarray.empty(
+        1, coord_dim_dtype
+      )
+      self.__scanA = gpuarray.empty(1, np.uint32)
+      self.__scanB = gpuarray.empty(1, np.uint32)
+      self.__numUniqueCoordinatesGPU = gpuarray.zeros(1, np.uint32)
+      self.__numUniqueDimensionsGPU = gpuarray.zeros(1, np.uint32)
 
     self.__uniqueDimensions: gpuarray.GPUArray
     self.__uniqueDimensionsOuterIndices: gpuarray.GPUArray # for each dimension, whats the start and end position inside the data array
@@ -703,10 +709,11 @@ class coordinateCompressionKernel:
     self.__uniqueDimensions = gpuarray.zeros(largest_num_unique_dimensions * 2, np.uint16)
     self.__uniqueDimensionsOuterIndices = gpuarray.zeros(largest_num_unique_dimensions + 1, np.uint32)
     self.__uniqueDimensionsBlockCounts = gpuarray.zeros(largest_num_unique_dimensions, np.uint32)
-    self.__coordinateBlockStarts = gpuarray.zeros(
-      largest_num_unique_dimensions + 1,
-      np.uint32
-    )
+    if is_metal():
+      self.__coordinateBlockStarts = gpuarray.zeros(
+        largest_num_unique_dimensions + 1,
+        np.uint32
+      )
 
     # kernels
     self.__get_unique_coords_kernel = None # the kernel that gets the unique coordinates as well as the unique number of coordinates
@@ -1129,40 +1136,45 @@ class coordinateCompressionKernel:
     # first we check if we need to reallocate space
     self.__total_coordinates = sum(self.__num_coordinates)
     # do a reset
-    buffers_to_clear = [
-      self.__uniqueCoordinates,
-      self.__uncompressedCoordinates,
-      self.__uncompressedDimensions,
-      self.__lookupArray,
-      self.__uniqueDimensionsBlockCounts,
-      self.__uniqueDimensionsOuterIndices,
-    ]
     if is_metal():
-      gpuarray.fill_batch(buffers_to_clear)
+      gpuarray.fill_batch([
+        self.__uniqueCoordinates,
+        self.__uncompressedCoordinates,
+        self.__uncompressedDimensions,
+        self.__lookupArray,
+        self.__uniqueDimensionsBlockCounts,
+        self.__uniqueDimensionsOuterIndices,
+      ])
+      self.__num_unique_coords = 0
+      self.__num_unique_dimensions = 0
     else:
-      for buffer in buffers_to_clear:
-        buffer.fill(0)
-    self.__num_unique_coords = 0
-    self.__num_unique_dimensions = 0
+      self.__uniqueCoordinates.fill(0)
+      # self.__uncompressedCoordinatesAndDimensionsTmp.fill(0)
+      self.__uncompressedCoordinates.fill(0)
+      self.__uncompressedDimensions.fill(0)
+      self.__lookupArray.fill(0)
+      self.__num_unique_coords = 0
+      self.__num_unique_dimensions = 0
+      self.__uniqueDimensionsBlockCounts.fill(0)
+      self.__uniqueDimensionsOuterIndices.fill(0)
     if self.__total_coordinates == 0:
       return # nothing we need to do
     # allocate space if needed
     if self.__total_coordinates > self.__lookupArray.size:
-      self.__paddedCoordinateCount = 1
-      while self.__paddedCoordinateCount < self.__total_coordinates:
-        self.__paddedCoordinateCount *= 2
-      temporary_count = (
-        self.__paddedCoordinateCount
-        if is_metal()
-        else self.__total_coordinates
-      )
+      temporary_count = self.__total_coordinates
+      if is_metal():
+        self.__paddedCoordinateCount = 1
+        while self.__paddedCoordinateCount < self.__total_coordinates:
+          self.__paddedCoordinateCount *= 2
+        temporary_count = self.__paddedCoordinateCount
       self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = gpuarray.empty(temporary_count, coord_dim_dtype)
-      self.__uniqueCoordinateDimensions = gpuarray.empty(
-        temporary_count,
-        coord_dim_dtype
-      )
-      self.__scanA = gpuarray.empty(temporary_count, np.uint32)
-      self.__scanB = gpuarray.empty(temporary_count, np.uint32)
+      if is_metal():
+        self.__uniqueCoordinateDimensions = gpuarray.empty(
+          temporary_count,
+          coord_dim_dtype
+        )
+        self.__scanA = gpuarray.empty(temporary_count, np.uint32)
+        self.__scanB = gpuarray.empty(temporary_count, np.uint32)
       self.__uncompressedCoordinates = gpuarray.zeros(self.__total_coordinates * 2, np.uint32)
       self.__uncompressedDimensions = gpuarray.zeros(self.__total_coordinates * 2, np.uint16)
       self.__lookupArray = gpuarray.zeros(self.__total_coordinates, np.uint32)

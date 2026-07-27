@@ -612,7 +612,7 @@ class gradientIndicesKernel:
     self.__outputNumUniqueGradientSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the number of unique sizes of the gradients after compression
     self.__outputNumUniqueGradientSizesCPU = None
     self.__outputCompressedCoordinateCountsOuter: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
-    self.__scanScratch: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32)
+    self.__scanScratch = None
     ####################################################
     # Here are information needed for coordinate generation
     # we will have 1 array of uint32 which stores the uncompressed coordinates
@@ -1314,45 +1314,57 @@ kernel void {self.__energy.fullName}_get_indices_metal(
   def __reallocate(self):
     newNumInstances: int = self.__energy.correspondance.numInstances
     if newNumInstances > self.__maxInstances:
-      self.__paddedInstances = 1
-      while self.__paddedInstances < newNumInstances:
-        self.__paddedInstances *= 2
-      # resize the gpu arrays
-      self.__outputIndices = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
-      self.__outputIndexSizes = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint16)
-      self.__outputPermutations = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.int16)
-      gradient_size_capacity = (
-        self.__paddedInstances if is_metal() else newNumInstances
-      )
-      grouped_index_capacity = max(
-        self.maxNumIndicesNeeded * newNumInstances,
-        gradient_size_capacity
-      )
-      self.__outputGradientSizes = gpuarray.zeros(gradient_size_capacity, dtype=np.uint16)
-      self.__outputGroupedIndicesInner = gpuarray.zeros(grouped_index_capacity, dtype=np.uint32)
-      self.__outputCompressedCoordinateCountsOuter = gpuarray.zeros(newNumInstances + 1, dtype=np.uint32)
-      self.__scanScratch = gpuarray.zeros(newNumInstances + 1, dtype=np.uint32)
+      if is_metal():
+        self.__paddedInstances = 1
+        while self.__paddedInstances < newNumInstances:
+          self.__paddedInstances *= 2
+        self.__outputIndices = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
+        self.__outputIndexSizes = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint16)
+        self.__outputPermutations = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.int16)
+        self.__outputGradientSizes = gpuarray.zeros(self.__paddedInstances, dtype=np.uint16)
+        self.__outputGroupedIndicesInner = gpuarray.zeros(
+          max(
+            self.maxNumIndicesNeeded * newNumInstances,
+            self.__paddedInstances
+          ),
+          dtype=np.uint32
+        )
+        self.__outputCompressedCoordinateCountsOuter = gpuarray.zeros(newNumInstances + 1, dtype=np.uint32)
+        self.__scanScratch = gpuarray.zeros(newNumInstances + 1, dtype=np.uint32)
+      else:
+        # Keep the original CUDA allocation sizes and ordering.
+        self.__outputIndices = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
+        self.__outputIndexSizes = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint16)
+        self.__outputPermutations = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.int16)
+        self.__outputGradientSizes = gpuarray.zeros(newNumInstances, dtype=np.uint16)
+        self.__outputGroupedIndicesInner = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
+        self.__outputCompressedCoordinateCountsOuter = gpuarray.zeros(newNumInstances + 1, dtype=np.uint32)
       self.__maxInstances = newNumInstances # update the maximum size
     self.__numInstances = newNumInstances # update the number of instances
     if newNumInstances == 0:
       self.__numInstances = 0
       return
     # we clear the output arrays
-    buffers_to_clear = [
-      self.__outputIndices,
-      self.__outputIndexSizes,
-      self.__outputPermutations,
-      self.__outputGradientSizes,
-      self.__outputGroupedIndicesInner,
-      self.__outputUniqueGradientSizes,
-      self.__outputGroupedIndicesOuter,
-      self.__outputCompressedCoordinateCountsOuter,
-    ]
     if is_metal():
-      gpuarray.fill_batch(buffers_to_clear)
+      gpuarray.fill_batch([
+        self.__outputIndices,
+        self.__outputIndexSizes,
+        self.__outputPermutations,
+        self.__outputGradientSizes,
+        self.__outputGroupedIndicesInner,
+        self.__outputUniqueGradientSizes,
+        self.__outputGroupedIndicesOuter,
+        self.__outputCompressedCoordinateCountsOuter,
+      ])
     else:
-      for buffer in buffers_to_clear:
-        buffer.fill(0)
+      self.__outputIndices.fill(0)
+      self.__outputIndexSizes.fill(0)
+      self.__outputPermutations.fill(0)
+      self.__outputGradientSizes.fill(0)
+      self.__outputGroupedIndicesInner.fill(0)
+      self.__outputUniqueGradientSizes.fill(0)
+      self.__outputGroupedIndicesOuter.fill(0)
+      self.__outputCompressedCoordinateCountsOuter.fill(0)
 
   @timed("gradientIndicesKernel.__computeIndices")
   def __computeIndices(self, wrt_start_indices: List[int]):

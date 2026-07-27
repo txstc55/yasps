@@ -8,7 +8,6 @@ from typing import Dict, List, Set, Tuple
 from yasps.deviceKernel import deviceKernel
 from yasps.globalKernel import globalKernel
 from yasps.helper import timed
-from yasps.backend.metal_codegen import translate_device_kernel
 from yasps.backend import is_metal
 
 class codeGenerator:
@@ -181,24 +180,25 @@ class codeGenerator:
       kernelHeader: str = f'''
 __device__ void {current.fullName}_device_function(const double* {current.code_generation_data_name}, unsigned int {current.correspondance.fullName}_index, double* result)'''
       cudaKernelString = f'{kernelHeader}{{\n{kernelString}\n}}'
-      metalKernelString = ""
-      metalKernelHeader = ""
       if is_metal():
+        from yasps.backend.metal_codegen import translate_device_kernel
         metalKernelString, metalKernelHeader = translate_device_kernel(
           cudaKernelString, kernelHeader, current.rows, current.cols
         )
-      current.deviceKernel = deviceKernel(
-        cudaKernelString,
-        kernelHeader,
-        [current],
-        [],
-        [],
-        [],
-        set(),
-        current.fullNameWithHash,
-        metalKernelString,
-        metalKernelHeader
-      ) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
+        current.deviceKernel = deviceKernel(
+          cudaKernelString,
+          kernelHeader,
+          [current],
+          [],
+          [],
+          [],
+          set(),
+          current.fullNameWithHash,
+          metalKernelString,
+          metalKernelHeader
+        )
+      else:
+        current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, [current], [], [], [], set(), current.fullNameWithHash) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
       return
     for item in self.__input.children:
       self.__generateCodeOrderDFS(item)
@@ -382,24 +382,25 @@ __device__ void {attributeName}_device_function(
 
     # now we generate the device kernel
     cudaKernelString = f'{headerString}{{\n{kernelString}\n}}'
-    metalKernelString = ""
-    metalKernelHeader = ""
     if is_metal():
+      from yasps.backend.metal_codegen import translate_device_kernel
       metalKernelString, metalKernelHeader = translate_device_kernel(
         cudaKernelString, headerString, self.__input.rows, self.__input.cols
       )
-    self.__input.deviceKernel = deviceKernel(
-      cudaKernelString,
-      headerString,
-      allDatas,
-      allConnectivities,
-      allPrimitiveUnions,
-      allDependencies,
-      allEvdSizes,
-      self.__input.fullNameWithHash,
-      metalKernelString,
-      metalKernelHeader
-    )
+      self.__input.deviceKernel = deviceKernel(
+        cudaKernelString,
+        headerString,
+        allDatas,
+        allConnectivities,
+        allPrimitiveUnions,
+        allDependencies,
+        allEvdSizes,
+        self.__input.fullNameWithHash,
+        metalKernelString,
+        metalKernelHeader
+      )
+    else:
+      self.__input.deviceKernel = deviceKernel(f'{headerString}{{\n{kernelString}\n}}', headerString, allDatas, allConnectivities, allPrimitiveUnions, allDependencies, allEvdSizes, self.__input.fullNameWithHash)
     # print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
     # print(f"We initialized {self.__total_initialized_registers} registers")
     # print(f"We saved {self.__total_saved_registers} registers")
