@@ -11,6 +11,7 @@ ARTIFACT_ROOT="${YASPS_EVAL_OUTPUT_ROOT:-$ARTIFACT_ROOT}"
 FRAMES="${YASPS_EVAL_FRAMES:-24}"
 SOFT_BUNNIES="${YASPS_EVAL_SOFT_BUNNIES:-1}"
 MIXED_BUNNIES="${YASPS_EVAL_MIXED_BUNNIES:-2}"
+MAX_INNER_ITERATIONS="${YASPS_EVAL_MAX_INNER_ITERATIONS:-0}"
 YASPS_PATH="$REPOSITORY_ROOT/yasps"
 mkdir -p "$ARTIFACT_ROOT"
 ARTIFACT_ROOT="$(cd "$ARTIFACT_ROOT" && pwd)"
@@ -27,6 +28,7 @@ run_rendered() {
     /usr/bin/time -p env \
       YASPS_BACKEND=metal \
       YASPS_NUM_FRAMES="$FRAMES" \
+      YASPS_MAX_INNER_ITERATIONS="$MAX_INNER_ITERATIONS" \
       YASPS_OFF_SCREEN=1 \
       PYVISTA_OFF_SCREEN=true \
       YASPS_RENDER_WIDTH=960 \
@@ -79,6 +81,7 @@ mkdir -p "$NO_SAVE_OUTPUT"
   /usr/bin/time -p env \
     YASPS_BACKEND=metal \
     YASPS_NUM_FRAMES="$FRAMES" \
+    YASPS_MAX_INNER_ITERATIONS="$MAX_INNER_ITERATIONS" \
     YASPS_METAL_TIMING_JSON="$NO_SAVE_OUTPUT/kernel_timings.json" \
     PYTHONPATH="$YASPS_PATH" \
     python dropping_in_container_no_save.py \
@@ -88,5 +91,6 @@ mkdir -p "$NO_SAVE_OUTPUT"
 python "$REPOSITORY_ROOT/metal_evaluation/summarize.py" \
   --root "$ARTIFACT_ROOT" \
   --frames "$FRAMES" \
+  --max-inner-iterations "$MAX_INNER_ITERATIONS" \
   --soft-bunnies "$SOFT_BUNNIES" \
   --mixed-bunnies "$MIXED_BUNNIES"

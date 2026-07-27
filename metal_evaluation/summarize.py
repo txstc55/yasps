@@ -15,6 +15,7 @@ PARSER.add_argument(
   default=Path(__file__).resolve().parent,
 )
 PARSER.add_argument("--frames", type=int, default=24)
+PARSER.add_argument("--max-inner-iterations", type=int, default=0)
 PARSER.add_argument("--soft-bunnies", type=int, default=1)
 PARSER.add_argument("--mixed-bunnies", type=int, default=2)
 ARGS = PARSER.parse_args()
@@ -23,6 +24,7 @@ ROOT = ARGS.root.resolve()
 FRAMES = ARGS.frames
 SOFT_BUNNIES = ARGS.soft_bunnies
 MIXED_BUNNIES = ARGS.mixed_bunnies
+MAX_INNER_ITERATIONS = ARGS.max_inner_iterations
 
 
 def bunny_label(count, kind):
@@ -307,21 +309,27 @@ def main():
   devices = {result["device"] for result in variants.values()}
   if len(devices) != 1:
     raise ValueError(f"Expected one Metal device, got {devices}")
+  policy = {
+    "frames": FRAMES,
+    "render_resolution": [960, 540],
+    "video_fps": 12,
+    "shader_cache": "warm",
+    "timing_scope": (
+      "MTLCommandBuffer GPU time; compilation and rendering excluded"
+    ),
+    "nonlinear_stopping": "example defaults; no iteration cap",
+  }
+  if MAX_INNER_ITERATIONS > 0:
+    policy["nonlinear_stopping"] = (
+      "example stopping criteria with a per-frame iteration cap"
+    )
+    policy["max_inner_iterations"] = MAX_INNER_ITERATIONS
   summary = {
     "evaluated_on": date.today().isoformat(),
     "backend": "metal",
     "device": devices.pop(),
     "dtype": "float32",
-    "policy": {
-      "frames": FRAMES,
-      "render_resolution": [960, 540],
-      "video_fps": 12,
-      "shader_cache": "warm",
-      "timing_scope": (
-        "MTLCommandBuffer GPU time; compilation and rendering excluded"
-      ),
-      "nonlinear_stopping": "example defaults; no iteration cap",
-    },
+    "policy": policy,
     "variants": variants,
   }
   (ROOT / "summary.json").write_text(
