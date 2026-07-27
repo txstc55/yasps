@@ -523,6 +523,78 @@ class MetalKernel:
     )
 
 
+class MetalBatch:
+  """A dependency-ordered dispatch list whose arguments are encoded once."""
+
+  def __init__(
+    self,
+    dispatches: Iterable[
+      tuple[
+        MetalKernel,
+        Iterable[GPUArray | np.generic | int | float],
+        int,
+        int,
+      ]
+    ],
+    label: str,
+  ):
+    self.label = label
+    self.items = list(dispatches)
+    encoded_dispatches: list[_BatchDispatch] = []
+    self.argument_arrays = []
+    self.keepalive = []
+    self.total_grid_size = 0
+    for kernel, arguments, grid_size, threadgroup_size in self.items:
+      if kernel.argument_buffer:
+        raise ValueError(
+          "Metal batch dispatch does not support argument-buffer kernels"
+        )
+      argument_array, scalar_keepalive = _encode_arguments(arguments)
+      self.argument_arrays.append(argument_array)
+      self.keepalive.extend(scalar_keepalive)
+      encoded_dispatches.append(
+        _BatchDispatch(
+          kernel._pipeline,
+          argument_array,
+          len(argument_array),
+          grid_size,
+          threadgroup_size,
+        )
+      )
+      self.total_grid_size += grid_size
+    self.dispatch_array = (
+      _BatchDispatch * len(encoded_dispatches)
+    )(*encoded_dispatches)
+
+  def dispatch(self) -> None:
+    dispatch_count = len(self.dispatch_array)
+    if dispatch_count == 0:
+      return
+    error = ctypes.create_string_buffer(8192)
+    start = time.perf_counter()
+    result = _runtime.yasps_metal_dispatch_batch(
+      self.dispatch_array,
+      dispatch_count,
+      error,
+      len(error),
+    )
+    wall_ms = (time.perf_counter() - start) * 1000.0
+    if result != 0:
+      raise RuntimeError(error.value.decode(errors="replace"))
+    gpu_ms = float(_runtime.yasps_metal_last_gpu_time_ms())
+    _record_kernel_timing(
+      (
+        f"metal_batch::{self.label}::dispatches_{dispatch_count}"
+        f"::threads_{self.total_grid_size}"
+      ),
+      "metal_batch",
+      self.label,
+      wall_ms,
+      gpu_ms,
+      self.total_grid_size,
+    )
+
+
 def dispatch_batch(
   dispatches: Iterable[
     tuple[
@@ -534,59 +606,7 @@ def dispatch_batch(
   ],
   label: str,
 ) -> None:
-  items = list(dispatches)
-  if not items:
-    return
-
-  encoded_dispatches: list[_BatchDispatch] = []
-  argument_arrays = []
-  keepalive = []
-  total_grid_size = 0
-  for kernel, arguments, grid_size, threadgroup_size in items:
-    if kernel.argument_buffer:
-      raise ValueError(
-        "Metal batch dispatch does not support argument-buffer kernels"
-      )
-    argument_array, scalar_keepalive = _encode_arguments(arguments)
-    argument_arrays.append(argument_array)
-    keepalive.extend(scalar_keepalive)
-    encoded_dispatches.append(
-      _BatchDispatch(
-        kernel._pipeline,
-        argument_array,
-        len(argument_array),
-        grid_size,
-        threadgroup_size,
-      )
-    )
-    total_grid_size += grid_size
-
-  dispatch_array = (
-    _BatchDispatch * len(encoded_dispatches)
-  )(*encoded_dispatches)
-  error = ctypes.create_string_buffer(8192)
-  start = time.perf_counter()
-  result = _runtime.yasps_metal_dispatch_batch(
-    dispatch_array,
-    len(encoded_dispatches),
-    error,
-    len(error),
-  )
-  wall_ms = (time.perf_counter() - start) * 1000.0
-  if result != 0:
-    raise RuntimeError(error.value.decode(errors="replace"))
-  gpu_ms = float(_runtime.yasps_metal_last_gpu_time_ms())
-  _record_kernel_timing(
-    (
-      f"metal_batch::{label}::dispatches_{len(encoded_dispatches)}"
-      f"::threads_{total_grid_size}"
-    ),
-    "metal_batch",
-    label,
-    wall_ms,
-    gpu_ms,
-    total_grid_size,
-  )
+  MetalBatch(dispatches, label).dispatch()
 
 
 def fill_batch(arrays: Iterable[GPUArray], value=0) -> None:
@@ -880,6 +900,7 @@ cuda = _CudaCompatibility()
 
 __all__ = [
   "GPUArray",
+  "MetalBatch",
   "MetalKernel",
   "compile_metal",
   "cuda",
