@@ -151,6 +151,78 @@ def test_fixed_size_shader_matrix_operations(tmp_path):
   )
 
 
+def test_small_matrix_guards_contain_nonfinite_curvature(tmp_path):
+  fixture = Path(__file__).with_name("fixtures")
+  matrix_include = (
+    Path(__file__).parents[2]
+    / "yasps"
+    / "yasps"
+    / "kernel"
+    / "Compute"
+  )
+  library = gpuarray.compile_metal(
+    [fixture / "matrix_ops.metal"],
+    tmp_path / "matrix_guards.metallib",
+    include_dirs=[matrix_include],
+  )
+  kernel = gpuarray.MetalKernel(library, "yasps_test_matrix_guards")
+
+  invalid = np.eye(3, dtype=np.float32)
+  invalid[0, 1] = np.nan
+  input_array = gpuarray.to_gpu(invalid.ravel())
+  projection = gpuarray.empty(9, np.float32)
+  inverse = gpuarray.empty(9, np.float32)
+  kernel.dispatch([input_array, projection, inverse], 1)
+
+  np.testing.assert_array_equal(
+    projection.get(),
+    np.zeros(9, dtype=np.float32),
+  )
+  np.testing.assert_array_equal(
+    inverse.get().reshape(3, 3),
+    np.eye(3, dtype=np.float32),
+  )
+
+
+def test_small_matrix_guards_preserve_finite_path(tmp_path):
+  fixture = Path(__file__).with_name("fixtures")
+  matrix_include = (
+    Path(__file__).parents[2]
+    / "yasps"
+    / "yasps"
+    / "kernel"
+    / "Compute"
+  )
+  library = gpuarray.compile_metal(
+    [fixture / "matrix_ops.metal"],
+    tmp_path / "matrix_finite.metallib",
+    include_dirs=[matrix_include],
+  )
+  kernel = gpuarray.MetalKernel(library, "yasps_test_matrix_guards")
+
+  finite = np.array(
+    [[4.0, 1.0, 0.5], [1.0, 3.0, 0.25], [0.5, 0.25, 2.0]],
+    dtype=np.float32,
+  )
+  input_array = gpuarray.to_gpu(finite.ravel())
+  projection = gpuarray.empty(9, np.float32)
+  inverse = gpuarray.empty(9, np.float32)
+  kernel.dispatch([input_array, projection, inverse], 1)
+
+  np.testing.assert_allclose(
+    projection.get().reshape(3, 3),
+    finite,
+    rtol=2.0e-5,
+    atol=2.0e-5,
+  )
+  np.testing.assert_allclose(
+    inverse.get().reshape(3, 3),
+    np.linalg.inv(finite),
+    rtol=2.0e-5,
+    atol=2.0e-5,
+  )
+
+
 def test_generated_eigen_source_translates_and_links(tmp_path):
   cuda_header = """
 __device__ void generated_device_function(

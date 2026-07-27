@@ -394,6 +394,16 @@ void yasps_spd_projection_inplace(thread float *source, int choice) {
   if (choice == 0) {
     return;
   }
+  for (uint index = 0; index < Size * Size; ++index) {
+    if (!isfinite(source[index])) {
+      for (uint output_index = 0;
+           output_index < Size * Size;
+           ++output_index) {
+        source[output_index] = 0.0f;
+      }
+      return;
+    }
+  }
 
   YaspsMatrix<Size, Size> matrix =
       yasps_matrix_from_pointer<Size, Size>(source);
@@ -454,6 +464,7 @@ void yasps_spd_projection_inplace(thread float *source, int choice) {
           choice == 1 ? fabs(eigenvalue) : 0.0f;
     }
   }
+  bool finite_projection = true;
   for (uint row = 0; row < Size; ++row) {
     for (uint col = 0; col < Size; ++col) {
       float value = 0.0f;
@@ -462,6 +473,12 @@ void yasps_spd_projection_inplace(thread float *source, int choice) {
                  eigenvectors(col, inner);
       }
       source[row * Size + col] = value;
+      finite_projection = finite_projection && isfinite(value);
+    }
+  }
+  if (!finite_projection) {
+    for (uint index = 0; index < Size * Size; ++index) {
+      source[index] = 0.0f;
     }
   }
 }
@@ -486,6 +503,16 @@ template <uint Size>
 void yasps_symmetric_pseudoinverse(
     thread const float *source,
     thread float *output) {
+  for (uint index = 0; index < Size * Size; ++index) {
+    if (!isfinite(source[index])) {
+      for (uint row = 0; row < Size; ++row) {
+        for (uint col = 0; col < Size; ++col) {
+          output[row * Size + col] = row == col ? 1.0f : 0.0f;
+        }
+      }
+      return;
+    }
+  }
   YaspsMatrix<Size, Size> matrix =
       yasps_matrix_from_pointer<Size, Size>(source);
   YaspsMatrix<Size, Size> eigenvectors = {};
@@ -544,6 +571,7 @@ void yasps_symmetric_pseudoinverse(
         ? fabs(eigenvalue)
         : fabs(1.0f / eigenvalue);
   }
+  bool finite_inverse = true;
   for (uint row = 0; row < Size; ++row) {
     for (uint col = 0; col < Size; ++col) {
       float value = 0.0f;
@@ -553,6 +581,14 @@ void yasps_symmetric_pseudoinverse(
           * eigenvectors(col, inner);
       }
       output[row * Size + col] = value;
+      finite_inverse = finite_inverse && isfinite(value);
+    }
+  }
+  if (!finite_inverse) {
+    for (uint row = 0; row < Size; ++row) {
+      for (uint col = 0; col < Size; ++col) {
+        output[row * Size + col] = row == col ? 1.0f : 0.0f;
+      }
     }
   }
 }

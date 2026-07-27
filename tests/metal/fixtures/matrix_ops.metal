@@ -22,3 +22,28 @@ kernel void yasps_test_matrix_ops(
     output[element] = result.values[element];
   }
 }
+
+kernel void yasps_test_matrix_guards(
+    device const float *input [[buffer(0)]],
+    device float *projection [[buffer(1)]],
+    device float *inverse [[buffer(2)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index != 0) {
+    return;
+  }
+  float local[9];
+  float local_inverse_input[9];
+  float local_inverse[9];
+  for (uint element = 0; element < 9; ++element) {
+    local[element] = input[element];
+    local_inverse_input[element] = input[element];
+  }
+  yasps_spd_projection_inplace<3>(local, 2);
+  yasps_symmetric_pseudoinverse<3>(
+      local_inverse_input,
+      local_inverse);
+  for (uint element = 0; element < 9; ++element) {
+    projection[element] = local[element];
+    inverse[element] = local_inverse[element];
+  }
+}
