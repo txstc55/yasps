@@ -38,6 +38,9 @@ struct Allocation {
 struct Pipeline {
   __strong id<MTLComputePipelineState> state;
   __strong id<MTLFunction> function;
+  __strong id<MTLArgumentEncoder> argument_encoder;
+  __strong id<MTLBuffer> argument_buffer;
+  std::mutex argument_mutex;
 };
 
 std::mutex allocation_mutex;
@@ -113,6 +116,11 @@ int dispatch_pipeline(Pipeline *pipeline,
     if (!ensure_runtime(error, error_size)) {
       return -1;
     }
+    std::unique_lock<std::mutex> argument_lock(
+        pipeline->argument_mutex, std::defer_lock);
+    if (use_argument_buffer) {
+      argument_lock.lock();
+    }
 
     id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
     id<MTLComputeCommandEncoder> encoder =
@@ -121,16 +129,25 @@ int dispatch_pipeline(Pipeline *pipeline,
 
     if (use_argument_buffer) {
       id<MTLArgumentEncoder> argument_encoder =
-          [pipeline->function newArgumentEncoderWithBufferIndex:0];
+          pipeline->argument_encoder;
+      if (argument_encoder == nil) {
+        argument_encoder =
+            [pipeline->function newArgumentEncoderWithBufferIndex:0];
+        pipeline->argument_encoder = argument_encoder;
+      }
       if (argument_encoder == nil) {
         copy_error(error, error_size,
                    @"Metal could not create the generated argument encoder");
         [encoder endEncoding];
         return -1;
       }
-      id<MTLBuffer> encoded_arguments =
-          [device newBufferWithLength:argument_encoder.encodedLength
-                              options:MTLResourceStorageModeShared];
+      id<MTLBuffer> encoded_arguments = pipeline->argument_buffer;
+      if (encoded_arguments == nil) {
+        encoded_arguments =
+            [device newBufferWithLength:argument_encoder.encodedLength
+                                options:MTLResourceStorageModeShared];
+        pipeline->argument_buffer = encoded_arguments;
+      }
       [argument_encoder setArgumentBuffer:encoded_arguments offset:0];
       for (size_t index = 0; index < argument_count; ++index) {
         const YaspsMetalArgument &argument = arguments[index];
@@ -244,6 +261,8 @@ int dispatch_pipeline_batch(const YaspsMetalDispatch *dispatches,
     }
 
     id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
+    id<MTLComputeCommandEncoder> encoder =
+        [command_buffer computeCommandEncoder];
     for (size_t dispatch_index = 0;
          dispatch_index < dispatch_count;
          ++dispatch_index) {
@@ -252,14 +271,13 @@ int dispatch_pipeline_batch(const YaspsMetalDispatch *dispatches,
       if (pipeline == nullptr) {
         copy_error(error, error_size,
                    @"Cannot dispatch a null Metal pipeline");
+        [encoder endEncoding];
         return -1;
       }
       if (dispatch.grid_size == 0) {
         continue;
       }
 
-      id<MTLComputeCommandEncoder> encoder =
-          [command_buffer computeCommandEncoder];
       [encoder setComputePipelineState:pipeline->state];
       for (size_t index = 0;
            index < dispatch.argument_count;
@@ -307,9 +325,12 @@ int dispatch_pipeline_batch(const YaspsMetalDispatch *dispatches,
       width = std::min<NSUInteger>(width, dispatch.grid_size);
       [encoder dispatchThreads:MTLSizeMake(dispatch.grid_size, 1, 1)
           threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
-      [encoder endEncoding];
+      if (dispatch_index + 1 < dispatch_count) {
+        [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+      }
     }
 
+    [encoder endEncoding];
     [command_buffer commit];
     [command_buffer waitUntilCompleted];
     if (command_buffer.status == MTLCommandBufferStatusError) {
@@ -429,7 +450,7 @@ void *yasps_metal_pipeline_create(const char *metallib_path,
       copy_error(error, error_size, pipeline_error.localizedDescription);
       return nullptr;
     }
-    return new Pipeline{state, function};
+    return new Pipeline{state, function, nil, nil, {}};
   }
 }
 

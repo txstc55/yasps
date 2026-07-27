@@ -27,9 +27,11 @@ class solverKernel:
     self.__metal_dot_kernel = None
     self.__metal_sum_kernel = None
     self.__metal_vec_add_kernel = None
+    self.__metal_cg_update_kernel = None
     self.__metal_fill_kernel = None
     self.__dot_scratch_a = gpuarray.empty(0, dtype=np.float32)
     self.__dot_scratch_b = gpuarray.empty(0, dtype=np.float32)
+    self.__denominator_value = gpuarray.empty(1, dtype=np.float32)
 
   def updateBlockDimensions(self, blockDimensions: List[int]):
     self.__init_kernel(blockDimensions)
@@ -896,6 +898,28 @@ kernel void vec_add_with_scalar_metal(
   }
 }
 
+kernel void cg_solution_residual_from_denominator_metal(
+  device float* solution [[buffer(0)]],
+  device const float* direction [[buffer(1)]],
+  device float* residual [[buffer(2)]],
+  device const float* system_product [[buffer(3)]],
+  device const float* denominator [[buffer(4)]],
+  device float* denominator_value [[buffer(5)]],
+  constant float& delta [[buffer(6)]],
+  constant uint& count [[buffer(7)]],
+  uint index [[thread_position_in_grid]]
+) {
+  float value = denominator[0];
+  if (index == 0) {
+    denominator_value[0] = value;
+  }
+  if (index < count && isfinite(value) && value > 0.0f) {
+    float alpha = delta / value;
+    solution[index] += direction[index] * alpha;
+    residual[index] -= system_product[index] * alpha;
+  }
+}
+
 kernel void fill_float_metal(
   device float* output [[buffer(0)]],
   constant float& value [[buffer(1)]],
@@ -944,6 +968,10 @@ kernel void fill_float_metal(
     self.__metal_vec_add_kernel = gpuarray.MetalKernel(
       library_path,
       "vec_add_with_scalar_metal"
+    )
+    self.__metal_cg_update_kernel = gpuarray.MetalKernel(
+      library_path,
+      "cg_solution_residual_from_denominator_metal"
     )
     self.__metal_fill_kernel = gpuarray.MetalKernel(
       library_path,
@@ -1302,16 +1330,16 @@ kernel void fill_float_metal(
         result = maxIteration + 1
         direction_scalar = None
         for iteration in range(1, maxIteration + 1):
-          denominator_dispatches = []
+          iteration_dispatches = []
           if direction_scalar is not None:
             self.__metalVecAdd(
               d_s,
               d_c,
               d_c,
               direction_scalar,
-              denominator_dispatches,
+              iteration_dispatches,
             )
-          self.__metalFill(d_q, 0.0, denominator_dispatches)
+          self.__metalFill(d_q, 0.0, iteration_dispatches)
           self.__metalSpmvWithSystem(
             block_values,
             block_positions,
@@ -1325,39 +1353,28 @@ kernel void fill_float_metal(
             block_dimensions_dynamic,
             d_c,
             d_q,
-            denominator_dispatches,
+            iteration_dispatches,
           )
           denominator_result = self.__appendMetalDot(
             d_c,
             d_q,
-            denominator_dispatches,
+            iteration_dispatches,
           )
-          gpuarray.dispatch_batch(
-            denominator_dispatches,
-            "cg_denominator",
-          )
-          denominator = float(denominator_result.get()[0])
-          if not np.isfinite(denominator):
-            result = -4
-            break
-          if denominator <= 0.0:
-            result = -iteration - 4
-            break
-          alpha = delta_new / denominator
-          residual_dispatches = []
-          self.__metalVecAdd(
-            solution,
-            d_c,
-            solution,
-            alpha,
-            residual_dispatches,
-          )
-          self.__metalVecAdd(
-            d_r,
-            d_q,
-            d_r,
-            -alpha,
-            residual_dispatches,
+          self.__metalDispatch(
+            self.__metal_cg_update_kernel,
+            [
+              solution,
+              d_c,
+              d_r,
+              d_q,
+              denominator_result,
+              self.__denominator_value,
+              np.float32(delta_new),
+              np.uint32(solution.size),
+            ],
+            solution.size,
+            256,
+            iteration_dispatches,
           )
           if use_identity_preconditioner:
             self.__metalVecAdd(
@@ -1365,7 +1382,7 @@ kernel void fill_float_metal(
               d_r,
               d_s,
               0.0,
-              residual_dispatches,
+              iteration_dispatches,
             )
           else:
             self.__metalBlockJacobi(
@@ -1376,18 +1393,25 @@ kernel void fill_float_metal(
               diagonal_blocks_count,
               diagonal_blocks_size,
               gradient_segments_start,
-              residual_dispatches,
+              iteration_dispatches,
             )
           delta_old = delta_new
           delta_new_result = self.__appendMetalDot(
             d_r,
             d_s,
-            residual_dispatches,
+            iteration_dispatches,
           )
           gpuarray.dispatch_batch(
-            residual_dispatches,
-            "cg_residual",
+            iteration_dispatches,
+            "cg_iteration",
           )
+          denominator = float(self.__denominator_value.get()[0])
+          if not np.isfinite(denominator):
+            result = -4
+            break
+          if denominator <= 0.0:
+            result = -iteration - 4
+            break
           delta_new = float(delta_new_result.get()[0])
           if use_identity_preconditioner:
             if not np.isfinite(delta_new):
