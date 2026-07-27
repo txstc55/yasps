@@ -27,11 +27,14 @@ class solverKernel:
     self.__metal_dot_kernel = None
     self.__metal_sum_kernel = None
     self.__metal_vec_add_kernel = None
+    self.__metal_cg_direction_kernel = None
     self.__metal_cg_update_kernel = None
+    self.__metal_cg_finalize_kernel = None
     self.__metal_fill_kernel = None
     self.__dot_scratch_a = gpuarray.empty(0, dtype=np.float32)
     self.__dot_scratch_b = gpuarray.empty(0, dtype=np.float32)
-    self.__denominator_value = gpuarray.empty(1, dtype=np.float32)
+    self.__cg_state = gpuarray.empty(4, dtype=np.float32)
+    self.__cg_status = gpuarray.empty(2, dtype=np.int32)
 
   def updateBlockDimensions(self, blockDimensions: List[int]):
     self.__init_kernel(blockDimensions)
@@ -781,9 +784,10 @@ kernel void spmv_blocks_{row_size}_{col_size}_metal(
   constant uint& block_count [[buffer(4)]],
   device const float* x [[buffer(5)]],
   device atomic_float* y [[buffer(6)]],
+  device const int* cg_status [[buffer(7)]],
   uint index [[thread_position_in_grid]]
 ) {{
-  if (index >= block_count) {{
+  if (cg_status[0] != 0 || index >= block_count) {{
     return;
   }}
   constexpr uint row_size = {row_size};
@@ -821,9 +825,10 @@ kernel void block_jacobi_metal(
   device float* y [[buffer(2)]],
   constant uint& block_count [[buffer(3)]],
   constant uint& block_size [[buffer(4)]],
+  device const int* cg_status [[buffer(5)]],
   uint index [[thread_position_in_grid]]
 ) {
-  if (index >= block_count) {
+  if (cg_status[0] != 0 || index >= block_count) {
     return;
   }
   uint matrix_start = index * block_size * block_size;
@@ -844,13 +849,15 @@ kernel void dot_product_partial_metal(
   device const float* right [[buffer(1)]],
   device float* output [[buffer(2)]],
   constant uint& count [[buffer(3)]],
+  device const int* cg_status [[buffer(4)]],
   uint index [[thread_position_in_grid]],
   uint local_index [[thread_index_in_threadgroup]],
   uint group_index [[threadgroup_position_in_grid]]
 ) {
   threadgroup float values[256];
-  values[local_index] =
-    index < count ? left[index] * right[index] : 0.0f;
+  values[local_index] = (
+    cg_status[0] == 0 && index < count
+  ) ? left[index] * right[index] : 0.0f;
   threadgroup_barrier(mem_flags::mem_threadgroup);
   for (uint stride = 128; stride > 0; stride /= 2) {
     if (local_index < stride) {
@@ -867,12 +874,15 @@ kernel void sum_partial_metal(
   device const float* input [[buffer(0)]],
   device float* output [[buffer(1)]],
   constant uint& count [[buffer(2)]],
+  device const int* cg_status [[buffer(3)]],
   uint index [[thread_position_in_grid]],
   uint local_index [[thread_index_in_threadgroup]],
   uint group_index [[threadgroup_position_in_grid]]
 ) {
   threadgroup float values[256];
-  values[local_index] = index < count ? input[index] : 0.0f;
+  values[local_index] = (
+    cg_status[0] == 0 && index < count
+  ) ? input[index] : 0.0f;
   threadgroup_barrier(mem_flags::mem_threadgroup);
   for (uint stride = 128; stride > 0; stride /= 2) {
     if (local_index < stride) {
@@ -891,10 +901,28 @@ kernel void vec_add_with_scalar_metal(
   device float* output [[buffer(2)]],
   constant float& scalar [[buffer(3)]],
   constant uint& count [[buffer(4)]],
+  device const int* cg_status [[buffer(5)]],
   uint index [[thread_position_in_grid]]
 ) {
-  if (index < count) {
+  if (cg_status[0] == 0 && index < count) {
     output[index] = left[index] + right[index] * scalar;
+  }
+}
+
+kernel void cg_direction_from_state_metal(
+  device const float* preconditioned_residual [[buffer(0)]],
+  device float* direction [[buffer(1)]],
+  device const float* state [[buffer(2)]],
+  device const int* status [[buffer(3)]],
+  constant uint& update_direction [[buffer(4)]],
+  constant uint& count [[buffer(5)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (
+    status[0] == 0 && update_direction != 0 && index < count
+  ) {
+    direction[index] =
+      preconditioned_residual[index] + direction[index] * state[3];
   }
 }
 
@@ -904,29 +932,71 @@ kernel void cg_solution_residual_from_denominator_metal(
   device float* residual [[buffer(2)]],
   device const float* system_product [[buffer(3)]],
   device const float* denominator [[buffer(4)]],
-  device float* denominator_value [[buffer(5)]],
-  constant float& delta [[buffer(6)]],
-  constant uint& count [[buffer(7)]],
+  device float* state [[buffer(5)]],
+  device int* status [[buffer(6)]],
+  constant uint& iteration [[buffer(7)]],
+  constant uint& count [[buffer(8)]],
   uint index [[thread_position_in_grid]]
 ) {
+  if (status[0] != 0) {
+    return;
+  }
   float value = denominator[0];
   if (index == 0) {
-    denominator_value[0] = value;
+    state[2] = value;
+    if (!isfinite(value)) {
+      status[0] = -4;
+    } else if (value <= 0.0f) {
+      status[0] = -int(iteration) - 4;
+    }
   }
   if (index < count && isfinite(value) && value > 0.0f) {
-    float alpha = delta / value;
+    float alpha = state[0] / value;
     solution[index] += direction[index] * alpha;
     residual[index] -= system_product[index] * alpha;
   }
+}
+
+kernel void cg_finalize_iteration_metal(
+  device const float* reduced_delta [[buffer(0)]],
+  device float* state [[buffer(1)]],
+  device int* status [[buffer(2)]],
+  constant uint& identity_preconditioner [[buffer(3)]],
+  constant uint& iteration [[buffer(4)]],
+  uint index [[thread_position_in_grid]]
+) {
+  if (index != 0 || status[0] != 0) {
+    return;
+  }
+  float delta = reduced_delta[0];
+  if (!isfinite(delta)) {
+    status[0] = identity_preconditioner != 0 ? -4 : -2147483647;
+    status[1] = int(iteration);
+    state[3] = delta;
+    return;
+  }
+  if (identity_preconditioner == 0 && delta <= 0.0f) {
+    status[0] = -2147483647;
+    status[1] = int(iteration);
+    state[3] = delta;
+    return;
+  }
+  if (delta <= state[1]) {
+    status[0] = int(iteration);
+    return;
+  }
+  state[3] = delta / state[0];
+  state[0] = delta;
 }
 
 kernel void fill_float_metal(
   device float* output [[buffer(0)]],
   constant float& value [[buffer(1)]],
   constant uint& count [[buffer(2)]],
+  device const int* cg_status [[buffer(3)]],
   uint index [[thread_position_in_grid]]
 ) {
-  if (index < count) {
+  if (cg_status[0] == 0 && index < count) {
     output[index] = value;
   }
 }
@@ -969,9 +1039,17 @@ kernel void fill_float_metal(
       library_path,
       "vec_add_with_scalar_metal"
     )
+    self.__metal_cg_direction_kernel = gpuarray.MetalKernel(
+      library_path,
+      "cg_direction_from_state_metal"
+    )
     self.__metal_cg_update_kernel = gpuarray.MetalKernel(
       library_path,
       "cg_solution_residual_from_denominator_metal"
+    )
+    self.__metal_cg_finalize_kernel = gpuarray.MetalKernel(
+      library_path,
+      "cg_finalize_iteration_metal"
     )
     self.__metal_fill_kernel = gpuarray.MetalKernel(
       library_path,
@@ -999,7 +1077,12 @@ kernel void fill_float_metal(
       return
     self.__metalDispatch(
       self.__metal_fill_kernel,
-      [output, np.float32(value), np.uint32(output.size)],
+      [
+        output,
+        np.float32(value),
+        np.uint32(output.size),
+        self.__cg_status,
+      ],
       output.size,
       256,
       dispatches,
@@ -1021,6 +1104,7 @@ kernel void fill_float_metal(
         output,
         np.float32(scalar),
         np.uint32(output.size),
+        self.__cg_status,
       ],
       output.size,
       256,
@@ -1041,7 +1125,13 @@ kernel void fill_float_metal(
       )
     self.__metalDispatch(
       self.__metal_dot_kernel,
-      [left, right, self.__dot_scratch_a, np.uint32(count)],
+      [
+        left,
+        right,
+        self.__dot_scratch_a,
+        np.uint32(count),
+        self.__cg_status,
+      ],
       group_count * 256,
       256,
       dispatches,
@@ -1053,7 +1143,12 @@ kernel void fill_float_metal(
       next_count = (current_count + 255) // 256
       self.__metalDispatch(
         self.__metal_sum_kernel,
-        [current, temporary, np.uint32(current_count)],
+        [
+          current,
+          temporary,
+          np.uint32(current_count),
+          self.__cg_status,
+        ],
         next_count * 256,
         256,
         dispatches,
@@ -1089,6 +1184,7 @@ kernel void fill_float_metal(
             np.uint32(block_count),
             x,
             y,
+            self.__cg_status,
           ],
           block_count,
           32,
@@ -1163,6 +1259,7 @@ kernel void fill_float_metal(
           y[segment_start:segment_start + vector_count],
           np.uint32(block_count),
           np.uint32(block_size),
+          self.__cg_status,
         ],
         block_count,
         32,
@@ -1210,6 +1307,7 @@ kernel void fill_float_metal(
 
     if is_metal():
       start_time = time.perf_counter()
+      self.__cg_status.set(np.zeros(2, dtype=np.int32))
       cuda.memcpy_dtod(
         solution.gpudata,
         initial_guess.gpudata,
@@ -1328,139 +1426,182 @@ kernel void fill_float_metal(
       relative_tolerance = threshold * delta_zero
       if result == 0 and delta_new > relative_tolerance:
         result = maxIteration + 1
-        direction_scalar = None
-        for iteration in range(1, maxIteration + 1):
+        self.__cg_state.set(np.array(
+          [
+            delta_new,
+            np.float32(relative_tolerance),
+            0.0,
+            0.0,
+          ],
+          dtype=np.float32,
+        ))
+        iteration = 1
+        update_direction = False
+        while iteration <= maxIteration:
+          chunk_end = min(iteration + 3, maxIteration)
           iteration_dispatches = []
-          if direction_scalar is not None:
-            self.__metalVecAdd(
-              d_s,
+          for current_iteration in range(
+            iteration,
+            chunk_end + 1,
+          ):
+            if update_direction:
+              self.__metalDispatch(
+                self.__metal_cg_direction_kernel,
+                [
+                  d_s,
+                  d_c,
+                  self.__cg_state,
+                  self.__cg_status,
+                  np.uint32(1),
+                  np.uint32(solution.size),
+                ],
+                solution.size,
+                256,
+                iteration_dispatches,
+              )
+            update_direction = True
+            self.__metalFill(d_q, 0.0, iteration_dispatches)
+            self.__metalSpmvWithSystem(
+              block_values,
+              block_positions,
+              block_values_start,
+              block_counts,
+              block_dimensions,
+              block_values_dynamic,
+              block_positions_dynamic,
+              block_values_start_dynamic,
+              block_counts_dynamic,
+              block_dimensions_dynamic,
               d_c,
-              d_c,
-              direction_scalar,
-              iteration_dispatches,
-            )
-          self.__metalFill(d_q, 0.0, iteration_dispatches)
-          self.__metalSpmvWithSystem(
-            block_values,
-            block_positions,
-            block_values_start,
-            block_counts,
-            block_dimensions,
-            block_values_dynamic,
-            block_positions_dynamic,
-            block_values_start_dynamic,
-            block_counts_dynamic,
-            block_dimensions_dynamic,
-            d_c,
-            d_q,
-            iteration_dispatches,
-          )
-          denominator_result = self.__appendMetalDot(
-            d_c,
-            d_q,
-            iteration_dispatches,
-          )
-          self.__metalDispatch(
-            self.__metal_cg_update_kernel,
-            [
-              solution,
-              d_c,
-              d_r,
               d_q,
-              denominator_result,
-              self.__denominator_value,
-              np.float32(delta_new),
-              np.uint32(solution.size),
-            ],
-            solution.size,
-            256,
-            iteration_dispatches,
-          )
-          if use_identity_preconditioner:
-            self.__metalVecAdd(
-              d_r,
-              d_r,
-              d_s,
-              0.0,
               iteration_dispatches,
             )
-          else:
-            self.__metalBlockJacobi(
-              diagonal_blocks_inverse,
-              d_r,
-              d_s,
-              diagonal_blocks_start,
-              diagonal_blocks_count,
-              diagonal_blocks_size,
-              gradient_segments_start,
+            denominator_result = self.__appendMetalDot(
+              d_c,
+              d_q,
               iteration_dispatches,
             )
-          delta_old = delta_new
-          delta_new_result = self.__appendMetalDot(
-            d_r,
-            d_s,
-            iteration_dispatches,
-          )
+            self.__metalDispatch(
+              self.__metal_cg_update_kernel,
+              [
+                solution,
+                d_c,
+                d_r,
+                d_q,
+                denominator_result,
+                self.__cg_state,
+                self.__cg_status,
+                np.uint32(current_iteration),
+                np.uint32(solution.size),
+              ],
+              solution.size,
+              256,
+              iteration_dispatches,
+            )
+            if use_identity_preconditioner:
+              self.__metalVecAdd(
+                d_r,
+                d_r,
+                d_s,
+                0.0,
+                iteration_dispatches,
+              )
+            else:
+              self.__metalBlockJacobi(
+                diagonal_blocks_inverse,
+                d_r,
+                d_s,
+                diagonal_blocks_start,
+                diagonal_blocks_count,
+                diagonal_blocks_size,
+                gradient_segments_start,
+                iteration_dispatches,
+              )
+            delta_new_result = self.__appendMetalDot(
+              d_r,
+              d_s,
+              iteration_dispatches,
+            )
+            self.__metalDispatch(
+              self.__metal_cg_finalize_kernel,
+              [
+                delta_new_result,
+                self.__cg_state,
+                self.__cg_status,
+                np.uint32(use_identity_preconditioner),
+                np.uint32(current_iteration),
+              ],
+              1,
+              1,
+              iteration_dispatches,
+            )
           gpuarray.dispatch_batch(
             iteration_dispatches,
-            "cg_iteration",
+            "cg_iterations",
           )
-          denominator = float(self.__denominator_value.get()[0])
-          if not np.isfinite(denominator):
+          status_values = self.__cg_status.get()
+          status_code = int(status_values[0])
+          if status_code == 0:
+            iteration = chunk_end + 1
+            update_direction = True
+            continue
+          if status_code != -2147483647:
+            result = status_code
+            break
+
+          fallback_iteration = int(status_values[1])
+          preconditioned_residual = float(
+            self.__cg_state.get()[3]
+          )
+          self.__cg_status.set(np.zeros(2, dtype=np.int32))
+          residual_norm_dispatches = []
+          residual_norm_result = self.__appendMetalDot(
+            d_r,
+            d_r,
+            residual_norm_dispatches,
+          )
+          gpuarray.dispatch_batch(
+            residual_norm_dispatches,
+            "cg_convergence_residual_norm",
+          )
+          residual_norm = float(residual_norm_result.get()[0])
+          if not np.isfinite(residual_norm):
             result = -4
             break
-          if denominator <= 0.0:
-            result = -iteration - 4
+          if residual_norm == 0.0:
+            result = fallback_iteration
             break
-          delta_new = float(delta_new_result.get()[0])
-          if use_identity_preconditioner:
-            if not np.isfinite(delta_new):
-              result = -4
-              break
-            if delta_new <= relative_tolerance:
-              result = iteration
-              break
-          elif not np.isfinite(delta_new) or delta_new <= 0.0:
-            residual_norm_dispatches = []
-            residual_norm_result = self.__appendMetalDot(
-              d_r,
-              d_r,
-              residual_norm_dispatches,
+          if os.environ.get("YASPS_SOLVER_DIAGNOSTICS") == "1":
+            print(
+              "CG preconditioner fallback:"
+              f" iteration={fallback_iteration},"
+              f" preconditioned_residual="
+              f"{preconditioned_residual:.9e},"
+              f" residual_norm_squared={residual_norm:.9e}"
             )
-            gpuarray.dispatch_batch(
-              residual_norm_dispatches,
-              "cg_convergence_residual_norm",
-            )
-            residual_norm = float(residual_norm_result.get()[0])
-            if not np.isfinite(residual_norm):
-              result = -4
-              break
-            if residual_norm == 0.0:
-              result = iteration
-              break
-            if os.environ.get("YASPS_SOLVER_DIAGNOSTICS") == "1":
-              print(
-                "CG preconditioner fallback:"
-                f" iteration={iteration},"
-                f" preconditioned_residual={delta_new:.9e},"
-                f" residual_norm_squared={residual_norm:.9e}"
-              )
-            use_identity_preconditioner = True
-            delta_new = residual_norm
-            relative_tolerance = threshold * residual_norm
-            cuda.memcpy_dtod(
-              d_c.gpudata,
-              d_r.gpudata,
-              d_c.nbytes,
-            )
-            direction_scalar = None
-            continue
-          elif delta_new <= relative_tolerance:
-            result = iteration
+          use_identity_preconditioner = True
+          relative_tolerance = threshold * residual_norm
+          self.__cg_state.set(np.array(
+            [
+              residual_norm,
+              np.float32(relative_tolerance),
+              0.0,
+              0.0,
+            ],
+            dtype=np.float32,
+          ))
+          cuda.memcpy_dtod(
+            d_c.gpudata,
+            d_r.gpudata,
+            d_c.nbytes,
+          )
+          iteration = fallback_iteration + 1
+          update_direction = False
+          if iteration > maxIteration:
             break
-          direction_scalar = delta_new / delta_old
 
       if result == -5:
+        self.__cg_status.set(np.zeros(2, dtype=np.int32))
         self.__metalFill(solution, 0.0)
         self.__metalVecAdd(
           solution,
