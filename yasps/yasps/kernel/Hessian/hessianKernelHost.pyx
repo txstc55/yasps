@@ -1,10 +1,10 @@
-from typing import List
+from typing import List, Set
 from yasps.attribute import attribute
 from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 class hessianKernelHost:
-  def __init__(self, att: attribute, unique_gradient_sizes: List[int], max_child_gradient_size: int, project_entire_hessian: bool):
+  def __init__(self, att: attribute, unique_gradient_sizes: Set[int], max_child_gradient_size: int, project_entire_hessian: bool):
     self.__att = att
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
@@ -79,7 +79,7 @@ int compute_hessian_and_gradient_with_compression(
     switch(unique_gradient_sizes[i]){{
 '''
       # now we add the for loop to instantiate the known gradient sizes template functions
-      for size in sorted(unique_gradient_sizes):
+      for size in unique_gradient_sizes:
         if size != 0:
           self.__kernelString += f'''
       case {size}:

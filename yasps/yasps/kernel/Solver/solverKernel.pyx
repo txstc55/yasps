@@ -7,38 +7,9 @@ import numpy as np
 import pycuda.driver as cuda
 import os
 import hashlib
-import subprocess
-import threading
+import json
 from yasps.helper import timed
 from yasps.context import context
-
-SOLVER_KERNEL_CACHE_VERSION = "v6_content_addressed"
-SOLVER_NVCC_COMMAND_TEMPLATE = (
-  "nvcc", "-Xcompiler", "-fPIC", "-shared", "-o", "<OUTPUT>", "<SOURCE>",
-  "-O3", "-arch=sm_89", "-cudart=shared", "-lcuda",
-  "--expt-relaxed-constexpr", "-std=c++17",
-)
-
-def _solver_kernel_signature(kernel_source: str) -> str:
-  encoded = "\0".join((
-    SOLVER_KERNEL_CACHE_VERSION,
-    *SOLVER_NVCC_COMMAND_TEMPLATE,
-    kernel_source,
-  )).encode("utf-8")
-  return hashlib.sha256(encoded).hexdigest()
-
-def _atomic_write_text(path: str, text: str) -> None:
-  build_token = f"{os.getpid()}_{threading.get_ident()}"
-  temporary_path = f"{path}.tmp_{build_token}"
-  try:
-    with open(temporary_path, "w", encoding="utf-8") as f:
-      f.write(text)
-      f.flush()
-      os.fsync(f.fileno())
-    os.replace(temporary_path, path)
-  finally:
-    if os.path.exists(temporary_path):
-      os.remove(temporary_path)
 
 class solverKernel:
   def __init__(self, blockDimensions: List[int]):
@@ -120,9 +91,40 @@ class solverKernel:
       return
     else:
       # we may need to create a new kernel
-      candidate_block_dimensions = self.__saved_block_dimensions | blockDimensionsTuplesSet
-      max_modded_row_size = (max(dim[0] for dim in candidate_block_dimensions) + 2) // 3 * 3
-      os.makedirs(".yasps_constant", exist_ok=True)
+      self.__saved_block_dimensions.update(blockDimensionsTuplesSet)
+      max_modded_row_size = (max(blockDimensions[::2]) + 2) // 3 * 3
+      self.__max_row_size = max_modded_row_size
+      dimension_to_text = [f'{dim[0]}_{dim[1]}' for dim in blockDimensionsTuplesSet]
+      dimension_to_text = '__'.join(dimension_to_text)
+      file_original_name = f".yasps_constant/cg_dims_{dimension_to_text}"
+      file_hashed_name = f".yasps_constant/cg_dims_{int(hashlib.sha256(dimension_to_text.encode('utf-8')).hexdigest(), 16)}"
+      # now we first record this information in a json file
+      if not os.path.exists(".yasps_constant/cg_dimension_to_file.json"):
+        file_to_dimensions = []
+        with open(".yasps_constant/cg_dimension_to_file.json", "w", encoding="utf-8") as f:
+          json.dump(file_to_dimensions, f, indent=2)
+
+      # now open the json file and see if this dimension_to_text already exists
+      with open(".yasps_constant/cg_dimension_to_file.json", "r", encoding="utf-8") as f:
+        items = json.load(f)
+        in_json_but_no_so = False # false means not in file, true means in file but so file not found
+        for item in items:
+          # we check if the current dimensions has been compiled to a file before
+          seen_dimensions = item["dimensions"]
+          seen_dimensions = [tuple(dim) for dim in seen_dimensions]
+          seen_dimensions = set(seen_dimensions)
+          if self.__saved_block_dimensions.issubset(seen_dimensions):
+            # now we check if the file exists
+            file_hashed_name_existing = item["file_hashed_name"]
+            if os.path.exists(f"{file_hashed_name_existing}.so"):
+              self.__saved_block_dimensions = seen_dimensions
+              self.__loadKernelLibrary(file_hashed_name_existing)
+              return
+            else:
+              in_json_but_no_so = True
+      # if we reach here, we need to compile a new kernel
+      # because either the dimension doesnt exist in the previous compiled files,
+      # or the file is not found
       kernelString: str = '''
 #include <stdio.h>
 #include <stdlib.h>
@@ -259,7 +261,7 @@ void spmvWithSystem(const double* block_values, // the value of the blocks in th
     positions_end = positions_start + block_counts[i];
     switch(block_dimensions[i * 2]<< 16 | block_dimensions[i * 2 + 1]){
 '''
-      for dim in sorted(candidate_block_dimensions):
+      for dim in self.__saved_block_dimensions:
         kernelString += f'''
       case {dim[0]} << 16 | {dim[1]}:
         spmvOffDiagonalBlocks<{dim[0]}, {dim[1]}><<<(block_counts[i] + 31) / 32, 32, 0, streams[i]>>>(block_values, block_values_start[i], block_positions, positions_start, positions_end, x, y);
@@ -278,7 +280,7 @@ void spmvWithSystem(const double* block_values, // the value of the blocks in th
     positions_end = positions_start + block_counts_dynamic[i];
     switch(block_dimensions_dynamic[i * 2]<< 16 | block_dimensions_dynamic[i * 2 + 1]){
 '''
-      for dim in sorted(candidate_block_dimensions):
+      for dim in self.__saved_block_dimensions:
         kernelString += f'''
       case {dim[0]} << 16 | {dim[1]}:
         spmvOffDiagonalBlocks<{dim[0]}, {dim[1]}><<<(block_counts_dynamic[i] + 31) / 32, 32, 0, streams[i + NUM_BLOCK_DIMENSIONS]>>>(block_values_dynamic, block_values_start_dynamic[i], block_positions_dynamic, positions_start, positions_end, x, y);
@@ -711,31 +713,24 @@ int computeSolution(unsigned int maxIteration,
 
 } // close the extern "C"
 '''
-      sorted_dimensions = sorted(candidate_block_dimensions)
-      cache_signature = _solver_kernel_signature(kernelString)
-      file_hashed_name = f".yasps_constant/cg_dims_{cache_signature}"
-      source_path = f"{file_hashed_name}.cu"
-      shared_library_path = f"{file_hashed_name}.so"
+      # ok now we compile the kernel by saving it to a file and then calling nvcc
+      f = open(f"{file_hashed_name}.cu", 'w')
+      f.write(kernelString)
+      f.close()
 
-      _atomic_write_text(source_path, kernelString)
-      if not os.path.exists(shared_library_path):
-        build_token = f"{os.getpid()}_{threading.get_ident()}"
-        temporary_library_path = f"{shared_library_path}.tmp_{build_token}"
-        compile_command = [
-          temporary_library_path if item == "<OUTPUT>" else
-          source_path if item == "<SOURCE>" else item
-          for item in SOLVER_NVCC_COMMAND_TEMPLATE
-        ]
-        try:
-          subprocess.run(compile_command, check=True)
-          os.replace(temporary_library_path, shared_library_path)
-        finally:
-          if os.path.exists(temporary_library_path):
-            os.remove(temporary_library_path)
-
+      # now we compile the kernel
+      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_hashed_name}.so {file_hashed_name}.cu -O3 -arch=sm_89 -cudart=shared -lcuda --expt-relaxed-constexpr -std=c++17")
       self.__loadKernelLibrary(file_hashed_name)
-      self.__saved_block_dimensions = candidate_block_dimensions
-      self.__max_row_size = max_modded_row_size
+      data = []
+      with open(".yasps_constant/cg_dimension_to_file.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+      for item in data:
+        if item["file_hashed_name"] == file_hashed_name:
+          # already exists
+          return
+      data.append({"dimensions": [dim for dim in self.__saved_block_dimensions], "file_hashed_name": file_hashed_name, "file_original_name": file_original_name})
+      with open(".yasps_constant/cg_dimension_to_file.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
 
   def __to_void_p(self, x: gpuarray.GPUArray):
     if x is None or x.size == 0:
