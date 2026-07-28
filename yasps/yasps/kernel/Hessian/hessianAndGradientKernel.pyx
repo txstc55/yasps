@@ -21,7 +21,7 @@ from yasps.hessianKernelNoProject import hessianKernelNoProject
 from yasps.hessianKernelHost import hessianKernelHost
 from yasps.hessianKernelSeparateJacobian import hessianKernelSeparateJacobian
 
-HESSIAN_KERNEL_CACHE_VERSION = "v5_symbolic_jacobian_helpers"
+HESSIAN_KERNEL_CACHE_VERSION = "v6_shared_attribute_helpers"
 
 def _stable_content_signature(payload, length: int = 24) -> str:
   encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
@@ -181,6 +181,7 @@ class hessianAndGradientKernel:
       "relocatable_device_code": True,
       "extra_flags": list(self.__additional_compile_flags),
     }
+    # Reuse dependency objects across Hessian bundles and global kernels.
     device_units = []
     for item in (sortedDependency + [self.__att.deviceKernel]):
       device_unit_source = f'''
@@ -189,13 +190,7 @@ extern "C"{{
 {item.kernelString}
 }}
 '''
-      device_unit_signature = _stable_content_signature({
-        "cache_version": HESSIAN_KERNEL_CACHE_VERSION,
-        "compiler": compiler_identity,
-        "header": hessian_header_string,
-        "source": device_unit_source,
-      })
-      device_units.append((device_unit_signature, device_unit_source))
+      device_units.append((item.attributeName, device_unit_source))
     generation_metadata = {
       "cache_version": HESSIAN_KERNEL_CACHE_VERSION,
       "compiler": compiler_identity,
@@ -251,9 +246,9 @@ extern "C"{{
       compile_jobs = []
       obj_files = []
       seen_obj_files = set()
-      for device_unit_signature, device_unit_source in device_units:
-        cu_file = f".yasps_tmp/hessian_device_{device_unit_signature}.cu"
-        obj_file = f".yasps_tmp/hessian_device_{device_unit_signature}.o"
+      for attribute_name, device_unit_source in device_units:
+        cu_file = f".yasps_tmp/{attribute_name}.cu"
+        obj_file = f".yasps_tmp/{attribute_name}.o"
         if obj_file in seen_obj_files:
           continue
         seen_obj_files.add(obj_file)
