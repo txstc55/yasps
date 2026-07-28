@@ -189,6 +189,16 @@ def main() -> int:
             errors.append(
                 f"stylesheet: missing two-space declaration {declaration!r}"
             )
+    for declaration in (
+        "background-attachment: fixed",
+        "border-radius: 0",
+        "box-shadow: 8px 8px 0",
+    ):
+        if declaration not in style_text:
+            errors.append(
+                f"stylesheet: missing requested presentation "
+                f"{declaration!r}"
+            )
 
     tutorial = DOCS / "tutorials" / "mixed-separation.md"
     if not tutorial.is_file():

@@ -1,5 +1,5 @@
 :root {
-  --surface: #fcf9f8;
+  --surface: #ffffff;
   --surface-container-lowest: #ffffff;
   --surface-container-low: #f6f3f2;
   --surface-container: #f0eded;
@@ -8,6 +8,7 @@
   --on-surface-variant: #594139;
   --outline: #8d7168;
   --outline-variant: #e1bfb5;
+  --dot: #dedede;
   --primary: #ab3500;
   --primary-container: #ff6b35;
   --on-primary-container: #5f1900;
@@ -47,10 +48,11 @@ body {
   background-color: var(--surface);
   background-image: radial-gradient(
     circle,
-    var(--outline-variant) 1.2px,
+    var(--dot) 1.2px,
     transparent 1.3px
   );
   background-size: 24px 24px;
+  background-attachment: fixed;
   font-family: var(--sans);
   font-size: 1rem;
   line-height: 1.65;
@@ -107,7 +109,7 @@ summary:focus-visible {
 
 .site-shell {
   display: grid;
-  grid-template-columns: 19.5rem minmax(0, 1fr);
+  grid-template-columns: 18rem minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -261,10 +263,10 @@ summary:focus-visible {
 }
 
 .content {
-  width: min(100% - 5rem, 60rem);
+  width: min(100% - 4rem, 62rem);
   min-height: calc(100vh - 7rem);
-  margin: 0 auto;
-  padding: 5rem 0 6rem;
+  margin: 0 0 0 2rem;
+  padding: 4rem 0 6rem;
 }
 
 .content > :first-child {
@@ -570,7 +572,7 @@ kbd {
 
 div.highlighter-rouge {
   max-width: 100%;
-  margin: 1.7rem 0;
+  margin: 1.7rem 8px 2.3rem 0;
 }
 
 pre {
@@ -580,9 +582,9 @@ pre {
   padding: 1.2rem 1.3rem;
   color: var(--on-surface);
   background: var(--surface-container-lowest);
-  border: 1px solid var(--outline);
-  border-left: 6px solid var(--primary-container);
-  border-radius: 0.5rem;
+  border: 3px solid var(--on-surface);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--on-surface);
   font-size: 0.9rem;
   line-height: 1.7;
   tab-size: 2;
@@ -809,8 +811,8 @@ hr {
 
 footer {
   display: flex;
-  width: min(100% - 5rem, 60rem);
-  margin: 0 auto;
+  width: min(100% - 4rem, 62rem);
+  margin: 0 0 0 2rem;
   padding: 1.5rem 0 2.5rem;
   justify-content: space-between;
   gap: 1rem;
@@ -886,6 +888,13 @@ footer {
 
   .content {
     padding-top: 4rem;
+  }
+
+  .content,
+  footer {
+    width: min(100% - 4rem, 60rem);
+    margin-right: auto;
+    margin-left: auto;
   }
 }
 
