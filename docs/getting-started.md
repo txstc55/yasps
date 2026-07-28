@@ -136,9 +136,9 @@ values = quadratic_expression.compute().value.get()
 
 ## Where to go next
 
-- Read the [mental model]({{ '/concepts/' | relative_url }}) before combining attributes from different primitives.
-- Learn the [attribute expression syntax]({{ '/attributes/' | relative_url }}).
-- Use [Connectivity and JOIN]({{ '/join/' | relative_url }}) for mesh topology.
-- Use [Primitive unions]({{ '/union/' | relative_url }}) for mixed parameterizations.
-- Follow [Energies and minimization]({{ '/optimization/' | relative_url }}) for Newton and contact loops.
-- Put the entire frontend together in the [five-bunny mixed-separation walkthrough]({{ '/tutorials/mixed-separation/' | relative_url }}).
+- Read the [mental model]({{ '/concepts/' | relative_url }}?v={{ site.time | date: '%s' }}) before combining attributes from different primitives.
+- Learn the [attribute expression syntax]({{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}).
+- Use [Connectivity and JOIN]({{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}) for mesh topology.
+- Use [Primitive unions]({{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}) for mixed parameterizations.
+- Follow [Energies and minimization]({{ '/optimization/' | relative_url }}?v={{ site.time | date: '%s' }}) for Newton and contact loops.
+- Put the entire frontend together in the [five-bunny mixed-separation walkthrough]({{ '/tutorials/mixed-separation/' | relative_url }}?v={{ site.time | date: '%s' }}).

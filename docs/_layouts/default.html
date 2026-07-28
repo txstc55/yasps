@@ -15,7 +15,7 @@
     <a class="skip-link" href="#content">Skip to content</a>
     <div class="site-shell">
       <aside class="sidebar" aria-label="Documentation navigation">
-        <a class="brand" href="{{ '/' | relative_url }}">
+        <a class="brand" href="{{ '/' | relative_url }}?v={{ site.time | date: '%s' }}">
           <span class="brand-mark">Y</span>
           <span>
             <strong>YASPS</strong>
@@ -25,27 +25,27 @@
 
         <nav>
           <p class="nav-label">Learn in order</p>
-          <a href="{{ '/getting-started/' | relative_url }}"><span>01</span> Getting started</a>
-          <a href="{{ '/concepts/' | relative_url }}"><span>02</span> Scene & mesh model</a>
-          <a href="{{ '/attributes/' | relative_url }}"><span>03</span> Attributes</a>
-          <a href="{{ '/join/' | relative_url }}"><span>04</span> JOIN</a>
-          <a href="{{ '/union/' | relative_url }}"><span>05</span> UNION</a>
-          <a href="{{ '/optimization/' | relative_url }}"><span>06</span> Energy & minimize</a>
-          <a href="{{ '/dynamic-scenes/' | relative_url }}"><span>07</span> Dynamic contact</a>
-          <a class="capstone-link" href="{{ '/tutorials/mixed-separation/' | relative_url }}"><span>08</span> Capstone example</a>
+          <a href="{{ '/getting-started/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>01</span> Getting started</a>
+          <a href="{{ '/concepts/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>02</span> Scene & mesh model</a>
+          <a href="{{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>03</span> Attributes</a>
+          <a href="{{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>04</span> JOIN</a>
+          <a href="{{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>05</span> UNION</a>
+          <a href="{{ '/optimization/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>06</span> Energy & minimize</a>
+          <a href="{{ '/dynamic-scenes/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>07</span> Dynamic contact</a>
+          <a class="capstone-link" href="{{ '/tutorials/mixed-separation/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>08</span> Capstone example</a>
 
           <details class="secondary-nav">
             <summary>More documentation</summary>
             <div>
-              <a href="{{ '/examples/' | relative_url }}">Examples map</a>
-              <a href="{{ '/architecture/' | relative_url }}">How YASPS executes</a>
-              <a href="{{ '/troubleshooting/' | relative_url }}">Troubleshooting</a>
-              <a href="{{ '/advanced/minimizer/' | relative_url }}">Direct minimizer</a>
-              <a href="{{ '/advanced/differentiation/' | relative_url }}">Differentiation</a>
-              <a href="{{ '/advanced/hessian-solver/' | relative_url }}">Hessian & solver</a>
-              <a href="{{ '/reference/core/' | relative_url }}">Core API</a>
-              <a href="{{ '/reference/advanced/' | relative_url }}">Advanced API</a>
-              <a href="{{ '/reference/internal/' | relative_url }}">Low-level exports</a>
+              <a href="{{ '/examples/' | relative_url }}?v={{ site.time | date: '%s' }}">Examples map</a>
+              <a href="{{ '/architecture/' | relative_url }}?v={{ site.time | date: '%s' }}">How YASPS executes</a>
+              <a href="{{ '/troubleshooting/' | relative_url }}?v={{ site.time | date: '%s' }}">Troubleshooting</a>
+              <a href="{{ '/advanced/minimizer/' | relative_url }}?v={{ site.time | date: '%s' }}">Direct minimizer</a>
+              <a href="{{ '/advanced/differentiation/' | relative_url }}?v={{ site.time | date: '%s' }}">Differentiation</a>
+              <a href="{{ '/advanced/hessian-solver/' | relative_url }}?v={{ site.time | date: '%s' }}">Hessian & solver</a>
+              <a href="{{ '/reference/core/' | relative_url }}?v={{ site.time | date: '%s' }}">Core API</a>
+              <a href="{{ '/reference/advanced/' | relative_url }}?v={{ site.time | date: '%s' }}">Advanced API</a>
+              <a href="{{ '/reference/internal/' | relative_url }}?v={{ site.time | date: '%s' }}">Low-level exports</a>
             </div>
           </details>
         </nav>
@@ -53,23 +53,23 @@
 
       <div class="page-column">
         <header class="mobile-header">
-          <a class="brand compact" href="{{ '/' | relative_url }}">
+          <a class="brand compact" href="{{ '/' | relative_url }}?v={{ site.time | date: '%s' }}">
             <span class="brand-mark">Y</span>
             <strong>YASPS</strong>
           </a>
           <details class="mobile-nav">
             <summary>Docs menu</summary>
             <div>
-              <a href="{{ '/getting-started/' | relative_url }}">Getting started</a>
-              <a href="{{ '/concepts/' | relative_url }}">Mental model</a>
-              <a href="{{ '/attributes/' | relative_url }}">Attributes</a>
-              <a href="{{ '/join/' | relative_url }}">JOIN</a>
-              <a href="{{ '/union/' | relative_url }}">UNION</a>
-              <a href="{{ '/optimization/' | relative_url }}">Optimization</a>
-              <a href="{{ '/dynamic-scenes/' | relative_url }}">Dynamic contact</a>
-              <a href="{{ '/tutorials/mixed-separation/' | relative_url }}">Capstone example</a>
-              <a href="{{ '/examples/' | relative_url }}">Examples</a>
-              <a href="{{ '/reference/core/' | relative_url }}">API reference</a>
+              <a href="{{ '/getting-started/' | relative_url }}?v={{ site.time | date: '%s' }}">Getting started</a>
+              <a href="{{ '/concepts/' | relative_url }}?v={{ site.time | date: '%s' }}">Mental model</a>
+              <a href="{{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}">Attributes</a>
+              <a href="{{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}">JOIN</a>
+              <a href="{{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}">UNION</a>
+              <a href="{{ '/optimization/' | relative_url }}?v={{ site.time | date: '%s' }}">Optimization</a>
+              <a href="{{ '/dynamic-scenes/' | relative_url }}?v={{ site.time | date: '%s' }}">Dynamic contact</a>
+              <a href="{{ '/tutorials/mixed-separation/' | relative_url }}?v={{ site.time | date: '%s' }}">Capstone example</a>
+              <a href="{{ '/examples/' | relative_url }}?v={{ site.time | date: '%s' }}">Examples</a>
+              <a href="{{ '/reference/core/' | relative_url }}?v={{ site.time | date: '%s' }}">API reference</a>
             </div>
           </details>
         </header>
@@ -79,7 +79,7 @@
           {% if page.next_url and page.next_label %}
           <nav class="next-page" aria-label="Next chapter">
             <span>Next chapter</span>
-            <a href="{{ page.next_url | relative_url }}">{{ page.next_label }} →</a>
+            <a href="{{ page.next_url | relative_url }}?v={{ site.time | date: '%s' }}">{{ page.next_label }} →</a>
           </nav>
           {% endif %}
         </main>

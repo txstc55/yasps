@@ -120,6 +120,11 @@ def main() -> int:
                 errors.append(
                     f"{path.relative_to(DOCS)}: unresolved page {url}"
                 )
+            elif not text[match.end():].startswith("?v={{ site.time"):
+                errors.append(
+                    f"{path.relative_to(DOCS)}: internal page link {url} "
+                    "must include the current build version"
+                )
 
     init_text = (REPO / "yasps" / "yasps" / "__init__.py").read_text(
         encoding="utf-8"
@@ -149,6 +154,8 @@ def main() -> int:
         errors.append("layout: runtime scripts violate the static-site budget")
     if "style.css' | relative_url }}?v={{ site.time" not in layout_text:
         errors.append("layout: stylesheet URL must change with each site build")
+    if "page.next_url | relative_url }}?v={{ site.time" not in layout_text:
+        errors.append("layout: next-chapter links must include the build version")
 
     style_text = (DOCS / "assets" / "css" / "style.css").read_text(
         encoding="utf-8"

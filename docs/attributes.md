@@ -176,4 +176,4 @@ The first call generates and compiles a global kernel. The output buffer is cach
 
 ## Lineage errors
 
-If two attributes belong to unrelated primitives, arithmetic raises an error. Do not copy their numerical arrays together to bypass this: that would sever differentiation. Define the relation with [JOIN]({{ '/join/' | relative_url }}) or combine heterogeneous attributes with [UNION]({{ '/union/' | relative_url }}).
+If two attributes belong to unrelated primitives, arithmetic raises an error. Do not copy their numerical arrays together to bypass this: that would sever differentiation. Define the relation with [JOIN]({{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}) or combine heterogeneous attributes with [UNION]({{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}).

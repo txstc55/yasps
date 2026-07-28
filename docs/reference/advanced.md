@@ -72,7 +72,7 @@ Produces a local symbolic derivative expression. It does not create global spars
 path(global_targets, local_targets=[])
 ```
 
-`getRoots(attribute, parent_path)` discovers valid target routes. `getPathDict()` finalizes dictionaries consumed by index generation and `wrt` exposes the effective target subset. This is generator-facing API; inspect [How YASPS executes]({{ '/architecture/' | relative_url }}) before using it directly.
+`getRoots(attribute, parent_path)` discovers valid target routes. `getPathDict()` finalizes dictionaries consumed by index generation and `wrt` exposes the effective target subset. This is generator-facing API; inspect [How YASPS executes]({{ '/architecture/' | relative_url }}?v={{ site.time | date: '%s' }}) before using it directly.
 
 ## `hessian`
 

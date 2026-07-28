@@ -17,7 +17,7 @@ python one_bunny.py
 
 Most simulations need the optional geometry and visualization packages imported by their local `helpers.py`, in addition to YASPS's core CUDA dependencies.
 
-> For a guided reading of hierarchy construction, two parameterizations, JOIN, UNION, dynamic contact, separated Hessian/Jacobian assembly, target layout, CCD, and line search, follow the [mixed bodies with separated assembly tutorial]({{ '/tutorials/mixed-separation/' | relative_url }}).
+> For a guided reading of hierarchy construction, two parameterizations, JOIN, UNION, dynamic contact, separated Hessian/Jacobian assembly, target layout, CCD, and line search, follow the [mixed bodies with separated assembly tutorial]({{ '/tutorials/mixed-separation/' | relative_url }}?v={{ site.time | date: '%s' }}).
 
 ## Recommended reading order
 

@@ -96,7 +96,7 @@ The generated UNION code receives child counts so it can map a union index to th
 
 | Need | Operation |
 | --- | --- |
-| Gather target instances through explicit indices | [JOIN]({{ '/join/' | relative_url }}) |
+| Gather target instances through explicit indices | [JOIN]({{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}) |
 | Stack complete primitives into one logical population | UNION |
 | Reduce a variable number of neighbors | JOIN with `"SUM"` or `"AVERAGE"` |
 | Make unrelated arrays interact without topology | Define either a JOIN or UNION; do not bypass lineage |

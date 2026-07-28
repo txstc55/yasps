@@ -577,14 +577,14 @@ The excerpt names the same operations as the production loop while compressing i
 
 | Frontend concept | Where it appears in this example | Read next |
 | --- | --- | --- |
-| Scene/mesh/primitive hierarchy | Soft, affine, container, and collision meshes | [Mental model]({{ '/concepts/' | relative_url }}) |
-| Data versus constant leaves | Position targets versus rest/history/material state | [Attributes]({{ '/attributes/' | relative_url }}) |
-| Symbolic matrix syntax | Edge matrices, Neo-Hookean energy, affine constraint, barriers | [Attributes]({{ '/attributes/' | relative_url }}) |
-| JOIN | Tet-to-vertex, vertex-to-body, deformation-gradient boundaries, contact stencils | [Connectivity and JOIN]({{ '/join/' | relative_url }}) |
-| UNION | One collision position field over three parameterizations | [Primitive unions]({{ '/union/' | relative_url }}) |
-| Dynamic topology | PP/PE/PT/EE candidate counts and connectivity | [Dynamic topology]({{ '/dynamic-scenes/' | relative_url }}) |
-| Energy policies | Projection, dynamic instances, separated Hessian/Jacobian | [Energies and minimization]({{ '/optimization/' | relative_url }}) |
-| Global target layout | Soft positions, affine matrices, translations | [Direct minimizer use]({{ '/advanced/minimizer/' | relative_url }}) |
-| Generated sparse solve | Target paths → indices → assembly → PCG | [How YASPS executes]({{ '/architecture/' | relative_url }}) |
+| Scene/mesh/primitive hierarchy | Soft, affine, container, and collision meshes | [Mental model]({{ '/concepts/' | relative_url }}?v={{ site.time | date: '%s' }}) |
+| Data versus constant leaves | Position targets versus rest/history/material state | [Attributes]({{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}) |
+| Symbolic matrix syntax | Edge matrices, Neo-Hookean energy, affine constraint, barriers | [Attributes]({{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}) |
+| JOIN | Tet-to-vertex, vertex-to-body, deformation-gradient boundaries, contact stencils | [Connectivity and JOIN]({{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}) |
+| UNION | One collision position field over three parameterizations | [Primitive unions]({{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}) |
+| Dynamic topology | PP/PE/PT/EE candidate counts and connectivity | [Dynamic topology]({{ '/dynamic-scenes/' | relative_url }}?v={{ site.time | date: '%s' }}) |
+| Energy policies | Projection, dynamic instances, separated Hessian/Jacobian | [Energies and minimization]({{ '/optimization/' | relative_url }}?v={{ site.time | date: '%s' }}) |
+| Global target layout | Soft positions, affine matrices, translations | [Direct minimizer use]({{ '/advanced/minimizer/' | relative_url }}?v={{ site.time | date: '%s' }}) |
+| Generated sparse solve | Target paths → indices → assembly → PCG | [How YASPS executes]({{ '/architecture/' | relative_url }}?v={{ site.time | date: '%s' }}) |
 
 Once this flow is clear, the larger `brazil_nuts`, cage, cloth, and teaser examples are variations in model construction—not different frontend rules.

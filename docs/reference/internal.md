@@ -117,4 +117,4 @@ hessianKernelNoProject, placementReorderKernel,
 hessianKernelSeparateJacobian
 ```
 
-The [core reference]({{ '/reference/core/' | relative_url }}) and [advanced reference]({{ '/reference/advanced/' | relative_url }}) document the application-facing members from that inventory.
+The [core reference]({{ '/reference/core/' | relative_url }}?v={{ site.time | date: '%s' }}) and [advanced reference]({{ '/reference/advanced/' | relative_url }}?v={{ site.time | date: '%s' }}) document the application-facing members from that inventory.

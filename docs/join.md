@@ -131,4 +131,4 @@ The update path is designed for fixed arity. Construct variable-arity CSR connec
 - The number and ordering of connectivity rows must match the source primitive's instances.
 - A JOIN must be added to the connectivity's source primitive.
 
-See [Dynamic topology]({{ '/dynamic-scenes/' | relative_url }}) for the collision-pair lifecycle and [How YASPS executes]({{ '/architecture/' | relative_url }}) for how JOIN paths become sparse matrix indices.
+See [Dynamic topology]({{ '/dynamic-scenes/' | relative_url }}?v={{ site.time | date: '%s' }}) for the collision-pair lifecycle and [How YASPS executes]({{ '/architecture/' | relative_url }}?v={{ site.time | date: '%s' }}) for how JOIN paths become sparse matrix indices.

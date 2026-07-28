@@ -10,7 +10,7 @@ description: YASPS is a GPU-first symbolic framework for extensible IPC-style ph
 <p class="lead">Describe physical energies once. YASPS traces every value to its true degrees of freedom, differentiates the symbolic program, emits fused CUDA kernels, assembles the sparse Newton system, and solves it on the GPU.</p>
 
 <div class="hero-actions">
-  <a class="button" href="{{ '/getting-started/' | relative_url }}">Start learning</a>
+  <a class="button" href="{{ '/getting-started/' | relative_url }}?v={{ site.time | date: '%s' }}">Start learning</a>
   <a class="button secondary" href="https://github.com/txstc55/yasps/blob/main/YASPS_compressed.pdf">Read the paper</a>
 </div>
 
@@ -25,35 +25,35 @@ Work through these chapters sequentially. Each one supplies a piece of the final
 <ol class="learning-path">
   <li>
     <span>01</span>
-    <div><a href="{{ '/getting-started/' | relative_url }}">Getting started</a><p>Install the CUDA implementation and run the smallest symbolic solve.</p></div>
+    <div><a href="{{ '/getting-started/' | relative_url }}?v={{ site.time | date: '%s' }}">Getting started</a><p>Install the CUDA implementation and run the smallest symbolic solve.</p></div>
   </li>
   <li>
     <span>02</span>
-    <div><a href="{{ '/concepts/' | relative_url }}">Scene and mesh model</a><p>Understand scenes, meshes, primitives, lineage, and generated execution.</p></div>
+    <div><a href="{{ '/concepts/' | relative_url }}?v={{ site.time | date: '%s' }}">Scene and mesh model</a><p>Understand scenes, meshes, primitives, lineage, and generated execution.</p></div>
   </li>
   <li>
     <span>03</span>
-    <div><a href="{{ '/attributes/' | relative_url }}">Attributes and expressions</a><p>Declare data, constants, matrix expressions, and named computation boundaries.</p></div>
+    <div><a href="{{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}">Attributes and expressions</a><p>Declare data, constants, matrix expressions, and named computation boundaries.</p></div>
   </li>
   <li>
     <span>04</span>
-    <div><a href="{{ '/join/' | relative_url }}">Connectivity and JOIN</a><p>Gather values from another primitive while retaining their symbolic path.</p></div>
+    <div><a href="{{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}">Connectivity and JOIN</a><p>Gather values from another primitive while retaining their symbolic path.</p></div>
   </li>
   <li>
     <span>05</span>
-    <div><a href="{{ '/union/' | relative_url }}">Primitive unions</a><p>Present heterogeneous parameterizations through one compatible interface.</p></div>
+    <div><a href="{{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}">Primitive unions</a><p>Present heterogeneous parameterizations through one compatible interface.</p></div>
   </li>
   <li>
     <span>06</span>
-    <div><a href="{{ '/optimization/' | relative_url }}">Energies and minimization</a><p>Register scalar objectives, choose targets, assemble derivatives, and solve.</p></div>
+    <div><a href="{{ '/optimization/' | relative_url }}?v={{ site.time | date: '%s' }}">Energies and minimization</a><p>Register scalar objectives, choose targets, assemble derivatives, and solve.</p></div>
   </li>
   <li>
     <span>07</span>
-    <div><a href="{{ '/dynamic-scenes/' | relative_url }}">Dynamic contact topology</a><p>Update changing contact stencils without rebuilding the symbolic energy.</p></div>
+    <div><a href="{{ '/dynamic-scenes/' | relative_url }}?v={{ site.time | date: '%s' }}">Dynamic contact topology</a><p>Update changing contact stencils without rebuilding the symbolic energy.</p></div>
   </li>
   <li class="capstone">
     <span>08</span>
-    <div><a href="{{ '/tutorials/mixed-separation/' | relative_url }}">Complete mixed-body example</a><p>Assemble all seven chapters into the five-bunny container simulation.</p></div>
+    <div><a href="{{ '/tutorials/mixed-separation/' | relative_url }}?v={{ site.time | date: '%s' }}">Complete mixed-body example</a><p>Assemble all seven chapters into the five-bunny container simulation.</p></div>
   </li>
 </ol>
 
@@ -61,4 +61,4 @@ Work through these chapters sequentially. Each one supplies a piece of the final
 
 YASPS returns the solution of `H Δx = g`; a Newton update normally subtracts that segment. It deliberately leaves collision detection, continuous collision detection, line search, and timestep policy to the application, where geometry and parameterization-specific decisions belong.
 
-Begin with [Getting started]({{ '/getting-started/' | relative_url }}). The complete program appears only after the concepts it combines.
+Begin with [Getting started]({{ '/getting-started/' | relative_url }}?v={{ site.time | date: '%s' }}). The complete program appears only after the concepts it combines.

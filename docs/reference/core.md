@@ -182,4 +182,4 @@ Read-only properties include `name`, `fullName`, `fullNameWithHash`, `rows`, `co
 
 Generator-facing mutable properties include `deviceKernel`, `globalKernel`, `generate_code`, and `disable_array_access`. `setName` and `setAsIntermediate` mutate code-generation metadata; prefer hierarchy methods unless extending the generator.
 
-See [Attributes and expressions]({{ '/attributes/' | relative_url }}) for semantics and examples.
+See [Attributes and expressions]({{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}) for semantics and examples.

@@ -44,7 +44,7 @@ Scene, mesh, primitive, connectivity, and attribute names become Python members 
 
 ### “No connection to the attribute”
 
-The operands have incompatible lineage. Gather through a [connectivity and JOIN]({{ '/join/' | relative_url }}), or stack shape-compatible sources with [UNION]({{ '/union/' | relative_url }}).
+The operands have incompatible lineage. Gather through a [connectivity and JOIN]({{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}), or stack shape-compatible sources with [UNION]({{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}).
 
 ### JOIN has the wrong shape
 

@@ -175,4 +175,4 @@ world.ignoreEnergies([contact_energy])
 
 The ignore list affects subsequent assembly and total-energy evaluation. Pass an empty list to restore all registered energies.
 
-For direct control of assembly without the scene façade, continue to [Direct minimizer use]({{ '/advanced/minimizer/' | relative_url }}).
+For direct control of assembly without the scene façade, continue to [Direct minimizer use]({{ '/advanced/minimizer/' | relative_url }}?v={{ site.time | date: '%s' }}).
