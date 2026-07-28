@@ -6,8 +6,8 @@ from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 
-# Retain the symbolic implementation as a fallback when a compact lookup would
-# exceed the CUDA parameter-memory budget. The cache key isolates both modes.
+# Retain the symbolic implementation when the one-per-module compact lookup
+# would exceed the bounded CUDA constant-memory budget.
 USE_DIRECT_SEPARATED_JACOBIAN_CONTRACTION = True
 DIRECT_JACOBIAN_LOOKUP_MAX_BYTES = 48 * 1024
 
@@ -203,14 +203,30 @@ class hessianKernelSeparateJacobian:
     self.__compact_jacobian_lookup = lookup
     self.__compact_jacobian_lookup_offsets = lookup_outer
 
+  def __direct_contraction_lookup_name(self, attribute_name: str) -> str:
+    return f"compact_jacobian_lookup_{attribute_name}"
+
+  def generateDirectContractionSupportUnit(
+    self,
+    attribute_name: str,
+  ) -> str:
+    if not self.__use_direct_contraction:
+      return ""
+    lookup_name = self.__direct_contraction_lookup_name(attribute_name)
+    lookup_values = ", ".join(str(value) for value in self.__compact_jacobian_lookup)
+    return f'''
+extern "C"{{
+__device__ __constant__ int {lookup_name}[{len(self.__compact_jacobian_lookup)}] = {{{lookup_values}}};
+}}
+'''
+
   def __generate_direct_contraction_support(
     self,
     unique_gradient_size: int,
     attribute_name: str,
   ):
-    lookup_name = f"compact_jacobian_lookup_{attribute_name}_{unique_gradient_size}"
-    lookup_values = ", ".join(str(value) for value in self.__compact_jacobian_lookup)
-    result = f'''\nstatic __device__ __constant__ int {lookup_name}[{len(self.__compact_jacobian_lookup)}] = {{{lookup_values}}};\n'''
+    lookup_name = self.__direct_contraction_lookup_name(attribute_name)
+    result = f'''\nextern __device__ __constant__ int {lookup_name}[{len(self.__compact_jacobian_lookup)}];\n'''
     hessian_rows = sum(self.__global_jacobian_children_sizes)
     hessian_entries = hessian_rows * hessian_rows
     row_outer = [0]

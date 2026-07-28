@@ -25,7 +25,7 @@ from yasps.hessianKernelSeparateJacobian import (
 )
 
 HESSIAN_KERNEL_CACHE_VERSION = (
-  "v3_direct_compact_jacobian" if USE_DIRECT_SEPARATED_JACOBIAN_CONTRACTION
+  "v4_shared_compact_jacobian" if USE_DIRECT_SEPARATED_JACOBIAN_CONTRACTION
   else "v3_symbolic_jacobian_helpers"
 )
 
@@ -126,6 +126,11 @@ class hessianAndGradientKernel:
       attributeName = f'attr_{self.__att.hash}'.replace("-", "_neg_")
     else:
       attributeName = self.__att.fullName
+    direct_contraction_support_unit = ""
+    if not self.__project_entire_hessian and self.__clear_separation:
+      direct_contraction_support_unit = (
+        separate_jacobian_kernel.generateDirectContractionSupportUnit(attributeName)
+      )
 
     hessian_header_string = hessianKernelHeader(
       self.__att,
@@ -145,6 +150,7 @@ class hessianAndGradientKernel:
           self.__gradient_only,
           max_num_indices,
           attributeName,
+          len(wrt),
         ).kernelString
       elif not self.__clear_separation:
         kernel_source = hessianKernelNoProject(
@@ -153,6 +159,7 @@ class hessianAndGradientKernel:
           self.__gradient_only,
           max_num_indices,
           attributeName,
+          len(wrt),
         ).kernelString
       else:
         kernel_source = separate_jacobian_kernel.generateKernelString(
@@ -200,6 +207,17 @@ extern "C"{{
         "source": device_unit_source,
       })
       device_units.append((device_unit_signature, device_unit_source))
+    if direct_contraction_support_unit:
+      direct_support_signature = _stable_content_signature({
+        "cache_version": HESSIAN_KERNEL_CACHE_VERSION,
+        "compiler": compiler_identity,
+        "header": hessian_header_string,
+        "source": direct_contraction_support_unit,
+      })
+      device_units.append((
+        direct_support_signature,
+        direct_contraction_support_unit,
+      ))
 
     generation_metadata = {
       "cache_version": HESSIAN_KERNEL_CACHE_VERSION,

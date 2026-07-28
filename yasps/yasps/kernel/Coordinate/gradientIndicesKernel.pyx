@@ -12,42 +12,6 @@ import pycuda.driver as cuda
 from yasps.helper import prune_duplicate_functions
 from yasps.context import context
 import time
-import hashlib
-import json
-import subprocess
-
-
-GRADIENT_INDICES_KERNEL_CACHE_VERSION = "v2_exact_source_abi_atomic"
-GRADIENT_INDICES_NVCC_COMMAND_TEMPLATE = (
-  "nvcc",
-  "-Xcompiler",
-  "-fPIC",
-  "-shared",
-  "<SOURCE>",
-  "-O3",
-  "-arch=sm_89",
-  "-o",
-  "<OUTPUT>",
-  "-lcudart",
-  "-lcuda",
-)
-
-
-def _stable_content_signature(payload, length: int = 32) -> str:
-  encoded = json.dumps(
-    payload,
-    sort_keys=True,
-    separators=(",", ":"),
-    ensure_ascii=True,
-  ).encode("utf-8")
-  return hashlib.sha256(encoded).hexdigest()[:length]
-
-
-def _write_generated_source(path: str, source: str, build_token: str) -> None:
-  temporary_path = f"{path}.tmp_{build_token}"
-  with open(temporary_path, "w") as f:
-    f.write(source)
-  os.replace(temporary_path, path)
 
 ########################################################################
 # The gradient indices kernel has multiple functions
@@ -371,8 +335,7 @@ class gradientIndicesKernel:
     # print("Checking unioned child to its children")
     # for key in self.__unioned_child_to_its_children:
     #   print(f"Unioned child: {key.fullName}, children: {[x.fullName for x in self.__unioned_child_to_its_children[key]]}")
-    self.__wrt_start_indices = None
-    self.__wrt_start_indices_gpu: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32)
+    self.__wrt_start_indices: List[int] = wrt_start_indices
     self.__energy: attribute = energy
     self.__used_join_attributes: List[attribute] = [] # all the join attributes, we will use its connectivities for indexing
     self.__used_join_attributes_hashes: Set[int] = set() # we will use this to quickly check if an attribute is already included
@@ -419,7 +382,6 @@ class gradientIndicesKernel:
     self.__outputNumUniqueGradientSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the number of unique sizes of the gradients after compression
     self.__outputNumUniqueGradientSizesCPU = None
     self.__outputCompressedCoordinateCountsOuter: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
-    self.__numTotalCoordinatesCPU = None
     ####################################################
     # Here are information needed for coordinate generation
     # we will have 1 array of uint32 which stores the uncompressed coordinates
@@ -483,33 +445,25 @@ class gradientIndicesKernel:
 
   @property
   def numUniqueGradientSizes(self):
-    return self.numUniqueGradientSizesCPU
+    if self.__numInstances == 0:
+      return 0
+    return self.__outputNumUniqueGradientSizes.get()[0]
 
   @property
   def numUniqueGradientSizesCPU(self):
     if self.__numInstances == 0:
       return 0
-    if self.__outputNumUniqueGradientSizesCPU is None:
-      self.__outputNumUniqueGradientSizesCPU = int(self.__outputNumUniqueGradientSizes.get()[0])
+    # if self.__outputNumUniqueGradientSizesCPU is None:
+    self.__outputNumUniqueGradientSizesCPU = self.__outputNumUniqueGradientSizes.get()[0]
     return self.__outputNumUniqueGradientSizesCPU
 
   @property
   def outputUniqueGradientSizesCPU(self):
     if self.__numInstances == 0:
       return np.array([], dtype=np.uint16)
-    if self.__outputUniqueGradientSizesCPU is None:
-      num_unique_sizes = self.numUniqueGradientSizesCPU
-      self.__outputUniqueGradientSizesCPU = np.asarray(
-        self.__outputUniqueGradientSizes[:num_unique_sizes].get(),
-        dtype=np.uint16
-      ).reshape(-1)
-      self.__outputUniqueGradientSizesCPU.setflags(write=False)
+    # if self.__outputUniqueGradientSizesCPU is None:
+    self.__outputUniqueGradientSizesCPU = np.array(self.__outputUniqueGradientSizes.get(), dtype=np.uint16).flatten()[:self.numUniqueGradientSizesCPU]
     return self.__outputUniqueGradientSizesCPU
-
-  def __invalidateCPUMetadata(self):
-    self.__outputUniqueGradientSizesCPU = None
-    self.__outputNumUniqueGradientSizesCPU = None
-    self.__numTotalCoordinatesCPU = None
 
   @property
   def outputPermutations(self):
@@ -640,23 +594,19 @@ class gradientIndicesKernel:
           self.__used_primitive_unions.append(att.correspondance)
           self.__used_primitive_unions_names.add(att.correspondance.fullName)
 
-  def __loadIndicesKernel(self, file_name: str) -> None:
-    self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices
-    self.__indices_kernel.restype = ctypes.c_int
-    self.__indices_kernel.argtypes = (
-      [ctypes.c_void_p] * len(self.__used_join_attributes)
-      + [ctypes.c_void_p] * len(self.__used_primitive_unions)
-      + [ctypes.c_void_p] * 3
-      + [ctypes.c_uint32]
-    )
-
   @timed("gradientIndicesKernel.__generateKernel")
   def __generateKernel(self):
-    os.makedirs(".yasps_tmp", exist_ok=True)
-    self.__kernelString = ""
+    # ok now we compile the kernel by saving it to a file and then calling nvcc
+    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"
+    if os.path.exists(f'{file_name}.so'):
+      # we just use that file?
+      self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
+      self.__indices_kernel.restype = ctypes.c_int # set the return type to None
+      self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_primitive_unions) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
+      return
 
-    # Generate the exact source before consulting the cache. The source and its
-    # ordered ABI jointly identify the module that is safe to load.
+
+    # ok now we need to generate the kernel
     # what we basically aim to do
     # is to have an isolated kernel that calls the children kernel to fetch the data
     self.__kernelString += '''
@@ -942,84 +892,21 @@ extern "C" int get_indices(
 }}
 '''
 
-    self.__kernelString = prune_duplicate_functions(self.__kernelString)
-    abi_metadata = {
-      "entry_point": "get_indices",
-      "energy": {
-        "full_name": self.__energy.fullName,
-        "rows": int(self.__energy.rows),
-        "cols": int(self.__energy.cols),
-        "size": int(self.__energy.size),
-      },
-      "join_attributes": [
-        {
-          "full_name": item.fullName,
-          "connectivity": item.through.fullName,
-          "dimension": int(item.through.dimension),
-        }
-        for item in self.__used_join_attributes
-      ],
-      "primitive_unions": [
-        {
-          "full_name": item.fullName,
-          "counts_name": item.code_generation_counts_name,
-        }
-        for item in self.__used_primitive_unions
-      ],
-      "wrt": [
-        {
-          "full_name": item.fullName,
-          "rows": int(item.rows),
-          "cols": int(item.cols),
-          "size": int(item.size),
-        }
-        for item in self.__wrt
-      ],
-      "max_num_indices": int(self.maxNumIndicesNeeded),
-      "argument_types": (
-        ["const uint32_t*"] * len(self.__used_join_attributes)
-        + ["const uint32_t*"] * len(self.__used_primitive_unions)
-        + ["const uint32_t*", "uint32_t*", "uint16_t*", "uint32_t"]
-      ),
-    }
-    generation_signature = _stable_content_signature({
-      "cache_version": GRADIENT_INDICES_KERNEL_CACHE_VERSION,
-      "compiler_command": list(GRADIENT_INDICES_NVCC_COMMAND_TEMPLATE),
-      "abi": abi_metadata,
-      "source": self.__kernelString,
-    })
-    file_name = f".yasps_tmp/gradient_indices_{generation_signature}"
-    source_path = f"{file_name}.cu"
-    shared_object_path = f"{file_name}.so"
-    build_token = f"{os.getpid()}_{id(self)}"
-
-    if not os.path.exists(source_path):
-      _write_generated_source(
-        source_path,
-        self.__kernelString,
-        build_token,
-      )
-
-    if not os.path.exists(shared_object_path):
-      temporary_shared_object = f"{shared_object_path}.tmp_{build_token}"
-      compile_command = [
-        temporary_shared_object if item == "<OUTPUT>" else
-        source_path if item == "<SOURCE>" else item
-        for item in GRADIENT_INDICES_NVCC_COMMAND_TEMPLATE
-      ]
-      try:
-        subprocess.run(compile_command, check=True)
-        os.replace(temporary_shared_object, shared_object_path)
-      finally:
-        if os.path.exists(temporary_shared_object):
-          os.remove(temporary_shared_object)
-
-    self.__loadIndicesKernel(file_name)
+    # ok now we compile the kernel by saving it to a file and then calling nvcc
+    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"
+    f = open(f"{file_name}.cu", 'w')
+    self.__kernelString = prune_duplicate_functions(self.__kernelString) # just in case we have duplicated functions
+    f.write(self.__kernelString)
+    f.close()
+    # we will now compile this kernel
+    os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda")
+    self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
+    self.__indices_kernel.restype = ctypes.c_int # set the return type to None
+    self.__indices_kernel.argtypes = [ctypes.c_void_p] * len(self.__used_join_attributes) + [ctypes.c_void_p] * len(self.__used_primitive_unions) + [ctypes.c_void_p] * 3 + [ctypes.c_uint32]
 
 
   @timed("gradientIndicesKernel.__reallocate")
   def __reallocate(self):
-    self.__invalidateCPUMetadata()
     newNumInstances: int = self.__energy.correspondance.numInstances
     if newNumInstances > self.__maxInstances:
       # resize the gpu arrays
@@ -1046,16 +933,8 @@ extern "C" int get_indices(
 
   @timed("gradientIndicesKernel.__computeIndices")
   def __computeIndices(self, wrt_start_indices: List[int]):
-    wrt_start_indices_key = tuple(int(x) for x in wrt_start_indices)
-    if len(wrt_start_indices_key) == 0:
-      raise ValueError("gradientIndicesKernel.__computeIndices: wrt_start_indices must not be empty.")
-    if wrt_start_indices_key != self.__wrt_start_indices:
-      wrt_start_indices_cpu = np.asarray(wrt_start_indices_key, dtype=np.uint32)
-      if self.__wrt_start_indices_gpu.size == wrt_start_indices_cpu.size:
-        self.__wrt_start_indices_gpu.set(wrt_start_indices_cpu)
-      else:
-        self.__wrt_start_indices_gpu = gpuarray.to_gpu(wrt_start_indices_cpu)
-      self.__wrt_start_indices = wrt_start_indices_key
+    # first let's convert wrt_start_indices to a pycuda array
+    wrt_start_indices_gpu = gpuarray.to_gpu(np.array(wrt_start_indices, dtype=np.uint32)) # this has to be non empty
     # then we get all the gpu arrays for the connectivity
     connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
     self.__union_counts = [x.children_primitive_counts_gpu for x in self.__used_primitive_unions]
@@ -1066,7 +945,7 @@ extern "C" int get_indices(
     error_code = self.__indices_kernel(
       *connectivity_list_gpu,
       *union_count_list_gpu,
-      self.__to_void_p(self.__wrt_start_indices_gpu),
+      self.__to_void_p(wrt_start_indices_gpu),
       self.__to_void_p(self.__outputIndices),
       self.__to_void_p(self.__outputIndexSizes),
       self.__numInstances
@@ -1098,12 +977,11 @@ extern "C" int get_indices(
   def numTotalCoordinates(self) -> int:
     if self.__numInstances == 0:
       return 0
-    if self.__numTotalCoordinatesCPU is None:
-      result = np.zeros(1, dtype=np.uint32)
-      assert self.__outputCompressedCoordinateCountsOuter is not None
-      cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
-      self.__numTotalCoordinatesCPU = int(result[0])
-    return self.__numTotalCoordinatesCPU
+    result = np.zeros(1, dtype=np.uint32)
+    assert self.__outputCompressedCoordinateCountsOuter is not None
+    cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
+    # return int(self.__outputCompressedCoordinateCountsOuter[self.__numInstances])
+    return int(result[0])
 
   @timed("gradientIndicesKernel.allocateSpaceForCoordinates")
   def __allocateSpaceForCoordinates(self):

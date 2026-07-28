@@ -7,8 +7,6 @@ import numpy as np
 import pycuda.driver as cuda
 import os
 import hashlib
-import json
-import fcntl
 import subprocess
 import threading
 from yasps.helper import timed
@@ -21,8 +19,12 @@ SOLVER_NVCC_COMMAND_TEMPLATE = (
   "--expt-relaxed-constexpr", "-std=c++17",
 )
 
-def _stable_content_signature(payload) -> str:
-  encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+def _solver_kernel_signature(kernel_source: str) -> str:
+  encoded = "\0".join((
+    SOLVER_KERNEL_CACHE_VERSION,
+    *SOLVER_NVCC_COMMAND_TEMPLATE,
+    kernel_source,
+  )).encode("utf-8")
   return hashlib.sha256(encoded).hexdigest()
 
 def _atomic_write_text(path: str, text: str) -> None:
@@ -37,28 +39,6 @@ def _atomic_write_text(path: str, text: str) -> None:
   finally:
     if os.path.exists(temporary_path):
       os.remove(temporary_path)
-
-def _update_cache_index(cache_index_file: str, entry: dict) -> None:
-  lock_path = f"{cache_index_file}.lock"
-  with open(lock_path, "a+", encoding="utf-8") as lock_file:
-    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-    try:
-      try:
-        with open(cache_index_file, "r", encoding="utf-8") as f:
-          data = json.load(f)
-      except (FileNotFoundError, json.JSONDecodeError):
-        data = []
-      if not isinstance(data, list):
-        data = []
-      data = [
-        item for item in data
-        if isinstance(item, dict) and item.get("file_hashed_name") != entry["file_hashed_name"]
-      ]
-      data.append(entry)
-      data.sort(key=lambda item: item.get("file_hashed_name", ""))
-      _atomic_write_text(cache_index_file, json.dumps(data, indent=2, sort_keys=True) + "\n")
-    finally:
-      fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 class solverKernel:
   def __init__(self, blockDimensions: List[int]):
@@ -122,9 +102,7 @@ class solverKernel:
     if self.__cleanup_streams is None:
       return
     self.__context.useDefaultContext()
-    result = self.__cleanup_streams()
-    if result != 0:
-      raise RuntimeError(f"solverKernel.cleanupStreams: CUDA error {result}")
+    self.__cleanup_streams()
 
   def updateBlockDimensions(self, blockDimensions: List[int]):
     self.__init_kernel(blockDimensions)
@@ -423,7 +401,7 @@ __global__ void prepareCgIteration(double* cg_scalars) {
   if (blockIdx.x == 0 && threadIdx.x == 0) {
     const double denominator = cg_scalars[CG_DENOMINATOR];
     cg_scalars[CG_DELTA_OLD] = cg_scalars[CG_DELTA_NEW];
-    if (!isfinite(denominator) || denominator <= 0.0) {
+    if (denominator < 0.0) {
       cg_scalars[CG_ALPHA] = 0.0;
       cg_scalars[CG_STATUS] = CG_STATUS_NON_SPD;
       cg_scalars[CG_STATUS_VALUE] = denominator;
@@ -635,17 +613,7 @@ int computeSolution(unsigned int maxIteration,
   h_delta_new = initial_residuals[1];
 
   // check tolerance
-  if (!isfinite(h_delta_0) || h_delta_0 < 0.0 ||
-      !isfinite(h_delta_new) || h_delta_new < 0.0) {
-    printf("Invalid initial preconditioned residuals: delta_0=%lf, delta_new=%lf\\n",
-           h_delta_0, h_delta_new);
-    return -5;
-  }
   double relativeTolerance = threshold * h_delta_0;
-  if (!isfinite(relativeTolerance) || relativeTolerance < 0.0) {
-    printf("Invalid relative tolerance: %lf\\n", relativeTolerance);
-    return -5;
-  }
   // printf("Initial residual %lf, relative tolerance: %lf\\n", h_delta_new, relativeTolerance);
   if (h_delta_new <= relativeTolerance){
     return 0;
@@ -720,26 +688,17 @@ int computeSolution(unsigned int maxIteration,
     printf("CUDA error during kernel execution: %s\\n", cudaGetErrorString(err));
     return -3;  // Return error to Python
   }
-  printf("Did not converge in %d iterations; residual %lf\\n", maxIteration, h_delta_new);
-  return -4;
+  printf("Converged in %d iterations with residual %lf\\n", maxIteration + 1, h_delta_new);
+  return maxIteration + 1;
 }
 
 } // close the extern "C"
 '''
       sorted_dimensions = sorted(candidate_block_dimensions)
-      cache_identity = {
-        "cache_version": SOLVER_KERNEL_CACHE_VERSION,
-        "dimensions": sorted_dimensions,
-        "source": kernelString,
-        "compiler_command": SOLVER_NVCC_COMMAND_TEMPLATE,
-      }
-      cache_signature = _stable_content_signature(cache_identity)
-      dimension_to_text = "__".join(f"{dim[0]}_{dim[1]}" for dim in sorted_dimensions)
-      file_original_name = f".yasps_constant/cg_dims_{dimension_to_text}__{SOLVER_KERNEL_CACHE_VERSION}"
+      cache_signature = _solver_kernel_signature(kernelString)
       file_hashed_name = f".yasps_constant/cg_dims_{cache_signature}"
       source_path = f"{file_hashed_name}.cu"
       shared_library_path = f"{file_hashed_name}.so"
-      cache_index_file = ".yasps_constant/cg_dimension_to_file_v6.json"
 
       _atomic_write_text(source_path, kernelString)
       if not os.path.exists(shared_library_path):
@@ -758,15 +717,6 @@ int computeSolution(unsigned int maxIteration,
             os.remove(temporary_library_path)
 
       self.__loadKernelLibrary(file_hashed_name)
-      _update_cache_index(cache_index_file, {
-        "cache_signature": cache_signature,
-        "cache_version": SOLVER_KERNEL_CACHE_VERSION,
-        "compiler_command": list(SOLVER_NVCC_COMMAND_TEMPLATE),
-        "dimensions": sorted_dimensions,
-        "file_hashed_name": file_hashed_name,
-        "file_original_name": file_original_name,
-        "source_sha256": hashlib.sha256(kernelString.encode("utf-8")).hexdigest(),
-      })
       self.__saved_block_dimensions = candidate_block_dimensions
       self.__max_row_size = max_modded_row_size
 

@@ -707,11 +707,10 @@ class hessian(matrix):
     for item in self.__indices_kernels:
       item.computeIndices(self.__wrt_start_indices)
 
-    num_coordinates = [x.numTotalCoordinates for x in self.__indices_kernels]
     self.__compression_kernel = coordinateCompressionKernel(
       [x.outputCoordinates for x in self.__indices_kernels],
       [x.outputBlockDimensions for x in self.__indices_kernels],
-      num_coordinates,
+      [x.numTotalCoordinates for x in self.__indices_kernels],
       self.__wrt
     )
     self.__compression_kernel.compressCoordinatesAndDimensions()
@@ -733,24 +732,15 @@ class hessian(matrix):
           self.__block_indices_gpu[i],
         )
 
-    blocks_start_indices, block_counts, block_dimensions = self.__snapshotCompressionMetadata(self.__compression_kernel)
-    total_block_size = blocks_start_indices[-1] if len(blocks_start_indices) > 0 else 0
+    total_block_size = self.__compression_kernel.totalBlockSize
     if self.blocks_flattened.size < total_block_size:
       self.blocks_flattened = gpuarray.zeros(total_block_size, dtype=np.float64)
 
-    self.blocks_start_indices = blocks_start_indices
+    num_unique_dimensions = self.__compression_kernel.numUniqueDimensions
+    self.blocks_start_indices = self.__compression_kernel.uniqueDimensionsOuterIndices.get().tolist()[:num_unique_dimensions + 1]
     self.block_positions = self.__compression_kernel.uniqueCoordinates
-    self.block_counts = block_counts
-    self.block_dimensions = block_dimensions
-
-  def __snapshotCompressionMetadata(self, compression_kernel: coordinateCompressionKernel):
-    num_unique_dimensions = compression_kernel.numUniqueDimensions
-    blocks_start_indices = compression_kernel.uniqueDimensionsOuterIndices[:num_unique_dimensions + 1].get().tolist()
-    if num_unique_dimensions == 0:
-      return blocks_start_indices, [], []
-    block_counts = compression_kernel.uniqueDimensionsBlockCounts[:num_unique_dimensions].get().tolist()
-    block_dimensions = compression_kernel.uniqueDimensions[:num_unique_dimensions * 2].get().tolist()
-    return blocks_start_indices, block_counts, block_dimensions
+    self.block_counts = self.__compression_kernel.uniqueDimensionsBlockCounts.get().tolist()
+    self.block_dimensions = self.__compression_kernel.uniqueDimensions.get().tolist()[:num_unique_dimensions * 2]
 
   @timed("hessian.getSparseIndicesDynamic")
   def getSparseIndicesDynamic(self):
@@ -760,11 +750,10 @@ class hessian(matrix):
     for item in self.__indices_kernels_dynamic:
       item.computeIndices(self.__wrt_start_indices)
 
-    num_coordinates = [x.numTotalCoordinates for x in self.__indices_kernels_dynamic]
     self.__compression_kernel_dynamic = coordinateCompressionKernel(
       [x.outputCoordinates for x in self.__indices_kernels_dynamic],
       [x.outputBlockDimensions for x in self.__indices_kernels_dynamic],
-      num_coordinates,
+      [x.numTotalCoordinates for x in self.__indices_kernels_dynamic],
       self.__wrt
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
@@ -772,8 +761,8 @@ class hessian(matrix):
     lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
     self.__block_indices_gpu_dynamic = []
     tmp_count = 0
-    for num_coordinate in num_coordinates:
-      if num_coordinate > 0:
+    for item in self.__indices_kernels_dynamic:
+      if item.numTotalCoordinates > 0:
         self.__block_indices_gpu_dynamic.append(lookup_arrays[tmp_count])
         tmp_count += 1
       else:
@@ -788,21 +777,21 @@ class hessian(matrix):
           self.__sources_dynamic[i]
         )
         # reorder the indices if needed
-        if num_coordinates[i] > 0:
+        if (self.__indices_kernels_dynamic[i].numTotalCoordinates > 0):
           self.__placement_reorder_kernels_dynamic[i].reorderPlacementIndices(
             self.__indices_kernels_dynamic[i],
             self.__block_indices_gpu_dynamic[i],
           )
 
-    blocks_start_indices, block_counts, block_dimensions = self.__snapshotCompressionMetadata(self.__compression_kernel_dynamic)
-    total_block_size = blocks_start_indices[-1] if len(blocks_start_indices) > 0 else 0
+    total_block_size = self.__compression_kernel_dynamic.totalBlockSize
     if self.blocks_flattened_dynamic.size < total_block_size:
       self.blocks_flattened_dynamic = gpuarray.zeros(total_block_size, dtype=np.float64)
 
-    self.blocks_start_indices_dynamic = blocks_start_indices
+    num_unique_dimensions = self.__compression_kernel_dynamic.numUniqueDimensions
+    self.blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get().tolist()[:num_unique_dimensions + 1]
     self.block_positions_dynamic = self.__compression_kernel_dynamic.uniqueCoordinates
-    self.block_counts_dynamic = block_counts
-    self.block_dimensions_dynamic = block_dimensions
+    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get().tolist()
+    self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[:num_unique_dimensions * 2]
 
   @timed("hessian.getSparseIndicesDynamicAgain")
   def getSparseIndicesDynamicAgain(self):
@@ -815,19 +804,18 @@ class hessian(matrix):
     for item in self.__indices_kernels_dynamic:
       item.computeIndices(self.__wrt_start_indices)
 
-    num_coordinates = [x.numTotalCoordinates for x in self.__indices_kernels_dynamic]
     self.__compression_kernel_dynamic.updateCoordinates(
       [x.outputCoordinates for x in self.__indices_kernels_dynamic],
       [x.outputBlockDimensions for x in self.__indices_kernels_dynamic],
-      num_coordinates
+      [x.numTotalCoordinates for x in self.__indices_kernels_dynamic]
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
 
     lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
     self.__block_indices_gpu_dynamic = []
     tmp_count = 0
-    for num_coordinate in num_coordinates:
-      if num_coordinate > 0:
+    for item in self.__indices_kernels_dynamic:
+      if item.numTotalCoordinates > 0:
         self.__block_indices_gpu_dynamic.append(lookup_arrays[tmp_count])
         tmp_count += 1
       else:
@@ -836,21 +824,21 @@ class hessian(matrix):
     for i in range(len(self.__placement_reorder_kernels_dynamic)):
       # reorder the indices if needed
       if self.__separate_hessian_jacobian_dynamic[i] and not self.__project_entire_hessian_dynamic[i]:
-        if num_coordinates[i] > 0:
+        if (self.__indices_kernels_dynamic[i].numTotalCoordinates > 0):
           self.__placement_reorder_kernels_dynamic[i].reorderPlacementIndices(
             self.__indices_kernels_dynamic[i],
             self.__block_indices_gpu_dynamic[i],
           )
 
-    blocks_start_indices, block_counts, block_dimensions = self.__snapshotCompressionMetadata(self.__compression_kernel_dynamic)
-    total_block_size = blocks_start_indices[-1] if len(blocks_start_indices) > 0 else 0
+    total_block_size = self.__compression_kernel_dynamic.totalBlockSize
     if self.blocks_flattened_dynamic.size < total_block_size:
       self.blocks_flattened_dynamic = gpuarray.zeros(total_block_size, dtype=np.float64)
 
-    self.blocks_start_indices_dynamic = blocks_start_indices
+    num_unique_dimensions = self.__compression_kernel_dynamic.numUniqueDimensions
+    self.blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get().tolist()[:num_unique_dimensions + 1]
     self.block_positions_dynamic = self.__compression_kernel_dynamic.uniqueCoordinates
-    self.block_counts_dynamic = block_counts
-    self.block_dimensions_dynamic = block_dimensions
+    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get().tolist()
+    self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[:num_unique_dimensions * 2]
 
   def __buildMergedHessianAndGradientAttribute(
     self,

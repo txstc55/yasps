@@ -4,7 +4,7 @@ from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 class hessianKernelFullProject:
-  def __init__(self, att: attribute, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str):
+  def __init__(self, att: attribute, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int):
     self.__att = att
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
@@ -44,11 +44,12 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   }}
   index = start + index; // add to begin
   const unsigned int instance = groupedIndicesInner[index]; // this will tell us which instance of the hessian we are computing
-// determine if we are computing both the hessian and gradient
+// The generated device function writes every entry, so default construction
+// avoids a redundant local-memory zero pass before that complete overwrite.
 #if {int(not gradient_only)} // are we computing both the hessian and gradient
-  Eigen::Matrix<double, {self.__att.rows}, {self.__att.cols}{", Eigen::RowMajor" if self.__att.cols > 1 else ""}> hg_mat = Eigen::Matrix<double, {self.__att.rows}, {self.__att.cols}, Eigen::RowMajor>::Zero(); // get the merged gradient and hessian
+  Eigen::Matrix<double, {self.__att.rows}, {self.__att.cols}{", Eigen::RowMajor" if self.__att.cols > 1 else ""}> hg_mat;
 #else // we are only computing the gradient
-  Eigen::Matrix<double, 1, {self.__att.cols}> hg_mat = Eigen::Matrix<double, 1, {self.__att.cols}>::Zero(); // get the gradient
+  Eigen::Matrix<double, 1, {self.__att.cols}> hg_mat;
 #endif
 
 
@@ -195,7 +196,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             // now we do the block diagonal placement
             // we first need to determine where to put it in the global diagonal blocks array
             int which_attribute = 0;
-            for (int k = 0; k < 123456; k++){{ // for now lets just make 123456 our default, need to change it later
+            for (int k = 0; k < {num_attributes}; k++){{
               if (segment_index < gradient_segments_start[k + 1]){{
                 break;
               }}
