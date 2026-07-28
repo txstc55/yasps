@@ -401,7 +401,7 @@ __global__ void prepareCgIteration(double* cg_scalars) {
   if (blockIdx.x == 0 && threadIdx.x == 0) {
     const double denominator = cg_scalars[CG_DENOMINATOR];
     cg_scalars[CG_DELTA_OLD] = cg_scalars[CG_DELTA_NEW];
-    if (denominator < 0.0) {
+    if (!isfinite(denominator) || denominator <= 0.0) {
       cg_scalars[CG_ALPHA] = 0.0;
       cg_scalars[CG_STATUS] = CG_STATUS_NON_SPD;
       cg_scalars[CG_STATUS_VALUE] = denominator;
@@ -438,10 +438,17 @@ __global__ void finishCgIteration(double* cg_scalars,
   if (blockIdx.x == 0 && threadIdx.x == 0 &&
       cg_scalars[CG_STATUS] != CG_STATUS_NON_SPD) {
     const double deltaNew = cg_scalars[CG_DELTA_NEW];
-    cg_scalars[CG_BETA] = deltaNew / cg_scalars[CG_DELTA_OLD];
-    cg_scalars[CG_STATUS] = deltaNew <= relativeTolerance
-      ? CG_STATUS_CONVERGED
-      : CG_STATUS_CONTINUE;
+    const double deltaOld = cg_scalars[CG_DELTA_OLD];
+    if (!isfinite(deltaNew) || deltaNew < 0.0 ||
+        !isfinite(deltaOld) || deltaOld <= 0.0) {
+      cg_scalars[CG_BETA] = 0.0;
+      cg_scalars[CG_STATUS] = CG_STATUS_NON_SPD;
+    } else {
+      cg_scalars[CG_BETA] = deltaNew / deltaOld;
+      cg_scalars[CG_STATUS] = deltaNew <= relativeTolerance
+        ? CG_STATUS_CONVERGED
+        : CG_STATUS_CONTINUE;
+    }
     cg_scalars[CG_STATUS_VALUE] = deltaNew;
   }
 }
@@ -613,7 +620,17 @@ int computeSolution(unsigned int maxIteration,
   h_delta_new = initial_residuals[1];
 
   // check tolerance
+  if (!isfinite(h_delta_0) || h_delta_0 < 0.0 ||
+      !isfinite(h_delta_new) || h_delta_new < 0.0) {
+    printf("Invalid initial preconditioned residuals: delta_0=%lf, delta_new=%lf\\n",
+           h_delta_0, h_delta_new);
+    return -5;
+  }
   double relativeTolerance = threshold * h_delta_0;
+  if (!isfinite(relativeTolerance) || relativeTolerance < 0.0) {
+    printf("Invalid relative tolerance: %lf\\n", relativeTolerance);
+    return -5;
+  }
   // printf("Initial residual %lf, relative tolerance: %lf\\n", h_delta_new, relativeTolerance);
   if (h_delta_new <= relativeTolerance){
     return 0;
@@ -688,8 +705,8 @@ int computeSolution(unsigned int maxIteration,
     printf("CUDA error during kernel execution: %s\\n", cudaGetErrorString(err));
     return -3;  // Return error to Python
   }
-  printf("Converged in %d iterations with residual %lf\\n", maxIteration + 1, h_delta_new);
-  return maxIteration + 1;
+  printf("Did not converge in %d iterations; residual %lf\\n", maxIteration, h_delta_new);
+  return -4;
 }
 
 } // close the extern "C"

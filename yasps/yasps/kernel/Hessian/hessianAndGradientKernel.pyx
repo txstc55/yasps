@@ -91,14 +91,15 @@ class hessianAndGradientKernel:
     # print("unique gradient sizes are", unique_gradient_sizes)
     if (set(unique_gradient_sizes).issubset(self.__unique_gradient_sizes) and self.__project_entire_hessian) or (max_child_gradient_size in self.__unique_gradient_sizes and not self.__project_entire_hessian):
       return
+    candidate_unique_gradient_sizes = set(self.__unique_gradient_sizes)
     if self.__project_entire_hessian:
-      print("Unique gradient sizes before is", unique_gradient_sizes)
-      self.__unique_gradient_sizes.update(unique_gradient_sizes)
-      print("Unique gradient sizes after is", self.__unique_gradient_sizes)
+      print("Unique gradient sizes before is", self.__unique_gradient_sizes)
+      candidate_unique_gradient_sizes.update(unique_gradient_sizes)
+      print("Unique gradient sizes after is", candidate_unique_gradient_sizes)
     else:
       print("Max child gradient size before is", max_child_gradient_size)
-      self.__unique_gradient_sizes.add(max_child_gradient_size)
-      print("Unique gradient sizes after is", self.__unique_gradient_sizes)
+      candidate_unique_gradient_sizes.add(max_child_gradient_size)
+      print("Unique gradient sizes after is", candidate_unique_gradient_sizes)
 
 
     # if we need to separate the jacobian and hessian, the first thing we need to do is reconstruct the jacobian and hessian symbolically
@@ -120,7 +121,7 @@ class hessianAndGradientKernel:
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
     sorted_unique_gradient_sizes = sorted(
-      int(size) for size in self.__unique_gradient_sizes if int(size) != 0
+      int(size) for size in candidate_unique_gradient_sizes if int(size) != 0
     )
     if self.__att.name == "":
       attributeName = f'attr_{self.__att.hash}'.replace("-", "_neg_")
@@ -445,6 +446,7 @@ extern "C"{{
         ctypes.c_void_p,    # unique_gradient_sizes
         ctypes.c_uint,      # num_unique_gradient_sizes
       ]
+    self.__unique_gradient_sizes = candidate_unique_gradient_sizes
 
   @timed("hessianAndGradientKernel.compute")
   def compute(
