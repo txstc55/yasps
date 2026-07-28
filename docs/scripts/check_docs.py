@@ -153,12 +153,23 @@ def main() -> int:
     )
     for selector in (
         ".highlight .c",
+        ".highlight .c1",
         ".highlight .k",
+        ".highlight .kn",
         ".highlight .s",
+        ".highlight .s1",
+        ".highlight .sh",
+        ".highlight .n",
         ".highlight .mi",
+        ".highlight .mf",
         ".highlight .nf",
         ".highlight .nb",
+        ".highlight .bp",
+        ".highlight .nn",
+        ".highlight .no",
+        ".highlight .nt",
         ".highlight .o",
+        ".highlight .ow",
         ".highlight .p",
         ".highlight .na",
     ):
