@@ -224,6 +224,17 @@ summary:focus-visible {
   color: var(--white);
 }
 
+.sidebar nav > a[aria-current="page"] {
+  color: var(--on-primary-container);
+  background: var(--primary-container);
+  border: 2px solid var(--on-surface);
+  box-shadow: 4px 4px 0 var(--on-surface);
+}
+
+.sidebar nav > a[aria-current="page"] span {
+  color: var(--on-primary-container);
+}
+
 .secondary-nav {
   margin-top: 1.2rem;
 }
@@ -254,6 +265,14 @@ summary:focus-visible {
   color: var(--red);
 }
 
+.secondary-nav a[aria-current="page"] {
+  margin-left: -0.9rem;
+  padding-left: 0.7rem;
+  color: var(--white);
+  background: var(--tertiary);
+  border-left: 4px solid var(--primary-container);
+}
+
 .page-column {
   min-width: 0;
 }
@@ -263,9 +282,9 @@ summary:focus-visible {
 }
 
 .content {
-  width: min(100% - 4rem, 62rem);
+  width: min(100% - 5rem, 60rem);
   min-height: calc(100vh - 7rem);
-  margin: 0 0 0 2rem;
+  margin: 0 auto;
   padding: 4rem 0 6rem;
 }
 
@@ -811,8 +830,8 @@ hr {
 
 footer {
   display: flex;
-  width: min(100% - 4rem, 62rem);
-  margin: 0 0 0 2rem;
+  width: min(100% - 5rem, 60rem);
+  margin: 0 auto;
   padding: 1.5rem 0 2.5rem;
   justify-content: space-between;
   gap: 1rem;
@@ -884,6 +903,12 @@ footer {
   .mobile-nav a:hover {
     color: var(--white);
     background: var(--tertiary);
+  }
+
+  .mobile-nav a[aria-current="page"] {
+    color: var(--on-primary-container);
+    background: var(--primary-container);
+    border: 2px solid var(--on-surface);
   }
 
   .content {

@@ -156,6 +156,14 @@ def main() -> int:
         errors.append("layout: stylesheet URL must change with each site build")
     if "page.next_url | relative_url }}?v={{ site.time" not in layout_text:
         errors.append("layout: next-chapter links must include the build version")
+    if 'aria-current="page"' not in layout_text:
+        errors.append("layout: current-page navigation state is missing")
+    if (
+        'secondary_routes contains page.url %} open' not in layout_text
+    ):
+        errors.append(
+            "layout: current secondary page must reveal its navigation group"
+        )
 
     style_text = (DOCS / "assets" / "css" / "style.css").read_text(
         encoding="utf-8"
@@ -193,12 +201,55 @@ def main() -> int:
         "background-attachment: fixed",
         "border-radius: 0",
         "box-shadow: 8px 8px 0",
+        "margin: 0 auto",
     ):
         if declaration not in style_text:
             errors.append(
                 f"stylesheet: missing requested presentation "
                 f"{declaration!r}"
             )
+
+    required_sections = {
+        "concepts.md": (
+            "## Scenes",
+            "## Meshes",
+            "## Primitives",
+            "## Primitive unions",
+        ),
+        "attributes.md": (
+            "## Data attributes",
+            "## Constant attributes",
+            "## Computed attributes",
+            "## JOIN attributes",
+            "## UNION attributes",
+        ),
+        "optimization.md": (
+            "## The optimization pipeline",
+            "## Register an energy",
+            "## Register global targets",
+            "## Manual assembly control",
+        ),
+        "advanced/minimizer.md": (
+            "## Generate symbolic derivatives",
+            "## Assemble numerical values",
+            "## Solve through the minimizer",
+            "## Solve an already assembled Hessian",
+        ),
+        "advanced/hessian-solver.md": (
+            "## Generate a Hessian with `diff2`",
+            "## Assemble a Hessian",
+            "## Call the PCG solver",
+            "## The base `matrix` class",
+        ),
+    }
+    for relative, headings in required_sections.items():
+        text = (DOCS / relative).read_text(encoding="utf-8")
+        for heading in headings:
+            if heading not in text:
+                errors.append(
+                    f"{relative}: required simulation guide section "
+                    f"{heading!r} is missing"
+                )
 
     tutorial = DOCS / "tutorials" / "mixed-separation.md"
     if not tutorial.is_file():

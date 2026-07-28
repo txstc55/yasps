@@ -24,6 +24,13 @@ engine = autodiff()
 d_energy_dx = engine.diff(energy_expression, x)
 ```
 
+`autodiff()` takes no parameters. Its local differentiation call accepts:
+
+| Parameter | Effect |
+| --- | --- |
+| `current` | Symbolic attribute expression whose local derivative rule is applied. |
+| `wrt` | Attribute node for the local derivative denominator. |
+
 The result is another `attribute` graph. It can be named and computed like any other expression:
 
 ```python
@@ -53,6 +60,19 @@ H = builder.diff2(
   dynamic_instances=False,
 )
 ```
+
+`differentiator()` takes no parameters. `diff2` accepts:
+
+| Parameter | Type and default | Effect |
+| --- | --- | --- |
+| `source` | scalar attribute or list | Energy terms to differentiate and combine. |
+| `target1` | `list[attribute]` | Ordered global row targets and vector layout. |
+| `target2` | `list[attribute]` | Ordered global column targets; currently must match `target1`. |
+| `local_targets` | `list[attribute] = []` | Optional effective target subset for path discovery. |
+| `projection_method` | `int = 1` | Local projection: `-1` none, `0` no-op, `1` absolute eigenvalues, `2` clamp negative values. |
+| `save_intermediate` | `bool = False` | Allows reusable derivative subexpressions to be materialized. |
+| `separate_hessian_jacobian` | `bool = False` | Splits inner energy-Hessian and outer Jacobian generation. |
+| `dynamic_instances` | `bool = False` | Builds sparse-index metadata for changing source counts. |
 
 `source` may be one scalar attribute or a list of scalar attributes. A list is differentiated term by term and the resulting `hessian` objects are added.
 

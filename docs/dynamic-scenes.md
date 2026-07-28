@@ -33,6 +33,21 @@ pair2vertex = pairs.addConnectivity(
 )
 ```
 
+| Primitive parameter | Effect |
+| --- | --- |
+| `name` | Stable identifier for the runtime population. |
+| `numInstances=0` | Initial active count. Starting at zero is valid. |
+| `isDynamic=True` | Enables later `updateNumInstances`; omitting it makes count updates invalid. |
+
+The fixed-arity connectivity parameters are:
+
+| Connectivity parameter | Effect |
+| --- | --- |
+| `name` | Stable outgoing-edge identifier. |
+| `to` | Fixed target primitive or union in the same mesh namespace expected by the connectivity implementation. |
+| `data=[]` | Initially empty index rows because no pair is active. |
+| `dimension=4` | Four gathered vertices per contact stencil; choose the arity required by the energy. |
+
 The expression can be built even when there are no active pairs:
 
 ```python
@@ -58,6 +73,10 @@ world.addEnergy(
 
 `dynamic_instances=True` is essential. It routes the term through the dynamic sparse-index and numerical-assembly paths.
 
+`separate_hessian_jacobian=True` selects the split generation route, which can
+exploit sparsity inside the outer Jacobian blocks. It is independent of dynamic
+instance tracking.
+
 ## Update every iteration
 
 After collision detection produces a new two-dimensional index array (or an equivalent device buffer):
@@ -69,6 +88,10 @@ pairs.updateNumInstances(num_pairs)
 if num_pairs:
   pair2vertex.updateConnectivity(pair_indices)
 ```
+
+`updateNumInstances(num_pairs)` requires a nonnegative integer and changes the
+active launch/index range without reconstructing the primitive. The subsequent
+`updateConnectivity(pair_indices)` replaces only the flattened target indices.
 
 Keep the instance count and connectivity consistent before calling `minimizeEnergy`, `computeTotalEnergy`, or materializing an expression that depends on the pairs.
 

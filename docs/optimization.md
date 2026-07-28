@@ -10,23 +10,59 @@ next_label: Dynamic contact topology
 
 # Energies and minimization
 
-YASPS turns named scalar attributes into sparse gradient and Hessian contributions. It assembles and solves the linear system; the application owns the surrounding optimization or timestep policy.
+YASPS differentiates named scalar attributes, assembles a block-sparse Hessian
+and gradient, and solves one linear system. Your application still owns the
+outer Newton iteration: collision updates, line search, state acceptance, and
+convergence tests.
 
-## Register a scalar energy
+## The optimization pipeline
 
-An energy expression must be scalar and should be named on its correspondence:
+The scene API is a thin façade over its `minimizer`:
+
+```text
+scene.addEnergy(...)
+  └─ minimizer.addEnergy(...)             record symbolic requests
+
+scene.addMinimizeTarget(...)
+  ├─ minimizer.addWrt(...)                 define the global vector layout
+  └─ minimizer.generateHessianAndGradient() discover paths and build derivatives
+
+scene.minimizeEnergy(...)
+  └─ minimizer.computeSolution(...)
+     └─ minimizer.computeHessianAndGradient(...)
+        ├─ minimizer.computeNumericValue() assemble H and g
+        │  ├─ hessian.compute(...)
+        │  └─ invert dense diagonal blocks
+        └─ solver.computeSolution(...)     solve H dx = g with PCG
+```
+
+This distinction matters when profiling. Symbolic differentiation, numerical
+assembly, diagonal-block inversion, and PCG are separate costs even though the
+high-level call performs the last three together.
+
+## Energy expressions
+
+Each registered energy must be a scalar attribute: `rows == 1` and `cols == 1`.
+It may have one value per primitive instance; the global objective is the sum
+over those instances and over all active energy requests.
+
+Name the final expression on its correspondence before registering it:
 
 ```python
 displacement = position - target
 quadratic = 0.5 * stiffness * displacement.dot(displacement)
-quadratic = points.addAttribute("quadratic", computed_attribute=quadratic)
+quadratic = points.addAttribute(
+  "quadratic",
+  computed_attribute=quadratic,
+)
 
 world.addEnergy(quadratic)
 ```
 
-Naming is important because the code generator uses named attributes as kernel boundaries and identifiers.
+The name forms a stable kernel boundary and supplies the identifier used by the
+code generator. Registering an unnamed temporary raises `ValueError`.
 
-The full registration signature is:
+## Register an energy
 
 ```python
 world.addEnergy(
@@ -40,29 +76,37 @@ world.addEnergy(
 )
 ```
 
-| Argument | Meaning |
+| Parameter | Type and default | Effect |
+| --- | --- | --- |
+| `energy_attribute` | scalar `attribute` | The named per-instance objective term to differentiate and sum. |
+| `targets` | `list[attribute] = []` | Optional local subset of the global targets. Use it when this energy depends on only part of the global state. |
+| `projection_method` | `int = 1` | Selects the local symmetric-positive-definite projection described below. |
+| `save_intermediate` | `bool = False` | Allows the differentiator to materialize selected derivative intermediates for reuse. It trades memory and launches for recomputation. |
+| `gradient_only` | `bool = False` | Reserved. Passing `True` currently raises `NotImplementedError`. |
+| `dynamic_instances` | `bool = False` | Places the request in the dynamic structural path so sparse indices can be refreshed when the energy primitive's instance count changes. |
+| `separate_hessian_jacobian` | `bool = False` | Generates inner energy-Hessian and outer Jacobian stages separately. This is useful when the outer Jacobian has exploitable within-block sparsity. |
+
+Registering the same request twice raises `ValueError`. The duplicate check
+includes the request options, not merely the energy object's Python identity.
+
+### Local Hessian projection
+
+| `projection_method` | Local operation |
 | --- | --- |
-| `targets` | Optional subset of the scene's global minimization targets that this energy depends on |
-| `projection_method` | Local Hessian projection policy |
-| `save_intermediate` | Materialize selected derivative intermediates for reuse |
-| `gradient_only` | Reserved flag; the current minimizer raises `NotImplementedError` for it |
-| `dynamic_instances` | Recompute structure for an energy whose primitive instance count changes |
-| `separate_hessian_jacobian` | Generate the energy Hessian and outer Jacobian as separate stages |
+| `-1` | Do not insert a projection operation. |
+| `0` | Insert the projection machinery but leave eigenvalues unchanged. |
+| `1` | Replace each local eigenvalue with its absolute value. |
+| `2` | Clamp negative local eigenvalues to zero. |
 
-### Projection methods
-
-| Value | Behavior |
-| --- | --- |
-| `-1` | Skip insertion of the local SPD projection |
-| `0` | Insert a no-op projection |
-| `1` | Replace local eigenvalues with their absolute values |
-| `2` | Clamp negative local eigenvalues to zero |
-
-The default is `1`. Several examples use `-1` for convex inertia terms and a projected method for nonlinear elasticity or contact. Projection is applied to a local energy Hessian; it is not a promise that every assembled global system is well conditioned.
+Projection acts on a local energy Hessian before sparse assembly. It does not
+guarantee that the final global system is nonsingular or well conditioned.
+Convex inertia terms commonly use `-1`; nonlinear elasticity and contact terms
+often use `1` or `2`.
 
 ### Local target subsets
 
-If the scene solves for several parameter groups but an energy depends on only some of them, declare that subset:
+Suppose one scene solves positions and affine body transforms, but each energy
+touches only one group:
 
 ```python
 world.addEnergy(
@@ -75,11 +119,32 @@ world.addEnergy(
 )
 ```
 
-These local targets control differentiation for the energy while the global gradient and solution layout still follows all targets registered on the minimizer. Every local target must also appear in the global target list.
+The local list restricts path discovery and derivative generation for that
+request. It does not change the global vector layout. Every local target must
+later appear in `addMinimizeTarget`.
 
-## Register minimization targets
+### Static and dynamic energy requests
 
-After all energies have been added:
+Use the default static path when the energy correspondence keeps the same
+instance count. Use `dynamic_instances=True` for contact pairs or other
+runtime-changing correspondences:
+
+```python
+world.addEnergy(
+  contact_barrier,
+  targets=[position],
+  projection_method=2,
+  dynamic_instances=True,
+)
+```
+
+Dynamic mode refreshes sparse coordinates during later assemblies. It does not
+make the target itself dynamic: minimization targets must still be static data
+attributes.
+
+## Register global targets
+
+After registering all energies, define the global unknown-vector layout:
 
 ```python
 world.addMinimizeTarget([
@@ -89,9 +154,28 @@ world.addMinimizeTarget([
 ])
 ```
 
-Each target must be a differentiable data attribute, and a target may appear only once. Registration triggers symbolic differentiation and preparation of the sparse structures, so do it once after the model topology is constructed.
+| Parameter | Type | Effect |
+| --- | --- | --- |
+| `target_list` | `list[attribute]` | Ordered differentiable data attributes. The order controls gradient and solution segmentation. |
 
-## Solve
+Every target must:
+
+- be a `DATA` attribute rather than a computed, JOIN, or UNION expression;
+- have a fixed instance count;
+- appear only once;
+- include every attribute named in an energy's local `targets` list.
+
+The flattened length of a target segment is:
+
+```text
+target.correspondance.numInstances × target.rows × target.cols
+```
+
+Calling `addMinimizeTarget` forwards to `minimizer.addWrt` and then explicitly
+generates the symbolic derivatives. Construct topology and energies first so
+this expensive generation happens once.
+
+## High-level assembly and solve
 
 ```python
 directions = world.minimizeEnergy(
@@ -100,13 +184,23 @@ directions = world.minimizeEnergy(
 )
 ```
 
-The return value is a list of flattened PyCUDA `GPUArray` views, one per target in registration order. Internally YASPS solves:
+| Parameter | Type and default | Effect |
+| --- | --- | --- |
+| `tolerance` | `float = 1e-3` | Residual tolerance passed to the generated PCG solver. |
+| `maxIterations` | `int = 20000` | Maximum PCG iterations for this solve. |
+
+The call assembles the current numerical Hessian and gradient, rebuilds the
+dense inverse diagonal blocks used by the preconditioner, and solves:
 
 ```text
-H Δx = g
+H dx = g
 ```
 
-It does not negate or apply the direction. A Newton-style update is therefore:
+It returns a `list[GPUArray]`, one flattened view per target in registration
+order. A negative internal solver status prints a warning, but the method still
+returns the best direction found.
+
+YASPS does not negate or apply the direction. A Newton update therefore uses:
 
 ```python
 directions = world.minimizeEnergy()
@@ -116,28 +210,27 @@ position.updateValue(
 )
 ```
 
-`deepCopy=True` is useful when the source expression aliases a buffer that YASPS may reuse.
+The returned segments alias a reusable global solution buffer. Copy a segment
+if it must survive another solve.
 
-## A complete outer loop
-
-YASPS deliberately leaves line search, continuous collision detection, and state acceptance to the application:
+## A complete outer Newton loop
 
 ```python
 for newton_iteration in range(max_newton_iterations):
-  # 1. Update state-derived constants and dynamic collision pairs.
+  # Runtime-derived constants and dynamic contact correspondences.
   update_collision_topology()
 
-  # 2. Assemble H and g, then solve H dx = g.
+  # Current H and g are assembled, then H dx = g is solved.
   directions = world.minimizeEnergy(
     tolerance=cg_tolerance,
     maxIterations=cg_iterations,
   )
 
-  # 3. Choose a safe step outside YASPS.
+  # The application chooses a feasible, energy-decreasing step.
   alpha_ccd = compute_collision_free_step(directions)
   alpha = backtracking_line_search(alpha_ccd, directions)
 
-  # 4. Apply x <- x - alpha dx.
+  # Apply x <- x - alpha dx.
   for target, direction in zip(targets, directions):
     target.updateValue(
       target.value - alpha * direction,
@@ -148,31 +241,89 @@ for newton_iteration in range(max_newton_iterations):
     break
 ```
 
-This separation lets a simulation choose its own IPC barrier policy, feasibility condition, convergence norm, and integrator.
+This separation lets each simulator choose its IPC barrier policy, feasibility
+condition, convergence norm, timestep acceptance rule, and integrator.
 
-## Inspecting the assembled problem
+## Manual assembly control
 
-After a numerical assembly or solve:
+`scene.minimizeEnergy` is convenient, but it does not expose an
+assembly-only mode. Reach through `world.minimizer` when you need one:
 
 ```python
-gradient_gpu = world.gradient
-gradient_segments = world.gradientSegments
-block_diagonal_inverse = world.diagonal
-total_energy = world.computeTotalEnergy()
 engine = world.minimizer
+
+# Assemble H and g and prepare the block-diagonal preconditioner.
+active_hessian = engine.computeNumericValue()
+
+gradient = engine.gradient
+gradient_segments = engine.gradientSegments
+inverse_blocks = active_hessian.diagonal_blocks_inverse
 ```
 
-- `gradient` is the flattened global gradient buffer.
-- `gradientSegments` follows the minimization-target layout.
-- `diagonal` is the assembled flattened Hessian diagonal. The dense inverse diagonal blocks used by the preconditioner remain on the active `hessian`.
-- `computeTotalEnergy()` launches each registered energy and returns a Python float.
+`computeNumericValue()` returns the active `hessian`, or `None` when every
+energy is ignored. Calling `engine.computeSolution()` afterwards assembles
+again; it does not merely solve the Hessian you just inspected. To solve an
+already assembled Hessian, call the low-level `solver` as shown in
+[Hessian and solver]({{ '/advanced/hessian-solver/' | relative_url }}?v={{ site.time | date: '%s' }}).
 
-Temporarily disable selected energy attributes with:
+## Inspect the current problem
+
+After an assembly or solve:
+
+```python
+engine = world.minimizer
+
+gradient_gpu = world.gradient
+gradient_segments = world.gradientSegments
+solution_segments = world.solutionSegments
+scalar_diagonal = world.diagonal
+active_hessian = engine.computeNumericValue()
+```
+
+| Value | Meaning |
+| --- | --- |
+| `gradient` | One flattened global gradient buffer. |
+| `gradientSegments` | Views of that gradient split in target order. |
+| `solutionSegments` | Views of the latest PCG solution split in target order. |
+| `diagonal` | The assembled scalar Hessian diagonal. |
+| `active_hessian.diagonal_blocks_inverse` | Dense inverse diagonal blocks actually used by the preconditioner. |
+
+The gradient and solution segments are views into reused buffers. Their Python
+objects are convenient handles, not immutable snapshots.
+
+## Select active energies
+
+Temporarily exclude registered terms:
 
 ```python
 world.ignoreEnergies([contact_energy])
+directions_without_contact = world.minimizeEnergy()
+
+world.ignoreEnergies([])
+directions_with_everything = world.minimizeEnergy()
 ```
 
-The ignore list affects subsequent assembly and total-energy evaluation. Pass an empty list to restore all registered energies.
+| Parameter | Type | Effect |
+| --- | --- | --- |
+| `energies` | `list[attribute]` | Replaces the ignore list with the hashes of these energy attributes. An empty list restores all terms. |
 
-For direct control of assembly without the scene façade, continue to [Direct minimizer use]({{ '/advanced/minimizer/' | relative_url }}?v={{ site.time | date: '%s' }}).
+Changing the ignore list invalidates the cached active Hessian sum, but it
+retains each request's differentiated Hessian. This makes toggling cheaper than
+re-registering energies.
+
+## Evaluate total energy
+
+```python
+objective = world.computeTotalEnergy()
+```
+
+The method computes every nonignored energy, reduces its instances on the GPU,
+and transfers one scalar per energy request to the host. Dynamic requests with
+zero instances are skipped.
+
+This is a synchronization point. Use it deliberately for line search,
+acceptance, or diagnostics rather than as a free inspection operation inside
+every GPU stage.
+
+For all minimizer methods and buffer-lifetime details, continue to
+[Direct minimizer use]({{ '/advanced/minimizer/' | relative_url }}?v={{ site.time | date: '%s' }}).

@@ -12,6 +12,28 @@ next_label: Primitive unions
 
 Attributes on different primitives do not share an instance index. A connectivity makes their relationship explicit, and JOIN gathers a target attribute into the source primitive's index space.
 
+## Connectivity construction
+
+```python
+edge = source.addConnectivity(
+  name,
+  to=target,
+  data=index_rows,
+  dimension=arity,
+)
+```
+
+| Parameter | Type | Effect |
+| --- | --- | --- |
+| `name` | `str` | Unused connectivity identifier on `source`. |
+| `to` | `primitive` | Target instance space. It must belong to the same mesh as `source`. |
+| `data` | NumPy array or nested list | Target indices. Values are flattened and uploaded as uint32. |
+| `dimension` | nonnegative `int` | Number of target indices per source instance. Zero selects variable-arity CSR conversion. |
+
+The returned `connectivity` records the direction from `source` to `target`.
+Its generated index name is used by JOIN kernels and its hash contributes to
+the symbolic lineage.
+
 ## Fixed-arity connectivity
 
 Suppose each tetrahedron references four vertices:
@@ -36,6 +58,25 @@ tet_positions = tetrahedra.addAttribute(
   source=vertices["position"],
 )
 ```
+
+The fixed-arity JOIN mode uses:
+
+```python
+joined = source.addAttribute(
+  name,
+  through=edge,
+  source=target_attribute,
+)
+```
+
+| Parameter | Type | Effect |
+| --- | --- | --- |
+| `name` | `str` | New attribute key on the connectivity's source primitive. |
+| `through` | `connectivity` | Outgoing edge whose source must be this primitive. |
+| `source` | `attribute | None` | Target attribute to gather. When omitted, YASPS looks up `edge.toPrimitive[name]`. |
+| `computed_attribute` | must be `None` | Expression-binding and JOIN modes are mutually exclusive. |
+| `rows`, `cols` | ignored by JOIN shape | Output shape is derived from connectivity arity and source shape. |
+| `operation` | `None` for fixed arity | Reductions are reserved for `dimension=0`. |
 
 For a source attribute with shape `r × c` and connectivity arity `k`, JOIN produces a `k × (rc)` attribute. A four-to-one JOIN of a `3 × 1` position therefore becomes a `4 × 3` per-tetrahedron matrix.
 
@@ -98,6 +139,15 @@ incident_area = vertices.addAttribute(
 )
 ```
 
+The variable-arity JOIN parameters are:
+
+| Parameter | Required value |
+| --- | --- |
+| `name` | Both the new source-side name and the implicit target-side attribute lookup. |
+| `through` | A connectivity constructed with `dimension=0`. |
+| `source` | Omit it in the current implementation. |
+| `operation` | `"SUM"` or `"AVERAGE"`. |
+
 The input is converted to a CSR-style flattened index array plus row offsets. A reduction is mandatory:
 
 - `"SUM"` sums the gathered values;
@@ -119,7 +169,28 @@ if num_pairs:
   pair2vertex.updateConnectivity(pair_indices)
 ```
 
-`updateConnectivity` accepts a NumPy array, nested Python lists, or a PyCUDA `GPUArray`. It may reuse an existing device buffer when its capacity exceeds the new input.
+The object-level update signature is:
+
+```python
+pair2vertex.updateConnectivity(value)
+```
+
+| Parameter | Type | Effect |
+| --- | --- | --- |
+| `value` | NumPy array, nested list, or PyCUDA `GPUArray` | Replaces the flattened device indices, reusing capacity when possible. |
+
+The primitive convenience call is:
+
+```python
+pairs.updateConnectivity(
+  name="pair2vertex",
+  data=pair_indices,
+  dimension=4,
+)
+```
+
+Here `name` selects an existing connectivity, `data` is forwarded as the new
+value, and `dimension` must match its stored arity.
 
 The update path is designed for fixed arity. Construct variable-arity CSR connectivity up front; its row-offset metadata is not rebuilt by the same dynamic update path.
 

@@ -12,6 +12,23 @@ next_label: Energies and minimization
 
 UNION gives downstream code one logical primitive while retaining the symbolic route to several heterogeneous sources. Its common use is collision processing across soft-body vertices, affine-body vertices, or multiple meshes.
 
+## Union construction
+
+```python
+all_items = owner_mesh.addPrimitiveUnion(
+  name,
+  primitives=children,
+)
+```
+
+| Parameter | Type | Effect |
+| --- | --- | --- |
+| `name` | `str` | Unused union identifier under `owner_mesh`. |
+| `primitives` | ordered list | Child primitives or nested primitive unions. Their order defines contiguous ranges in the union. |
+
+The union belongs to `owner_mesh`, but children may come from other meshes in
+the same scene. `numInstances` is evaluated as the sum of current child counts.
+
 ## Create a union
 
 Each child must expose an attribute with the same name and per-instance shape:
@@ -52,6 +69,24 @@ A single collision energy written against `all_position` can therefore different
 
 ## Attribute rules
 
+The full signature is:
+
+```python
+united = all_items.addAttribute(
+  name,
+  computed_attribute=None,
+  rows=0,
+  cols=0,
+)
+```
+
+| Parameter | Type and default | Effect |
+| --- | --- | --- |
+| `name` | `str` | New union key. In normal UNION mode, it is also the attribute name queried from every child. |
+| `computed_attribute` | `attribute | None = None` | When supplied, binds this expression at union scope instead of querying children. |
+| `rows` | `int = 0` | With positive `rows` and `cols`, creates union-owned data rather than unioning child attributes. |
+| `cols` | `int = 0` | Union-owned data column count; both dimensions must be positive in data mode. |
+
 The usual form queries child attributes by name:
 
 ```python
@@ -74,6 +109,19 @@ all_vertices.addAttribute("speed", computed_attribute=speed)
 ```
 
 `primitiveUnion.addConstant` exists, but it creates data owned by the union rather than unioning values from children. For heterogeneous parameters, prefer defining the constant on every child and using `addAttribute(name)` so lineage remains explicit.
+
+Its signature is:
+
+```python
+constant = all_items.addConstant(
+  name,
+  rows=1,
+  cols=1,
+)
+```
+
+`name` is the new union-owned key, while `rows` and `cols` set the per-union-
+instance buffer shape.
 
 ## Nested unions
 

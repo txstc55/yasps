@@ -15,7 +15,7 @@
     <a class="skip-link" href="#content">Skip to content</a>
     <div class="site-shell">
       <aside class="sidebar" aria-label="Documentation navigation">
-        <a class="brand" href="{{ '/' | relative_url }}?v={{ site.time | date: '%s' }}">
+        <a class="brand" href="{{ '/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/' %} aria-current="page"{% endif %}>
           <span class="brand-mark">Y</span>
           <span>
             <strong>YASPS</strong>
@@ -25,27 +25,28 @@
 
         <nav>
           <p class="nav-label">Learn in order</p>
-          <a href="{{ '/getting-started/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>01</span> Getting started</a>
-          <a href="{{ '/concepts/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>02</span> Scene & mesh model</a>
-          <a href="{{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>03</span> Attributes</a>
-          <a href="{{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>04</span> JOIN</a>
-          <a href="{{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>05</span> UNION</a>
-          <a href="{{ '/optimization/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>06</span> Energy & minimize</a>
-          <a href="{{ '/dynamic-scenes/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>07</span> Dynamic contact</a>
-          <a class="capstone-link" href="{{ '/tutorials/mixed-separation/' | relative_url }}?v={{ site.time | date: '%s' }}"><span>08</span> Capstone example</a>
+          <a href="{{ '/getting-started/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/getting-started/' %} aria-current="page"{% endif %}><span>01</span> Getting started</a>
+          <a href="{{ '/concepts/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/concepts/' %} aria-current="page"{% endif %}><span>02</span> Scene & mesh model</a>
+          <a href="{{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/attributes/' %} aria-current="page"{% endif %}><span>03</span> Attributes</a>
+          <a href="{{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/join/' %} aria-current="page"{% endif %}><span>04</span> JOIN</a>
+          <a href="{{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/union/' %} aria-current="page"{% endif %}><span>05</span> UNION</a>
+          <a href="{{ '/optimization/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/optimization/' %} aria-current="page"{% endif %}><span>06</span> Energy & minimize</a>
+          <a href="{{ '/dynamic-scenes/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/dynamic-scenes/' %} aria-current="page"{% endif %}><span>07</span> Dynamic contact</a>
+          <a class="capstone-link" href="{{ '/tutorials/mixed-separation/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/tutorials/mixed-separation/' %} aria-current="page"{% endif %}><span>08</span> Capstone example</a>
 
-          <details class="secondary-nav">
+          {% assign secondary_routes = "/examples/|/architecture/|/troubleshooting/|/advanced/minimizer/|/advanced/differentiation/|/advanced/hessian-solver/|/reference/core/|/reference/advanced/|/reference/internal/" | split: "|" %}
+          <details class="secondary-nav"{% if secondary_routes contains page.url %} open{% endif %}>
             <summary>More documentation</summary>
             <div>
-              <a href="{{ '/examples/' | relative_url }}?v={{ site.time | date: '%s' }}">Examples map</a>
-              <a href="{{ '/architecture/' | relative_url }}?v={{ site.time | date: '%s' }}">How YASPS executes</a>
-              <a href="{{ '/troubleshooting/' | relative_url }}?v={{ site.time | date: '%s' }}">Troubleshooting</a>
-              <a href="{{ '/advanced/minimizer/' | relative_url }}?v={{ site.time | date: '%s' }}">Direct minimizer</a>
-              <a href="{{ '/advanced/differentiation/' | relative_url }}?v={{ site.time | date: '%s' }}">Differentiation</a>
-              <a href="{{ '/advanced/hessian-solver/' | relative_url }}?v={{ site.time | date: '%s' }}">Hessian & solver</a>
-              <a href="{{ '/reference/core/' | relative_url }}?v={{ site.time | date: '%s' }}">Core API</a>
-              <a href="{{ '/reference/advanced/' | relative_url }}?v={{ site.time | date: '%s' }}">Advanced API</a>
-              <a href="{{ '/reference/internal/' | relative_url }}?v={{ site.time | date: '%s' }}">Low-level exports</a>
+              <a href="{{ '/examples/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/examples/' %} aria-current="page"{% endif %}>Examples map</a>
+              <a href="{{ '/architecture/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/architecture/' %} aria-current="page"{% endif %}>How YASPS executes</a>
+              <a href="{{ '/troubleshooting/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/troubleshooting/' %} aria-current="page"{% endif %}>Troubleshooting</a>
+              <a href="{{ '/advanced/minimizer/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/advanced/minimizer/' %} aria-current="page"{% endif %}>Direct minimizer</a>
+              <a href="{{ '/advanced/differentiation/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/advanced/differentiation/' %} aria-current="page"{% endif %}>Differentiation</a>
+              <a href="{{ '/advanced/hessian-solver/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/advanced/hessian-solver/' %} aria-current="page"{% endif %}>Hessian & solver</a>
+              <a href="{{ '/reference/core/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/reference/core/' %} aria-current="page"{% endif %}>Core API</a>
+              <a href="{{ '/reference/advanced/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/reference/advanced/' %} aria-current="page"{% endif %}>Advanced API</a>
+              <a href="{{ '/reference/internal/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/reference/internal/' %} aria-current="page"{% endif %}>Low-level exports</a>
             </div>
           </details>
         </nav>
@@ -53,23 +54,23 @@
 
       <div class="page-column">
         <header class="mobile-header">
-          <a class="brand compact" href="{{ '/' | relative_url }}?v={{ site.time | date: '%s' }}">
+          <a class="brand compact" href="{{ '/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/' %} aria-current="page"{% endif %}>
             <span class="brand-mark">Y</span>
             <strong>YASPS</strong>
           </a>
           <details class="mobile-nav">
             <summary>Docs menu</summary>
             <div>
-              <a href="{{ '/getting-started/' | relative_url }}?v={{ site.time | date: '%s' }}">Getting started</a>
-              <a href="{{ '/concepts/' | relative_url }}?v={{ site.time | date: '%s' }}">Mental model</a>
-              <a href="{{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}">Attributes</a>
-              <a href="{{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}">JOIN</a>
-              <a href="{{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}">UNION</a>
-              <a href="{{ '/optimization/' | relative_url }}?v={{ site.time | date: '%s' }}">Optimization</a>
-              <a href="{{ '/dynamic-scenes/' | relative_url }}?v={{ site.time | date: '%s' }}">Dynamic contact</a>
-              <a href="{{ '/tutorials/mixed-separation/' | relative_url }}?v={{ site.time | date: '%s' }}">Capstone example</a>
-              <a href="{{ '/examples/' | relative_url }}?v={{ site.time | date: '%s' }}">Examples</a>
-              <a href="{{ '/reference/core/' | relative_url }}?v={{ site.time | date: '%s' }}">API reference</a>
+              <a href="{{ '/getting-started/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/getting-started/' %} aria-current="page"{% endif %}>Getting started</a>
+              <a href="{{ '/concepts/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/concepts/' %} aria-current="page"{% endif %}>Mental model</a>
+              <a href="{{ '/attributes/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/attributes/' %} aria-current="page"{% endif %}>Attributes</a>
+              <a href="{{ '/join/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/join/' %} aria-current="page"{% endif %}>JOIN</a>
+              <a href="{{ '/union/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/union/' %} aria-current="page"{% endif %}>UNION</a>
+              <a href="{{ '/optimization/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/optimization/' %} aria-current="page"{% endif %}>Optimization</a>
+              <a href="{{ '/dynamic-scenes/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/dynamic-scenes/' %} aria-current="page"{% endif %}>Dynamic contact</a>
+              <a href="{{ '/tutorials/mixed-separation/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/tutorials/mixed-separation/' %} aria-current="page"{% endif %}>Capstone example</a>
+              <a href="{{ '/examples/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/examples/' %} aria-current="page"{% endif %}>Examples</a>
+              <a href="{{ '/reference/core/' | relative_url }}?v={{ site.time | date: '%s' }}"{% if page.url == '/reference/core/' %} aria-current="page"{% endif %}>API reference</a>
             </div>
           </details>
         </header>
