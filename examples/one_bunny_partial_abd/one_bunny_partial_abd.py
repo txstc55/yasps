@@ -328,7 +328,7 @@ for i in range(500):
 
 
 
-      ccd.cd(computed_position, DHAT_VALUE) # perform collision detection
+      ccd.cd_from_cached_ccd(computed_position, DHAT_VALUE, step_taken)
       pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
       print("The separated counts are", ccd.separated_counts)
       bunny.pp.updateNumInstances(pp_count)
@@ -379,3 +379,5 @@ for i in range(500):
   plotter.render()
   plotter.update()
   # plotter.screenshot(f"outputs/bunny1_partial_abd_{i:04d}.jpg")
+
+ccd.close()

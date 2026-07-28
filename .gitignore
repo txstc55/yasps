@@ -25,6 +25,9 @@ yasps/*/*.c
 *.hpp
 *.h
 *.c
+!examples/ccd/cuda_tools.h
+!examples/ccd/eigen_data.h
+examples/ccd/.ccd-architecture
 
 
 # ignore all meshes

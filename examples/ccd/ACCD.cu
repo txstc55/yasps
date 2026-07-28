@@ -8,6 +8,7 @@
 
 #include "ACCD.cuh"
 #include "gpu_eigen_libs.cuh"
+#include <cub/block/block_reduce.cuh>
 #include <cmath>
 #include <stdio.h>
 const static int default_threads = 256;
@@ -632,124 +633,117 @@ void _reduct_min_selfTimeStep_to_double(const double3* vertexes, const int4* _cc
     int idof = blockIdx.x * blockDim.x;
     int idx = threadIdx.x + idof;
 
-    extern __shared__ double tep[];
+    double temp = 0.0;
+    if (idx < number) {
+        double CCDDistRatio = 1.0 - slackness;
+        int4 MMCVIDI = _ccd_collitionPairs[idx];
 
-    if (idx >= number) return;
-    double temp = 1.0;
-    double CCDDistRatio = 1.0 - slackness;
+        if (MMCVIDI.x < 0) {
+            MMCVIDI.x = -MMCVIDI.x - 1;
 
-    int4 MMCVIDI = _ccd_collitionPairs[idx];
+            double temp1 = point_triangle_ccd(vertexes[MMCVIDI.x],
+                vertexes[MMCVIDI.y],
+                vertexes[MMCVIDI.z],
+                vertexes[MMCVIDI.w],
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.x], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.y], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.z], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0);
 
-    if (MMCVIDI.x < 0) {
-        MMCVIDI.x = -MMCVIDI.x - 1;
-
-        double temp1 = point_triangle_ccd(vertexes[MMCVIDI.x],
-            vertexes[MMCVIDI.y],
-            vertexes[MMCVIDI.z],
-            vertexes[MMCVIDI.w],
-            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.x], -1),
-            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.y], -1),
-            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.z], -1),
-            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0);
-
-        temp = 1.0 / temp1;
-    }
-    else {
-        temp = 1.0 / edge_edge_ccd(vertexes[MMCVIDI.x],
-            vertexes[MMCVIDI.y],
-            vertexes[MMCVIDI.z],
-            vertexes[MMCVIDI.w],
-            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.x], -1),
-            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.y], -1),
-            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.z], -1),
-            __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0);
-    }
-
-    int warpTid = threadIdx.x % 32;
-    int warpId = (threadIdx.x >> 5);
-    double nextTp;
-    int warpNum;
-    //int tidNum = 32;
-    if (blockIdx.x == gridDim.x - 1) {
-        //tidNum = numbers - idof;
-        warpNum = ((number - idof + 31) >> 5);
-    }
-    else {
-        warpNum = ((blockDim.x) >> 5);
-    }
-    for (int i = 1; i < 32; i = (i << 1)) {
-        double tempMin = __shfl_down_sync(0xffffffff, temp, i);
-        temp = __m_max(temp, tempMin);
-    }
-    if (warpTid == 0) {
-        tep[warpId] = temp;
-    }
-    __syncthreads();
-    if (threadIdx.x >= warpNum) return;
-    if (warpNum > 1) {
-        //	tidNum = warpNum;
-        temp = tep[threadIdx.x];
-
-        //	warpNum = ((tidNum + 31) >> 5);
-        for (int i = 1; i < warpNum; i = (i << 1)) {
-            double tempMin = __shfl_down_sync(0xffffffff, temp, i);
-            temp = __m_max(temp, tempMin);
+            temp = 1.0 / temp1;
+        }
+        else {
+            temp = 1.0 / edge_edge_ccd(vertexes[MMCVIDI.x],
+                vertexes[MMCVIDI.y],
+                vertexes[MMCVIDI.z],
+                vertexes[MMCVIDI.w],
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.x], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.y], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.z], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0);
         }
     }
+
+    using BlockReduce = cub::BlockReduce<double, default_threads>;
+    __shared__ typename BlockReduce::TempStorage temp_storage;
+    double blockMax = BlockReduce(temp_storage).Reduce(temp, cub::Max());
+
     if (threadIdx.x == 0) {
-        minStepSizes[blockIdx.x] = temp;
+        minStepSizes[blockIdx.x] = blockMax;
+    }
+}
+
+__global__
+void _reduct_min_selfTimeStepCompact_to_double(
+    const double3* vertexes,
+    const int2* _ccd_candidatePairs,
+    const uint3* faces,
+    const uint2* edges,
+    const double3* moveDir,
+    double* minStepSizes,
+    double slackness,
+    int number) {
+    int idof = blockIdx.x * blockDim.x;
+    int idx = threadIdx.x + idof;
+
+    double temp = 0.0;
+    if (idx < number) {
+        double CCDDistRatio = 1.0 - slackness;
+        int2 candidate = _ccd_candidatePairs[idx];
+
+        if (candidate.x < 0) {
+            int point = -candidate.x - 1;
+            uint3 face = faces[candidate.y];
+
+            double temp1 = point_triangle_ccd(vertexes[point],
+                vertexes[face.x],
+                vertexes[face.y],
+                vertexes[face.z],
+                __GEIGEN__::__s_vec_multiply3(moveDir[point], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[face.x], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[face.y], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[face.z], -1), CCDDistRatio, 0);
+
+            temp = 1.0 / temp1;
+        }
+        else {
+            uint2 edge0 = edges[candidate.x];
+            uint2 edge1 = edges[candidate.y];
+
+            temp = 1.0 / edge_edge_ccd(vertexes[edge0.x],
+                vertexes[edge0.y],
+                vertexes[edge1.x],
+                vertexes[edge1.y],
+                __GEIGEN__::__s_vec_multiply3(moveDir[edge0.x], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[edge0.y], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[edge1.x], -1),
+                __GEIGEN__::__s_vec_multiply3(moveDir[edge1.y], -1), CCDDistRatio, 0);
+        }
     }
 
+    using BlockReduce = cub::BlockReduce<double, default_threads>;
+    __shared__ typename BlockReduce::TempStorage temp_storage;
+    double blockMax = BlockReduce(temp_storage).Reduce(temp, cub::Max());
+
+    if (threadIdx.x == 0) {
+        minStepSizes[blockIdx.x] = blockMax;
+    }
 }
 
 
 __global__
 void _reduct_max_double(double* _double1Dim, int number) {
-    int idof = blockIdx.x * blockDim.x;
-    int idx = threadIdx.x + idof;
-
-    extern __shared__ double tep[];
-
-    if (idx >= number) return;
-    //int cfid = tid + CONFLICT_FREE_OFFSET(tid);
-    double temp = _double1Dim[idx];
-
-    __threadfence();
-
-
-    int warpTid = threadIdx.x % 32;
-    int warpId = (threadIdx.x >> 5);
-    double nextTp;
-    int warpNum;
-    //int tidNum = 32;
-    if (blockIdx.x == gridDim.x - 1) {
-        //tidNum = numbers - idof;
-        warpNum = ((number - idof + 31) >> 5);
+    double temp = 0.0;
+    for (int idx = threadIdx.x; idx < number; idx += blockDim.x) {
+        temp = __m_max(temp, _double1Dim[idx]);
     }
-    else {
-        warpNum = ((blockDim.x) >> 5);
-    }
-    for (int i = 1; i < 32; i = (i << 1)) {
-        double tempMax = __shfl_down_sync(0xffffffff, temp, i);
-        temp = __m_max(temp, tempMax);
-    }
-    if (warpTid == 0) {
-        tep[warpId] = temp;
-    }
-    __syncthreads();
-    if (threadIdx.x >= warpNum) return;
-    if (warpNum > 1) {
-        //	tidNum = warpNum;
-        temp = tep[threadIdx.x];
 
-        //	warpNum = ((tidNum + 31) >> 5);
-        for (int i = 1; i < warpNum; i = (i << 1)) {
-            double tempMax = __shfl_down_sync(0xffffffff, temp, i);
-            temp = __m_max(temp, tempMax);
-        }
-    }
+    using BlockReduce = cub::BlockReduce<double, default_threads>;
+    __shared__ typename BlockReduce::TempStorage temp_storage;
+    double blockMax = BlockReduce(temp_storage).Reduce(temp, cub::Max());
+
     if (threadIdx.x == 0) {
-        _double1Dim[blockIdx.x] = temp;
+        _double1Dim[0] = blockMax;
     }
 }
 
@@ -765,17 +759,45 @@ double self_largestFeasibleStepSize(
     const unsigned int threadNum = default_threads;
     int blockNum = (numbers + threadNum - 1) / threadNum;
 
-    unsigned int sharedMsize = sizeof(double) * (threadNum >> 5);
-    _reduct_min_selfTimeStep_to_double <<<blockNum, threadNum, sharedMsize >>> (_vertexes, _ccd_collisonPairs, _moveDir, mqueue, slackness, numbers);
+    _reduct_min_selfTimeStep_to_double <<<blockNum, threadNum >>> (
+      _vertexes, _ccd_collisonPairs, _moveDir, mqueue, slackness, numbers);
 
-    numbers = blockNum;
-    blockNum = (numbers + threadNum - 1) / threadNum;
-
-    while (numbers > 1) {
-      _reduct_max_double <<<blockNum, threadNum, sharedMsize >>> (mqueue, numbers);
-      numbers = blockNum;
-      blockNum = (numbers + threadNum - 1) / threadNum;
+    if (blockNum > 1) {
+      _reduct_max_double <<<1, threadNum >>> (mqueue, blockNum);
     }
+
+    double minValue;
+    cudaMemcpy(&minValue, mqueue, sizeof(double), cudaMemcpyDeviceToHost);
+    return 1.0 / minValue;
+}
+
+double self_largestFeasibleStepSizeCompact(
+  double slackness,
+  const double3* _vertexes,
+  const int2* _ccd_candidatePairs,
+  const uint3* _faces,
+  const uint2* _edges,
+  const double3* _moveDir,
+  double* mqueue,
+  int numbers) {
+    if (numbers < 1) return 1;
+    const unsigned int threadNum = default_threads;
+    int blockNum = (numbers + threadNum - 1) / threadNum;
+
+    _reduct_min_selfTimeStepCompact_to_double <<<blockNum, threadNum >>> (
+      _vertexes,
+      _ccd_candidatePairs,
+      _faces,
+      _edges,
+      _moveDir,
+      mqueue,
+      slackness,
+      numbers);
+
+    if (blockNum > 1) {
+      _reduct_max_double <<<1, threadNum >>> (mqueue, blockNum);
+    }
+
     double minValue;
     cudaMemcpy(&minValue, mqueue, sizeof(double), cudaMemcpyDeviceToHost);
     return 1.0 / minValue;

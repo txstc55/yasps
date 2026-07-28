@@ -9,133 +9,242 @@
 #pragma once
 #ifndef _MLBVH_CUH_
 #define _MLBVH_CUH_
+
+#include <cstddef>
 #include <cstdint>
 #include <cuda_runtime.h>
-extern "C" {
-struct AABB {
-public:
+
+struct AABB
+{
+  public:
     double3 upper;
     double3 lower;
-    __host__ __device__  AABB();
-    __host__ __device__  void combines(const double& x, const double& y, const double& z);
-    __host__ __device__  void combines(const double& x, const double& y, const double& z, const double& xx, const double& yy, const double& zz);
-    __host__ __device__  void combines(const AABB& aabb);
-    __host__ __device__  double3 center();
+
+    __host__ __device__ AABB();
+    __host__ __device__ void combines(const double& x, const double& y, const double& z);
+    __host__ __device__ void combines(const double& x,
+                                      const double& y,
+                                      const double& z,
+                                      const double& xx,
+                                      const double& yy,
+                                      const double& zz);
+    __host__ __device__ void combines(const AABB& aabb);
+    __host__ __device__ double3 center();
 };
 
-struct Node {
-public:
+struct Node
+{
+  public:
     uint32_t parent_idx;
     uint32_t left_idx;
     uint32_t right_idx;
     uint32_t element_idx;
 };
 
-class lbvh {
-public:
-    uint32_t vert_number;
-    double3* _vertexes;
-    AABB* _bvs;
-    AABB* _tempLeafBox;
-    Node* _nodes;
-    uint64_t* _MChash;
-    uint32_t* _indices;
-    int4* _collisionPair;
-    int4* _ccd_collisionPair;
-    uint32_t* _cpNum;
-    uint32_t* _flags;
-    AABB scene;
-    int* _btype;
-    uint32_t* _meshIndices;
-public:
-    lbvh() {}
-    ~lbvh();
-    void MALLOC_DEVICE_MEM(const int& number);
+class lbvh
+{
+  public:
+    uint32_t vert_number = 0;
+    double3* _vertexes   = nullptr;
+
+    AABB*     _bvs           = nullptr;
+    AABB*     _tempLeafBox   = nullptr;
+    Node*     _nodes         = nullptr;
+    uint64_t* _MChash        = nullptr;
+    uint64_t* _MChash_sorted = nullptr;
+    uint32_t* _flags         = nullptr;
+    int32_t*  _escape        = nullptr;
+
+    void*  _sort_temp_storage = nullptr;
+    size_t _sort_temp_bytes   = 0;
+
+    int4*     _collisionPair = nullptr;
+    uint32_t* _caseRank      = nullptr;
+    uint32_t* _cpNum         = nullptr;
+    uint32_t* _packedOutput  = nullptr;
+
+    int2*     _candidatePairs = nullptr;
+    uint32_t* _candidateNum   = nullptr;
+    uint32_t* _overflowCount  = nullptr;
+
+    int*      _btype       = nullptr;
+    uint32_t* _meshIndices = nullptr;
+    AABB      scene;
+
+    uint32_t _maxCandidatePairs = 0;
+    uint32_t _maxActivePairs    = 0;
+    bool     _initialized       = false;
+
+  public:
+    lbvh() = default;
+    virtual ~lbvh();
+
+    void MALLOC_DEVICE_MEM(uint32_t primitiveNumber);
     void FREE_DEVICE_MEM();
-    //void Construct();
+    void radixSortMorton(uint32_t number);
 };
 
+class lbvh_f : public lbvh
+{
+  public:
+    uint32_t  face_number = 0;
+    uint3*    _faces      = nullptr;
+    uint32_t* _surfVerts  = nullptr;
 
-class lbvh_f : public lbvh {
-public:
-    uint32_t face_number;
-    uint3* _faces;
-    uint32_t* _surfVerts;
-public:
-    void init(int* _btype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int faceNum, int vertNum);
-    // cpnum, the first one is the number of collision pairs, 2 for pp, 3 for pe, 4 for pt here, but ee for edge bvh_e
-    double Construct(double3* _mVerts);
-    AABB* getSceneSize(); // fuck this one
-    double ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha);
-    void SelfCollitionDetect(double dHat); // only check for local without moving direction, for checking substeps
-    void SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha); // check when moving, what's tha largest moving size
-    void SeparateCasesCCD(uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint* counts);
-    void SeparateCasesCD(uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint* counts);
-};
+    void init(int*       btype,
+              double3*   vertices,
+              uint3*     faces,
+              uint32_t*  surfaceVertices,
+              int4*      activePairs,
+              uint32_t*  caseRank,
+              uint32_t*  cpNum,
+              uint32_t*  meshIndices,
+              int2*      candidates,
+              uint32_t*  candidateNum,
+              uint32_t*  packedOutput,
+              uint32_t*  overflowCount,
+              uint32_t   maxCandidatePairs,
+              uint32_t   maxActivePairs,
+              uint32_t   faceNum,
+              uint32_t   vertNum);
 
+    double Construct(double3* vertices);
+    double ConstructFullCCD(double3* vertices, const double3* moveDir, double alpha);
+    AABB* getSceneSize();
 
-// for collision pairs
-// if the first one is positive, then it has to be ee
-// if the first one is negative, check the third one, if the third one is negative, then it is pp
-// otherwise, if the third one is positive, check the forth one, if the forth one is negative, then it is pe
-// else, it is pt
-
-
-class lbvh_e : public lbvh{
-public:
-    double3* _rest_vertexes;
-    uint32_t edge_number;
-    uint2* _edges;
-public:
-    void init(int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int edgeNum, int vertNum);
-    double Construct(double3* _mVerts);
-    double ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha);
     void SelfCollitionDetect(double dHat);
-    void SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha);
-    void SeparateCasesCCD(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint* counts);
-    void SeparateCasesCD(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint* counts);
+    void SelfCollitionFullDetect(double dHat, const double3* moveDir, double alpha);
 };
 
+class lbvh_e : public lbvh
+{
+  public:
+    double3* _rest_vertexes = nullptr;
+    uint32_t edge_number    = 0;
+    uint2*   _edges         = nullptr;
+
+    void init(int*       btype,
+              double3*   vertices,
+              double3*   restVertices,
+              uint2*     edges,
+              int4*      activePairs,
+              uint32_t*  caseRank,
+              uint32_t*  cpNum,
+              uint32_t*  meshIndices,
+              int2*      candidates,
+              uint32_t*  candidateNum,
+              uint32_t*  packedOutput,
+              uint32_t*  overflowCount,
+              uint32_t   maxCandidatePairs,
+              uint32_t   maxActivePairs,
+              uint32_t   edgeNum,
+              uint32_t   vertNum);
+
+    double Construct(double3* vertices);
+    double ConstructFullCCD(double3* vertices, const double3* moveDir, double alpha);
+
+    void SelfCollitionDetect(double dHat);
+    void SelfCollitionFullDetect(double dHat, const double3* moveDir, double alpha);
+};
+
+extern "C"
+{
+uint32_t mlbvh_api_version();
 lbvh_f* create_lbvh_f();
 lbvh_e* create_lbvh_e();
-void lbvh_f_init(lbvh_f* obj, int* _btype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int faceNum, int vertNum);
-void lbvh_e_init(lbvh_e* obj, int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int edgeNum, int vertNum);
-void lbvh_f_construct(lbvh_f* obj, double3* _mVerts);
-void lbvh_e_construct(lbvh_e* obj, double3* _mVerts);
-void lbvh_f_construct_full_ccd(lbvh_f* obj, double3* _mVerts, const double3* moveDir, const double& alpha);
-void lbvh_e_construct_full_ccd(lbvh_e* obj, double3* _mVerts, const double3* moveDir, const double& alpha);
-void lbvh_f_self_collision_detect(lbvh_f* obj, double dHat);
-void lbvh_e_self_collision_detect(lbvh_e* obj, double dHat);
-void lbvh_f_self_collision_full_detect(lbvh_f* obj, double dHat, const double3* moveDir, const double& alpha);
-void lbvh_e_self_collision_full_detect(lbvh_e* obj, double dHat, const double3* moveDir, const double& alpha);
 void destroy_lbvh_f(lbvh_f* obj);
 void destroy_lbvh_e(lbvh_e* obj);
+
+void lbvh_f_init(lbvh_f*   obj,
+                 int*      btype,
+                 double3*  vertices,
+                 uint3*    faces,
+                 uint32_t* surfaceVertices,
+                 int4*     activePairs,
+                 uint32_t* caseRank,
+                 uint32_t* cpNum,
+                 uint32_t* meshIndices,
+                 int2*     candidates,
+                 uint32_t* candidateNum,
+                 uint32_t* packedOutput,
+                 uint32_t* overflowCount,
+                 uint32_t  maxCandidatePairs,
+                 uint32_t  maxActivePairs,
+                 uint32_t  faceNum,
+                 uint32_t  vertNum);
+
+void lbvh_e_init(lbvh_e*   obj,
+                 int*      btype,
+                 double3*  vertices,
+                 double3*  restVertices,
+                 uint2*    edges,
+                 int4*     activePairs,
+                 uint32_t* caseRank,
+                 uint32_t* cpNum,
+                 uint32_t* meshIndices,
+                 int2*     candidates,
+                 uint32_t* candidateNum,
+                 uint32_t* packedOutput,
+                 uint32_t* overflowCount,
+                 uint32_t  maxCandidatePairs,
+                 uint32_t  maxActivePairs,
+                 uint32_t  edgeNum,
+                 uint32_t  vertNum);
+
+void lbvh_f_construct(lbvh_f* obj, double3* vertices);
+void lbvh_e_construct(lbvh_e* obj, double3* vertices);
+void lbvh_f_construct_full_ccd(
+    lbvh_f* obj, double3* vertices, const double3* moveDir, double alpha);
+void lbvh_e_construct_full_ccd(
+    lbvh_e* obj, double3* vertices, const double3* moveDir, double alpha);
+
+// Append operations do not reset the shared cache. Reset once, append face
+// candidates, then append edge candidates.
+void lbvh_reset_candidate_cache(lbvh_f* faceObj, lbvh_e* edgeObj);
+void lbvh_f_append_proximity_candidates(lbvh_f* obj, double3* vertices, double dHat);
+void lbvh_e_append_proximity_candidates(lbvh_e* obj, double3* vertices, double dHat);
+void lbvh_f_append_swept_candidates(lbvh_f*        obj,
+                                    double3*       vertices,
+                                    const double3* moveDir,
+                                    double         alpha,
+                                    double         dHat);
+void lbvh_e_append_swept_candidates(lbvh_e*        obj,
+                                    double3*       vertices,
+                                    const double3* moveDir,
+                                    double         alpha,
+                                    double         dHat);
+
+// Re-filtering reuses the CCD cache and current trial positions. It resets
+// cpNum[0..4] and active overflow before launching.
+void lbvh_refilter_cached_candidates(
+    lbvh_f* faceObj, lbvh_e* edgeObj, double3* currentVertices, double dHat);
+void lbvh_scatter_packed_cases(lbvh_f* faceObj, lbvh_e* edgeObj);
+void lbvh_expand_cached_candidates(lbvh_f*   faceObj,
+                                   lbvh_e*   edgeObj,
+                                   int4*     expandedPairs,
+                                   uint32_t  candidateCount);
+
+// Compatibility names. These calls append to the current cache.
+void lbvh_f_self_collision_detect(lbvh_f* obj, double dHat);
+void lbvh_e_self_collision_detect(lbvh_e* obj, double dHat);
+void lbvh_f_self_collision_full_detect(
+    lbvh_f* obj, double dHat, const double3* moveDir, double alpha);
+void lbvh_e_self_collision_full_detect(
+    lbvh_e* obj, double dHat, const double3* moveDir, double alpha);
+
 double scene_size_f(lbvh_f* obj);
 double scene_size_e(lbvh_e* obj);
+}
 
-
-void lbvh_f_separate_cases_ccd(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count);
-void lbvh_e_separate_cases_ccd(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count);
-void lbvh_f_separate_cases_cd(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count);
-void lbvh_e_separate_cases_cd(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count);
-
-__device__
-void _d_PP(const double3& v0, const double3& v1, double& d);
-
-__device__
-void _d_PT(const double3& v0, const double3& v1, const double3& v2, const double3& v3, double& d);
-
-__device__
-void _d_PE(const double3& v0, const double3& v1, const double3& v2, double& d);
-
-__device__
-void _d_EE(const double3& v0, const double3& v1, const double3& v2, const double3& v3, double& d);
-
-__device__
-void _d_EEParallel(const double3& v0, const double3& v1, const double3& v2, const double3& v3, double& d);
-
-__device__
-double _compute_epx(const double3& v0, const double3& v1, const double3& v2, const double3& v3);
+__device__ void _d_PP(const double3& v0, const double3& v1, double& d);
+__device__ void _d_PT(
+    const double3& v0, const double3& v1, const double3& v2, const double3& v3, double& d);
+__device__ void _d_PE(const double3& v0, const double3& v1, const double3& v2, double& d);
+__device__ void _d_EE(
+    const double3& v0, const double3& v1, const double3& v2, const double3& v3, double& d);
+__device__ void _d_EEParallel(
+    const double3& v0, const double3& v1, const double3& v2, const double3& v3, double& d);
+__device__ double _compute_epx(
+    const double3& v0, const double3& v1, const double3& v2, const double3& v3);
 
 #endif
-}

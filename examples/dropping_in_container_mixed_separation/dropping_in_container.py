@@ -538,7 +538,7 @@ for i in range(200):
     #   break
     # check for the largest step size we can take
     start_ccd = time.time()
-    ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 0.5)
+    ccd.ccd(position_copy, DHAT_VALUE, direction_copy, 1.0)
     end_ccd = time.time()
     print(f"Time taken for CCD: {end_ccd - start_ccd} seconds")
     start_largest_step = time.time()
@@ -559,7 +559,8 @@ for i in range(200):
       start_cd = time.time()
 
   #     # perform collision detection
-      ccd.cd(collision_mesh.vertices["position"].compute().value, DHAT_VALUE) # perform collision detection
+      trial_positions = collision_mesh.vertices["position"].compute().value
+      ccd.cd_from_cached_ccd(trial_positions, DHAT_VALUE, step_taken)
       end_cd = time.time()
       print(f"Time taken for collision detection: {end_cd - start_cd} seconds")
       pp_count, pe_count, pt_count, ee_count = ccd.separated_counts
@@ -645,3 +646,4 @@ for i in range(200):
   # bunny_poly1.save(f"outputs/bunny_abd_soft1_{i:04d}.obj")
 end = time.time()
 print("Total time: ", end - start)
+ccd.close()

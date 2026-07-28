@@ -51,4 +51,14 @@ double self_largestFeasibleStepSize(
   const double3* _moveDir,
   double* mqueue,
   int numbers);
+
+double self_largestFeasibleStepSizeCompact(
+  double slackness,
+  const double3* _vertexes,
+  const int2* _ccd_candidatePairs,
+  const uint3* _faces,
+  const uint2* _edges,
+  const double3* _moveDir,
+  double* mqueue,
+  int numbers);
 }

@@ -10,12 +10,55 @@
 #include <cmath>
 #include "cuda_tools.h"
 #include <cstdint>
-#include <thrust/sort.h>
-#include <thrust/sequence.h>
-#include <thrust/device_ptr.h>
-#include<iostream>
-#include<fstream>
+#include <cub/device/device_radix_sort.cuh>
+#include <iostream>
+#include <fstream>
+#include <utility>
 #include "gpu_eigen_libs.cuh"
+
+namespace
+{
+constexpr uint32_t INVALID_INDEX = 0xFFFFFFFFu;
+
+__device__ inline uint32_t reserve_bounded(uint32_t* counter,
+                                           uint32_t  capacity,
+                                           uint32_t* overflow)
+{
+    const uint32_t current = atomicAdd(counter, 1u);
+    if(current < capacity)
+        return current;
+    if(overflow)
+        atomicAdd(overflow, 1u);
+    return INVALID_INDEX;
+}
+
+__device__ inline uint32_t active_case(const int4& pair)
+{
+    if(pair.x >= 0)
+        return 4u;
+    if(pair.z < 0)
+        return 1u;
+    if(pair.w < 0)
+        return 2u;
+    return 3u;
+}
+
+__device__ inline void emit_active(const int4& pair,
+                                   uint32_t*   cpNum,
+                                   uint32_t*   caseRank,
+                                   int4*       activePairs,
+                                   uint32_t    capacity,
+                                   uint32_t*   activeOverflow)
+{
+    const uint32_t output = reserve_bounded(cpNum, capacity, activeOverflow);
+    if(output == INVALID_INDEX)
+        return;
+
+    const uint32_t collisionCase = active_case(pair);
+    activePairs[output]           = pair;
+    caseRank[output]              = atomicAdd(cpNum + collisionCase, 1u);
+}
+}
 template <class F>
 __device__ __host__
 inline F __m_min(F a, F b) {
@@ -91,7 +134,6 @@ void calcLeafBvs_fullCCD(const double3* _vertexes, const double3* _moveDir, cons
     _calcLeafBvs_ccd << <blockNum, threadNum >> > (_vertexes, _moveDir, alpha, _faces, _bvs + numbers - 1, faceNum, type);
 }
 
-extern "C"{
 __device__ __host__
 inline AABB merge(const AABB& lhs, const AABB& rhs) noexcept
 {
@@ -475,387 +517,155 @@ int _dType_EE(const double3& v0, const double3& v1, const double3& v2, const dou
 }
 
 
-__device__
-inline bool _checkPTintersection(const double3* _vertexes, const uint32_t& id0, const uint32_t& id1, const uint32_t& id2, const uint32_t& id3, const double& dHat, uint32_t* _cpNum, uint32_t* _meshIndices, int4* _collisionPair, int4* _ccd_collisionPair) noexcept
+__device__ inline void _checkPTintersection(const double3* _vertexes,
+                                            uint32_t       id0,
+                                            uint32_t       id1,
+                                            uint32_t       id2,
+                                            uint32_t       id3,
+                                            double         dHat,
+                                            uint32_t*      cpNum,
+                                            uint32_t*      caseRank,
+                                            int4*          activePairs,
+                                            uint32_t       activeCapacity,
+                                            uint32_t*      activeOverflow) noexcept
 {
-    double3 v0 = _vertexes[id0];
-    double3 v1 = _vertexes[id1];
-    double3 v2 = _vertexes[id2];
-    double3 v3 = _vertexes[id3];
-    // printf("id0: %u, id1: %u, id2: %u, id3: %u\n", id0, id1, id2, id3);
+    const double3 v0 = _vertexes[id0];
+    const double3 v1 = _vertexes[id1];
+    const double3 v2 = _vertexes[id2];
+    const double3 v3 = _vertexes[id3];
 
-    int dtype = _dType_PT(v0, v1, v2, v3);
-
-    double d = 100;
-    switch (dtype) {
-    case 0: {
-        _d_PP(v0, v1, d);
-        if (d < dHat) {
-            //printf("%d   %d   %d   %d   %d   %f\n", dtype, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, d);
-            int cdp_idx = atomicAdd(_cpNum, 1);
-            _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
-            _collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, -1, -1);
-        }
-        break;
+    const int dtype = _dType_PT(v0, v1, v2, v3);
+    double    d     = 100.0;
+    int4      pair;
+    switch(dtype)
+    {
+        case 0:
+            _d_PP(v0, v1, d);
+            pair = make_int4(-static_cast<int>(id0) - 1, id1, -1, -1);
+            break;
+        case 1:
+            _d_PP(v0, v2, d);
+            pair = make_int4(-static_cast<int>(id0) - 1, id2, -1, -1);
+            break;
+        case 2:
+            _d_PP(v0, v3, d);
+            pair = make_int4(-static_cast<int>(id0) - 1, id3, -1, -1);
+            break;
+        case 3:
+            _d_PE(v0, v1, v2, d);
+            pair = make_int4(-static_cast<int>(id0) - 1, id1, id2, -1);
+            break;
+        case 4:
+            _d_PE(v0, v2, v3, d);
+            pair = make_int4(-static_cast<int>(id0) - 1, id2, id3, -1);
+            break;
+        case 5:
+            _d_PE(v0, v3, v1, d);
+            pair = make_int4(-static_cast<int>(id0) - 1, id3, id1, -1);
+            break;
+        case 6:
+            _d_PT(v0, v1, v2, v3, d);
+            pair = make_int4(-static_cast<int>(id0) - 1, id1, id2, id3);
+            break;
+        default:
+            return;
     }
 
-    case 1: {
-        _d_PP(v0, v2, d);
-        if (d < dHat) {
-            //printf("%d   %d   %d   %d   %d   %f\n", dtype, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, d);
-            int cdp_idx = atomicAdd(_cpNum, 1);
-            _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
-            _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, -1, -1);
-        }
-        break;
-    }
-
-    case 2: {
-        _d_PP(v0, v3, d);
-        if (d < dHat) {
-            //printf("%d   %d   %d   %d   %d   %f\n", dtype, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, d);
-            int cdp_idx = atomicAdd(_cpNum, 1);
-            _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
-            _collisionPair[cdp_idx] = make_int4(-id0 - 1, id3, -1, -1);
-        }
-        break;
-    }
-
-    case 3: {
-        _d_PE(v0, v1, v2, d);
-        if (d < dHat) {
-            //printf("%d   %d   %d   %d   %d   %f\n", dtype, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, d);
-            int cdp_idx = atomicAdd(_cpNum, 1);
-            _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
-            _collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, -1);
-        }
-        break;
-    }
-
-    case 4: {
-        _d_PE(v0, v2, v3, d);
-        if (d < dHat) {
-            //printf("%d   %d   %d   %d   %d   %f\n", dtype, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, d);
-            int cdp_idx = atomicAdd(_cpNum, 1);
-            _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
-            _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, id3, -1);
-        }
-        break;
-    }
-
-    case 5: {
-        _d_PE(v0, v3, v1, d);
-        if (d < dHat) {
-            //printf("%d   %d   %d   %d   %d   %f\n", dtype, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, d);
-            int cdp_idx = atomicAdd(_cpNum, 1);
-            _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
-            _collisionPair[cdp_idx] = make_int4(-id0 - 1, id3, id1, -1);
-        }
-        break;
-    }
-
-    case 6: {
-        _d_PT(v0, v1, v2, v3, d);
-        if (d < dHat) {
-            //printf("%d   %d   %d   %d   %d   %f\n", dtype, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, d);
-            int cdp_idx = atomicAdd(_cpNum, 1);
-            _ccd_collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
-            _collisionPair[cdp_idx] = make_int4(-id0 - 1, id1, id2, id3);
-            //printf("ccbcbcbcbbcbcbbcbcb  %d  %d  %d  %d\n", -id0 - 1, id1, id2, id3);
-        }
-        break;
-    }
-
-    default:
-        break;
-    }
+    if(d < dHat)
+        emit_active(pair, cpNum, caseRank, activePairs, activeCapacity, activeOverflow);
 }
 
-__device__
-inline bool _checkPTintersection_fullCCD(const double3* _vertexes, const uint32_t& id0, const uint32_t& id1, const uint32_t& id2, const uint32_t& id3, const double& dHat, uint32_t* _cpNum, int4* _ccd_collisionPair) noexcept
+__device__ inline void _checkEEintersection(const double3* _vertexes,
+                                            const double3* _rest_vertexes,
+                                            uint32_t       id0,
+                                            uint32_t       id1,
+                                            uint32_t       id2,
+                                            uint32_t       id3,
+                                            uint32_t       obj_idx,
+                                            double         dHat,
+                                            uint32_t*      cpNum,
+                                            uint32_t*      caseRank,
+                                            int4*          activePairs,
+                                            uint32_t       activeCapacity,
+                                            uint32_t*      activeOverflow) noexcept
 {
-    double3 v0 = _vertexes[id0];
-    double3 v1 = _vertexes[id1];
-    double3 v2 = _vertexes[id2];
-    double3 v3 = _vertexes[id3];
+    const double3 v0 = _vertexes[id0];
+    const double3 v1 = _vertexes[id1];
+    const double3 v2 = _vertexes[id2];
+    const double3 v3 = _vertexes[id3];
 
-    int dtype = _dType_PT(v0, v1, v2, v3);
+    const int dtype = _dType_EE(v0, v1, v2, v3);
+    double    d     = 100.0;
+    int4      pair;
+    switch(dtype)
+    {
+        case 0:
+            _d_PP(v0, v2, d);
+            pair = make_int4(-static_cast<int>(id0) - 1, id2, -1, -1);
+            break;
+        case 1:
+            _d_PP(v0, v3, d);
+            pair = make_int4(-static_cast<int>(id0) - 1, id3, -1, -1);
+            break;
+        case 2:
+            _d_PE(v0, v2, v3, d);
+            pair = make_int4(-static_cast<int>(id0) - 1, id2, id3, -1);
+            break;
+        case 3:
+            _d_PP(v1, v2, d);
+            pair = make_int4(-static_cast<int>(id1) - 1, id2, -1, -1);
+            break;
+        case 4:
+            _d_PP(v1, v3, d);
+            pair = make_int4(-static_cast<int>(id1) - 1, id3, -1, -1);
+            break;
+        case 5:
+            _d_PE(v1, v2, v3, d);
+            pair = make_int4(-static_cast<int>(id1) - 1, id2, id3, -1);
+            break;
+        case 6:
+            _d_PE(v2, v0, v1, d);
+            pair = make_int4(-static_cast<int>(id2) - 1, id0, id1, -1);
+            break;
+        case 7:
+            _d_PE(v3, v0, v1, d);
+            pair = make_int4(-static_cast<int>(id3) - 1, id0, id1, -1);
+            break;
+        case 8:
+            _d_EE(v0, v1, v2, v3, d);
+            pair = make_int4(id0, id1, id2, id3);
+            break;
+        default:
+            return;
+    }
 
-    double3 basis0 = __GEIGEN__::__minus(v2, v1);
-    double3 basis1 = __GEIGEN__::__minus(v3, v1);
-    double3 basis2 = __GEIGEN__::__minus(v0, v1);
-
-    const double3 nVec = __GEIGEN__::__v_vec_cross(basis0, basis1);
-
-    double sign = __GEIGEN__::__v_vec_dot(nVec, basis2);
-
-    if (dtype==6&&(sign <0)) {
+    if(d >= dHat)
         return;
+
+    // Preserve the original parallel-edge marker for PP/PE cases. It is not
+    // part of packed Python output, but downstream collision energies use it.
+    if(dtype != 8)
+    {
+        const bool reverse = dtype >= 6;
+        const double3 a0   = reverse ? v2 : v0;
+        const double3 a1   = reverse ? v3 : v1;
+        const double3 b0   = reverse ? v0 : v2;
+        const double3 b1   = reverse ? v1 : v3;
+        const uint32_t a0i = reverse ? id2 : id0;
+        const uint32_t a1i = reverse ? id3 : id1;
+        const uint32_t b0i = reverse ? id0 : id2;
+        const uint32_t b1i = reverse ? id1 : id3;
+        const double crossSquared = __GEIGEN__::__squaredNorm3(
+            __GEIGEN__::__v_vec_cross(__GEIGEN__::__minus(a0, a1),
+                                      __GEIGEN__::__minus(b0, b1)));
+        const double eps = _compute_epx_cp(_rest_vertexes[a0i],
+                                           _rest_vertexes[a1i],
+                                           _rest_vertexes[b0i],
+                                           _rest_vertexes[b1i]);
+        pair.w = crossSquared < eps ? -static_cast<int>(obj_idx) - 2 : -1;
     }
 
-    _ccd_collisionPair[atomicAdd(_cpNum, 1)] = make_int4(-id0 - 1, id1, id2, id3);
-}
-
-__device__
-inline bool _checkEEintersection(const double3* _vertexes, const double3* _rest_vertexes, const uint32_t& id0, const uint32_t& id1, const uint32_t& id2, const uint32_t& id3, const uint32_t& obj_idx, const double& dHat, uint32_t* _cpNum, int4* _collisionPair, int4* _ccd_collisionPair, int edgeNum) noexcept
-{
-    double3 v0 = _vertexes[id0];
-    double3 v1 = _vertexes[id1];
-    double3 v2 = _vertexes[id2];
-    double3 v3 = _vertexes[id3];
-
-
-    int dtype = _dType_EE(v0, v1, v2, v3);
-    int add_e = -1;
-    double d = 100.0;
-    bool smooth = false;
-    switch (dtype) {
-    case 0: {
-        _d_PP(v0, v2, d);
-        if (d < dHat) {
-
-            double eeSqureNCross = __GEIGEN__::__squaredNorm3(__GEIGEN__::__v_vec_cross(__GEIGEN__::__minus(v0, v1), __GEIGEN__::__minus(v2, v3)))/* / __GEIGEN__::__squaredNorm(__GEIGEN__::__minus(v0, v1))*/;
-            double eps_x = _compute_epx_cp(_rest_vertexes[id0], _rest_vertexes[id1], _rest_vertexes[id2], _rest_vertexes[id3]);
-            add_e = (eeSqureNCross < eps_x) ? -obj_idx - 2 : -1;
-
-            if (add_e <= -2) {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                if (smooth) {
-                    _collisionPair[cdp_idx] = make_int4(-id0 - 1, -id2 - 1, -id1 - 1, -id3 - 1);
-                    break;
-                }
-                _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, -1, add_e);
-            }
-            else {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                // if (cdp_idx >= 100000000){
-                //   printf("cpd idx is too large %d\n", cdp_idx);
-                // }
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, -1, add_e);
-            }
-        }
-        break;
-    }
-
-    case 1: {
-        _d_PP(v0, v3, d);
-        if (d < dHat) {
-
-            double eeSqureNCross = __GEIGEN__::__squaredNorm3(__GEIGEN__::__v_vec_cross(__GEIGEN__::__minus(v0, v1), __GEIGEN__::__minus(v2, v3)))/* / __GEIGEN__::__squaredNorm(__GEIGEN__::__minus(v0, v1))*/;
-            double eps_x = _compute_epx_cp(_rest_vertexes[id0], _rest_vertexes[id1], _rest_vertexes[id2], _rest_vertexes[id3]);
-            add_e = (eeSqureNCross < eps_x) ? -obj_idx - 2 : -1;
-
-            if (add_e <= -2) {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                if (smooth) {
-                    _collisionPair[cdp_idx] = make_int4(-id0 - 1, -id3 - 1, -id1 - 1, -id2 - 1);
-                    break;
-                }
-                _collisionPair[cdp_idx] = make_int4(-id0 - 1, id3, -1, add_e);
-            }
-            else {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                _collisionPair[cdp_idx] = make_int4(-id0 - 1, id3, -1, add_e);
-            }
-        }
-        break;
-    }
-
-    case 2: {
-        _d_PE(v0, v2, v3, d);
-        if (d < dHat) {
-
-            double eeSqureNCross = __GEIGEN__::__squaredNorm3(__GEIGEN__::__v_vec_cross(__GEIGEN__::__minus(v0, v1), __GEIGEN__::__minus(v2, v3)))/* / __GEIGEN__::__squaredNorm(__GEIGEN__::__minus(v0, v1))*/;
-            double eps_x = _compute_epx_cp(_rest_vertexes[id0], _rest_vertexes[id1], _rest_vertexes[id2], _rest_vertexes[id3]);
-            add_e = (eeSqureNCross < eps_x) ? -obj_idx - 2 : -1;
-
-
-            if (add_e <= -2) {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                if (smooth) {
-                    _collisionPair[cdp_idx] = make_int4(-id0 - 1, -id2 - 1, id3, -id1 - 1);
-                    break;
-                }
-                _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, id3, add_e);
-            }
-            else {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                _collisionPair[cdp_idx] = make_int4(-id0 - 1, id2, id3, add_e);
-            }
-        }
-        break;
-    }
-
-    case 3: {
-        _d_PP(v1, v2, d);
-        if (d < dHat) {
-
-            double eeSqureNCross = __GEIGEN__::__squaredNorm3(__GEIGEN__::__v_vec_cross(__GEIGEN__::__minus(v0, v1), __GEIGEN__::__minus(v2, v3)))/* / __GEIGEN__::__squaredNorm(__GEIGEN__::__minus(v0, v1))*/;
-            double eps_x = _compute_epx_cp(_rest_vertexes[id0], _rest_vertexes[id1], _rest_vertexes[id2], _rest_vertexes[id3]);
-            add_e = (eeSqureNCross < eps_x) ? -obj_idx - 2 : -1;
-
-            if (add_e <= -2) {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                if (smooth) {
-                    _collisionPair[cdp_idx] = make_int4(-id1 - 1, -id2 - 1, -id0 - 1, -id3 - 1);
-                    break;
-                }
-                _collisionPair[cdp_idx] = make_int4(-id1 - 1, id2, -1, add_e);
-            }
-            else {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                _collisionPair[cdp_idx] = make_int4(-id1 - 1, id2, -1, add_e);
-            }
-        }
-        break;
-    }
-
-    case 4: {
-        _d_PP(v1, v3, d);
-        if (d < dHat) {
-
-            double eeSqureNCross = __GEIGEN__::__squaredNorm3(__GEIGEN__::__v_vec_cross(__GEIGEN__::__minus(v0, v1), __GEIGEN__::__minus(v2, v3)))/* / __GEIGEN__::__squaredNorm(__GEIGEN__::__minus(v0, v1))*/;
-            double eps_x = _compute_epx_cp(_rest_vertexes[id0], _rest_vertexes[id1], _rest_vertexes[id2], _rest_vertexes[id3]);
-            add_e = (eeSqureNCross < eps_x) ? -obj_idx - 2 : -1;
-
-            if (add_e <= -2) {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                if (smooth) {
-                    _collisionPair[cdp_idx] = make_int4(-id1 - 1, -id3 - 1, -id0 - 1, -id2 - 1);
-                    break;
-                }
-                _collisionPair[cdp_idx] = make_int4(-id1 - 1, id3, -1, add_e);
-            }
-            else {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                _collisionPair[cdp_idx] = make_int4(-id1 - 1, id3, -1, add_e);
-            }
-        }
-        break;
-    }
-
-    case 5: {
-        _d_PE(v1, v2, v3, d);
-        if (d < dHat) {
-
-            double eeSqureNCross = __GEIGEN__::__squaredNorm3(__GEIGEN__::__v_vec_cross(__GEIGEN__::__minus(v0, v1), __GEIGEN__::__minus(v2, v3)))/* / __GEIGEN__::__squaredNorm(__GEIGEN__::__minus(v0, v1))*/;
-            double eps_x = _compute_epx_cp(_rest_vertexes[id0], _rest_vertexes[id1], _rest_vertexes[id2], _rest_vertexes[id3]);
-            add_e = (eeSqureNCross < eps_x) ? -obj_idx - 2 : -1;
-
-            if (add_e <= -2) {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                if (smooth) {
-                    _collisionPair[cdp_idx] = make_int4(-id1 - 1, -id2 - 1, id3, -id0 - 1);
-                    break;
-                }
-                _collisionPair[cdp_idx] = make_int4(-id1 - 1, id2, id3, add_e);
-            }
-            else {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                _collisionPair[cdp_idx] = make_int4(-id1 - 1, id2, id3, add_e);
-            }
-        }
-        break;
-    }
-
-    case 6: {
-        _d_PE(v2, v0, v1, d);
-        if (d < dHat) {
-
-            double eeSqureNCross = __GEIGEN__::__squaredNorm3(__GEIGEN__::__v_vec_cross(__GEIGEN__::__minus(v2, v3), __GEIGEN__::__minus(v0, v1)))/* / __GEIGEN__::__squaredNorm(__GEIGEN__::__minus(v2, v3))*/;
-            double eps_x = _compute_epx_cp(_rest_vertexes[id2], _rest_vertexes[id3], _rest_vertexes[id0], _rest_vertexes[id1]);
-            add_e = (eeSqureNCross < eps_x) ? -obj_idx - 2 : -1;
-
-
-            if (add_e <= -2) {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                if (smooth) {
-                    _collisionPair[cdp_idx] = make_int4(-id2 - 1, -id0 - 1, id1, -id3 - 1);
-                    break;
-                }
-                _collisionPair[cdp_idx] = make_int4(-id2 - 1, id0, id1, add_e);
-            }
-            else {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                _collisionPair[cdp_idx] = make_int4(-id2 - 1, id0, id1, add_e);
-            }
-        }
-        break;
-    }
-
-    case 7: {
-        _d_PE(v3, v0, v1, d);
-        if (d < dHat) {
-
-            double eeSqureNCross = __GEIGEN__::__squaredNorm3(__GEIGEN__::__v_vec_cross(__GEIGEN__::__minus(v2, v3), __GEIGEN__::__minus(v0, v1)))/* / __GEIGEN__::__squaredNorm(__GEIGEN__::__minus(v2, v3))*/;
-            double eps_x = _compute_epx_cp(_rest_vertexes[id2], _rest_vertexes[id3], _rest_vertexes[id0], _rest_vertexes[id1]);
-            add_e = (eeSqureNCross < eps_x) ? -obj_idx - 2 : -1;
-
-
-            if (add_e <= -2) {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                if (smooth) {
-                    _collisionPair[cdp_idx] = make_int4(-id3 - 1, -id0 - 1, id1, -id2 - 1);
-                    break;
-                }
-                _collisionPair[cdp_idx] = make_int4(-id3 - 1, id0, id1, add_e);
-            }
-            else {
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                _collisionPair[cdp_idx] = make_int4(-id3 - 1, id0, id1, add_e);
-            }
-        }
-        break;
-    }
-
-    case 8: {
-        _d_EE(v0, v1, v2, v3, d);
-
-        double eeSqureNCross = __GEIGEN__::__squaredNorm3(__GEIGEN__::__v_vec_cross(__GEIGEN__::__minus(v0, v1), __GEIGEN__::__minus(v2, v3)))/* / __GEIGEN__::__squaredNorm(__GEIGEN__::__minus(v0, v1))*/;
-        double eps_x = _compute_epx_cp(_rest_vertexes[id0], _rest_vertexes[id1], _rest_vertexes[id2], _rest_vertexes[id3]);
-        add_e = (eeSqureNCross < eps_x) ? -obj_idx - 2 : -1;
-
-        if (d < dHat) {
-            if (add_e <= -2) {
-                //printf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nxxxxxxxxxxx\n");
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                if (smooth) {
-                    _collisionPair[cdp_idx] = make_int4(id0, id1, id2, -id3 - 1);
-                    break;
-                }
-                _collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-            }
-            else {
-
-                int cdp_idx = atomicAdd(_cpNum, 1);
-                _ccd_collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-                _collisionPair[cdp_idx] = make_int4(id0, id1, id2, id3);
-
-            }
-        }
-        break;
-    }
-
-    default:
-        break;
-    }
+    emit_active(pair, cpNum, caseRank, activePairs, activeCapacity, activeOverflow);
 }
 
 __global__
@@ -877,7 +687,6 @@ void _reduct_max_box(AABB* _leafBoxes, int number) {
     //printf("%f   %f    %f\n", xmax, ymax, zmax);
     int warpTid = threadIdx.x % 32;
     int warpId = (threadIdx.x >> 5);
-    double nextTp;
     int warpNum;
     int tidNum = 32;
     if (blockIdx.x == gridDim.x - 1) {
@@ -924,828 +733,1200 @@ void _reduct_max_box(AABB* _leafBoxes, int number) {
 
 
 
-__global__
-void _calcMChash(uint64_t* _MChash, AABB* _bvs, int number) {
-    uint32_t idx = threadIdx.x + blockIdx.x * blockDim.x;
-    if (idx >= number) return;
-    AABB maxBv = _bvs[0];
-    double3 SceneSize = make_double3(maxBv.upper.x - maxBv.lower.x, maxBv.upper.y - maxBv.lower.y, maxBv.upper.z - maxBv.lower.z);
-    double3 centerP = _bvs[idx + number - 1].center();
-    double3 offset = make_double3(centerP.x - maxBv.lower.x, centerP.y - maxBv.lower.y, centerP.z - maxBv.lower.z);
-
-    //printf("%d   %f     %f     %f\n", offset.x, offset.y, offset.z);
-    uint64_t mc32 = morton_code(offset.x / SceneSize.x, offset.y / SceneSize.y, offset.z / SceneSize.z);
-    uint64_t mc64 = ((mc32 << 32) | idx);
-    _MChash[idx] = mc64;
-}
-
-__global__
-void _calcLeafNodes(Node* _nodes, const uint32_t* _indices, int number) {
-    int idx = threadIdx.x + blockIdx.x * blockDim.x;
-    if (idx >= number) return;
-    if (idx < number - 1) {
-        _nodes[idx].left_idx = 0xFFFFFFFF;
-        _nodes[idx].right_idx = 0xFFFFFFFF;
-        _nodes[idx].parent_idx = 0xFFFFFFFF;
-        _nodes[idx].element_idx = 0xFFFFFFFF;
-    }
-    int l_idx = idx + number - 1;
-    _nodes[l_idx].left_idx = 0xFFFFFFFF;
-    _nodes[l_idx].right_idx = 0xFFFFFFFF;
-    _nodes[l_idx].parent_idx = 0xFFFFFFFF;
-    _nodes[l_idx].element_idx = _indices[idx];
-}
-
-
-
-
-__global__
-void _calcInternalNodes(Node* _nodes, const uint64_t* _MChash, int number) {
-    int idx = threadIdx.x + blockIdx.x * blockDim.x;
-    if (idx >= number - 1) return;
-    const uint2 ij = determine_range(_MChash, number, idx);
-    const unsigned int gamma = find_split(_MChash, number, ij.x, ij.y);
-
-    _nodes[idx].left_idx = gamma;
-    _nodes[idx].right_idx = gamma + 1;
-    if (__m_min(ij.x, ij.y) == gamma)
-    {
-        _nodes[idx].left_idx += number - 1;
-    }
-    if (__m_max(ij.x, ij.y) == gamma + 1)
-    {
-        _nodes[idx].right_idx += number - 1;
-    }
-    _nodes[_nodes[idx].left_idx].parent_idx = idx;
-    _nodes[_nodes[idx].right_idx].parent_idx = idx;
-}
-
-__global__
-void _calcInternalAABB(const Node* _nodes, AABB* _bvs, uint32_t* flags, int number) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= number) return;
-    idx = idx + number - 1;
-
-    uint32_t parent = _nodes[idx].parent_idx;
-    while (parent != 0xFFFFFFFF) // means idx == 0
-    {
-        const int old = atomicCAS(flags + parent, 0xFFFFFFFF, 0);
-        if (old == 0xFFFFFFFF)
-        {
-            return;
-        }
-
-        const uint32_t lidx = _nodes[parent].left_idx;
-        const uint32_t ridx = _nodes[parent].right_idx;
-
-        const AABB lbox = _bvs[lidx];
-        const AABB rbox = _bvs[ridx];
-        _bvs[parent] = merge(lbox, rbox);
-
-        __threadfence();
-
-        parent = _nodes[parent].parent_idx;
-
-    }
-}
-
-__global__
-void _sortBvs(const uint32_t* _indices, AABB* _bvs, AABB* _temp_bvs, int number) {
-    int idx = threadIdx.x + blockIdx.x * blockDim.x;
-    if (idx >= number) return;
-    _bvs[idx] = _temp_bvs[_indices[idx]];
-}
-
-__global__
-void _selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _collisionPair, int4* _ccd_collisionPair, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= number) return;
-
-    uint32_t  stack[64];
-    uint32_t* stack_ptr = stack;
-    *stack_ptr++ = 0;
-
-    AABB _bv;
-    idx = _surfVerts[idx];
-    _bv.upper = _vertexes[idx];
-    _bv.lower = _vertexes[idx];
-    //double bboxDiagSize2 = __GEIGEN__::__squaredNorm(__GEIGEN__::__minus(_bvs[0].upper, _bvs[0].lower));
-    //printf("%f\n", bboxDiagSize2);
-    double gapl = sqrt(dHat);//0.001 * sqrt(bboxDiagSize2);
-    //double dHat = gapl * gapl;// *bboxDiagSize2;
-    const uint32_t currentMeshIndex = _meshIndices[idx];
-    unsigned int num_found = 0;
-    do
-    {
-        const uint32_t node_id = *--stack_ptr;
-        const uint32_t L_idx = _nodes[node_id].left_idx;
-        const uint32_t R_idx = _nodes[node_id].right_idx;
-        if (L_idx != 0xFFFFFFFF && overlap(_bv, _bvs[L_idx], gapl))
-        {
-            const auto obj_idx = _nodes[L_idx].element_idx;
-
-            if (obj_idx != 0xFFFFFFFF)
-            {
-              const uint32_t f_mesh_index_0 = _meshIndices[_faces[obj_idx].x];
-              const uint32_t f_mesh_index_1 = _meshIndices[_faces[obj_idx].y];
-              const uint32_t f_mesh_index_2 = _meshIndices[_faces[obj_idx].z];
-              if (currentMeshIndex == 0 || (currentMeshIndex != 0 && ((currentMeshIndex != f_mesh_index_0) || (currentMeshIndex != f_mesh_index_1) || (currentMeshIndex != f_mesh_index_2 )))){
-                if (idx != _faces[obj_idx].x && idx != _faces[obj_idx].y && idx != _faces[obj_idx].z) {
-                    if (!(_btype[idx] >= 2 && _btype[_faces[obj_idx].x] >= 2 && _btype[_faces[obj_idx].y] >= 2 && _btype[_faces[obj_idx].z] >= 2))
-                        _checkPTintersection(_vertexes, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, dHat, _cpNum, _meshIndices, _collisionPair, _ccd_collisionPair);
-                }
-              }
-            }
-            else // the node is not a leaf.
-            {
-                *stack_ptr++ = L_idx;
-            }
-        }
-        if (R_idx != 0xFFFFFFFF && overlap(_bv, _bvs[R_idx], gapl))
-        {
-            const auto obj_idx = _nodes[R_idx].element_idx;
-            if (obj_idx != 0xFFFFFFFF)
-            {
-              const uint32_t f_mesh_index_0 = _meshIndices[_faces[obj_idx].x];
-              const uint32_t f_mesh_index_1 = _meshIndices[_faces[obj_idx].y];
-              const uint32_t f_mesh_index_2 = _meshIndices[_faces[obj_idx].z];
-              if (currentMeshIndex == 0 || (currentMeshIndex != 0 && ((currentMeshIndex != f_mesh_index_0) || (currentMeshIndex != f_mesh_index_1) || (currentMeshIndex != f_mesh_index_2 )))){
-                if (idx != _faces[obj_idx].x && idx != _faces[obj_idx].y && idx != _faces[obj_idx].z) {
-                    if (!(_btype[idx] >= 2 && _btype[_faces[obj_idx].x] >= 2 && _btype[_faces[obj_idx].y] >= 2 && _btype[_faces[obj_idx].z] >= 2))
-                        _checkPTintersection(_vertexes, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, dHat, _cpNum, _meshIndices, _collisionPair, _ccd_collisionPair);
-                }
-              }
-            }
-            else // the node is not a leaf.
-            {
-                *stack_ptr++ = R_idx;
-            }
-        }
-    } while (stack < stack_ptr);
-}
-
-__global__
-void _selfQuery_vf_ccd(const int* _btype, const double3* _vertexes, const double3* moveDir, double alpha, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisionPair, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= number) return;
-
-    uint32_t  stack[64];
-    uint32_t* stack_ptr = stack;
-    *stack_ptr++ = 0;
-
-    AABB _bv;
-    idx = _surfVerts[idx];
-    double3 current_vertex = _vertexes[idx];
-    double3 mvD = moveDir[idx];
-    _bv.upper = current_vertex;
-    _bv.lower = current_vertex;
-    _bv.combines(current_vertex.x - mvD.x * alpha, current_vertex.y - mvD.y * alpha, current_vertex.z - mvD.z * alpha);
-    double gapl = sqrt(dHat);//0.001 * sqrt(bboxDiagSize2);
-    //double dHat = gapl * gapl;// *bboxDiagSize2;
-    const uint32_t currentMeshIndex = _meshIndices[idx];
-    unsigned int num_found = 0;
-    do
-    {
-        const uint32_t node_id = *--stack_ptr;
-        const uint32_t L_idx = _nodes[node_id].left_idx;
-        const uint32_t R_idx = _nodes[node_id].right_idx;
-
-        if (L_idx != 0xFFFFFFFF && overlap(_bv, _bvs[L_idx], gapl))
-        {
-            const auto obj_idx = _nodes[L_idx].element_idx;
-            if (obj_idx != 0xFFFFFFFF)
-            {
-                if(!(_btype[idx]>=2&& _btype[_faces[obj_idx].x] >= 2 && _btype[_faces[obj_idx].y] >= 2 && _btype[_faces[obj_idx].z] >= 2)){
-                  const uint32_t f_mesh_index_0 = _meshIndices[_faces[obj_idx].x];
-                  const uint32_t f_mesh_index_1 = _meshIndices[_faces[obj_idx].y];
-                  const uint32_t f_mesh_index_2 = _meshIndices[_faces[obj_idx].z];
-                  if (currentMeshIndex == 0 || (currentMeshIndex != 0 && ((currentMeshIndex != f_mesh_index_0) || (currentMeshIndex != f_mesh_index_1) || (currentMeshIndex != f_mesh_index_2 )))){
-                    if (idx != _faces[obj_idx].x && idx != _faces[obj_idx].y && idx != _faces[obj_idx].z) {
-                        _ccd_collisionPair[atomicAdd(_cpNum, 1)] = make_int4(-idx - 1, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z);
-                        //_checkPTintersection_fullCCD(_vertexes, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, dHat, _cpNum, _ccd_collisionPair);
-                    }
-                  }
-                }
-            }
-            else // the node is not a leaf.
-            {
-                *stack_ptr++ = L_idx;
-            }
-        }
-        if (R_idx != 0xFFFFFFFF && overlap(_bv, _bvs[R_idx], gapl))
-        {
-            const auto obj_idx = _nodes[R_idx].element_idx;
-            if (obj_idx != 0xFFFFFFFF)
-            {
-                if(!(_btype[idx]>=2&& _btype[_faces[obj_idx].x] >= 2 && _btype[_faces[obj_idx].y] >= 2 && _btype[_faces[obj_idx].z] >= 2)){
-                  const uint32_t f_mesh_index_0 = _meshIndices[_faces[obj_idx].x];
-                  const uint32_t f_mesh_index_1 = _meshIndices[_faces[obj_idx].y];
-                  const uint32_t f_mesh_index_2 = _meshIndices[_faces[obj_idx].z];
-                  if (currentMeshIndex == 0 || (currentMeshIndex != 0 && ((currentMeshIndex != f_mesh_index_0) || (currentMeshIndex != f_mesh_index_1) || (currentMeshIndex != f_mesh_index_2 )))){
-                    if (idx != _faces[obj_idx].x && idx != _faces[obj_idx].y && idx != _faces[obj_idx].z) {
-                        _ccd_collisionPair[atomicAdd(_cpNum, 1)] = make_int4(-idx - 1, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z);
-                        //_checkPTintersection_fullCCD(_vertexes, idx, _faces[obj_idx].x, _faces[obj_idx].y, _faces[obj_idx].z, dHat, _cpNum, _ccd_collisionPair);
-                    }
-                  }
-                }
-            }
-            else // the node is not a leaf.
-            {
-                *stack_ptr++ = R_idx;
-            }
-        }
-    } while (stack < stack_ptr);
-}
-
-
-__global__
-void _selfQuery_ee(const int* _btype, const double3* _vertexes, const double3* _rest_vertexes, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _collisionPair, int4* _ccd_collisionPair, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= number) return;
-
-    uint32_t  stack[64];
-    uint32_t* stack_ptr = stack;
-    *stack_ptr++ = 0;
-
-    idx = idx + number - 1;
-    AABB _bv = _bvs[idx];
-    uint32_t self_eid = _nodes[idx].element_idx;
-    double gapl = sqrt(dHat);//0.001 * sqrt(bboxDiagSize2);
-    unsigned int num_found = 0;
-    const uint32_t currentMeshIndex0 = _meshIndices[_edges[self_eid].x];
-    const uint32_t currentMeshIndex1 = _meshIndices[_edges[self_eid].y];
-    do
-    {
-        const uint32_t node_id = *--stack_ptr;
-        const uint32_t L_idx = _nodes[node_id].left_idx;
-        const uint32_t R_idx = _nodes[node_id].right_idx;
-
-        if (overlap(_bv, _bvs[L_idx], gapl))
-        {
-            const auto obj_idx = _nodes[L_idx].element_idx;
-            if (obj_idx != 0xFFFFFFFF)
-            {
-                if (self_eid != obj_idx) {
-                  const uint32_t e_mesh_index_0 = _meshIndices[_edges[obj_idx].x];
-                  const uint32_t e_mesh_index_1 = _meshIndices[_edges[obj_idx].y];
-                  if (currentMeshIndex0 == 0 || currentMeshIndex1 == 0 || (currentMeshIndex0 == currentMeshIndex1) && (currentMeshIndex0 != e_mesh_index_0 || currentMeshIndex0 != e_mesh_index_1)){
-                    if (!(_edges[self_eid].x == _edges[obj_idx].x || _edges[self_eid].x == _edges[obj_idx].y || _edges[self_eid].y == _edges[obj_idx].x || _edges[self_eid].y == _edges[obj_idx].y || obj_idx < self_eid)) {
-                        //printf("%d   %d   %d   %d\n", _edges[self_eid].x, _edges[self_eid].y, _edges[obj_idx].x, _edges[obj_idx].y);
-                        if (!(_btype[_edges[self_eid].x] >= 2 && _btype[_edges[self_eid].y]>= 2 && _btype[_edges[obj_idx].x] >= 2 && _btype[_edges[obj_idx].y] >= 2))
-                            _checkEEintersection(_vertexes, _rest_vertexes, _edges[self_eid].x, _edges[self_eid].y, _edges[obj_idx].x, _edges[obj_idx].y, obj_idx, dHat, _cpNum, _collisionPair, _ccd_collisionPair, number);
-                    }
-                  }
-                }
-            }
-            else // the node is not a leaf.
-            {
-                *stack_ptr++ = L_idx;
-            }
-        }
-        if (overlap(_bv, _bvs[R_idx], gapl))
-        {
-            const auto obj_idx = _nodes[R_idx].element_idx;
-            if (obj_idx != 0xFFFFFFFF)
-            {
-                if (self_eid != obj_idx) {
-                  const uint32_t e_mesh_index_0 = _meshIndices[_edges[obj_idx].x];
-                  const uint32_t e_mesh_index_1 = _meshIndices[_edges[obj_idx].y];
-                  if (currentMeshIndex0 == 0 || currentMeshIndex1 == 0 || (currentMeshIndex0 == currentMeshIndex1) && (currentMeshIndex0 != e_mesh_index_0 || currentMeshIndex0 != e_mesh_index_1)){
-                    if (!(_edges[self_eid].x == _edges[obj_idx].x || _edges[self_eid].x == _edges[obj_idx].y || _edges[self_eid].y == _edges[obj_idx].x || _edges[self_eid].y == _edges[obj_idx].y || obj_idx < self_eid)) {
-                        //printf("%d   %d   %d   %d\n", _edges[self_eid].x, _edges[self_eid].y, _edges[obj_idx].x, _edges[obj_idx].y);
-                        if (!(_btype[_edges[self_eid].x] >= 2 && _btype[_edges[self_eid].y]>= 2 && _btype[_edges[obj_idx].x] >= 2 && _btype[_edges[obj_idx].y] >= 2))
-                            _checkEEintersection(_vertexes, _rest_vertexes, _edges[self_eid].x, _edges[self_eid].y, _edges[obj_idx].x, _edges[obj_idx].y, obj_idx, dHat, _cpNum, _collisionPair, _ccd_collisionPair, number);
-                    }
-                  }
-                }
-            }
-            else // the node is not a leaf.
-            {
-                *stack_ptr++ = R_idx;
-            }
-        }
-    } while (stack < stack_ptr);
-}
-
-__global__
-void _selfQuery_ee_ccd(const int* _btype, const double3* _vertexes, const double3* moveDir, double alpha, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisionPair, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= number) return;
-
-    uint32_t  stack[64];
-    uint32_t* stack_ptr = stack;
-    *stack_ptr++ = 0;
-    idx = idx + number - 1;
-    AABB _bv = _bvs[idx];
-    uint32_t self_eid = _nodes[idx].element_idx;
-    uint2 current_edge = _edges[self_eid];
-    double gapl = sqrt(dHat);
-    const uint32_t currentMeshIndex0 = _meshIndices[_edges[self_eid].x];
-    const uint32_t currentMeshIndex1 = _meshIndices[_edges[self_eid].y];
-    unsigned int num_found = 0;
-    do
-    {
-        const uint32_t node_id = *--stack_ptr;
-        const uint32_t L_idx = _nodes[node_id].left_idx;
-        const uint32_t R_idx = _nodes[node_id].right_idx;
-
-        if (overlap(_bv, _bvs[L_idx], gapl))
-        {
-            const auto obj_idx = _nodes[L_idx].element_idx;
-            if (obj_idx != 0xFFFFFFFF)
-            {
-                if (self_eid != obj_idx) {
-                  const uint32_t e_mesh_index_0 = _meshIndices[_edges[obj_idx].x];
-                  const uint32_t e_mesh_index_1 = _meshIndices[_edges[obj_idx].y];
-                  if (currentMeshIndex0 == 0 || currentMeshIndex1 == 0 || (currentMeshIndex0 == currentMeshIndex1) && (currentMeshIndex0 != e_mesh_index_0 || currentMeshIndex0 != e_mesh_index_1)){
-                    if (!(_btype[_edges[self_eid].x] >= 2 && _btype[_edges[self_eid].y] >= 2 && _btype[_edges[obj_idx].x] >= 2 && _btype[_edges[obj_idx].y] >= 2))
-                        if (!(current_edge.x == _edges[obj_idx].x || current_edge.x == _edges[obj_idx].y || current_edge.y == _edges[obj_idx].x || current_edge.y == _edges[obj_idx].y || obj_idx < self_eid)) {
-                            _ccd_collisionPair[atomicAdd(_cpNum, 1)] = make_int4(current_edge.x, current_edge.y, _edges[obj_idx].x, _edges[obj_idx].y);
-                        }
-                  }
-                }
-            }
-            else // the node is not a leaf.
-            {
-                *stack_ptr++ = L_idx;
-            }
-        }
-        if (overlap(_bv, _bvs[R_idx], gapl))
-        {
-            const auto obj_idx = _nodes[R_idx].element_idx;
-            if (obj_idx != 0xFFFFFFFF)
-            {
-                if (self_eid != obj_idx) {
-                  const uint32_t e_mesh_index_0 = _meshIndices[_edges[obj_idx].x];
-                  const uint32_t e_mesh_index_1 = _meshIndices[_edges[obj_idx].y];
-                  if (currentMeshIndex0 == 0 || currentMeshIndex1 == 0 || (currentMeshIndex0 == currentMeshIndex1) && (currentMeshIndex0 != e_mesh_index_0 || currentMeshIndex0 != e_mesh_index_1)){
-                    if (!(_btype[_edges[self_eid].x] >= 2 && _btype[_edges[self_eid].y] >= 2 && _btype[_edges[obj_idx].x] >= 2 && _btype[_edges[obj_idx].y] >= 2))
-                        if (!(current_edge.x == _edges[obj_idx].x || current_edge.x == _edges[obj_idx].y || current_edge.y == _edges[obj_idx].x || current_edge.y == _edges[obj_idx].y || obj_idx < self_eid)) {
-                            _ccd_collisionPair[atomicAdd(_cpNum, 1)] = make_int4(current_edge.x, current_edge.y, _edges[obj_idx].x, _edges[obj_idx].y);
-                        }
-                  }
-                }
-            }
-            else // the node is not a leaf.
-            {
-                *stack_ptr++ = R_idx;
-            }
-        }
-    } while (stack < stack_ptr);
-}
-
-///////////////////////////////////////host//////////////////////////////////////////////
-
-
-AABB calcMaxBV(AABB* _leafBoxes, AABB* _tempLeafBox, const int& number)
+namespace
 {
+constexpr uint32_t BVH_THREADS = 256u;
 
-    int                numbers   = number;
-    const unsigned int threadNum = default_threads;
-    int                blockNum  = (numbers + threadNum - 1) / threadNum;
+__global__ void reduce_boxes_safe(const AABB* input, AABB* output, uint32_t number)
+{
+    __shared__ double lowerX[BVH_THREADS];
+    __shared__ double lowerY[BVH_THREADS];
+    __shared__ double lowerZ[BVH_THREADS];
+    __shared__ double upperX[BVH_THREADS];
+    __shared__ double upperY[BVH_THREADS];
+    __shared__ double upperZ[BVH_THREADS];
 
-    unsigned int sharedMsize = sizeof(AABB) * (threadNum >> 5);
-
-    //AABB* _tempLeafBox;
-    //CUDA_SAFE_CALL(cudaMalloc((void**)&_tempLeafBox, number * sizeof(AABB)));
-    CUDA_SAFE_CALL(cudaMemcpy(
-        _tempLeafBox, _leafBoxes + number - 1, number * sizeof(AABB), cudaMemcpyDeviceToDevice));
-
-    _reduct_max_box<<<blockNum, threadNum, sharedMsize>>>(_tempLeafBox, numbers);
-
-    numbers  = blockNum;
-    blockNum = (numbers + threadNum - 1) / threadNum;
-
-    while(numbers > 1)
+    const uint32_t tid = threadIdx.x;
+    const uint32_t idx = blockIdx.x * blockDim.x + tid;
+    if(idx < number)
     {
-        _reduct_max_box<<<blockNum, threadNum, sharedMsize>>>(_tempLeafBox, numbers);
-        numbers  = blockNum;
-        blockNum = (numbers + threadNum - 1) / threadNum;
+        const AABB value = input[idx];
+        lowerX[tid] = value.lower.x;
+        lowerY[tid] = value.lower.y;
+        lowerZ[tid] = value.lower.z;
+        upperX[tid] = value.upper.x;
+        upperY[tid] = value.upper.y;
+        upperZ[tid] = value.upper.z;
     }
-    cudaMemcpy(_leafBoxes, _tempLeafBox, sizeof(AABB), cudaMemcpyDeviceToDevice);
-    AABB h_bv;
-    cudaMemcpy(&h_bv, _tempLeafBox, sizeof(AABB), cudaMemcpyDeviceToHost);
-    //CUDA_SAFE_CALL(cudaFree(_tempLeafBox));
-    return h_bv;
+    else
+    {
+        lowerX[tid] = lowerY[tid] = lowerZ[tid] = 1e32;
+        upperX[tid] = upperY[tid] = upperZ[tid] = -1e32;
+    }
+    __syncthreads();
+
+    for(uint32_t stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if(tid < stride)
+        {
+            lowerX[tid] = __m_min(lowerX[tid], lowerX[tid + stride]);
+            lowerY[tid] = __m_min(lowerY[tid], lowerY[tid + stride]);
+            lowerZ[tid] = __m_min(lowerZ[tid], lowerZ[tid + stride]);
+            upperX[tid] = __m_max(upperX[tid], upperX[tid + stride]);
+            upperY[tid] = __m_max(upperY[tid], upperY[tid + stride]);
+            upperZ[tid] = __m_max(upperZ[tid], upperZ[tid + stride]);
+        }
+        __syncthreads();
+    }
+
+    if(tid == 0)
+    {
+        AABB result;
+        result.lower = make_double3(lowerX[0], lowerY[0], lowerZ[0]);
+        result.upper = make_double3(upperX[0], upperY[0], upperZ[0]);
+        output[blockIdx.x] = result;
+    }
 }
 
-
-
-void calcMChash(uint64_t* _MChash, AABB* _bvs, int number) {
-    int numbers = number;
-    const unsigned int threadNum = default_threads;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-    _calcMChash << <blockNum, threadNum >> > (_MChash, _bvs, number);
+__device__ inline double normalized_axis(double offset, double extent)
+{
+    return extent > 0.0 && isfinite(extent) ? offset / extent : 0.5;
 }
 
-void calcLeafNodes(Node* _nodes, const uint32_t* _indices, int number) {
-    int numbers = number;
-    const unsigned int threadNum = default_threads;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-    _calcLeafNodes << <blockNum, threadNum >> > (_nodes, _indices, number);
+__global__ void calc_morton_keys(uint64_t* keys, const AABB* bvs, uint32_t number)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= number)
+        return;
+
+    const AABB sceneBox = bvs[0];
+    const double3 extent = make_double3(sceneBox.upper.x - sceneBox.lower.x,
+                                        sceneBox.upper.y - sceneBox.lower.y,
+                                        sceneBox.upper.z - sceneBox.lower.z);
+    AABB leafBox = bvs[idx + number - 1];
+    const double3 center = leafBox.center();
+    const uint64_t morton = morton_code(
+        normalized_axis(center.x - sceneBox.lower.x, extent.x),
+        normalized_axis(center.y - sceneBox.lower.y, extent.y),
+        normalized_axis(center.z - sceneBox.lower.z, extent.z));
+    keys[idx] = (morton << 32) | static_cast<uint64_t>(idx);
 }
 
-void calcInternalNodes(Node* _nodes, const uint64_t* _MChash, int number) {
-    int numbers = number;
-    const unsigned int threadNum = default_threads;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-    _calcInternalNodes << <blockNum, threadNum >> > (_nodes, _MChash, number);
+__global__ void calc_leaf_nodes(Node* nodes, const uint64_t* keys, uint32_t number)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= number)
+        return;
+
+    if(idx < number - 1)
+    {
+        nodes[idx].left_idx    = INVALID_INDEX;
+        nodes[idx].right_idx   = INVALID_INDEX;
+        nodes[idx].parent_idx  = INVALID_INDEX;
+        nodes[idx].element_idx = INVALID_INDEX;
+    }
+
+    const uint32_t leaf       = idx + number - 1;
+    nodes[leaf].left_idx      = INVALID_INDEX;
+    nodes[leaf].right_idx     = INVALID_INDEX;
+    nodes[leaf].parent_idx    = INVALID_INDEX;
+    nodes[leaf].element_idx   = static_cast<uint32_t>(keys[idx]);
 }
 
-void calcInternalAABB(const Node* _nodes, AABB* _bvs, uint32_t* flags, int number) {
-    int numbers = number;
-    const unsigned int threadNum = default_threads;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-    //uint32_t* flags;
-    //CUDA_SAFE_CALL(cudaMalloc((void**)&flags, (numbers-1) * sizeof(uint32_t)));
-    CUDA_SAFE_CALL(cudaMemset(flags, 0xFFFFFFFF, sizeof(uint32_t) * (numbers - 1)));
-    _calcInternalAABB << <blockNum, threadNum >> > (_nodes, _bvs, flags, numbers);
-    //CUDA_SAFE_CALL(cudaFree(flags));
+__global__ void calc_internal_nodes(Node* nodes, const uint64_t* keys, uint32_t number)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= number - 1)
+        return;
 
+    const uint2 range = determine_range(keys, number, idx);
+    const uint32_t split = find_split(keys, number, range.x, range.y);
+
+    uint32_t left  = split;
+    uint32_t right = split + 1;
+    if(__m_min(range.x, range.y) == split)
+        left += number - 1;
+    if(__m_max(range.x, range.y) == split + 1)
+        right += number - 1;
+
+    nodes[idx].left_idx  = left;
+    nodes[idx].right_idx = right;
+    nodes[left].parent_idx  = idx;
+    nodes[right].parent_idx = idx;
 }
 
-void sortBvs(const uint32_t* _indices, AABB* _bvs, AABB* _temp_bvs, int number) {
-    int numbers = number;
-    const unsigned int threadNum = default_threads;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-    //AABB* _temp_bvs = _tempLeafBox;
-   // CUDA_SAFE_CALL(cudaMalloc((void**)&_temp_bvs, (number) * sizeof(AABB)));
-    cudaMemcpy(_temp_bvs, _bvs + number - 1, sizeof(AABB) * number, cudaMemcpyDeviceToDevice);
-    _sortBvs << <blockNum, threadNum >> > (_indices, _bvs + number - 1, _temp_bvs, number);
-    //CUDA_SAFE_CALL(cudaFree(_temp_bvs));
+__global__ void calc_internal_boxes(
+    const Node* nodes, AABB* bvs, uint32_t* flags, uint32_t number)
+{
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= number)
+        return;
+
+    idx += number - 1;
+    uint32_t parent = nodes[idx].parent_idx;
+    while(parent != INVALID_INDEX)
+    {
+        if(atomicCAS(flags + parent, INVALID_INDEX, 0u) == INVALID_INDEX)
+            return;
+
+        bvs[parent] = merge(bvs[nodes[parent].left_idx], bvs[nodes[parent].right_idx]);
+        __threadfence();
+        parent = nodes[parent].parent_idx;
+    }
 }
 
+__global__ void calc_escape_links(const Node* nodes, int32_t* escape, uint32_t nodeCount)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= nodeCount)
+        return;
 
-void selfQuery_ee(const int* _btype, const double3* _vertexes, const double3* _rest_vertexes, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _collisonPairs, int4* _ccd_collisonPairs, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
-    int numbers = number;
-    const unsigned int threadNum = 256;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-
-    _selfQuery_ee << <blockNum, threadNum >> > (_btype, _vertexes, _rest_vertexes, _edges, _bvs, _nodes, _collisonPairs, _ccd_collisonPairs, _cpNum, _meshIndices, dHat, numbers);
+    uint32_t node = idx;
+    int32_t next = -1;
+    while(node != 0)
+    {
+        const uint32_t parent = nodes[node].parent_idx;
+        if(parent == INVALID_INDEX)
+            break;
+        if(node == nodes[parent].left_idx)
+        {
+            next = static_cast<int32_t>(nodes[parent].right_idx);
+            break;
+        }
+        node = parent;
+    }
+    escape[idx] = next;
 }
 
-void fullCCDselfQuery_ee(const int* _btype, const double3* _vertexes, const double3* moveDir, const double& alpha, const uint2* _edges, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisonPairs, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
-    int numbers = number;
-    const unsigned int threadNum = 256;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-
-    _selfQuery_ee_ccd << <blockNum, threadNum >> > (_btype, _vertexes, moveDir, alpha, _edges, _bvs, _nodes, _ccd_collisonPairs, _cpNum, _meshIndices, dHat, numbers);
+__global__ void reorder_leaf_boxes(
+    const uint64_t* keys, AABB* leafBoxes, const AABB* unsorted, uint32_t number)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= number)
+        return;
+    leafBoxes[idx] = unsorted[static_cast<uint32_t>(keys[idx])];
 }
 
-void selfQuery_vf(const int* _btype, const double3* _vertexes, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _collisonPairs, int4* _ccd_collisonPairs, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
-    int numbers = number;
-    const unsigned int threadNum = 256;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-    // printf("Before selfQuery_vf\n");
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    _selfQuery_vf << <blockNum, threadNum >> > (_btype, _vertexes, _faces, _surfVerts, _bvs, _nodes, _collisonPairs, _ccd_collisonPairs, _cpNum, _meshIndices, dHat, numbers);
-    // printf("After selfQuery_vf\n");
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    // printf("selfquery vf finished without error\n");
+__device__ inline bool same_nonzero_mesh(const uint32_t* meshIndices,
+                                         uint32_t a,
+                                         uint32_t b,
+                                         uint32_t c,
+                                         uint32_t d)
+{
+    if(!meshIndices)
+        return false;
+    const uint32_t mesh = meshIndices[a];
+    return mesh != 0u && mesh == meshIndices[b] && mesh == meshIndices[c]
+           && mesh == meshIndices[d];
 }
 
-void fullCCDselfQuery_vf(const int* _btype, const double3* _vertexes, const double3* moveDir, const double& alpha, const uint3* _faces, const uint32_t* _surfVerts, const AABB* _bvs, const Node* _nodes, int4* _ccd_collisonPairs, uint32_t* _cpNum, uint32_t* _meshIndices, double dHat, int number) {
-    int numbers = number;
-    const unsigned int threadNum = 256;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-    // printf("Before selfQuery_vf_ccd\n");
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    _selfQuery_vf_ccd << <blockNum, threadNum >> > (_btype, _vertexes, moveDir, alpha, _faces, _surfVerts, _bvs, _nodes, _ccd_collisonPairs, _cpNum, _meshIndices, dHat, numbers);
-    // printf("After selfQuery_vf_ccd\n");
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+__device__ inline bool all_fixed(
+    const int* btype, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+{
+    return btype && btype[a] >= 2 && btype[b] >= 2 && btype[c] >= 2 && btype[d] >= 2;
 }
 
-void lbvh::FREE_DEVICE_MEM() {
-    CUDA_SAFE_CALL(cudaFree(_indices));
-    CUDA_SAFE_CALL(cudaFree(_MChash));
-    CUDA_SAFE_CALL(cudaFree(_nodes));
-    CUDA_SAFE_CALL(cudaFree(_bvs));
-    CUDA_SAFE_CALL(cudaFree(_flags));
-    CUDA_SAFE_CALL(cudaFree(_tempLeafBox));
+__device__ inline void append_candidate(int2          pair,
+                                        int2*         candidates,
+                                        uint32_t*     candidateNum,
+                                        uint32_t      capacity,
+                                        uint32_t*     candidateOverflow)
+{
+    const uint32_t output =
+        reserve_bounded(candidateNum, capacity, candidateOverflow);
+    if(output != INVALID_INDEX)
+        candidates[output] = pair;
 }
 
-void lbvh::MALLOC_DEVICE_MEM(const int& number) {
-    CUDA_SAFE_CALL(cudaMalloc((void**)&_indices, (number) * sizeof(uint32_t)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&_MChash, (number) * sizeof(uint64_t)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&_nodes, (max(2 * number - 1, 0)) * sizeof(Node)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&_bvs, (max(2 * number - 1, 0)) * sizeof(AABB)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&_tempLeafBox, number * sizeof(AABB)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&_flags, (max(number - 1, 0)) * sizeof(uint32_t)));
-    //CUDA_SAFE_CALL(cudaMalloc((void**)&_cpNum, sizeof(uint32_t)));ye
-    //CUDA_SAFE_CALL(cudaMemset(_cpNum, 0, sizeof(uint32_t)));
+__global__ void query_face_candidates(const int*      btype,
+                                      const uint32_t* meshIndices,
+                                      const double3*  vertices,
+                                      const double3*  moveDir,
+                                      double          alpha,
+                                      const uint3*    faces,
+                                      const uint32_t* surfaceVertices,
+                                      const AABB*     bvs,
+                                      const Node*     nodes,
+                                      const int32_t*  escape,
+                                      int2*           candidates,
+                                      uint32_t*       candidateNum,
+                                      uint32_t        candidateCapacity,
+                                      uint32_t*       candidateOverflow,
+                                      double          dHat,
+                                      uint32_t        surfaceCount,
+                                      bool            swept)
+{
+    uint32_t surfaceIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(surfaceIdx >= surfaceCount)
+        return;
+
+    const uint32_t point = surfaceVertices[surfaceIdx];
+    const double3 x = vertices[point];
+    AABB query;
+    query.lower = x;
+    query.upper = x;
+    if(swept)
+    {
+        const double3 dx = moveDir[point];
+        query.combines(x.x - dx.x * alpha, x.y - dx.y * alpha, x.z - dx.z * alpha);
+    }
+
+    const double gap = sqrt(dHat);
+    int32_t node = 0;
+    while(node != -1)
+    {
+        const Node current = nodes[node];
+        if(!overlap(query, bvs[node], gap))
+        {
+            node = escape[node];
+            continue;
+        }
+
+        if(current.element_idx == INVALID_INDEX)
+        {
+            node = static_cast<int32_t>(current.left_idx);
+            continue;
+        }
+
+        const uint32_t faceId = current.element_idx;
+        const uint3 face = faces[faceId];
+        if(point != face.x && point != face.y && point != face.z
+           && !all_fixed(btype, point, face.x, face.y, face.z)
+           && !same_nonzero_mesh(meshIndices, point, face.x, face.y, face.z))
+        {
+            append_candidate(make_int2(-static_cast<int>(point) - 1,
+                                       static_cast<int>(faceId)),
+                             candidates,
+                             candidateNum,
+                             candidateCapacity,
+                             candidateOverflow);
+        }
+        node = escape[node];
+    }
 }
 
-lbvh::~lbvh() {
-    //FREE_DEVICE_MEM();
+__global__ void query_edge_candidates(const int*      btype,
+                                      const uint32_t* meshIndices,
+                                      const uint2*    edges,
+                                      const AABB*     bvs,
+                                      const Node*     nodes,
+                                      const int32_t*  escape,
+                                      int2*           candidates,
+                                      uint32_t*       candidateNum,
+                                      uint32_t        candidateCapacity,
+                                      uint32_t*       candidateOverflow,
+                                      double          dHat,
+                                      uint32_t        edgeCount)
+{
+    uint32_t leaf = blockIdx.x * blockDim.x + threadIdx.x;
+    if(leaf >= edgeCount)
+        return;
+
+    leaf += edgeCount - 1;
+    const AABB query = bvs[leaf];
+    const uint32_t selfId = nodes[leaf].element_idx;
+    const uint2 self = edges[selfId];
+    const double gap = sqrt(dHat);
+
+    int32_t node = 0;
+    while(node != -1)
+    {
+        const Node current = nodes[node];
+        if(!overlap(query, bvs[node], gap))
+        {
+            node = escape[node];
+            continue;
+        }
+
+        if(current.element_idx == INVALID_INDEX)
+        {
+            node = static_cast<int32_t>(current.left_idx);
+            continue;
+        }
+
+        const uint32_t otherId = current.element_idx;
+        const uint2 other = edges[otherId];
+        if(otherId > selfId && self.x != other.x && self.x != other.y
+           && self.y != other.x && self.y != other.y
+           && !all_fixed(btype, self.x, self.y, other.x, other.y)
+           && !same_nonzero_mesh(meshIndices, self.x, self.y, other.x, other.y))
+        {
+            append_candidate(make_int2(static_cast<int>(selfId),
+                                       static_cast<int>(otherId)),
+                             candidates,
+                             candidateNum,
+                             candidateCapacity,
+                             candidateOverflow);
+        }
+        node = escape[node];
+    }
 }
 
+__global__ void process_cached_candidates(const double3* vertices,
+                                          const double3* restVertices,
+                                          const uint3*   faces,
+                                          const uint2*   edges,
+                                          const int2*    candidates,
+                                          uint32_t       candidateCount,
+                                          double         dHat,
+                                          uint32_t*      cpNum,
+                                          uint32_t*      caseRank,
+                                          int4*          activePairs,
+                                          uint32_t       activeCapacity,
+                                          uint32_t*      activeOverflow)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= candidateCount)
+        return;
 
+    const int2 candidate = candidates[idx];
+    if(candidate.x < 0)
+    {
+        const uint32_t point = static_cast<uint32_t>(-candidate.x - 1);
+        const uint3 face = faces[candidate.y];
+        _checkPTintersection(vertices,
+                             point,
+                             face.x,
+                             face.y,
+                             face.z,
+                             dHat,
+                             cpNum,
+                             caseRank,
+                             activePairs,
+                             activeCapacity,
+                             activeOverflow);
+    }
+    else
+    {
+        const uint2 first  = edges[candidate.x];
+        const uint2 second = edges[candidate.y];
+        _checkEEintersection(vertices,
+                             restVertices,
+                             first.x,
+                             first.y,
+                             second.x,
+                             second.y,
+                             static_cast<uint32_t>(candidate.y),
+                             dHat,
+                             cpNum,
+                             caseRank,
+                             activePairs,
+                             activeCapacity,
+                             activeOverflow);
+    }
+}
 
-void lbvh_f::init(int* _mbtype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* meshIndices, int faceNum, int vertNum) {
-    _faces = _mFaces;
-    _surfVerts = _mSurfVert;
-    _vertexes = _mVerts;
-    _collisionPair = _mCollisonPairs;
-    _ccd_collisionPair = _ccd_mCollisonPairs;
-    _cpNum = _mcpNum;
+__global__ void expand_cached_candidates(const int2*  candidates,
+                                         const uint3* faces,
+                                         const uint2* edges,
+                                         int4*        expandedPairs,
+                                         uint32_t     candidateCount)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= candidateCount)
+        return;
+
+    const int2 candidate = candidates[idx];
+    if(candidate.x < 0)
+    {
+        const uint3 face = faces[candidate.y];
+        expandedPairs[idx] = make_int4(candidate.x,
+                                       static_cast<int>(face.x),
+                                       static_cast<int>(face.y),
+                                       static_cast<int>(face.z));
+    }
+    else
+    {
+        const uint2 first  = edges[candidate.x];
+        const uint2 second = edges[candidate.y];
+        expandedPairs[idx] = make_int4(static_cast<int>(first.x),
+                                       static_cast<int>(first.y),
+                                       static_cast<int>(second.x),
+                                       static_cast<int>(second.y));
+    }
+}
+
+__global__ void scatter_packed_cases(const int4*     activePairs,
+                                     const uint32_t* caseRank,
+                                     const uint32_t* cpNum,
+                                     uint32_t*       packedOutput,
+                                     uint32_t        activeCount)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= activeCount)
+        return;
+
+    const int4 pair = activePairs[idx];
+    const uint32_t rank = caseRank[idx];
+    const uint32_t collisionCase = active_case(pair);
+    const uint32_t ppBase = 0u;
+    const uint32_t peBase = 2u * cpNum[1];
+    const uint32_t ptBase = peBase + 3u * cpNum[2];
+    const uint32_t eeBase = ptBase + 4u * cpNum[3];
+
+    if(collisionCase == 1u)
+    {
+        const uint32_t output = ppBase + 2u * rank;
+        packedOutput[output]     = static_cast<uint32_t>(-pair.x - 1);
+        packedOutput[output + 1] = static_cast<uint32_t>(pair.y);
+    }
+    else if(collisionCase == 2u)
+    {
+        const uint32_t output = peBase + 3u * rank;
+        packedOutput[output]     = static_cast<uint32_t>(-pair.x - 1);
+        packedOutput[output + 1] = static_cast<uint32_t>(pair.y);
+        packedOutput[output + 2] = static_cast<uint32_t>(pair.z);
+    }
+    else if(collisionCase == 3u)
+    {
+        const uint32_t output = ptBase + 4u * rank;
+        packedOutput[output]     = static_cast<uint32_t>(-pair.x - 1);
+        packedOutput[output + 1] = static_cast<uint32_t>(pair.y);
+        packedOutput[output + 2] = static_cast<uint32_t>(pair.z);
+        packedOutput[output + 3] = static_cast<uint32_t>(pair.w);
+    }
+    else
+    {
+        const uint32_t output = eeBase + 4u * rank;
+        packedOutput[output]     = static_cast<uint32_t>(pair.x);
+        packedOutput[output + 1] = static_cast<uint32_t>(pair.y);
+        packedOutput[output + 2] = static_cast<uint32_t>(pair.z);
+        packedOutput[output + 3] = static_cast<uint32_t>(pair.w);
+    }
+}
+
+AABB calculate_scene(AABB* bvs, AABB* temporary, uint32_t number)
+{
+    AABB hostScene;
+    if(number == 0)
+        return hostScene;
+
+    CUDA_SAFE_CALL(cudaMemcpy(temporary,
+                              bvs + number - 1,
+                              number * sizeof(AABB),
+                              cudaMemcpyDeviceToDevice));
+
+    const AABB* input = temporary;
+    AABB* output = bvs;
+    uint32_t count = number;
+    while(count > 1)
+    {
+        const uint32_t blocks = (count + BVH_THREADS - 1) / BVH_THREADS;
+        reduce_boxes_safe<<<blocks, BVH_THREADS>>>(input, output, count);
+        count = blocks;
+        if(count > 1)
+        {
+            const AABB* nextInput = output;
+            output = output == bvs ? temporary : bvs;
+            input = nextInput;
+        }
+    }
+
+    if(number == 1)
+        output = temporary;
+    CUDA_SAFE_CALL(cudaMemcpy(bvs, output, sizeof(AABB), cudaMemcpyDeviceToDevice));
+    CUDA_SAFE_CALL(cudaMemcpy(&hostScene, output, sizeof(AABB), cudaMemcpyDeviceToHost));
+
+    // Sorting needs the original, unsorted leaf order after reduction used the
+    // temporary buffer as ping-pong storage.
+    CUDA_SAFE_CALL(cudaMemcpy(temporary,
+                              bvs + number - 1,
+                              number * sizeof(AABB),
+                              cudaMemcpyDeviceToDevice));
+    return hostScene;
+}
+
+void build_topology(lbvh* bvh, uint32_t number)
+{
+    if(number == 0)
+        return;
+
+    const uint32_t blocks = (number + BVH_THREADS - 1) / BVH_THREADS;
+    calc_morton_keys<<<blocks, BVH_THREADS>>>(bvh->_MChash, bvh->_bvs, number);
+    bvh->radixSortMorton(number);
+    reorder_leaf_boxes<<<blocks, BVH_THREADS>>>(
+        bvh->_MChash, bvh->_bvs + number - 1, bvh->_tempLeafBox, number);
+    calc_leaf_nodes<<<blocks, BVH_THREADS>>>(bvh->_nodes, bvh->_MChash, number);
+
+    if(number > 1)
+    {
+        const uint32_t internalBlocks =
+            (number - 1 + BVH_THREADS - 1) / BVH_THREADS;
+        calc_internal_nodes<<<internalBlocks, BVH_THREADS>>>(
+            bvh->_nodes, bvh->_MChash, number);
+        CUDA_SAFE_CALL(cudaMemset(
+            bvh->_flags, 0xFF, (number - 1) * sizeof(uint32_t)));
+        calc_internal_boxes<<<blocks, BVH_THREADS>>>(
+            bvh->_nodes, bvh->_bvs, bvh->_flags, number);
+    }
+
+    const uint32_t nodeCount = 2u * number - 1u;
+    const uint32_t nodeBlocks = (nodeCount + BVH_THREADS - 1) / BVH_THREADS;
+    calc_escape_links<<<nodeBlocks, BVH_THREADS>>>(
+        bvh->_nodes, bvh->_escape, nodeCount);
+}
+
+uint32_t shared_pointer_count(const lbvh* obj)
+{
+    return static_cast<uint32_t>(obj->_collisionPair != nullptr)
+           + static_cast<uint32_t>(obj->_caseRank != nullptr)
+           + static_cast<uint32_t>(obj->_cpNum != nullptr)
+           + static_cast<uint32_t>(obj->_packedOutput != nullptr)
+           + static_cast<uint32_t>(obj->_candidatePairs != nullptr)
+           + static_cast<uint32_t>(obj->_candidateNum != nullptr)
+           + static_cast<uint32_t>(obj->_overflowCount != nullptr);
+}
+
+lbvh* initialized_shared_owner(lbvh_f* faceObj, lbvh_e* edgeObj)
+{
+    lbvh* face = faceObj && faceObj->_initialized
+                     ? static_cast<lbvh*>(faceObj)
+                     : nullptr;
+    lbvh* edge = edgeObj && edgeObj->_initialized
+                     ? static_cast<lbvh*>(edgeObj)
+                     : nullptr;
+    if(!face)
+        return edge;
+    if(!edge)
+        return face;
+    return shared_pointer_count(edge) > shared_pointer_count(face) ? edge : face;
+}
+
+void launch_face_query(lbvh_f* obj,
+                       const double3* moveDir,
+                       double alpha,
+                       double dHat,
+                       bool swept)
+{
+    if(!obj || obj->face_number == 0 || obj->vert_number == 0
+       || !obj->_candidatePairs || !obj->_candidateNum)
+        return;
+    const uint32_t blocks = (obj->vert_number + BVH_THREADS - 1) / BVH_THREADS;
+    query_face_candidates<<<blocks, BVH_THREADS>>>(obj->_btype,
+                                                   obj->_meshIndices,
+                                                   obj->_vertexes,
+                                                   moveDir,
+                                                   alpha,
+                                                   obj->_faces,
+                                                   obj->_surfVerts,
+                                                   obj->_bvs,
+                                                   obj->_nodes,
+                                                   obj->_escape,
+                                                   obj->_candidatePairs,
+                                                   obj->_candidateNum,
+                                                   obj->_maxCandidatePairs,
+                                                   obj->_overflowCount,
+                                                   dHat,
+                                                   obj->vert_number,
+                                                   swept);
+}
+
+void launch_edge_query(lbvh_e* obj, double dHat)
+{
+    if(!obj || obj->edge_number == 0 || !obj->_candidatePairs || !obj->_candidateNum)
+        return;
+    const uint32_t blocks = (obj->edge_number + BVH_THREADS - 1) / BVH_THREADS;
+    query_edge_candidates<<<blocks, BVH_THREADS>>>(obj->_btype,
+                                                   obj->_meshIndices,
+                                                   obj->_edges,
+                                                   obj->_bvs,
+                                                   obj->_nodes,
+                                                   obj->_escape,
+                                                   obj->_candidatePairs,
+                                                   obj->_candidateNum,
+                                                   obj->_maxCandidatePairs,
+                                                   obj->_overflowCount,
+                                                   dHat,
+                                                   obj->edge_number);
+}
+
+double scene_diagonal_squared(const AABB& scene)
+{
+    const double x = scene.upper.x - scene.lower.x;
+    const double y = scene.upper.y - scene.lower.y;
+    const double z = scene.upper.z - scene.lower.z;
+    if(!isfinite(x) || !isfinite(y) || !isfinite(z))
+        return 0.0;
+    return x * x + y * y + z * z;
+}
+}
+
+void lbvh::radixSortMorton(uint32_t number)
+{
+    if(number < 2)
+        return;
+
+    size_t required = 0;
+    CUDA_SAFE_CALL(cub::DeviceRadixSort::SortKeys(
+        nullptr, required, _MChash, _MChash_sorted, number));
+    if(required > _sort_temp_bytes)
+    {
+        if(_sort_temp_storage)
+            CUDA_SAFE_CALL(cudaFree(_sort_temp_storage));
+        CUDA_SAFE_CALL(cudaMalloc(&_sort_temp_storage, required));
+        _sort_temp_bytes = required;
+    }
+    CUDA_SAFE_CALL(cub::DeviceRadixSort::SortKeys(
+        _sort_temp_storage, required, _MChash, _MChash_sorted, number));
+    std::swap(_MChash, _MChash_sorted);
+}
+
+void lbvh::MALLOC_DEVICE_MEM(uint32_t primitiveNumber)
+{
+    if(primitiveNumber == 0)
+        return;
+
+    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_MChash),
+                              primitiveNumber * sizeof(uint64_t)));
+    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_MChash_sorted),
+                              primitiveNumber * sizeof(uint64_t)));
+    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_nodes),
+                              (2u * primitiveNumber - 1u) * sizeof(Node)));
+    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_bvs),
+                              (2u * primitiveNumber - 1u) * sizeof(AABB)));
+    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_escape),
+                              (2u * primitiveNumber - 1u) * sizeof(int32_t)));
+    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_tempLeafBox),
+                              primitiveNumber * sizeof(AABB)));
+    if(primitiveNumber > 1)
+        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_flags),
+                                  (primitiveNumber - 1u) * sizeof(uint32_t)));
+}
+
+void lbvh::FREE_DEVICE_MEM()
+{
+    // Python finalizers may run after PyCUDA has destroyed the context. CUDA
+    // teardown is therefore best-effort and must never call the fatal macro.
+    if(_MChash)
+        (void)cudaFree(_MChash);
+    if(_MChash_sorted)
+        (void)cudaFree(_MChash_sorted);
+    if(_nodes)
+        (void)cudaFree(_nodes);
+    if(_bvs)
+        (void)cudaFree(_bvs);
+    if(_flags)
+        (void)cudaFree(_flags);
+    if(_escape)
+        (void)cudaFree(_escape);
+    if(_tempLeafBox)
+        (void)cudaFree(_tempLeafBox);
+    if(_sort_temp_storage)
+        (void)cudaFree(_sort_temp_storage);
+
+    _MChash = nullptr;
+    _MChash_sorted = nullptr;
+    _nodes = nullptr;
+    _bvs = nullptr;
+    _flags = nullptr;
+    _escape = nullptr;
+    _tempLeafBox = nullptr;
+    _sort_temp_storage = nullptr;
+    _sort_temp_bytes = 0;
+}
+
+lbvh::~lbvh()
+{
+    FREE_DEVICE_MEM();
+}
+
+void lbvh_f::init(int*       btype,
+                  double3*   vertices,
+                  uint3*     faces,
+                  uint32_t*  surfaceVertices,
+                  int4*      activePairs,
+                  uint32_t*  caseRank,
+                  uint32_t*  cpNum,
+                  uint32_t*  meshIndices,
+                  int2*      candidates,
+                  uint32_t*  candidateNum,
+                  uint32_t*  packedOutput,
+                  uint32_t*  overflowCount,
+                  uint32_t   maxCandidatePairs,
+                  uint32_t   maxActivePairs,
+                  uint32_t   faceNum,
+                  uint32_t   vertNum)
+{
+    FREE_DEVICE_MEM();
+    _btype = btype;
+    _vertexes = vertices;
+    _faces = faces;
+    _surfVerts = surfaceVertices;
+    _collisionPair = activePairs;
+    _caseRank = caseRank;
+    _cpNum = cpNum;
+    _meshIndices = meshIndices;
+    _candidatePairs = candidates;
+    _candidateNum = candidateNum;
+    _packedOutput = packedOutput;
+    _overflowCount = overflowCount;
+    _maxCandidatePairs = maxCandidatePairs;
+    _maxActivePairs = maxActivePairs;
     face_number = faceNum;
     vert_number = vertNum;
-    _btype = _mbtype;
-    _meshIndices = meshIndices;
     MALLOC_DEVICE_MEM(face_number);
+    _initialized = true;
 }
 
-void lbvh_e::init(int* _mbtype, double3* _mVerts, double3* _mRest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* meshIndices, int edgeNum, int vertNum) {
-    _rest_vertexes = _mRest_vertexes;
-    _edges = _mEdges;
-    _vertexes = _mVerts;
-    _cpNum = _mcpNum;
-    _collisionPair = _mCollisonPairs;
-    _ccd_collisionPair = _ccd_mCollisonPairs;
+void lbvh_e::init(int*       btype,
+                  double3*   vertices,
+                  double3*   restVertices,
+                  uint2*     edges,
+                  int4*      activePairs,
+                  uint32_t*  caseRank,
+                  uint32_t*  cpNum,
+                  uint32_t*  meshIndices,
+                  int2*      candidates,
+                  uint32_t*  candidateNum,
+                  uint32_t*  packedOutput,
+                  uint32_t*  overflowCount,
+                  uint32_t   maxCandidatePairs,
+                  uint32_t   maxActivePairs,
+                  uint32_t   edgeNum,
+                  uint32_t   vertNum)
+{
+    FREE_DEVICE_MEM();
+    _btype = btype;
+    _vertexes = vertices;
+    _rest_vertexes = restVertices;
+    _edges = edges;
+    _collisionPair = activePairs;
+    _caseRank = caseRank;
+    _cpNum = cpNum;
+    _meshIndices = meshIndices;
+    _candidatePairs = candidates;
+    _candidateNum = candidateNum;
+    _packedOutput = packedOutput;
+    _overflowCount = overflowCount;
+    _maxCandidatePairs = maxCandidatePairs;
+    _maxActivePairs = maxActivePairs;
     edge_number = edgeNum;
     vert_number = vertNum;
-    _btype = _mbtype;
-    _meshIndices = meshIndices;
     MALLOC_DEVICE_MEM(edge_number);
+    _initialized = true;
 }
 
-AABB* lbvh_f::getSceneSize() {
-    calcLeafBvs(_vertexes, _faces, _bvs, face_number, 0);
-
-    calcMaxBV(_bvs, _tempLeafBox, face_number);
+AABB* lbvh_f::getSceneSize()
+{
+    if(face_number == 0)
+    {
+        scene = AABB();
+        return nullptr;
+    }
+    const uint32_t blocks = (face_number + BVH_THREADS - 1) / BVH_THREADS;
+    _calcLeafBvs<<<blocks, BVH_THREADS>>>(
+        _vertexes, _faces, _bvs + face_number - 1, face_number, 0);
+    scene = calculate_scene(_bvs, _tempLeafBox, face_number);
     return _bvs;
 }
 
-double lbvh_f::Construct(double3* _mVerts) {
-    _vertexes = _mVerts;
-    calcLeafBvs(_vertexes, _faces, _bvs, face_number, 0);
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    scene = calcMaxBV(_bvs, _tempLeafBox, face_number);
-    calcMChash(_MChash, _bvs, face_number);
-    thrust::sequence(thrust::device_ptr<uint32_t>(_indices), thrust::device_ptr<uint32_t>(_indices) + face_number);
-    thrust::sort_by_key(thrust::device_ptr<uint64_t>(_MChash), thrust::device_ptr<uint64_t>(_MChash) + face_number, thrust::device_ptr<uint32_t>(_indices));
-    sortBvs(_indices, _bvs, _tempLeafBox, face_number);
-    calcLeafNodes(_nodes, _indices, face_number);
-    calcInternalNodes(_nodes, _MChash, face_number);
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    calcInternalAABB(_nodes, _bvs, _flags, face_number);
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    // printf("construct finished\n");
-    return 0;//time0 + time1 + time2;
+double lbvh_f::Construct(double3* vertices)
+{
+    _vertexes = vertices;
+    if(face_number == 0)
+    {
+        scene = AABB();
+        return 0.0;
+    }
+    const uint32_t blocks = (face_number + BVH_THREADS - 1) / BVH_THREADS;
+    _calcLeafBvs<<<blocks, BVH_THREADS>>>(
+        _vertexes, _faces, _bvs + face_number - 1, face_number, 0);
+    scene = calculate_scene(_bvs, _tempLeafBox, face_number);
+    build_topology(this, face_number);
+    return 0.0;
 }
 
-double lbvh_f::ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha) {
-    _vertexes = _mVerts;
-    calcLeafBvs_fullCCD(_vertexes, moveDir, alpha, _faces, _bvs, face_number, 0);
-    scene = calcMaxBV(_bvs, _tempLeafBox, face_number);
-    calcMChash(_MChash, _bvs, face_number);
-    thrust::sequence(thrust::device_ptr<uint32_t>(_indices), thrust::device_ptr<uint32_t>(_indices) + face_number);
-
-    thrust::sort_by_key(thrust::device_ptr<uint64_t>(_MChash), thrust::device_ptr<uint64_t>(_MChash) + face_number, thrust::device_ptr<uint32_t>(_indices));
-    sortBvs(_indices, _bvs, _tempLeafBox, face_number);
-
-    calcLeafNodes(_nodes, _indices, face_number);
-
-    calcInternalNodes(_nodes, _MChash, face_number);
-    calcInternalAABB(_nodes, _bvs, _flags, face_number);
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    // printf("ccd construction finished\n");
-    return 0;
+double lbvh_f::ConstructFullCCD(
+    double3* vertices, const double3* moveDir, double alpha)
+{
+    _vertexes = vertices;
+    if(face_number == 0)
+    {
+        scene = AABB();
+        return 0.0;
+    }
+    const uint32_t blocks = (face_number + BVH_THREADS - 1) / BVH_THREADS;
+    _calcLeafBvs_ccd<<<blocks, BVH_THREADS>>>(_vertexes,
+                                              moveDir,
+                                              alpha,
+                                              _faces,
+                                              _bvs + face_number - 1,
+                                              face_number,
+                                              0);
+    scene = calculate_scene(_bvs, _tempLeafBox, face_number);
+    build_topology(this, face_number);
+    return 0.0;
 }
 
-double lbvh_e::Construct(double3* _mVerts) {
-    _vertexes = _mVerts;
-
-    calcLeafBvs(_vertexes, _edges, _bvs, edge_number, 1);
-    scene = calcMaxBV(_bvs, _tempLeafBox, edge_number);
-    calcMChash(_MChash, _bvs, edge_number);
-    thrust::sequence(thrust::device_ptr<uint32_t>(_indices), thrust::device_ptr<uint32_t>(_indices) + edge_number);
-
-    thrust::sort_by_key(thrust::device_ptr<uint64_t>(_MChash), thrust::device_ptr<uint64_t>(_MChash) + edge_number, thrust::device_ptr<uint32_t>(_indices));
-    sortBvs(_indices, _bvs, _tempLeafBox, edge_number);
-    calcLeafNodes(_nodes, _indices, edge_number);
-    calcInternalNodes(_nodes, _MChash, edge_number);
-    calcInternalAABB(_nodes, _bvs, _flags, edge_number);
-    return 0;//time0 + time1 + time2;
+double lbvh_e::Construct(double3* vertices)
+{
+    _vertexes = vertices;
+    if(edge_number == 0)
+    {
+        scene = AABB();
+        return 0.0;
+    }
+    const uint32_t blocks = (edge_number + BVH_THREADS - 1) / BVH_THREADS;
+    _calcLeafBvs<<<blocks, BVH_THREADS>>>(
+        _vertexes, _edges, _bvs + edge_number - 1, edge_number, 1);
+    scene = calculate_scene(_bvs, _tempLeafBox, edge_number);
+    build_topology(this, edge_number);
+    return 0.0;
 }
 
-double lbvh_e::ConstructFullCCD(double3* _mVerts, const double3* moveDir, const double& alpha) {
-    _vertexes = _mVerts;
-    calcLeafBvs_fullCCD(_vertexes, moveDir, alpha, _edges, _bvs, edge_number, 1);
-    scene = calcMaxBV(_bvs, _tempLeafBox, edge_number);
-    calcMChash(_MChash, _bvs, edge_number);
-    thrust::sequence(thrust::device_ptr<uint32_t>(_indices), thrust::device_ptr<uint32_t>(_indices) + edge_number);
-
-    thrust::sort_by_key(thrust::device_ptr<uint64_t>(_MChash), thrust::device_ptr<uint64_t>(_MChash) + edge_number, thrust::device_ptr<uint32_t>(_indices));
-    sortBvs(_indices, _bvs, _tempLeafBox, edge_number);
-    calcLeafNodes(_nodes, _indices, edge_number);
-    calcInternalNodes(_nodes, _MChash, edge_number);
-    calcInternalAABB(_nodes, _bvs, _flags, edge_number);
-    return 0;
+double lbvh_e::ConstructFullCCD(
+    double3* vertices, const double3* moveDir, double alpha)
+{
+    _vertexes = vertices;
+    if(edge_number == 0)
+    {
+        scene = AABB();
+        return 0.0;
+    }
+    const uint32_t blocks = (edge_number + BVH_THREADS - 1) / BVH_THREADS;
+    _calcLeafBvs_ccd<<<blocks, BVH_THREADS>>>(_vertexes,
+                                              moveDir,
+                                              alpha,
+                                              _edges,
+                                              _bvs + edge_number - 1,
+                                              edge_number,
+                                              1);
+    scene = calculate_scene(_bvs, _tempLeafBox, edge_number);
+    build_topology(this, edge_number);
+    return 0.0;
 }
 
-
-void lbvh_f::SelfCollitionDetect(double dHat) {
-    selfQuery_vf(_btype, _vertexes, _faces, _surfVerts, _bvs, _nodes, _collisionPair, _ccd_collisionPair, _cpNum, _meshIndices, dHat, vert_number);
+void lbvh_f::SelfCollitionDetect(double dHat)
+{
+    launch_face_query(this, nullptr, 0.0, dHat, false);
 }
 
-void lbvh_e::SelfCollitionDetect(double dHat) {
-    selfQuery_ee(_btype, _vertexes, _rest_vertexes, _edges, _bvs, _nodes, _collisionPair, _ccd_collisionPair, _cpNum, _meshIndices, dHat, edge_number);
+void lbvh_e::SelfCollitionDetect(double dHat)
+{
+    launch_edge_query(this, dHat);
 }
 
-void lbvh_f::SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha) {
-    fullCCDselfQuery_vf(_btype, _vertexes, moveDir, alpha, _faces, _surfVerts, _bvs, _nodes, _ccd_collisionPair, _cpNum, _meshIndices, dHat, vert_number);
+void lbvh_f::SelfCollitionFullDetect(
+    double dHat, const double3* moveDir, double alpha)
+{
+    launch_face_query(this, moveDir, alpha, dHat, true);
 }
 
-void lbvh_e::SelfCollitionFullDetect(double dHat, const double3* moveDir, const double& alpha) {
-    fullCCDselfQuery_ee(_btype, _vertexes, moveDir, alpha, _edges, _bvs, _nodes, _ccd_collisionPair, _cpNum, _meshIndices, dHat, edge_number);
+void lbvh_e::SelfCollitionFullDetect(
+    double dHat, const double3*, double)
+{
+    launch_edge_query(this, dHat);
 }
 
-lbvh_f* create_lbvh_f(){
-  return new lbvh_f();
+extern "C"
+{
+uint32_t mlbvh_api_version()
+{
+    return 2u;
 }
 
-lbvh_e* create_lbvh_e(){
-  return new lbvh_e();
+lbvh_f* create_lbvh_f()
+{
+    return new lbvh_f();
 }
 
-void lbvh_f_init(lbvh_f* obj, int* _btype, double3* _mVerts, uint3* _mFaces, uint32_t* _mSurfVert, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int faceNum, int vertNum){
-  if (obj == nullptr) {
-    obj = new lbvh_f();
-  }
-  obj->init(_btype, _mVerts, _mFaces, _mSurfVert, _mCollisonPairs, _ccd_mCollisonPairs, _mcpNum, _meshIndices, faceNum, vertNum);
+lbvh_e* create_lbvh_e()
+{
+    return new lbvh_e();
 }
 
-void lbvh_e_init(lbvh_e* obj, int* _btype, double3* _mVerts, double3* _rest_vertexes, uint2* _mEdges, int4* _mCollisonPairs, int4* _ccd_mCollisonPairs, uint32_t* _mcpNum, uint32_t* _meshIndices, int edgeNum, int vertNum){
-  if (obj == nullptr) {
-    obj = new lbvh_e();
-  }
-  obj->init(_btype, _mVerts, _rest_vertexes, _mEdges, _mCollisonPairs, _ccd_mCollisonPairs, _mcpNum, _meshIndices, edgeNum, vertNum);
+void destroy_lbvh_f(lbvh_f* obj)
+{
+    delete obj;
 }
 
-void lbvh_f_construct(lbvh_f* obj, double3* _mVerts){
-  obj->Construct(_mVerts);
+void destroy_lbvh_e(lbvh_e* obj)
+{
+    delete obj;
 }
 
-void lbvh_e_construct(lbvh_e* obj, double3* _mVerts){
-  obj->Construct(_mVerts);
+void lbvh_f_init(lbvh_f*   obj,
+                 int*      btype,
+                 double3*  vertices,
+                 uint3*    faces,
+                 uint32_t* surfaceVertices,
+                 int4*     activePairs,
+                 uint32_t* caseRank,
+                 uint32_t* cpNum,
+                 uint32_t* meshIndices,
+                 int2*     candidates,
+                 uint32_t* candidateNum,
+                 uint32_t* packedOutput,
+                 uint32_t* overflowCount,
+                 uint32_t  maxCandidatePairs,
+                 uint32_t  maxActivePairs,
+                 uint32_t  faceNum,
+                 uint32_t  vertNum)
+{
+    obj->init(btype,
+              vertices,
+              faces,
+              surfaceVertices,
+              activePairs,
+              caseRank,
+              cpNum,
+              meshIndices,
+              candidates,
+              candidateNum,
+              packedOutput,
+              overflowCount,
+              maxCandidatePairs,
+              maxActivePairs,
+              faceNum,
+              vertNum);
 }
 
-void lbvh_f_construct_full_ccd(lbvh_f* obj, double3* _mVerts, const double3* moveDir, const double& alpha){
-  obj->ConstructFullCCD(_mVerts, moveDir, alpha);
+void lbvh_e_init(lbvh_e*   obj,
+                 int*      btype,
+                 double3*  vertices,
+                 double3*  restVertices,
+                 uint2*    edges,
+                 int4*     activePairs,
+                 uint32_t* caseRank,
+                 uint32_t* cpNum,
+                 uint32_t* meshIndices,
+                 int2*     candidates,
+                 uint32_t* candidateNum,
+                 uint32_t* packedOutput,
+                 uint32_t* overflowCount,
+                 uint32_t  maxCandidatePairs,
+                 uint32_t  maxActivePairs,
+                 uint32_t  edgeNum,
+                 uint32_t  vertNum)
+{
+    obj->init(btype,
+              vertices,
+              restVertices,
+              edges,
+              activePairs,
+              caseRank,
+              cpNum,
+              meshIndices,
+              candidates,
+              candidateNum,
+              packedOutput,
+              overflowCount,
+              maxCandidatePairs,
+              maxActivePairs,
+              edgeNum,
+              vertNum);
 }
 
-void lbvh_e_construct_full_ccd(lbvh_e* obj, double3* _mVerts, const double3* moveDir, const double& alpha){
-  obj->ConstructFullCCD(_mVerts, moveDir, alpha);
+void lbvh_f_construct(lbvh_f* obj, double3* vertices)
+{
+    obj->Construct(vertices);
 }
 
-void lbvh_f_self_collision_detect(lbvh_f* obj, double dHat){
-  obj->SelfCollitionDetect(dHat);
+void lbvh_e_construct(lbvh_e* obj, double3* vertices)
+{
+    obj->Construct(vertices);
 }
 
-void lbvh_e_self_collision_detect(lbvh_e* obj, double dHat){
-  obj->SelfCollitionDetect(dHat);
+void lbvh_f_construct_full_ccd(
+    lbvh_f* obj, double3* vertices, const double3* moveDir, double alpha)
+{
+    obj->ConstructFullCCD(vertices, moveDir, alpha);
 }
 
-void lbvh_f_self_collision_full_detect(lbvh_f* obj, double dHat, const double3* moveDir, const double& alpha){
-  obj->SelfCollitionFullDetect(dHat, moveDir, alpha);
-}
-void lbvh_e_self_collision_full_detect(lbvh_e* obj, double dHat, const double3* moveDir, const double& alpha){
-  obj->SelfCollitionFullDetect(dHat, moveDir, alpha);
-}
-void destroy_lbvh_f(lbvh_f* obj){
-  delete obj;
+void lbvh_e_construct_full_ccd(
+    lbvh_e* obj, double3* vertices, const double3* moveDir, double alpha)
+{
+    obj->ConstructFullCCD(vertices, moveDir, alpha);
 }
 
-void destroy_lbvh_e(lbvh_e* obj){
-  delete obj;
+void lbvh_reset_candidate_cache(lbvh_f* faceObj, lbvh_e* edgeObj)
+{
+    lbvh* shared = initialized_shared_owner(faceObj, edgeObj);
+    if(!shared)
+        return;
+    if(shared->_candidateNum)
+        CUDA_SAFE_CALL(cudaMemset(shared->_candidateNum, 0, sizeof(uint32_t)));
+    if(shared->_overflowCount)
+        CUDA_SAFE_CALL(cudaMemset(shared->_overflowCount, 0, sizeof(uint32_t)));
 }
 
-double scene_size_f(lbvh_f *obj){
-  obj->getSceneSize();
-  double bboxDiagSize2 = __GEIGEN__::__squaredNorm3(
-      __GEIGEN__::__minus(obj->scene.upper, obj->scene.lower));
-  // printf("Upper is %lf, %lf, %lf\n", obj->scene.upper.x, obj->scene.upper.y, obj->scene.upper.z);
-  // printf("Lower is %lf, %lf, %lf\n", obj->scene.lower.x, obj->scene.lower.y, obj->scene.lower.z);
-  // printf("Diag size is: %lf\n", bboxDiagSize2);
-  return bboxDiagSize2;
+void lbvh_f_append_proximity_candidates(
+    lbvh_f* obj, double3* vertices, double dHat)
+{
+    if(!obj)
+        return;
+    obj->Construct(vertices);
+    obj->SelfCollitionDetect(dHat);
 }
 
-double scene_size_e(lbvh_e *obj){
-  double bboxDiagSize2 = __GEIGEN__::__squaredNorm3(
-      __GEIGEN__::__minus(obj->scene.upper, obj->scene.lower));
-  return bboxDiagSize2;
+void lbvh_e_append_proximity_candidates(
+    lbvh_e* obj, double3* vertices, double dHat)
+{
+    if(!obj)
+        return;
+    obj->Construct(vertices);
+    obj->SelfCollitionDetect(dHat);
 }
 
-
-__global__ void separate_cases_faces(const int4* indices, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, const uint32_t* cp_num, uint32_t* cp_num_count){
-  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= cp_num[0]) return;
-  const int id0 = indices[idx].x;
-  const int id1 = indices[idx].y;
-  const int id2 = indices[idx].z;
-  const int id3 = indices[idx].w;
-  // this is for triangle, so there is no ee cases
-  if (id2 < 0){
-    pp_indices[atomicAdd(cp_num_count, 1)] = make_uint2(-id0 - 1, id1);
-    return;
-  }
-  if (id3 < 0){
-    pe_indices[atomicAdd(cp_num_count + 1, 1)] = make_uint3(-id0 - 1, id1, id2);
-    return;
-  }
-  pt_indices[atomicAdd(cp_num_count + 2, 1)] = make_uint4(-id0 - 1, id1, id2, id3);
-  return;
+void lbvh_f_append_swept_candidates(lbvh_f*        obj,
+                                    double3*       vertices,
+                                    const double3* moveDir,
+                                    double         alpha,
+                                    double         dHat)
+{
+    if(!obj)
+        return;
+    obj->ConstructFullCCD(vertices, moveDir, alpha);
+    obj->SelfCollitionFullDetect(dHat, moveDir, alpha);
 }
 
-__global__ void separate_cases_edges(const int4* indices, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, const uint32_t* cp_num, uint32_t* cp_num_count){
-  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= cp_num[0]) return;
-  const int id0 = indices[idx].x;
-  const int id1 = indices[idx].y;
-  const int id2 = indices[idx].z;
-  const int id3 = indices[idx].w;
-  // this is for triangle, so there is no ee cases
-  if (id0 >= 0){
-    ee_indices[atomicAdd(cp_num_count + 3, 1)] = make_uint4(id0, id1, id2, id3);
-    return;
-  }
-  if (id2 < 0){
-    pp_indices[atomicAdd(cp_num_count, 1)] = make_uint2(-id0 - 1, id1);
-    return;
-  }
-  if (id3 < 0){
-    pe_indices[atomicAdd(cp_num_count + 1, 1)] = make_uint3(-id0 - 1, id1, id2);
-    return;
-  }
-  return;
+void lbvh_e_append_swept_candidates(lbvh_e*        obj,
+                                    double3*       vertices,
+                                    const double3* moveDir,
+                                    double         alpha,
+                                    double         dHat)
+{
+    if(!obj)
+        return;
+    obj->ConstructFullCCD(vertices, moveDir, alpha);
+    obj->SelfCollitionFullDetect(dHat, moveDir, alpha);
 }
 
-void lbvh_f::SeparateCasesCCD(uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* counts){
-  // first we get the actual count
-  uint32_t cp_num_count = 0;
-  CUDA_SAFE_CALL(cudaMemcpy(&cp_num_count, _cpNum, sizeof(uint32_t), cudaMemcpyDeviceToHost));
-  if (cp_num_count == 0) return;
-  const unsigned int threadNum = default_threads;
-  int blockNum = (cp_num_count + threadNum - 1) / threadNum;
-  separate_cases_faces<<<blockNum, threadNum>>>(_ccd_collisionPair, pp_indices, pe_indices, pt_indices, _cpNum, counts);
-  CUDA_SAFE_CALL(cudaDeviceSynchronize());
+void lbvh_refilter_cached_candidates(
+    lbvh_f* faceObj, lbvh_e* edgeObj, double3* currentVertices, double dHat)
+{
+    lbvh* shared = initialized_shared_owner(faceObj, edgeObj);
+    if(!shared || !shared->_cpNum)
+        return;
+
+    const bool faceInitialized = faceObj && faceObj->_initialized;
+    const bool edgeInitialized = edgeObj && edgeObj->_initialized;
+    if(faceInitialized)
+        faceObj->_vertexes = currentVertices;
+    if(edgeInitialized)
+        edgeObj->_vertexes = currentVertices;
+
+    CUDA_SAFE_CALL(cudaMemset(shared->_cpNum, 0, 5u * sizeof(uint32_t)));
+    uint32_t* activeOverflow =
+        shared->_overflowCount ? shared->_overflowCount + 1 : nullptr;
+    if(activeOverflow)
+        CUDA_SAFE_CALL(cudaMemset(activeOverflow, 0, sizeof(uint32_t)));
+
+    if(!shared->_candidateNum || !shared->_candidatePairs
+       || !shared->_collisionPair || !shared->_caseRank)
+        return;
+
+    uint32_t candidateCount = 0;
+    CUDA_SAFE_CALL(cudaMemcpy(&candidateCount,
+                              shared->_candidateNum,
+                              sizeof(uint32_t),
+                              cudaMemcpyDeviceToHost));
+    if(candidateCount == 0)
+        return;
+    if(candidateCount > shared->_maxCandidatePairs)
+        candidateCount = shared->_maxCandidatePairs;
+
+    const uint32_t blocks = (candidateCount + BVH_THREADS - 1) / BVH_THREADS;
+    process_cached_candidates<<<blocks, BVH_THREADS>>>(
+        currentVertices,
+        edgeInitialized ? edgeObj->_rest_vertexes : nullptr,
+        faceInitialized ? faceObj->_faces : nullptr,
+        edgeInitialized ? edgeObj->_edges : nullptr,
+        shared->_candidatePairs,
+        candidateCount,
+        dHat,
+        shared->_cpNum,
+        shared->_caseRank,
+        shared->_collisionPair,
+        shared->_maxActivePairs,
+        activeOverflow);
 }
 
-void lbvh_f::SeparateCasesCD(uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* counts){
-  // first we get the actual count
-  uint32_t cp_num_count = 0;
-  CUDA_SAFE_CALL(cudaMemcpy(&cp_num_count, _cpNum, sizeof(uint32_t), cudaMemcpyDeviceToHost));
-  if (cp_num_count == 0) return;
-  const unsigned int threadNum = default_threads;
-  int blockNum = (cp_num_count + threadNum - 1) / threadNum;
-  separate_cases_faces<<<blockNum, threadNum>>>(_collisionPair, pp_indices, pe_indices, pt_indices, _cpNum, counts);
-  CUDA_SAFE_CALL(cudaDeviceSynchronize());
+void lbvh_scatter_packed_cases(lbvh_f* faceObj, lbvh_e* edgeObj)
+{
+    lbvh* shared = initialized_shared_owner(faceObj, edgeObj);
+    if(!shared || !shared->_cpNum || !shared->_collisionPair
+       || !shared->_caseRank || !shared->_packedOutput)
+        return;
+
+    uint32_t activeCount = 0;
+    CUDA_SAFE_CALL(cudaMemcpy(&activeCount,
+                              shared->_cpNum,
+                              sizeof(uint32_t),
+                              cudaMemcpyDeviceToHost));
+    if(activeCount == 0)
+        return;
+    if(activeCount > shared->_maxActivePairs)
+        activeCount = shared->_maxActivePairs;
+
+    const uint32_t blocks = (activeCount + BVH_THREADS - 1) / BVH_THREADS;
+    scatter_packed_cases<<<blocks, BVH_THREADS>>>(shared->_collisionPair,
+                                                  shared->_caseRank,
+                                                  shared->_cpNum,
+                                                  shared->_packedOutput,
+                                                  activeCount);
 }
 
-void lbvh_e::SeparateCasesCCD(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* counts){
-  // first we get the actual count
-  uint32_t cp_num_count = 0;
-  CUDA_SAFE_CALL(cudaMemcpy(&cp_num_count, _cpNum, sizeof(uint32_t), cudaMemcpyDeviceToHost));
-  if (cp_num_count == 0) return;
+void lbvh_expand_cached_candidates(lbvh_f*  faceObj,
+                                   lbvh_e*  edgeObj,
+                                   int4*    expandedPairs,
+                                   uint32_t candidateCount)
+{
+    lbvh* shared = initialized_shared_owner(faceObj, edgeObj);
+    if(!shared || !expandedPairs || !shared->_candidatePairs || candidateCount == 0)
+        return;
 
-  const unsigned int threadNum = default_threads;
-  int blockNum = (cp_num_count + threadNum - 1) / threadNum;
-
-  separate_cases_edges<<<blockNum, threadNum>>>(_ccd_collisionPair, pp_indices, pe_indices, ee_indices, _cpNum, counts);
-  CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    candidateCount = __m_min(candidateCount, shared->_maxCandidatePairs);
+    const bool faceInitialized = faceObj && faceObj->_initialized;
+    const bool edgeInitialized = edgeObj && edgeObj->_initialized;
+    const uint32_t blocks = (candidateCount + BVH_THREADS - 1) / BVH_THREADS;
+    expand_cached_candidates<<<blocks, BVH_THREADS>>>(
+        shared->_candidatePairs,
+        faceInitialized ? faceObj->_faces : nullptr,
+        edgeInitialized ? edgeObj->_edges : nullptr,
+        expandedPairs,
+        candidateCount);
 }
 
-void lbvh_e::SeparateCasesCD(uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* counts){
-  // first we get the actual count
-  uint32_t cp_num_count = 0;
-  CUDA_SAFE_CALL(cudaMemcpy(&cp_num_count, _cpNum, sizeof(uint32_t), cudaMemcpyDeviceToHost));
-  if (cp_num_count == 0) return;
-
-  const unsigned int threadNum = default_threads;
-  int blockNum = (cp_num_count + threadNum - 1) / threadNum;
-
-  separate_cases_edges<<<blockNum, threadNum>>>(_collisionPair, pp_indices, pe_indices, ee_indices, _cpNum, counts);
-  CUDA_SAFE_CALL(cudaDeviceSynchronize());
+void lbvh_f_self_collision_detect(lbvh_f* obj, double dHat)
+{
+    if(obj)
+        obj->SelfCollitionDetect(dHat);
 }
 
-
-
-
-
-void lbvh_f_separate_cases_ccd(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count){
-  obj->SeparateCasesCCD(pp_indices, pe_indices, pt_indices, count);
-}
-void lbvh_e_separate_cases_ccd(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count){
-  obj->SeparateCasesCCD(pp_indices,pe_indices, ee_indices, count);
+void lbvh_e_self_collision_detect(lbvh_e* obj, double dHat)
+{
+    if(obj)
+        obj->SelfCollitionDetect(dHat);
 }
 
-void lbvh_f_separate_cases_cd(lbvh_f* obj, uint2* pp_indices, uint3* pe_indices, uint4* pt_indices, uint32_t* count){
-  obj->SeparateCasesCD(pp_indices, pe_indices, pt_indices, count);
-}
-void lbvh_e_separate_cases_cd(lbvh_e* obj, uint2* pp_indices, uint3* pe_indices, uint4* ee_indices, uint32_t* count){
-  obj->SeparateCasesCD(pp_indices,pe_indices, ee_indices, count);
+void lbvh_f_self_collision_full_detect(
+    lbvh_f* obj, double dHat, const double3* moveDir, double alpha)
+{
+    if(obj)
+        obj->SelfCollitionFullDetect(dHat, moveDir, alpha);
 }
 
+void lbvh_e_self_collision_full_detect(
+    lbvh_e* obj, double dHat, const double3* moveDir, double alpha)
+{
+    if(obj)
+        obj->SelfCollitionFullDetect(dHat, moveDir, alpha);
+}
 
-} // end of extern c
+double scene_size_f(lbvh_f* obj)
+{
+    if(!obj || obj->face_number == 0)
+        return 0.0;
+    obj->getSceneSize();
+    return scene_diagonal_squared(obj->scene);
+}
+
+double scene_size_e(lbvh_e* obj)
+{
+    if(!obj || obj->edge_number == 0)
+        return 0.0;
+    obj->Construct(obj->_vertexes);
+    return scene_diagonal_squared(obj->scene);
+}
+}
