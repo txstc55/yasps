@@ -1,5 +1,6 @@
 ---
 title: Primitive unions
+chapter: "05"
 description: Combine shape-compatible attributes from heterogeneous primitives with UNION.
 permalink: /union/
 next_url: /optimization/

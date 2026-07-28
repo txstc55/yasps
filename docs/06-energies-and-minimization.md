@@ -1,5 +1,6 @@
 ---
 title: Energies and minimization
+chapter: "06"
 description: Register scalar energies, select targets, assemble derivatives, and integrate YASPS into a Newton loop.
 permalink: /optimization/
 next_url: /dynamic-scenes/

@@ -1,5 +1,6 @@
 ---
 title: Dynamic topology
+chapter: "07"
 description: Update runtime instance counts and fixed-arity connectivity for collision and contact energies.
 permalink: /dynamic-scenes/
 next_url: /tutorials/mixed-separation/

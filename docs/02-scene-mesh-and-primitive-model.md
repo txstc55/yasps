@@ -1,5 +1,6 @@
 ---
 title: Scene, mesh, and primitive model
+chapter: "02"
 description: Understand YASPS scenes, meshes, primitives, unions, lineage, and how model structure becomes generated execution.
 permalink: /concepts/
 next_url: /attributes/

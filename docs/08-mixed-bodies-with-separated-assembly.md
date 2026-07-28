@@ -1,5 +1,6 @@
 ---
 title: Mixed bodies with separated assembly
+chapter: "08"
 description: Build and solve the five-bunny container example across soft, affine, static, and dynamic contact parameterizations.
 permalink: /tutorials/mixed-separation/
 ---

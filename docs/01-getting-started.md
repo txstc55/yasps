@@ -1,5 +1,6 @@
 ---
 title: Getting started
+chapter: "01"
 description: Install the CUDA implementation of YASPS and run a small symbolic minimization.
 permalink: /getting-started/
 next_url: /concepts/

@@ -18,6 +18,56 @@ REFERENCE = (
     DOCS / "reference" / "advanced.md",
     DOCS / "reference" / "internal.md",
 )
+ORDERED_CHAPTERS = (
+    (
+        "01-getting-started.md",
+        "01",
+        "Getting started",
+        "/getting-started/",
+    ),
+    (
+        "02-scene-mesh-and-primitive-model.md",
+        "02",
+        "Scene, mesh, and primitive model",
+        "/concepts/",
+    ),
+    (
+        "03-attributes-and-expressions.md",
+        "03",
+        "Attributes and expressions",
+        "/attributes/",
+    ),
+    (
+        "04-connectivity-and-join.md",
+        "04",
+        "Connectivity and JOIN",
+        "/join/",
+    ),
+    (
+        "05-primitive-unions.md",
+        "05",
+        "Primitive unions",
+        "/union/",
+    ),
+    (
+        "06-energies-and-minimization.md",
+        "06",
+        "Energies and minimization",
+        "/optimization/",
+    ),
+    (
+        "07-dynamic-topology.md",
+        "07",
+        "Dynamic topology",
+        "/dynamic-scenes/",
+    ),
+    (
+        "08-mixed-bodies-with-separated-assembly.md",
+        "08",
+        "Mixed bodies with separated assembly",
+        "/tutorials/mixed-separation/",
+    ),
+)
 
 
 def front_matter(text: str) -> dict[str, str]:
@@ -36,8 +86,31 @@ def front_matter(text: str) -> dict[str, str]:
 
 def main() -> int:
     errors: list[str] = []
-    markdown_files = sorted(DOCS.rglob("*.md"))
+    markdown_files = sorted(
+        path for path in DOCS.rglob("*.md") if path.name != "README.md"
+    )
     pages: dict[str, Path] = {"/": DOCS / "index.md"}
+
+    for filename, chapter, title, permalink in ORDERED_CHAPTERS:
+        path = DOCS / filename
+        if not path.is_file():
+            errors.append(f"chapters: ordered file {filename!r} is missing")
+            continue
+        metadata = front_matter(path.read_text(encoding="utf-8"))
+        actual_chapter = metadata.get("chapter", "").strip("\"'")
+        if actual_chapter != chapter:
+            errors.append(
+                f"{filename}: expected chapter {chapter!r}, "
+                f"found {actual_chapter!r}"
+            )
+        if metadata.get("title") != title:
+            errors.append(
+                f"{filename}: title must match ordered filename: {title!r}"
+            )
+        if metadata.get("permalink") != permalink:
+            errors.append(
+                f"{filename}: public URL changed from {permalink!r}"
+            )
 
     for path in markdown_files:
         text = path.read_text(encoding="utf-8")
@@ -238,20 +311,20 @@ def main() -> int:
                 )
 
     required_sections = {
-        "concepts.md": (
+        "02-scene-mesh-and-primitive-model.md": (
             "## Scenes",
             "## Meshes",
             "## Primitives",
             "## Primitive unions",
         ),
-        "attributes.md": (
+        "03-attributes-and-expressions.md": (
             "## Data attributes",
             "## Constant attributes",
             "## Computed attributes",
             "## JOIN attributes",
             "## UNION attributes",
         ),
-        "optimization.md": (
+        "06-energies-and-minimization.md": (
             "## The optimization pipeline",
             "## Register an energy",
             "## Register global targets",
@@ -279,7 +352,7 @@ def main() -> int:
                     f"{heading!r} is missing"
                 )
 
-    tutorial = DOCS / "tutorials" / "mixed-separation.md"
+    tutorial = DOCS / "08-mixed-bodies-with-separated-assembly.md"
     if not tutorial.is_file():
         errors.append("tutorial: mixed-separation walkthrough is missing")
 

@@ -1,5 +1,6 @@
 ---
 title: Attributes and expressions
+chapter: "03"
 description: Construct data, constants, computed expressions, JOINs, UNIONs, matrices, and materialized outputs in YASPS.
 permalink: /attributes/
 next_url: /join/

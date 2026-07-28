@@ -1,5 +1,6 @@
 ---
 title: Connectivity and JOIN
+chapter: "04"
 description: Define topology and gather attributes across primitives with fixed or variable-arity connectivity.
 permalink: /join/
 next_url: /union/
