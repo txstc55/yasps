@@ -147,6 +147,8 @@ def main() -> int:
     )
     if "<script" in layout_text:
         errors.append("layout: runtime scripts violate the static-site budget")
+    if "style.css' | relative_url }}?v={{ site.time" not in layout_text:
+        errors.append("layout: stylesheet URL must change with each site build")
 
     style_text = (DOCS / "assets" / "css" / "style.css").read_text(
         encoding="utf-8"
