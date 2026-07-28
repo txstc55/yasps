@@ -11,6 +11,7 @@ import os
 import ctypes
 from typing import List, Set
 import hashlib
+import json
 import subprocess
 from yasps.context import context
 import numpy as np
@@ -18,7 +19,31 @@ from yasps.hessianKernelHeader import hessianKernelHeader
 from yasps.hessianKernelFullProject import hessianKernelFullProject
 from yasps.hessianKernelNoProject import hessianKernelNoProject
 from yasps.hessianKernelHost import hessianKernelHost
-from yasps.hessianKernelSeparateJacobian import hessianKernelSeparateJacobian
+from yasps.hessianKernelSeparateJacobian import (
+  hessianKernelSeparateJacobian,
+  USE_DIRECT_SEPARATED_JACOBIAN_CONTRACTION,
+)
+
+HESSIAN_KERNEL_CACHE_VERSION = (
+  "v3_direct_compact_jacobian" if USE_DIRECT_SEPARATED_JACOBIAN_CONTRACTION
+  else "v3_symbolic_jacobian_helpers"
+)
+
+def _stable_content_signature(payload, length: int = 24) -> str:
+  encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+  return hashlib.sha256(encoded).hexdigest()[:length]
+
+def _bind_hessian_header(source: str, header_basename: str) -> str:
+  marker = '#include "allHeaders.cuh"'
+  if marker not in source:
+    raise ValueError("Hessian CUDA source is missing the generated-header include.")
+  return source.replace(marker, f'#include "{header_basename}"', 1)
+
+def _write_generated_source(path: str, source: str, build_token: str) -> None:
+  temporary_path = f"{path}.tmp_{build_token}"
+  with open(temporary_path, "w") as f:
+    f.write(source)
+  os.replace(temporary_path, path)
 
 class hessianAndGradientKernel:
   att_name_to_gradient_sizes: dict[str, Set[int]] = {}  # maps attribute names to their unique gradient sizes, this way we only need to generate unique gradient sizes once
@@ -58,7 +83,7 @@ class hessianAndGradientKernel:
     wrt: List[attribute], # wrt
     max_num_indices: int, # max number of indices for each local hessian
     global_jacobian_block_nonzero_attributes: List[attribute] = [],
-    global_jacobian_block_nonzero_local_positions: List[attribute] = [],
+    global_jacobian_block_nonzero_local_positions: List[int] = [],
     global_jacobian_children_sizes: List[int] = [],
     global_jacobian_children_spans: List[int] = [],
   ) -> None:
@@ -94,134 +119,251 @@ class hessianAndGradientKernel:
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
-    wrt_names = "_".join([att.fullName for att in wrt])
-    size_names = "_".join([str(size) for size in unique_gradient_sizes])
-    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullName}_wrt_{wrt_names}_with_sizes_{size_names}"
-    full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
-    file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}" + ("" if self.__project_entire_hessian else "_no_proj")
-    # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
-    # print(f"hashed: {file_name}.cu")
-    if not os.path.exists(f'{file_name}.so'):
-      hessian_header_file = hessianKernelHeader(self.__att, self.__unique_gradient_sizes, sortedDependency)
-      with open(".yasps_tmp/allHeaders.cuh", 'w') as f:
-        f.write(hessian_header_file.kernelString)
-        f.close()
+    sorted_unique_gradient_sizes = sorted(
+      int(size) for size in self.__unique_gradient_sizes if int(size) != 0
+    )
+    if self.__att.name == "":
+      attributeName = f'attr_{self.__att.hash}'.replace("-", "_neg_")
+    else:
+      attributeName = self.__att.fullName
 
-      compile_jobs = []
-      obj_files = []
-      seen_obj_files = set([])
-      for item in (sortedDependency + [self.__att.deviceKernel]):
-        # we check if the .o file exists
-        cu_file = f".yasps_tmp/{item.attributeName}.cu"
-        obj_file = f".yasps_tmp/{item.attributeName}.o"
-        if not obj_file in seen_obj_files:
-          obj_files.append(obj_file)
-        if (not os.path.exists(obj_file)) and (not obj_file in seen_obj_files):
-          with open(cu_file, 'w') as f:
-            f.write(f'''
-#include "allHeaders.cuh"
+    hessian_header_string = hessianKernelHeader(
+      self.__att,
+      sorted_unique_gradient_sizes,
+      sortedDependency,
+    ).kernelString
+    header_signature = _stable_content_signature({"header": hessian_header_string})
+    header_basename = f"hessian_headers_{header_signature}.cuh"
+    header_path = f".yasps_tmp/{header_basename}"
+
+    generated_gradient_kernels = []
+    for unique_gradient_size in sorted_unique_gradient_sizes:
+      if self.__project_entire_hessian:
+        kernel_source = hessianKernelFullProject(
+          self.__att,
+          unique_gradient_size,
+          self.__gradient_only,
+          max_num_indices,
+          attributeName,
+        ).kernelString
+      elif not self.__clear_separation:
+        kernel_source = hessianKernelNoProject(
+          self.__att,
+          unique_gradient_size,
+          self.__gradient_only,
+          max_num_indices,
+          attributeName,
+        ).kernelString
+      else:
+        kernel_source = separate_jacobian_kernel.generateKernelString(
+          unique_gradient_size,
+          max_num_indices,
+          attributeName,
+          len(wrt),
+        )
+      generated_gradient_kernels.append((
+        unique_gradient_size,
+        _bind_hessian_header(kernel_source, header_basename),
+      ))
+
+    self.__kernelString = _bind_hessian_header(
+      prune_duplicate_functions(
+        hessianKernelHost(
+          self.__att,
+          sorted_unique_gradient_sizes,
+          max_child_gradient_size,
+          self.__project_entire_hessian,
+        ).kernelString
+      ),
+      header_basename,
+    )
+
+    compiler_identity = {
+      "arch": "sm_89",
+      "optimization": "-O3",
+      "std": "c++17",
+      "relocatable_device_code": True,
+      "extra_flags": list(self.__additional_compile_flags),
+    }
+    device_units = []
+    for item in (sortedDependency + [self.__att.deviceKernel]):
+      device_unit_source = f'''
+#include "{header_basename}"
 extern "C"{{
 {item.kernelString}
 }}
-''')
-            f.close()
-          compile_cmd = [
-            "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
-            "-O3",
-            "-c", cu_file, "-o", obj_file,
-            "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
-            "--relocatable-device-code=true",
-          ] + self.__additional_compile_flags
-          print("Command is")
-          print(" ".join(compile_cmd))
-          job = subprocess.Popen(compile_cmd)
-          compile_jobs.append(job)
-        seen_obj_files.add(obj_file)
+'''
+      device_unit_signature = _stable_content_signature({
+        "cache_version": HESSIAN_KERNEL_CACHE_VERSION,
+        "compiler": compiler_identity,
+        "header": hessian_header_string,
+        "source": device_unit_source,
+      })
+      device_units.append((device_unit_signature, device_unit_source))
 
-      # now actually generate the global kernel
-      attributeName: str = ""
-      if self.__att.name == "":
-        attributeName = f'attr_{self.__att.hash}'.replace("-", "_neg_")
-      else:
-        attributeName = self.__att.fullName
-      for unique_gradient_size in self.__unique_gradient_sizes:
-        if unique_gradient_size == 0:
+    generation_metadata = {
+      "cache_version": HESSIAN_KERNEL_CACHE_VERSION,
+      "compiler": compiler_identity,
+      "attribute": {
+        "full_name": self.__att.fullName,
+        "rows": int(self.__att.rows),
+        "cols": int(self.__att.cols),
+      },
+      "wrt": [
+        {
+          "full_name": item.fullName,
+          "rows": int(item.rows),
+          "cols": int(item.cols),
+          "size": int(item.size),
+          "is_dynamic": bool(item.isDynamic),
+        }
+        for item in wrt
+      ],
+      "unique_gradient_sizes": sorted_unique_gradient_sizes,
+      "max_child_gradient_size": int(max_child_gradient_size),
+      "max_num_indices": int(max_num_indices),
+      "project_entire_hessian": bool(self.__project_entire_hessian),
+      "projection_method": int(self.__projection_method),
+      "gradient_only": bool(self.__gradient_only),
+      "clear_separation": bool(self.__clear_separation),
+      "direct_separated_contraction_enabled": bool(USE_DIRECT_SEPARATED_JACOBIAN_CONTRACTION),
+      "jacobian_rows": int(self.__jacobian_rows),
+      "jacobian_cols": int(self.__jacobian_cols),
+      "hessian_row_size": int(self.__hessian_row_size),
+      "dynamic_term": bool(self.__dynamic_terms),
+      "jacobian_nonzero_attributes": [
+        item.fullNameWithHash for item in global_jacobian_block_nonzero_attributes
+      ],
+      "jacobian_nonzero_local_positions": [
+        int(position) for position in global_jacobian_block_nonzero_local_positions
+      ],
+      "jacobian_children_sizes": [int(size) for size in global_jacobian_children_sizes],
+      "jacobian_children_spans": [int(span) for span in global_jacobian_children_spans],
+    }
+    generation_signature = _stable_content_signature({
+      "metadata": generation_metadata,
+      "header": hessian_header_string,
+      "host": self.__kernelString,
+      "gradient_kernels": generated_gradient_kernels,
+      "device_units": device_units,
+    }, length=32)
+    file_name = f".yasps_tmp/compute_hessian_and_gradient_{generation_signature}"
+
+    if not os.path.exists(f'{file_name}.so'):
+      build_token = f"{os.getpid()}_{id(self)}"
+      if not os.path.exists(header_path):
+        _write_generated_source(header_path, hessian_header_string, build_token)
+
+      compile_jobs = []
+      obj_files = []
+      seen_obj_files = set()
+      for device_unit_signature, device_unit_source in device_units:
+        cu_file = f".yasps_tmp/hessian_device_{device_unit_signature}.cu"
+        obj_file = f".yasps_tmp/hessian_device_{device_unit_signature}.o"
+        if obj_file in seen_obj_files:
           continue
-        cu_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}" + (".cu" if self.__project_entire_hessian else "_no_proj.cu")
-        obj_file = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}_fgs_{unique_gradient_size}" + (".o" if self.__project_entire_hessian else "_no_proj.o")
+        seen_obj_files.add(obj_file)
         obj_files.append(obj_file)
-        # if not os.path.exists(obj_file):
-        if True: # always regenerate the kernel because header has been replaced
-          with open(cu_file, 'w') as f:
-            if self.__project_entire_hessian:
-              f.write(hessianKernelFullProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName).kernelString)
-            elif not self.__clear_separation:
-              f.write(hessianKernelNoProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName).kernelString)
-            else:
-              f.write(separate_jacobian_kernel.generateKernelString(unique_gradient_size, max_num_indices, attributeName))
-            f.close()
-          compile_cmd = [
-            "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
-            "-O3",
-            "-c", cu_file, "-o", obj_file,
-            "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
-            "--relocatable-device-code=true",
-          ] + self.__additional_compile_flags
-          print("Command is")
-          print(" ".join(compile_cmd))
-          job = subprocess.Popen(compile_cmd)
-          compile_jobs.append(job)
+        if os.path.exists(obj_file):
+          continue
+        _write_generated_source(cu_file, device_unit_source, build_token)
+        temporary_obj_file = f"{obj_file}.tmp_{build_token}"
+        compile_cmd = [
+          "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
+          "-O3",
+          "-c", cu_file, "-o", temporary_obj_file,
+          "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
+          "--relocatable-device-code=true",
+        ] + self.__additional_compile_flags
+        print("Command is")
+        print(" ".join(compile_cmd))
+        compile_jobs.append((
+          compile_cmd,
+          subprocess.Popen(compile_cmd),
+          temporary_obj_file,
+          obj_file,
+        ))
 
-      # now we add the c functions that will go over all the unique gradient sizes
-      self.__kernelString = hessianKernelHost(self.__att, self.__unique_gradient_sizes, max_child_gradient_size, self.__project_entire_hessian).kernelString
-      # prune duplicate functions
-      self.__kernelString = prune_duplicate_functions(self.__kernelString)
-      # generate the code to check
-      f = open(f"{file_name}.cu", "w")
-      f.write(self.__kernelString)
-      f.close()
-      # Generate global kernel .o file
+      gradient_obj_files = []
+      for unique_gradient_size, kernel_source in generated_gradient_kernels:
+        cu_file = f".yasps_tmp/hessian_gradient_{generation_signature}_{unique_gradient_size}.cu"
+        obj_file = f".yasps_tmp/hessian_gradient_{generation_signature}_{unique_gradient_size}.o"
+        gradient_obj_files.append(obj_file)
+        _write_generated_source(cu_file, kernel_source, build_token)
+        temporary_obj_file = f"{obj_file}.tmp_{build_token}"
+        compile_cmd = [
+          "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
+          "-O3",
+          "-c", cu_file, "-o", temporary_obj_file,
+          "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
+          "--relocatable-device-code=true",
+        ] + self.__additional_compile_flags
+        print("Command is")
+        print(" ".join(compile_cmd))
+        compile_jobs.append((
+          compile_cmd,
+          subprocess.Popen(compile_cmd),
+          temporary_obj_file,
+          obj_file,
+        ))
+      obj_files.extend(gradient_obj_files)
+
       kernel_cu_file = f"{file_name}.cu"
+      _write_generated_source(kernel_cu_file, self.__kernelString, build_token)
       kernel_obj_file = f"{file_name}.o"
+      temporary_kernel_obj_file = f"{kernel_obj_file}.tmp_{build_token}"
       kernel_compile_cmd = [
         "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
         "-O3",
-        "-c", kernel_cu_file, "-o", kernel_obj_file,
+        "-c", kernel_cu_file, "-o", temporary_kernel_obj_file,
         "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
         "--relocatable-device-code=true",
       ] + self.__additional_compile_flags
       print("Kernel compile command: ")
       print(" ".join(kernel_compile_cmd))
-      job = subprocess.Popen(kernel_compile_cmd)
-      compile_jobs.append(job)
-      # Wait for all compilation jobs
-      for job in compile_jobs:
-        job.wait()
+      compile_jobs.append((
+        kernel_compile_cmd,
+        subprocess.Popen(kernel_compile_cmd),
+        temporary_kernel_obj_file,
+        kernel_obj_file,
+      ))
 
+      compile_failures = []
+      for compile_cmd, job, temporary_obj_file, obj_file in compile_jobs:
+        return_code = job.wait()
+        if return_code != 0:
+          compile_failures.append((return_code, compile_cmd))
+        else:
+          os.replace(temporary_obj_file, obj_file)
+      if compile_failures:
+        return_code, compile_cmd = compile_failures[0]
+        raise subprocess.CalledProcessError(return_code, compile_cmd)
 
-      # obj_files = list(set(obj_files))
-      # Device link step: critical for CUDA separable compilation
       device_link_obj = f"{file_name}_device_link.o"
+      temporary_device_link_obj = f"{device_link_obj}.tmp_{build_token}"
       dlink_cmd = [
         "nvcc", "-dlink", "-Xcompiler", "-fPIC", "-arch=sm_89",
         "-O3",
-        *(obj_files + [kernel_obj_file]), "-o", device_link_obj,
+        *(obj_files + [kernel_obj_file]), "-o", temporary_device_link_obj,
         "--relocatable-device-code=true",
       ] + self.__additional_compile_flags
       print("Device link command: ")
       print(" ".join(dlink_cmd))
       subprocess.run(dlink_cmd, check=True)
-      # Final shared object linking
+      os.replace(temporary_device_link_obj, device_link_obj)
+
+      temporary_shared_object = f"{file_name}.so.tmp_{build_token}"
       final_link_cmd = [
         "nvcc", "-shared", "-Xcompiler", "-fPIC", "-arch=sm_89",
         "-O3",
         kernel_obj_file, device_link_obj, *obj_files,
-        "-o", f"{file_name}.so",
+        "-o", temporary_shared_object,
         "-lcudart", "-lcuda",
       ] + self.__additional_compile_flags
       print("Final link command: ")
       print(" ".join(final_link_cmd))
       subprocess.run(final_link_cmd, check=True)
+      os.replace(temporary_shared_object, f"{file_name}.so")
 
 
       self.__kernel = ctypes.CDLL(f"{file_name}.so").compute_hessian_and_gradient_with_compression # get the compiled kernel

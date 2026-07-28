@@ -2,9 +2,9 @@ from yasps.attribute import attribute
 from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
-from typing import List, Set
+from typing import List
 class hessianKernelHeader:
-  def __init__(self, att: attribute, unique_gradient_sizes: Set[int], sortedDependency: List[deviceKernel]):
+  def __init__(self, att: attribute, unique_gradient_sizes: List[int], sortedDependency: List[deviceKernel]):
     self.__att = att
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
@@ -132,7 +132,7 @@ __device__ void spd_projection_inplace(double *A, int choice) {
 extern "C" {{
 {item.kernelHeader};
 }}'''
-    for unique_gradient_size in unique_gradient_sizes:
+    for unique_gradient_size in sorted(unique_gradient_sizes):
       if unique_gradient_size == 0:
         continue
       self.__kernelString += f'''

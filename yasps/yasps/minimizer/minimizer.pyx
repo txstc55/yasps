@@ -337,7 +337,8 @@ class minimizer:
       self.__gradient_object,
       self.__initial_guess,
       tolerance=tolerance,
-      maxIterations=maxIterations
+      maxIterations=maxIterations,
+      zero_initial_guess=True
     )
     if self.__active_hessian is not None:
       self.__updateSolutionSegments()

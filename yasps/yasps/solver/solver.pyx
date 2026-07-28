@@ -16,6 +16,7 @@ class solver:
     self.__d_c: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
     self.__d_q: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
     self.__d_s: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__cg_scalars: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
     self.__solution: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
 
   @property
@@ -23,12 +24,16 @@ class solver:
     return self.__solution
 
   def reset(self) -> None:
+    if self.__solverKernel is not None:
+      # Keep cleanup explicit: a Python finalizer may run after CUDA teardown.
+      self.__solverKernel.cleanupStreams()
     self.__solverKernel = None
     self.__d_p1_b = gpuarray.empty(0, dtype=np.float64)
     self.__d_r = gpuarray.empty(0, dtype=np.float64)
     self.__d_c = gpuarray.empty(0, dtype=np.float64)
     self.__d_q = gpuarray.empty(0, dtype=np.float64)
     self.__d_s = gpuarray.empty(0, dtype=np.float64)
+    self.__cg_scalars = gpuarray.empty(0, dtype=np.float64)
     self.__solution = gpuarray.empty(0, dtype=np.float64)
 
   def __ensureBuffers(self, active_hessian, gradient_object) -> None:
@@ -40,16 +45,19 @@ class solver:
     if active_hessian is None:
       return
 
+    if self.__solverKernel is not None:
+      self.__solverKernel.cleanupStreams()
     self.__solverKernel = solverKernel(active_hessian.block_dimensions + active_hessian.block_dimensions_dynamic)
     self.__d_p1_b = gpuarray.empty(gradient.shape, dtype=np.float64)
     self.__d_r = gpuarray.empty(gradient.shape, dtype=np.float64)
     self.__d_c = gpuarray.empty(gradient.shape, dtype=np.float64)
     self.__d_q = gpuarray.empty(gradient.shape, dtype=np.float64)
     self.__d_s = gpuarray.empty(gradient.shape, dtype=np.float64)
+    # Persistent device-side CG recurrence state; see CgScalarSlot in solverKernel.
+    self.__cg_scalars = gpuarray.empty(8, dtype=np.float64)
     self.__solution = gpuarray.empty(gradient.shape, dtype=np.float64)
-    self.__solution.fill(0)
 
-  def computeSolution(self, active_hessian, wrt, gradient_object, initial_guess, tolerance = 1e-3, maxIterations = 20000):
+  def computeSolution(self, active_hessian, wrt, gradient_object, initial_guess, tolerance = 1e-3, maxIterations = 20000, zero_initial_guess = False):
     gradient = gradient_object.value
     if gradient.size == 0:
       return 0
@@ -62,13 +70,6 @@ class solver:
     self.__ensureBuffers(active_hessian, gradient_object)
     assert self.__solverKernel is not None
     self.__solverKernel.updateBlockDimensions(active_hessian.block_dimensions + active_hessian.block_dimensions_dynamic)
-
-    self.__d_p1_b.fill(0)
-    self.__d_r.fill(0)
-    self.__d_c.fill(0)
-    self.__d_q.fill(0)
-    self.__d_s.fill(0)
-    self.__solution.fill(0)
 
     return self.__solverKernel.computeSolution(
       maxIterations,
@@ -97,5 +98,7 @@ class solver:
       self.__d_q,
       self.__d_s,
       self.__solution,
-      initial_guess
+      initial_guess,
+      zero_initial_guess=zero_initial_guess,
+      cg_scalars=self.__cg_scalars
     )
