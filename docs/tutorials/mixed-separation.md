@@ -4,11 +4,13 @@ description: Build and solve the five-bunny container example across soft, affin
 permalink: /tutorials/mixed-separation/
 ---
 
-<p class="eyebrow">Complete frontend walkthrough</p>
+<p class="eyebrow">Frontend capstone · chapter 08</p>
 
 # Mixed bodies, one collision objective
 
-<p class="lead">This tutorial follows the real <code>dropping_in_container_mixed_separation</code> program from mesh loading to velocity update. With five bunnies, four use free vertex degrees of freedom, one uses an affine matrix and translation, and all five collide with the same static container through one symbolic frontend.</p>
+<p class="lead">This is the program the preceding chapters have been building toward. It follows the real <code>dropping_in_container_mixed_separation</code> example from mesh loading to velocity update: five bunnies, two parameterizations, one static container, and one symbolic collision frontend.</p>
+
+Read this capstone after chapters 01–07. It assembles the scene hierarchy, attributes, JOIN, UNION, energy registry, minimization targets, and dynamic contact topology in the same order that the documentation introduces them.
 
 <div class="hero-actions">
   <a class="button" href="https://github.com/txstc55/yasps/blob/main/examples/dropping_in_container_mixed_separation/dropping_in_container.py">Open the complete program</a>
@@ -91,8 +93,8 @@ mu_soft = soft_mesh.addConstant("mu")
 lam_soft = soft_mesh.addConstant("lambda")
 
 soft_vertices = soft_mesh.addPrimitive(
-    "vertices_soft",
-    numInstances=4 * NUM_BUNNY_VERTICES,
+  "vertices_soft",
+  numInstances=4 * NUM_BUNNY_VERTICES,
 )
 
 x_soft = soft_vertices.addAttribute("position", rows=3, cols=1)
@@ -108,26 +110,26 @@ Tetrahedra need four vertex positions per instance. The connectivity makes that 
 
 ```python
 soft_tets = soft_mesh.addPrimitive(
-    "tets_soft",
-    numInstances=4 * NUM_BUNNY_TETS,
+  "tets_soft",
+  numInstances=4 * NUM_BUNNY_TETS,
 )
 
 tet2vertex = soft_tets.addConnectivity(
-    "tets_softs2_vertices",
-    soft_vertices,
-    bunny_tet_indices_soft,
-    4,
+  "tets_softs2_vertices",
+  soft_vertices,
+  bunny_tet_indices_soft,
+  4,
 )
 
 tet_x = soft_tets.addAttribute(
-    "positions",
-    through=tet2vertex,
-    source=x_soft,
+  "positions",
+  through=tet2vertex,
+  source=x_soft,
 )
 tet_x_rest = soft_tets.addAttribute(
-    "rest_positions",
-    through=tet2vertex,
-    source=x_rest,
+  "rest_positions",
+  through=tet2vertex,
+  source=x_rest,
 )
 ```
 
@@ -143,19 +145,19 @@ The example forms rest and current edge matrices from the four gathered rows:
 
 ```python
 def edge_matrix(tet_positions):
-    p0 = tet_positions.row(0)
-    e0 = tet_positions.row(1) - p0
-    e1 = tet_positions.row(2) - p0
-    e2 = tet_positions.row(3) - p0
-    return attribute.to_array(
-        [
-            e0[0], e0[1], e0[2],
-            e1[0], e1[1], e1[2],
-            e2[0], e2[1], e2[2],
-        ],
-        rows=3,
-        cols=3,
-    )
+  p0 = tet_positions.row(0)
+  e0 = tet_positions.row(1) - p0
+  e1 = tet_positions.row(2) - p0
+  e2 = tet_positions.row(3) - p0
+  return attribute.to_array(
+    [
+      e0[0], e0[1], e0[2],
+      e1[0], e1[1], e1[2],
+      e2[0], e2[1], e2[2],
+    ],
+    rows=3,
+    cols=3,
+  )
 
 TB = soft_tets.addAttribute("TB", computed_attribute=edge_matrix(tet_x_rest))
 F = soft_tets.addAttribute("F", computed_attribute=edge_matrix(tet_x))
@@ -167,20 +169,20 @@ Both soft and affine bodies later call the same helper:
 
 ```python
 def stable_neo_hookean_modified(F, TB, mu, lam, dt):
-    inverse_basis = TB.transpose().inverse()
-    volume = TB.transpose().determinant() / 6.0
-    deformation = F.transpose() * inverse_basis
-    J = deformation.determinant()
-    Ic = (deformation.transpose() * deformation).trace()
-    I3 = Ic + 1.0
+  inverse_basis = TB.transpose().inverse()
+  volume = TB.transpose().determinant() / 6.0
+  deformation = F.transpose() * inverse_basis
+  J = deformation.determinant()
+  Ic = (deformation.transpose() * deformation).trace()
+  I3 = Ic + 1.0
 
-    return volume * (
-        0.5 * mu * (Ic - 3.0)
-        - 0.5 * mu * I3.log()
-        + 0.5 * lam
-        * (J - (1.0 + 0.75 * mu / lam))
-        * (J - (1.0 + 0.75 * mu / lam))
-    ) * dt * dt
+  return volume * (
+    0.5 * mu * (Ic - 3.0)
+    - 0.5 * mu * I3.log()
+    + 0.5 * lam
+    * (J - (1.0 + 0.75 * mu / lam))
+    * (J - (1.0 + 0.75 * mu / lam))
+  ) * dt * dt
 ```
 
 Every line constructs `attribute` nodes. Python does not materialize `deformation`, `J`, or the partial energy arrays.
@@ -199,8 +201,8 @@ mu_affine = affine_mesh.addConstant("mu")
 lam_affine = affine_mesh.addConstant("lambda")
 
 affine_bodies = affine_mesh.addPrimitive(
-    "affine_bodies",
-    numInstances=1,
+  "affine_bodies",
+  numInstances=1,
 )
 
 A = affine_bodies.addAttribute("affine_matrices", rows=3, cols=3)
@@ -211,40 +213,40 @@ Affine vertices are not independent targets. A one-to-one JOIN broadcasts the ow
 
 ```python
 affine_vertices = affine_mesh.addPrimitive(
-    "vertices_abd",
-    numInstances=NUM_BUNNY_VERTICES,
+  "vertices_abd",
+  numInstances=NUM_BUNNY_VERTICES,
 )
 r = affine_vertices.addConstant("rest_position", rows=3, cols=1)
 affine_x_last = affine_vertices.addConstant(
-    "last_position",
-    rows=3,
-    cols=1,
+  "last_position",
+  rows=3,
+  cols=1,
 )
 v_affine = affine_vertices.addConstant("velocity", rows=3, cols=1)
 mass_affine = affine_vertices.addConstant("mass", rows=1, cols=1)
 
 vertex2body = affine_vertices.addConnectivity(
-    "v_abd2_abd",
-    affine_bodies,
-    [[0] * NUM_BUNNY_VERTICES],
-    1,
+  "v_abd2_abd",
+  affine_bodies,
+  [[0] * NUM_BUNNY_VERTICES],
+  1,
 )
 
 vertex_A = affine_vertices.addAttribute(
-    "affine_matrix",
-    through=vertex2body,
-    source=A,
+  "affine_matrix",
+  through=vertex2body,
+  source=A,
 ).resize(3, 3)
 
 vertex_t = affine_vertices.addAttribute(
-    "translation",
-    through=vertex2body,
-    source=t,
+  "translation",
+  through=vertex2body,
+  source=t,
 ).resize(3, 1)
 
 x_affine = affine_vertices.addAttribute(
-    "position",
-    computed_attribute=vertex_A * r + vertex_t,
+  "position",
+  computed_attribute=vertex_A * r + vertex_t,
 )
 ```
 
@@ -270,8 +272,8 @@ The container contributes a third `position` attribute. It is numerical data, bu
 ```python
 container = world.addMesh("container")
 container_vertices = container.addPrimitive(
-    "vertices",
-    numInstances=len(container_positions),
+  "vertices",
+  numInstances=len(container_positions),
 )
 container_x = container_vertices.addAttribute("position", rows=3, cols=1)
 container_x.updateValue(container_positions)
@@ -283,8 +285,8 @@ UNION stacks the three populations in a known order:
 collision_mesh = world.addMesh("collision_mesh")
 
 collision_vertices = collision_mesh.addPrimitiveUnion(
-    "vertices",
-    [soft_vertices, affine_vertices, container_vertices],
+  "vertices",
+  [soft_vertices, affine_vertices, container_vertices],
 )
 
 collision_x = collision_vertices.addAttribute("position")
@@ -327,13 +329,13 @@ The contact helper functions consume only a gathered matrix and scalar constants
 
 ```python
 def point_point(position, dHat, kappa):
-    p0 = position.row(0)
-    p1 = position.row(1)
-    distance_squared = (p1 - p0).dot(p1 - p0)
-    normalized = distance_squared / dHat
-    offset = distance_squared - dHat
-    log_term = normalized.log()
-    return kappa * offset * offset * log_term * log_term
+  p0 = position.row(0)
+  p1 = position.row(1)
+  distance_squared = (p1 - p0).dot(p1 - p0)
+  normalized = distance_squared / dHat
+  offset = distance_squared - dHat
+  log_term = normalized.log()
+  return kappa * offset * offset * log_term * log_term
 ```
 
 Point–edge, point–triangle, and edge–edge use the same pattern with their own symbolic squared-distance formula. None of them asks whether a row came from a soft body, affine body, or container.
@@ -348,60 +350,60 @@ Name every scalar energy on its owning primitive, then register its numerical po
 
 ```python
 snh_softs = bdg.addAttribute(
-    "snh_softs",
-    computed_attribute=stable_neo_hookean_modified(
-        bdg_F,
-        bdg_TB,
-        soft_mesh["mu"],
-        soft_mesh["lambda"],
-        dt,
-    ),
+  "snh_softs",
+  computed_attribute=stable_neo_hookean_modified(
+    bdg_F,
+    bdg_TB,
+    soft_mesh["mu"],
+    soft_mesh["lambda"],
+    dt,
+  ),
 )
 snh_abds = bdg_abd.addAttribute(
-    "snh_abds",
-    computed_attribute=stable_neo_hookean_modified(
-        bdg_F_abd,
-        bdg_TB_abd,
-        affine_mesh["mu"],
-        affine_mesh["lambda"],
-        dt,
-    ),
+  "snh_abds",
+  computed_attribute=stable_neo_hookean_modified(
+    bdg_F_abd,
+    bdg_TB_abd,
+    affine_mesh["mu"],
+    affine_mesh["lambda"],
+    dt,
+  ),
 )
 
 inertia_softs = soft_vertices.addAttribute(
-    "inertia_softs",
-    computed_attribute=inertia(x_last, v_soft, dt, x_soft, mass_soft),
+  "inertia_softs",
+  computed_attribute=inertia(x_last, v_soft, dt, x_soft, mass_soft),
 )
 inertia_abds = affine_vertices.addAttribute(
-    "inertia_abds",
-    computed_attribute=inertia(
-        affine_x_last,
-        v_affine,
-        dt,
-        x_affine,
-        mass_affine,
-    ),
+  "inertia_abds",
+  computed_attribute=inertia(
+    affine_x_last,
+    v_affine,
+    dt,
+    x_affine,
+    mass_affine,
+  ),
 )
 affine_constraint = affine_bodies.addAttribute(
-    "affine_energy",
-    computed_attribute=affine_energy(A),
+  "affine_energy",
+  computed_attribute=affine_energy(A),
 )
 
 point_point_e = pp.addAttribute(
-    "point_point",
-    computed_attribute=point_point(pp_x, dhat, kappa),
+  "point_point",
+  computed_attribute=point_point(pp_x, dhat, kappa),
 )
 point_edge_e = pe.addAttribute(
-    "point_edge",
-    computed_attribute=point_edge(pe_x, dhat, kappa),
+  "point_edge",
+  computed_attribute=point_edge(pe_x, dhat, kappa),
 )
 point_triangle_e = pt.addAttribute(
-    "point_triangle",
-    computed_attribute=point_triangle(pt_x, dhat, kappa),
+  "point_triangle",
+  computed_attribute=point_triangle(pt_x, dhat, kappa),
 )
 edge_edge_e = ee.addAttribute(
-    "edge_edge",
-    computed_attribute=edge_edge(ee_x, dhat, kappa),
+  "edge_edge",
+  computed_attribute=edge_edge(ee_x, dhat, kappa),
 )
 
 world.addEnergy(snh_softs, projection_method=1)
@@ -413,12 +415,12 @@ world.addEnergy(inertia_abds, projection_method=-1)
 world.addEnergy(affine_constraint, projection_method=2)
 
 for contact_energy in [point_point_e, point_edge_e, point_triangle_e, edge_edge_e]:
-    world.addEnergy(
-        contact_energy,
-        dynamic_instances=True,
-        projection_method=2,
-        separate_hessian_jacobian=True,
-    )
+  world.addEnergy(
+    contact_energy,
+    dynamic_instances=True,
+    projection_method=2,
+    separate_hessian_jacobian=True,
+  )
 ```
 
 The policies are intentionally different:
@@ -487,13 +489,13 @@ pt.updateNumInstances(pt_count)
 ee.updateNumInstances(ee_count)
 
 if pp_count:
-    pp2v.updateConnectivity(ccd.pp[: 2 * pp_count])
+  pp2v.updateConnectivity(ccd.pp[: 2 * pp_count])
 if pe_count:
-    pe2v.updateConnectivity(ccd.pe[: 3 * pe_count])
+  pe2v.updateConnectivity(ccd.pe[: 3 * pe_count])
 if pt_count:
-    pt2v.updateConnectivity(ccd.pt[: 4 * pt_count])
+  pt2v.updateConnectivity(ccd.pt[: 4 * pt_count])
 if ee_count:
-    ee2v.updateConnectivity(ccd.ee[: 4 * ee_count])
+  ee2v.updateConnectivity(ccd.ee[: 4 * ee_count])
 ```
 
 The symbolic barrier expressions remain untouched. On the next assembly, dynamic index kernels recompute which global blocks these active stencil instances reach.
@@ -508,58 +510,58 @@ One frame in the original program has three levels of responsibility:
 
 ```python
 for frame in range(200):
-    # State history for inertia.
-    x_last.updateValue(x_soft.value, deepCopy=True)
-    affine_x_last.updateValue(x_affine.compute().value, deepCopy=True)
+  # State history for inertia.
+  x_last.updateValue(x_soft.value, deepCopy=True)
+  affine_x_last.updateValue(x_affine.compute().value, deepCopy=True)
 
-    while True:
-        # YASPS: assemble H/g and solve H Δx = g.
-        dx_soft, dA, dt_affine = world.minimizeEnergy(tolerance=1e-4)
-        energy_before = world.computeTotalEnergy()
+  while True:
+    # YASPS: assemble H/g and solve H Δx = g.
+    dx_soft, dA, dt_affine = world.minimizeEnergy(tolerance=1e-4)
+    energy_before = world.computeTotalEnergy()
 
-        # Application: preserve the accepted state.
-        x0 = x_soft.value.copy()
-        A0 = A.value.copy()
-        t0 = t.value.copy()
-        union_x0 = collision_x.compute().value.copy()
+    # Application: preserve the accepted state.
+    x0 = x_soft.value.copy()
+    A0 = A.value.copy()
+    t0 = t.value.copy()
+    union_x0 = collision_x.compute().value.copy()
 
-        # Application: test a full step and ask CCD for a safe bound.
-        x_soft.updateValue(x0 - dx_soft, deepCopy=True)
-        A.updateValue(A0 - dA, deepCopy=True)
-        t.updateValue(t0 - dt_affine, deepCopy=True)
-        direction_world = union_x0 - collision_x.compute().value
-        ccd.ccd(union_x0, DHAT_VALUE, direction_world, 0.5)
-        alpha = ccd.compute_largest_step_size(
-            0.5,
-            union_x0,
-            direction_world,
-        )
-
-        # Application + YASPS dynamic frontend: backtrack and refresh contacts.
-        for _ in range(8):
-            x_soft.updateValue(x0 - alpha * dx_soft, deepCopy=True)
-            A.updateValue(A0 - alpha * dA, deepCopy=True)
-            t.updateValue(t0 - alpha * dt_affine, deepCopy=True)
-
-            ccd.cd(collision_x.compute().value, DHAT_VALUE)
-            update_dynamic_contact_primitives()
-
-            if world.computeTotalEnergy() <= energy_before:
-                break
-            alpha *= 0.5
-
-        if max_world_velocity(direction_world, DT_VALUE) < 1e-2:
-            break
-
-    # State integration after the accepted frame.
-    v_soft.updateValue(
-        (x_soft.value - x_last.value) / DT_VALUE,
-        deepCopy=True,
+    # Application: test a full step and ask CCD for a safe bound.
+    x_soft.updateValue(x0 - dx_soft, deepCopy=True)
+    A.updateValue(A0 - dA, deepCopy=True)
+    t.updateValue(t0 - dt_affine, deepCopy=True)
+    direction_world = union_x0 - collision_x.compute().value
+    ccd.ccd(union_x0, DHAT_VALUE, direction_world, 0.5)
+    alpha = ccd.compute_largest_step_size(
+      0.5,
+      union_x0,
+      direction_world,
     )
-    v_affine.updateValue(
-        (x_affine.compute().value - affine_x_last.value) / DT_VALUE,
-        deepCopy=True,
-    )
+
+    # Application + YASPS dynamic frontend: backtrack and refresh contacts.
+    for _ in range(8):
+      x_soft.updateValue(x0 - alpha * dx_soft, deepCopy=True)
+      A.updateValue(A0 - alpha * dA, deepCopy=True)
+      t.updateValue(t0 - alpha * dt_affine, deepCopy=True)
+
+      ccd.cd(collision_x.compute().value, DHAT_VALUE)
+      update_dynamic_contact_primitives()
+
+      if world.computeTotalEnergy() <= energy_before:
+        break
+      alpha *= 0.5
+
+    if max_world_velocity(direction_world, DT_VALUE) < 1e-2:
+      break
+
+  # State integration after the accepted frame.
+  v_soft.updateValue(
+    (x_soft.value - x_last.value) / DT_VALUE,
+    deepCopy=True,
+  )
+  v_affine.updateValue(
+    (x_affine.compute().value - affine_x_last.value) / DT_VALUE,
+    deepCopy=True,
+  )
 ```
 
 The excerpt names the same operations as the production loop while compressing its timing and rendering code. The boundary is deliberate:

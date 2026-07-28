@@ -18,10 +18,10 @@ The meaningful way to obtain one is through differentiation:
 from yasps import differentiator
 
 H = differentiator().diff2(
-    [energy],
-    targets,
-    targets,
-    projection_method=2,
+  [energy],
+  targets,
+  targets,
+  projection_method=2,
 )
 H.compute()
 ```
@@ -103,12 +103,12 @@ H = engine.computeNumericValue()
 initial_guess = gpuarray.zeros_like(engine.gradient)
 pcg = solver()
 status = pcg.computeSolution(
-    H,
-    engine.wrt,
-    H.gradient,
-    initial_guess,
-    tolerance=1e-3,
-    maxIterations=20000,
+  H,
+  engine.wrt,
+  H.gradient,
+  initial_guess,
+  tolerance=1e-3,
+  maxIterations=20000,
 )
 
 flat_direction = pcg.solution

@@ -2,6 +2,8 @@
 title: Mental model
 description: Understand YASPS scenes, lineage, symbolic attributes, JOIN, UNION, and generated execution.
 permalink: /concepts/
+next_url: /attributes/
+next_label: Attributes and expressions
 ---
 
 <p class="eyebrow">Core concepts</p>
@@ -74,9 +76,9 @@ A connectivity maps each source instance to one or more target instances. JOIN g
 ```python
 tet2v = tets.addConnectivity("tet2v", vertices, tet_indices, 4)
 tet_positions = tets.addAttribute(
-    "positions",
-    through=tet2v,
-    source=vertices["position"],
+  "positions",
+  through=tet2v,
+  source=vertices["position"],
 )
 ```
 
@@ -89,8 +91,8 @@ UNION stacks shape-compatible attributes from multiple primitives while preservi
 ```python
 collision_mesh = world.addMesh("collision")
 all_vertices = collision_mesh.addPrimitiveUnion(
-    "vertices",
-    [soft_vertices, affine_vertices],
+  "vertices",
+  [soft_vertices, affine_vertices],
 )
 all_positions = all_vertices.addAttribute("position")
 ```
@@ -139,7 +141,7 @@ At runtime, update both the count and the connectivity before evaluating the cor
 ```python
 pairs.updateNumInstances(pair_count)
 if pair_count:
-    pair2v.updateConnectivity(pair_indices)
+  pair2v.updateConnectivity(pair_indices)
 ```
 
 Dynamic energies must be registered with `dynamic_instances=True`.

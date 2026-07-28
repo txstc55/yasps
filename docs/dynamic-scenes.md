@@ -2,6 +2,8 @@
 title: Dynamic topology
 description: Update runtime instance counts and fixed-arity connectivity for collision and contact energies.
 permalink: /dynamic-scenes/
+next_url: /tutorials/mixed-separation/
+next_label: Assemble the mixed-body capstone
 ---
 
 <p class="eyebrow">Simulation integration</p>
@@ -18,16 +20,16 @@ Create the primitive and its fixed-arity connectivity during setup:
 collision = world.addMesh("collision")
 
 pairs = collision.addPrimitive(
-    "pairs",
-    numInstances=0,
-    isDynamic=True,
+  "pairs",
+  numInstances=0,
+  isDynamic=True,
 )
 
 pair2vertex = pairs.addConnectivity(
-    "pair2vertex",
-    to=all_vertices,
-    data=[],
-    dimension=4,
+  "pair2vertex",
+  to=all_vertices,
+  data=[],
+  dimension=4,
 )
 ```
 
@@ -35,22 +37,22 @@ The expression can be built even when there are no active pairs:
 
 ```python
 pair_position = pairs.addAttribute(
-    "position",
-    through=pair2vertex,
-    source=all_vertices["position"],
+  "position",
+  through=pair2vertex,
+  source=all_vertices["position"],
 )
 
 barrier_expression = build_barrier(pair_position)
 barrier = pairs.addAttribute(
-    "barrier",
-    computed_attribute=barrier_expression,
+  "barrier",
+  computed_attribute=barrier_expression,
 )
 
 world.addEnergy(
-    barrier,
-    projection_method=2,
-    dynamic_instances=True,
-    separate_hessian_jacobian=True,
+  barrier,
+  projection_method=2,
+  dynamic_instances=True,
+  separate_hessian_jacobian=True,
 )
 ```
 
@@ -65,7 +67,7 @@ num_pairs = len(pair_indices)
 pairs.updateNumInstances(num_pairs)
 
 if num_pairs:
-    pair2vertex.updateConnectivity(pair_indices)
+  pair2vertex.updateConnectivity(pair_indices)
 ```
 
 Keep the instance count and connectivity consistent before calling `minimizeEnergy`, `computeTotalEnergy`, or materializing an expression that depends on the pairs.

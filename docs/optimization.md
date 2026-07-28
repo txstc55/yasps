@@ -2,6 +2,8 @@
 title: Energies and minimization
 description: Register scalar energies, select targets, assemble derivatives, and integrate YASPS into a Newton loop.
 permalink: /optimization/
+next_url: /dynamic-scenes/
+next_label: Dynamic contact topology
 ---
 
 <p class="eyebrow">Core syntax</p>
@@ -28,13 +30,13 @@ The full registration signature is:
 
 ```python
 world.addEnergy(
-    energy_attribute,
-    targets=[],
-    projection_method=1,
-    save_intermediate=False,
-    gradient_only=False,
-    dynamic_instances=False,
-    separate_hessian_jacobian=False,
+  energy_attribute,
+  targets=[],
+  projection_method=1,
+  save_intermediate=False,
+  gradient_only=False,
+  dynamic_instances=False,
+  separate_hessian_jacobian=False,
 )
 ```
 
@@ -64,12 +66,12 @@ If the scene solves for several parameter groups but an energy depends on only s
 
 ```python
 world.addEnergy(
-    soft_elasticity,
-    targets=[soft_position],
+  soft_elasticity,
+  targets=[soft_position],
 )
 world.addEnergy(
-    affine_orthogonality,
-    targets=[affine_transform],
+  affine_orthogonality,
+  targets=[affine_transform],
 )
 ```
 
@@ -81,9 +83,9 @@ After all energies have been added:
 
 ```python
 world.addMinimizeTarget([
-    position,
-    affine_translation,
-    affine_transform,
+  position,
+  affine_translation,
+  affine_transform,
 ])
 ```
 
@@ -93,8 +95,8 @@ Each target must be a differentiable data attribute, and a target may appear onl
 
 ```python
 directions = world.minimizeEnergy(
-    tolerance=1e-3,
-    maxIterations=20000,
+  tolerance=1e-3,
+  maxIterations=20000,
 )
 ```
 
@@ -109,8 +111,8 @@ It does not negate or apply the direction. A Newton-style update is therefore:
 ```python
 directions = world.minimizeEnergy()
 position.updateValue(
-    position.value - directions[0],
-    deepCopy=True,
+  position.value - directions[0],
+  deepCopy=True,
 )
 ```
 
@@ -122,28 +124,28 @@ YASPS deliberately leaves line search, continuous collision detection, and state
 
 ```python
 for newton_iteration in range(max_newton_iterations):
-    # 1. Update state-derived constants and dynamic collision pairs.
-    update_collision_topology()
+  # 1. Update state-derived constants and dynamic collision pairs.
+  update_collision_topology()
 
-    # 2. Assemble H and g, then solve H dx = g.
-    directions = world.minimizeEnergy(
-        tolerance=cg_tolerance,
-        maxIterations=cg_iterations,
+  # 2. Assemble H and g, then solve H dx = g.
+  directions = world.minimizeEnergy(
+    tolerance=cg_tolerance,
+    maxIterations=cg_iterations,
+  )
+
+  # 3. Choose a safe step outside YASPS.
+  alpha_ccd = compute_collision_free_step(directions)
+  alpha = backtracking_line_search(alpha_ccd, directions)
+
+  # 4. Apply x <- x - alpha dx.
+  for target, direction in zip(targets, directions):
+    target.updateValue(
+      target.value - alpha * direction,
+      deepCopy=True,
     )
 
-    # 3. Choose a safe step outside YASPS.
-    alpha_ccd = compute_collision_free_step(directions)
-    alpha = backtracking_line_search(alpha_ccd, directions)
-
-    # 4. Apply x <- x - alpha dx.
-    for target, direction in zip(targets, directions):
-        target.updateValue(
-            target.value - alpha * direction,
-            deepCopy=True,
-        )
-
-    if converged(world.gradient):
-        break
+  if converged(world.gradient):
+    break
 ```
 
 This separation lets a simulation choose its own IPC barrier policy, feasibility condition, convergence norm, and integrator.

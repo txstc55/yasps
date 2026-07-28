@@ -120,17 +120,17 @@ Users normally create leaves and named nodes through a hierarchy object. The con
 
 ```python
 attribute(
-    name="",
-    rows=1,
-    cols=1,
-    correspondance=None,
-    through=None,
-    float_value=None,
-    children=[],
-    operator=DATA,
-    index_value=None,
-    is_constant=False,
-    generate_code=True,
+  name="",
+  rows=1,
+  cols=1,
+  correspondance=None,
+  through=None,
+  float_value=None,
+  children=[],
+  operator=DATA,
+  index_value=None,
+  is_constant=False,
+  generate_code=True,
 )
 ```
 

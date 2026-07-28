@@ -18,14 +18,14 @@ from yasps import minimizer
 engine = minimizer()
 
 engine.addEnergy(
-    elasticity,
-    targets=[position],
-    projection_method=2,
+  elasticity,
+  targets=[position],
+  projection_method=2,
 )
 engine.addEnergy(
-    inertia,
-    targets=[position],
-    projection_method=-1,
+  inertia,
+  targets=[position],
+  projection_method=-1,
 )
 
 engine.addWrt([position])
@@ -46,8 +46,8 @@ active_hessian = engine.computeNumericValue()
 
 # PCG solve; returns target-aligned GPUArray views.
 directions = engine.computeSolution(
-    tolerance=1e-3,
-    maxIterations=20000,
+  tolerance=1e-3,
+  maxIterations=20000,
 )
 ```
 
@@ -96,12 +96,12 @@ static_requests = engine.energies
 dynamic_requests = engine.energiesDynamic
 
 for request in static_requests + dynamic_requests:
-    print(
-        request.energy.fullName,
-        request.targets,
-        request.projection_method,
-        request.dynamic_instances,
-    )
+  print(
+    request.energy.fullName,
+    request.targets,
+    request.projection_method,
+    request.dynamic_instances,
+  )
 ```
 
 `energyRequest` is an implementation type returned by these properties; it is not exported from `yasps.__init__`.

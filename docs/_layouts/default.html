@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#132a24">
+    <meta name="theme-color" content="#ff5a1f">
     <title>{% if page.title %}{{ page.title }} · {% endif %}YASPS</title>
     <meta name="description" content="{{ page.description | default: site.description | escape }}">
     <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
@@ -20,40 +20,31 @@
           </span>
         </a>
 
-        <div class="build-stamp">
-          <span>CUDA / MAIN</span>
-          <strong>SYMBOLIC → GPU</strong>
-        </div>
-
         <nav>
-          <p class="nav-label">Start here</p>
-          <a href="{{ '/getting-started/' | relative_url }}">Getting started</a>
-          <a href="{{ '/concepts/' | relative_url }}">Mental model</a>
+          <p class="nav-label">Learn in order</p>
+          <a href="{{ '/getting-started/' | relative_url }}"><span>01</span> Getting started</a>
+          <a href="{{ '/concepts/' | relative_url }}"><span>02</span> Scene & mesh model</a>
+          <a href="{{ '/attributes/' | relative_url }}"><span>03</span> Attributes</a>
+          <a href="{{ '/join/' | relative_url }}"><span>04</span> JOIN</a>
+          <a href="{{ '/union/' | relative_url }}"><span>05</span> UNION</a>
+          <a href="{{ '/optimization/' | relative_url }}"><span>06</span> Energy & minimize</a>
+          <a href="{{ '/dynamic-scenes/' | relative_url }}"><span>07</span> Dynamic contact</a>
+          <a class="capstone-link" href="{{ '/tutorials/mixed-separation/' | relative_url }}"><span>08</span> Capstone example</a>
 
-          <p class="nav-label">Complete example</p>
-          <a href="{{ '/tutorials/mixed-separation/' | relative_url }}">Mixed bodies + separation</a>
-
-          <p class="nav-label">Core syntax</p>
-          <a href="{{ '/attributes/' | relative_url }}">Attributes & expressions</a>
-          <a href="{{ '/join/' | relative_url }}">Connectivity & JOIN</a>
-          <a href="{{ '/union/' | relative_url }}">Primitive unions</a>
-          <a href="{{ '/optimization/' | relative_url }}">Energies & minimization</a>
-          <a href="{{ '/dynamic-scenes/' | relative_url }}">Dynamic topology</a>
-
-          <p class="nav-label">Use the project</p>
-          <a href="{{ '/examples/' | relative_url }}">Examples map</a>
-          <a href="{{ '/architecture/' | relative_url }}">How YASPS executes</a>
-          <a href="{{ '/troubleshooting/' | relative_url }}">Troubleshooting</a>
-
-          <p class="nav-label">Advanced</p>
-          <a href="{{ '/advanced/minimizer/' | relative_url }}">Direct minimizer use</a>
-          <a href="{{ '/advanced/differentiation/' | relative_url }}">Differentiation</a>
-          <a href="{{ '/advanced/hessian-solver/' | relative_url }}">Hessian & solver</a>
-
-          <p class="nav-label">Reference</p>
-          <a href="{{ '/reference/core/' | relative_url }}">Core API</a>
-          <a href="{{ '/reference/advanced/' | relative_url }}">Advanced API</a>
-          <a href="{{ '/reference/internal/' | relative_url }}">Low-level exports</a>
+          <details class="secondary-nav">
+            <summary>More documentation</summary>
+            <div>
+              <a href="{{ '/examples/' | relative_url }}">Examples map</a>
+              <a href="{{ '/architecture/' | relative_url }}">How YASPS executes</a>
+              <a href="{{ '/troubleshooting/' | relative_url }}">Troubleshooting</a>
+              <a href="{{ '/advanced/minimizer/' | relative_url }}">Direct minimizer</a>
+              <a href="{{ '/advanced/differentiation/' | relative_url }}">Differentiation</a>
+              <a href="{{ '/advanced/hessian-solver/' | relative_url }}">Hessian & solver</a>
+              <a href="{{ '/reference/core/' | relative_url }}">Core API</a>
+              <a href="{{ '/reference/advanced/' | relative_url }}">Advanced API</a>
+              <a href="{{ '/reference/internal/' | relative_url }}">Low-level exports</a>
+            </div>
+          </details>
         </nav>
       </aside>
 
@@ -68,26 +59,26 @@
             <div>
               <a href="{{ '/getting-started/' | relative_url }}">Getting started</a>
               <a href="{{ '/concepts/' | relative_url }}">Mental model</a>
-              <a href="{{ '/tutorials/mixed-separation/' | relative_url }}">Complete walkthrough</a>
               <a href="{{ '/attributes/' | relative_url }}">Attributes</a>
               <a href="{{ '/join/' | relative_url }}">JOIN</a>
               <a href="{{ '/union/' | relative_url }}">UNION</a>
               <a href="{{ '/optimization/' | relative_url }}">Optimization</a>
+              <a href="{{ '/dynamic-scenes/' | relative_url }}">Dynamic contact</a>
+              <a href="{{ '/tutorials/mixed-separation/' | relative_url }}">Capstone example</a>
               <a href="{{ '/examples/' | relative_url }}">Examples</a>
               <a href="{{ '/reference/core/' | relative_url }}">API reference</a>
             </div>
           </details>
         </header>
 
-        <div class="status-strip" aria-hidden="true">
-          <span>COMPOSE</span>
-          <span>DIFFERENTIATE</span>
-          <span>GENERATE</span>
-          <span>SOLVE</span>
-        </div>
-
         <main id="content" class="content">
           {{ content }}
+          {% if page.next_url and page.next_label %}
+          <nav class="next-page" aria-label="Next chapter">
+            <span>Next chapter</span>
+            <a href="{{ page.next_url | relative_url }}">{{ page.next_label }} →</a>
+          </nav>
+          {% endif %}
         </main>
 
         <footer>

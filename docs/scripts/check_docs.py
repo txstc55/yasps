@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import ast
+import io
 import re
 import sys
+import tokenize
 from pathlib import Path
 
 
@@ -69,6 +71,36 @@ def main() -> int:
                     f"{relative}: Python block {block_number} is invalid: "
                     f"{error.msg}"
                 )
+                continue
+
+            indentation = [0]
+            try:
+                tokens = tokenize.generate_tokens(io.StringIO(block).readline)
+                for token in tokens:
+                    if token.type == tokenize.INDENT:
+                        width = len(token.string.expandtabs(2))
+                        if width - indentation[-1] != 2:
+                            errors.append(
+                                f"{relative}: Python block {block_number} "
+                                f"uses a {width - indentation[-1]}-space "
+                                "indent; documentation uses two spaces"
+                            )
+                        indentation.append(width)
+                    elif token.type == tokenize.DEDENT and len(indentation) > 1:
+                        indentation.pop()
+            except tokenize.TokenError as error:
+                errors.append(
+                    f"{relative}: Python block {block_number} cannot be "
+                    f"tokenized: {error.args[0]}"
+                )
+
+    for path in markdown_files:
+        metadata = front_matter(path.read_text(encoding="utf-8"))
+        next_url = metadata.get("next_url")
+        if next_url and next_url not in pages:
+            errors.append(
+                f"{path.relative_to(DOCS)}: unresolved next chapter {next_url}"
+            )
 
     sources = markdown_files + [DOCS / "_layouts" / "default.html"]
     relative_url_pattern = re.compile(
@@ -119,9 +151,24 @@ def main() -> int:
     style_text = (DOCS / "assets" / "css" / "style.css").read_text(
         encoding="utf-8"
     )
-    for selector in (".highlight .k", ".highlight .s", ".highlight .mi"):
+    for selector in (
+        ".highlight .c",
+        ".highlight .k",
+        ".highlight .s",
+        ".highlight .mi",
+        ".highlight .nf",
+        ".highlight .nb",
+        ".highlight .o",
+        ".highlight .p",
+        ".highlight .na",
+    ):
         if selector not in style_text:
             errors.append(f"stylesheet: missing Rouge selector {selector!r}")
+    for declaration in ("tab-size: 2", "-moz-tab-size: 2"):
+        if declaration not in style_text:
+            errors.append(
+                f"stylesheet: missing two-space declaration {declaration!r}"
+            )
 
     tutorial = DOCS / "tutorials" / "mixed-separation.md"
     if not tutorial.is_file():

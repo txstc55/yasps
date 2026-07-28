@@ -28,8 +28,8 @@ The result is another `attribute` graph. It can be named and computed like any o
 
 ```python
 d_energy_dx = points.addAttribute(
-    "energy_gradient_local",
-    computed_attribute=d_energy_dx,
+  "energy_gradient_local",
+  computed_attribute=d_energy_dx,
 )
 values = d_energy_dx.compute().value
 ```
@@ -43,14 +43,14 @@ from yasps import differentiator
 
 builder = differentiator()
 H = builder.diff2(
-    source=[energy],
-    target1=[position],
-    target2=[position],
-    local_targets=[],
-    projection_method=2,
-    save_intermediate=False,
-    separate_hessian_jacobian=False,
-    dynamic_instances=False,
+  source=[energy],
+  target1=[position],
+  target2=[position],
+  local_targets=[],
+  projection_method=2,
+  save_intermediate=False,
+  separate_hessian_jacobian=False,
+  dynamic_instances=False,
 )
 ```
 
@@ -70,10 +70,10 @@ The optional local list limits which of those targets are differentiated for thi
 
 ```python
 H_soft = builder.diff2(
-    [soft_energy],
-    global_targets,
-    global_targets,
-    local_targets=[soft_position],
+  [soft_energy],
+  global_targets,
+  global_targets,
+  local_targets=[soft_position],
 )
 ```
 

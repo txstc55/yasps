@@ -2,6 +2,8 @@
 title: Primitive unions
 description: Combine shape-compatible attributes from heterogeneous primitives with UNION.
 permalink: /union/
+next_url: /optimization/
+next_label: Energies and minimization
 ---
 
 <p class="eyebrow">Core syntax</p>
@@ -20,14 +22,14 @@ soft_position = soft_vertices.addAttribute("position", rows=3, cols=1)
 
 # A computed position on an affine body.
 affine_position = affine_vertices.addAttribute(
-    "position",
-    computed_attribute=translation + transform * rest_position,
+  "position",
+  computed_attribute=translation + transform * rest_position,
 )
 
 collision = world.addMesh("collision")
 all_vertices = collision.addPrimitiveUnion(
-    "vertices",
-    [soft_vertices, affine_vertices],
+  "vertices",
+  [soft_vertices, affine_vertices],
 )
 all_position = all_vertices.addAttribute("position")
 ```
@@ -79,8 +81,8 @@ A union may contain primitives or other primitive unions:
 
 ```python
 all_objects = collision.addPrimitiveUnion(
-    "all_objects",
-    [soft_union, affine_union, rigid_vertices],
+  "all_objects",
+  [soft_union, affine_union, rigid_vertices],
 )
 ```
 

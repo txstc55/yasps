@@ -2,6 +2,8 @@
 title: Attributes and expressions
 description: The public symbolic expression syntax, shapes, values, and materialization behavior in YASPS.
 permalink: /attributes/
+next_url: /join/
+next_label: Connectivity and JOIN
 ---
 
 <p class="eyebrow">Core syntax</p>
@@ -43,19 +45,19 @@ Use `attribute.to_array` with row-major elements:
 from yasps import attribute
 
 gravity = attribute.to_array(
-    [0.0, -9.8, 0.0],
-    rows=3,
-    cols=1,
+  [0.0, -9.8, 0.0],
+  rows=3,
+  cols=1,
 )
 
 F = attribute.to_array(
-    [
-        e0[0], e0[1], e0[2],
-        e1[0], e1[1], e1[2],
-        e2[0], e2[1], e2[2],
-    ],
-    rows=3,
-    cols=3,
+  [
+    e0[0], e0[1], e0[2],
+    e1[0], e1[1], e1[2],
+    e2[0], e2[1], e2[2],
+  ],
+  rows=3,
+  cols=3,
 )
 ```
 

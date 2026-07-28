@@ -2,6 +2,8 @@
 title: Getting started
 description: Install the CUDA implementation of YASPS and run a small symbolic minimization.
 permalink: /getting-started/
+next_url: /concepts/
+next_label: Scene and mesh model
 ---
 
 <p class="eyebrow">Start here</p>
@@ -83,8 +85,8 @@ target.updateValue(np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float64))
 dx = x - target
 quadratic_expression = 0.5 * dx * dx
 quadratic = dofs.addAttribute(
-    "quadratic",
-    computed_attribute=quadratic_expression,
+  "quadratic",
+  computed_attribute=quadratic_expression,
 )
 
 model.addEnergy(quadratic, projection_method=2)

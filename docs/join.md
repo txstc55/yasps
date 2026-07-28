@@ -2,6 +2,8 @@
 title: Connectivity and JOIN
 description: Define topology and gather attributes across primitives with fixed or variable-arity connectivity.
 permalink: /join/
+next_url: /union/
+next_label: Primitive unions
 ---
 
 <p class="eyebrow">Core syntax</p>
@@ -16,10 +18,10 @@ Suppose each tetrahedron references four vertices:
 
 ```python
 tet2vertex = tetrahedra.addConnectivity(
-    "tet2vertex",
-    to=vertices,
-    data=tet_indices,  # shape (num_tets, 4), integer-valued
-    dimension=4,
+  "tet2vertex",
+  to=vertices,
+  data=tet_indices,  # shape (num_tets, 4), integer-valued
+  dimension=4,
 )
 ```
 
@@ -29,9 +31,9 @@ Gather the vertex positions onto each tetrahedron:
 
 ```python
 tet_positions = tetrahedra.addAttribute(
-    "positions",
-    through=tet2vertex,
-    source=vertices["position"],
+  "positions",
+  through=tet2vertex,
+  source=vertices["position"],
 )
 ```
 
@@ -41,8 +43,8 @@ If the source attribute has the same name as the new attribute, `source` may be 
 
 ```python
 tet_positions = tetrahedra.addAttribute(
-    "position",
-    through=tet2vertex,
+  "position",
+  through=tet2vertex,
 )
 ```
 
@@ -60,9 +62,9 @@ bad = tetrahedra["volume"] + vertices["mass"]
 
 # Valid: first move mass into tetrahedron space.
 tet_mass = tetrahedra.addAttribute(
-    "vertex_mass",
-    through=tet2vertex,
-    source=vertices["mass"],
+  "vertex_mass",
+  through=tet2vertex,
+  source=vertices["mass"],
 )
 valid = tetrahedra["volume"] + tet_mass.row(0)
 ```
@@ -79,20 +81,20 @@ Use `dimension=0` for a list of neighbors whose length varies per source instanc
 
 ```python
 vertex2face = vertices.addConnectivity(
-    "vertex2face",
-    to=faces,
-    data=[
-        [0, 3, 8],
-        [0, 1],
-        [],
-    ],
-    dimension=0,
+  "vertex2face",
+  to=faces,
+  data=[
+    [0, 3, 8],
+    [0, 1],
+    [],
+  ],
+  dimension=0,
 )
 
 incident_area = vertices.addAttribute(
-    "area",
-    through=vertex2face,
-    operation="SUM",
+  "area",
+  through=vertex2face,
+  operation="SUM",
 )
 ```
 
@@ -114,7 +116,7 @@ For a dynamic, fixed-arity primitive, update the instance count and connectivity
 ```python
 pairs.updateNumInstances(num_pairs)
 if num_pairs:
-    pair2vertex.updateConnectivity(pair_indices)
+  pair2vertex.updateConnectivity(pair_indices)
 ```
 
 `updateConnectivity` accepts a NumPy array, nested Python lists, or a PyCUDA `GPUArray`. It may reuse an existing device buffer when its capacity exceeds the new input.

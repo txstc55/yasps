@@ -12,8 +12,8 @@ These symbols are exported at the package root:
 
 ```python
 from yasps import (
-    minimizer, differentiator, autodiff, path,
-    hessian, gradient, solver, matrix, vector, energy,
+  minimizer, differentiator, autodiff, path,
+  hessian, gradient, solver, matrix, vector, energy,
 )
 ```
 
@@ -45,14 +45,14 @@ differentiator()
 
 ```python
 H = differentiator().diff2(
-    source,
-    target1,
-    target2,
-    local_targets=[],
-    projection_method=1,
-    save_intermediate=False,
-    separate_hessian_jacobian=False,
-    dynamic_instances=False,
+  source,
+  target1,
+  target2,
+  local_targets=[],
+  projection_method=1,
+  save_intermediate=False,
+  separate_hessian_jacobian=False,
+  dynamic_instances=False,
 )
 ```
 
@@ -136,13 +136,13 @@ Properties: `rows`, `cols`, plus static `block_dimensions`, `blocks_flattened`, 
 
 ```python
 energy(
-    energy,
-    targets=[],
-    projection_method=1,
-    save_intermediate=False,
-    gradient_only=False,
-    separate_hessian_jacobian=False,
-    dynamic_instances=False,
+  energy,
+  targets=[],
+  projection_method=1,
+  save_intermediate=False,
+  gradient_only=False,
+  separate_hessian_jacobian=False,
+  dynamic_instances=False,
 )
 ```
 
