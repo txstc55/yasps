@@ -560,7 +560,7 @@ for i in range(200):
 
   #     # perform collision detection
       trial_positions = collision_mesh.vertices["position"].compute().value
-      ccd.cd_from_cached_ccd(trial_positions, DHAT_VALUE, step_taken)
+      ccd.cd(trial_positions, DHAT_VALUE)
       end_cd = time.time()
       print(f"Time taken for collision detection: {end_cd - start_cd} seconds")
       pp_count, pe_count, pt_count, ee_count = ccd.separated_counts

@@ -118,6 +118,80 @@ void _calcLeafBvs_ccd(const double3* _vertexes, const double3* _moveDir, double 
     _bvs[idx] = _bv;
 }
 
+__global__ void cache_swept_point_boxes(const double3*  vertices,
+                                        const double3*  moveDir,
+                                        double          alpha,
+                                        const uint32_t* surfaceVertices,
+                                        AABB*           pointBoxes,
+                                        uint32_t        pointCount)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= pointCount)
+        return;
+    const uint32_t point = surfaceVertices[idx];
+    const double3 x       = vertices[point];
+    const double3 dx      = moveDir[point];
+    AABB box;
+    box.combines(x.x, x.y, x.z);
+    box.combines(x.x - dx.x * alpha,
+                 x.y - dx.y * alpha,
+                 x.z - dx.z * alpha);
+    pointBoxes[idx] = box;
+}
+
+template <class element_type>
+__global__ void validate_cached_leaf_bounds(const double3*     vertices,
+                                            const element_type* elements,
+                                            const AABB*        cachedBoxes,
+                                            const Node*        nodes,
+                                            uint32_t           elementCount,
+                                            int                type,
+                                            uint32_t*          outside)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= elementCount)
+        return;
+
+    const uint32_t leaf      = idx + elementCount - 1u;
+    const element_type elem  = elements[nodes[leaf].element_idx];
+    AABB current;
+    double3 x = vertices[elem.x];
+    current.combines(x.x, x.y, x.z);
+    x = vertices[elem.y];
+    current.combines(x.x, x.y, x.z);
+    if(type == 0)
+    {
+        x = vertices[reinterpret_cast<const uint32_t*>(&elem)[2]];
+        current.combines(x.x, x.y, x.z);
+    }
+
+    const AABB cached = cachedBoxes[leaf];
+    const bool contained =
+        current.lower.x >= cached.lower.x && current.lower.y >= cached.lower.y
+        && current.lower.z >= cached.lower.z && current.upper.x <= cached.upper.x
+        && current.upper.y <= cached.upper.y && current.upper.z <= cached.upper.z;
+    if(!contained)
+        atomicExch(outside, 1u);
+}
+
+__global__ void validate_cached_point_bounds(const double3*  vertices,
+                                             const uint32_t* surfaceVertices,
+                                             const AABB*     cachedBoxes,
+                                             uint32_t        pointCount,
+                                             uint32_t*       outside)
+{
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx >= pointCount)
+        return;
+    const double3 x = vertices[surfaceVertices[idx]];
+    const AABB box  = cachedBoxes[idx];
+    const bool contained = x.x >= box.lower.x && x.y >= box.lower.y
+                           && x.z >= box.lower.z && x.x <= box.upper.x
+                           && x.y <= box.upper.y && x.z <= box.upper.z;
+    if(!contained)
+        atomicExch(outside, 1u);
+}
+
 template <class element_type>
 void calcLeafBvs(const double3* _vertexes, const element_type* _faces, AABB* _bvs, const int& faceNum, const int& type) {
     int numbers = faceNum;
@@ -1371,26 +1445,29 @@ void lbvh::radixSortMorton(uint32_t number)
     std::swap(_MChash, _MChash_sorted);
 }
 
-void lbvh::MALLOC_DEVICE_MEM(uint32_t primitiveNumber)
+void lbvh::MALLOC_DEVICE_MEM(uint32_t primitiveNumber, uint32_t pointNumber)
 {
-    if(primitiveNumber == 0)
-        return;
-
-    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_MChash),
-                              primitiveNumber * sizeof(uint64_t)));
-    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_MChash_sorted),
-                              primitiveNumber * sizeof(uint64_t)));
-    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_nodes),
-                              (2u * primitiveNumber - 1u) * sizeof(Node)));
-    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_bvs),
-                              (2u * primitiveNumber - 1u) * sizeof(AABB)));
-    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_escape),
-                              (2u * primitiveNumber - 1u) * sizeof(int32_t)));
-    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_tempLeafBox),
-                              primitiveNumber * sizeof(AABB)));
-    if(primitiveNumber > 1)
-        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_flags),
-                                  (primitiveNumber - 1u) * sizeof(uint32_t)));
+    if(primitiveNumber > 0)
+    {
+        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_MChash),
+                                  primitiveNumber * sizeof(uint64_t)));
+        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_MChash_sorted),
+                                  primitiveNumber * sizeof(uint64_t)));
+        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_nodes),
+                                  (2u * primitiveNumber - 1u) * sizeof(Node)));
+        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_bvs),
+                                  (2u * primitiveNumber - 1u) * sizeof(AABB)));
+        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_escape),
+                                  (2u * primitiveNumber - 1u) * sizeof(int32_t)));
+        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_tempLeafBox),
+                                  primitiveNumber * sizeof(AABB)));
+        if(primitiveNumber > 1)
+            CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_flags),
+                                      (primitiveNumber - 1u) * sizeof(uint32_t)));
+    }
+    if(pointNumber > 0)
+        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_sweptPointBox),
+                                  pointNumber * sizeof(AABB)));
 }
 
 void lbvh::FREE_DEVICE_MEM()
@@ -1411,6 +1488,8 @@ void lbvh::FREE_DEVICE_MEM()
         (void)cudaFree(_escape);
     if(_tempLeafBox)
         (void)cudaFree(_tempLeafBox);
+    if(_sweptPointBox)
+        (void)cudaFree(_sweptPointBox);
     if(_sort_temp_storage)
         (void)cudaFree(_sort_temp_storage);
 
@@ -1421,6 +1500,7 @@ void lbvh::FREE_DEVICE_MEM()
     _flags = nullptr;
     _escape = nullptr;
     _tempLeafBox = nullptr;
+    _sweptPointBox = nullptr;
     _sort_temp_storage = nullptr;
     _sort_temp_bytes = 0;
 }
@@ -1464,7 +1544,7 @@ void lbvh_f::init(int*       btype,
     _maxActivePairs = maxActivePairs;
     face_number = faceNum;
     vert_number = vertNum;
-    MALLOC_DEVICE_MEM(face_number);
+    MALLOC_DEVICE_MEM(face_number, face_number > 0 ? vert_number : 0u);
     _initialized = true;
 }
 
@@ -1555,6 +1635,17 @@ double lbvh_f::ConstructFullCCD(
                                               0);
     scene = calculate_scene(_bvs, _tempLeafBox, face_number);
     build_topology(this, face_number);
+    if(vert_number > 0)
+    {
+        const uint32_t pointBlocks =
+            (vert_number + BVH_THREADS - 1) / BVH_THREADS;
+        cache_swept_point_boxes<<<pointBlocks, BVH_THREADS>>>(_vertexes,
+                                                              moveDir,
+                                                              alpha,
+                                                              _surfVerts,
+                                                              _sweptPointBox,
+                                                              vert_number);
+    }
     return 0.0;
 }
 
@@ -1622,7 +1713,7 @@ extern "C"
 {
 uint32_t mlbvh_api_version()
 {
-    return 2u;
+    return 3u;
 }
 
 lbvh_f* create_lbvh_f()
@@ -1748,6 +1839,68 @@ void lbvh_reset_candidate_cache(lbvh_f* faceObj, lbvh_e* edgeObj)
         CUDA_SAFE_CALL(cudaMemset(shared->_candidateNum, 0, sizeof(uint32_t)));
     if(shared->_overflowCount)
         CUDA_SAFE_CALL(cudaMemset(shared->_overflowCount, 0, sizeof(uint32_t)));
+}
+
+uint32_t lbvh_cached_bounds_contain(
+    lbvh_f* faceObj, lbvh_e* edgeObj, const double3* currentVertices)
+{
+    lbvh* shared = initialized_shared_owner(faceObj, edgeObj);
+    if(!shared || !currentVertices || !shared->_overflowCount)
+        return 0u;
+
+    const bool checkFaces = faceObj && faceObj->_initialized
+                            && faceObj->face_number > 0
+                            && faceObj->vert_number > 0;
+    const bool checkEdges = edgeObj && edgeObj->_initialized
+                            && edgeObj->edge_number > 0;
+    if(checkFaces
+       && (!faceObj->_faces || !faceObj->_surfVerts || !faceObj->_bvs
+           || !faceObj->_nodes || !faceObj->_sweptPointBox))
+        return 0u;
+    if(checkEdges && (!edgeObj->_edges || !edgeObj->_bvs || !edgeObj->_nodes))
+        return 0u;
+
+    uint32_t* outside = shared->_overflowCount + 1;
+    CUDA_SAFE_CALL(cudaMemset(outside, 0, sizeof(uint32_t)));
+    if(checkFaces)
+    {
+        const uint32_t pointBlocks =
+            (faceObj->vert_number + BVH_THREADS - 1) / BVH_THREADS;
+        validate_cached_point_bounds<<<pointBlocks, BVH_THREADS>>>(
+            currentVertices,
+            faceObj->_surfVerts,
+            faceObj->_sweptPointBox,
+            faceObj->vert_number,
+            outside);
+        const uint32_t faceBlocks =
+            (faceObj->face_number + BVH_THREADS - 1) / BVH_THREADS;
+        validate_cached_leaf_bounds<<<faceBlocks, BVH_THREADS>>>(currentVertices,
+                                                                 faceObj->_faces,
+                                                                 faceObj->_bvs,
+                                                                 faceObj->_nodes,
+                                                                 faceObj->face_number,
+                                                                 0,
+                                                                 outside);
+    }
+    if(checkEdges)
+    {
+        const uint32_t edgeBlocks =
+            (edgeObj->edge_number + BVH_THREADS - 1) / BVH_THREADS;
+        validate_cached_leaf_bounds<<<edgeBlocks, BVH_THREADS>>>(currentVertices,
+                                                                 edgeObj->_edges,
+                                                                 edgeObj->_bvs,
+                                                                 edgeObj->_nodes,
+                                                                 edgeObj->edge_number,
+                                                                 1,
+                                                                 outside);
+    }
+
+    uint32_t hostOutside = 0;
+    CUDA_SAFE_CALL(cudaMemcpy(&hostOutside,
+                              outside,
+                              sizeof(uint32_t),
+                              cudaMemcpyDeviceToHost));
+    return hostOutside == 0u ? 1u : 0u;
 }
 
 void lbvh_f_append_proximity_candidates(

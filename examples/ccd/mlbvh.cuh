@@ -49,6 +49,7 @@ class lbvh
 
     AABB*     _bvs           = nullptr;
     AABB*     _tempLeafBox   = nullptr;
+    AABB*     _sweptPointBox = nullptr;
     Node*     _nodes         = nullptr;
     uint64_t* _MChash        = nullptr;
     uint64_t* _MChash_sorted = nullptr;
@@ -79,7 +80,7 @@ class lbvh
     lbvh() = default;
     virtual ~lbvh();
 
-    void MALLOC_DEVICE_MEM(uint32_t primitiveNumber);
+    void MALLOC_DEVICE_MEM(uint32_t primitiveNumber, uint32_t pointNumber = 0);
     void FREE_DEVICE_MEM();
     void radixSortMorton(uint32_t number);
 };
@@ -218,6 +219,8 @@ void lbvh_e_append_swept_candidates(lbvh_e*        obj,
 // cpNum[0..4] and active overflow before launching.
 void lbvh_refilter_cached_candidates(
     lbvh_f* faceObj, lbvh_e* edgeObj, double3* currentVertices, double dHat);
+uint32_t lbvh_cached_bounds_contain(
+    lbvh_f* faceObj, lbvh_e* edgeObj, const double3* currentVertices);
 void lbvh_scatter_packed_cases(lbvh_f* faceObj, lbvh_e* edgeObj);
 void lbvh_expand_cached_candidates(lbvh_f*   faceObj,
                                    lbvh_e*   edgeObj,

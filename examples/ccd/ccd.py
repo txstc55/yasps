@@ -13,7 +13,7 @@ import pycuda.driver as cuda
 import pycuda.gpuarray as gpuarray
 
 
-_MLBVH_API_VERSION = 2
+_MLBVH_API_VERSION = 3
 _CASE_WIDTHS = (2, 3, 4, 4)
 _UINT32_MAX = np.iinfo(np.uint32).max
 _INT32_MAX = np.iinfo(np.int32).max
@@ -290,6 +290,9 @@ class CCD:
     self.__refilter_candidates = self.__mlbvh.lbvh_refilter_cached_candidates
     self.__refilter_candidates.argtypes = [pointer, pointer, pointer, ctypes.c_double]
     self.__refilter_candidates.restype = None
+    self.__cached_bounds_contain = self.__mlbvh.lbvh_cached_bounds_contain
+    self.__cached_bounds_contain.argtypes = [pointer, pointer, pointer]
+    self.__cached_bounds_contain.restype = uint32
     self.__scatter_cases = self.__mlbvh.lbvh_scatter_packed_cases
     self.__scatter_cases.argtypes = [pointer, pointer]
     self.__scatter_cases.restype = None
@@ -731,6 +734,22 @@ class CCD:
     return list(counts)
 
   def cd(self, vertices: gpuarray.GPUArray, dhat: float) -> list[int]:
+    """Detect collisions, reusing the latest full CCD sweep when possible."""
+    self.__ensure_open()
+    self.__require_vertices("vertices", vertices)
+    self.__validate_dhat(dhat)
+    cache_covers_scene = (
+      (self.__face_num == 0 or self.__cached_faces)
+      and (self.__edge_num == 0 or self.__cached_edges)
+    )
+    cache_eligible = (
+      self.__cache_valid
+      and cache_covers_scene
+      and dhat <= self.__cached_dhat
+    )
+    if cache_eligible and self.__cache_contains(vertices):
+      return self.__run_cached_cd(vertices, dhat, alpha=None, bounds_validated=True)
+
     started = time.perf_counter()
     counts = self.__run_fresh_cd(vertices, dhat, include_faces=True, include_edges=True)
     self.__print_elapsed("Collision detection", started)
@@ -829,18 +848,13 @@ class CCD:
     self.__print_elapsed("Continuous collision detection", started)
     return count
 
-  def cd_from_cached_ccd(
+  def __run_cached_cd(
     self,
     vertices: gpuarray.GPUArray,
     dhat: float,
-    alpha: float,
+    alpha: float | None,
+    bounds_validated: bool = False,
   ) -> list[int]:
-    """Exactly filter a prior swept cache at line-search trial positions.
-
-    ``vertices`` must represent a point on the cached trajectory at ``alpha``.
-    Reuse is valid only inside the cached alpha interval and at an equal or
-    smaller squared distance threshold.
-    """
     self.__ensure_open()
     if not self.__cache_valid:
       raise RuntimeError("ccd() must create a candidate cache before cached filtering")
@@ -849,11 +863,13 @@ class CCD:
     ):
       raise RuntimeError(
         "Cached filtering requires a sweep over every initialized primitive type; "
-        "call ccd() before cd_from_cached_ccd()"
+        "call ccd() before cached collision filtering"
       )
     self.__require_vertices("vertices", vertices)
     self.__validate_dhat(dhat)
-    if not np.isfinite(alpha) or alpha < 0.0 or alpha > self.__cached_alpha:
+    if alpha is not None and (
+      not np.isfinite(alpha) or alpha < 0.0 or alpha > self.__cached_alpha
+    ):
       raise ValueError(
         f"Trial alpha {alpha} is outside cached sweep [0, {self.__cached_alpha}]"
       )
@@ -861,6 +877,8 @@ class CCD:
       raise ValueError(
         f"Trial dhat {dhat} exceeds cached dhat {self.__cached_dhat}"
       )
+    if not bounds_validated and not self.__cache_contains(vertices):
+      raise ValueError("Trial vertices lie outside the cached swept bounds")
 
     started = time.perf_counter()
     self.__counts = (0, 0, 0, 0)
@@ -877,6 +895,24 @@ class CCD:
     counts = self.__finish_active_pairs()
     self.__print_elapsed("Cached collision filtering", started)
     return list(counts)
+
+  def __cache_contains(self, vertices: gpuarray.GPUArray) -> bool:
+    return bool(
+      self.__cached_bounds_contain(
+        self.__face_handle(),
+        self.__edge_handle(),
+        self.__to_void_p(vertices),
+      )
+    )
+
+  def cd_from_cached_ccd(
+    self,
+    vertices: gpuarray.GPUArray,
+    dhat: float,
+    alpha: float,
+  ) -> list[int]:
+    """Explicitly filter a prior swept cache at a line-search trial alpha."""
+    return self.__run_cached_cd(vertices, dhat, alpha)
 
   def compute_largest_step_size(
     self,
@@ -921,10 +957,12 @@ class CCD:
 
   def get_scene_size_faces(self) -> float:
     self.__require_face_bvh()
+    self.__invalidate_cache()
     return float(self.__lbvh_f_scene_size(self.__bvh_f))
 
   def get_scene_size_edges(self) -> float:
     self.__require_edge_bvh()
+    self.__invalidate_cache()
     return float(self.__lbvh_e_scene_size(self.__bvh_e))
 
   def __print_elapsed(self, label: str, started: float) -> None:
