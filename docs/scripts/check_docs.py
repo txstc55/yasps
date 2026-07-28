@@ -150,8 +150,10 @@ def main() -> int:
     layout_text = (DOCS / "_layouts" / "default.html").read_text(
         encoding="utf-8"
     )
-    if "<script" in layout_text:
-        errors.append("layout: runtime scripts violate the static-site budget")
+    if layout_text.count("<script") != 1:
+        errors.append("layout: expected one navigation behavior script")
+    if "navigation.js' | relative_url }}?v={{ site.time" not in layout_text:
+        errors.append("layout: navigation script must include the build version")
     if "style.css' | relative_url }}?v={{ site.time" not in layout_text:
         errors.append("layout: stylesheet URL must change with each site build")
     if "page.next_url | relative_url }}?v={{ site.time" not in layout_text:
@@ -198,7 +200,8 @@ def main() -> int:
                 f"stylesheet: missing two-space declaration {declaration!r}"
             )
     for declaration in (
-        "background-attachment: fixed",
+        "background-size: 40px 40px",
+        "background-position: 0 var(--dot-offset)",
         "border-radius: 0",
         "box-shadow: 8px 8px 0",
         "margin: 0 auto",
@@ -208,6 +211,31 @@ def main() -> int:
                 f"stylesheet: missing requested presentation "
                 f"{declaration!r}"
             )
+    for selector in (
+        ".section-nav",
+        '.section-nav a[aria-current="location"]',
+    ):
+        if selector not in style_text:
+            errors.append(
+                f"stylesheet: missing subsection navigation selector "
+                f"{selector!r}"
+            )
+
+    navigation_script = DOCS / "assets" / "js" / "navigation.js"
+    if not navigation_script.is_file():
+        errors.append("navigation: scroll behavior script is missing")
+    else:
+        script_text = navigation_script.read_text(encoding="utf-8")
+        for behavior in (
+            'querySelectorAll("main h2[id], main h3[id]")',
+            'setAttribute("aria-current", "location")',
+            "0.15",
+            '"--dot-offset"',
+        ):
+            if behavior not in script_text:
+                errors.append(
+                    f"navigation: required behavior {behavior!r} is missing"
+                )
 
     required_sections = {
         "concepts.md": (

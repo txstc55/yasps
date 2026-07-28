@@ -28,6 +28,7 @@
   --red: var(--error);
   --blue: var(--tertiary);
   --border: 1px solid var(--on-surface);
+  --dot-offset: 0px;
   --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   --sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --display: "Hanken Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
@@ -46,13 +47,6 @@ body {
   margin: 0;
   color: var(--ink);
   background-color: var(--surface);
-  background-image: radial-gradient(
-    circle,
-    var(--dot) 1.2px,
-    transparent 1.3px
-  );
-  background-size: 24px 24px;
-  background-attachment: fixed;
   font-family: var(--sans);
   font-size: 1rem;
   line-height: 1.65;
@@ -108,13 +102,31 @@ summary:focus-visible {
 }
 
 .site-shell {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: 18rem minmax(0, 1fr);
   min-height: 100vh;
 }
 
+.site-shell::before {
+  content: "";
+  position: fixed;
+  z-index: 0;
+  inset: 0 0 0 18rem;
+  pointer-events: none;
+  background-image: radial-gradient(
+    circle,
+    var(--dot) 1.1px,
+    transparent 1.2px
+  );
+  background-position: 0 var(--dot-offset);
+  background-size: 40px 40px;
+}
+
 .sidebar {
   position: sticky;
+  z-index: 1;
   top: 0;
   height: 100vh;
   overflow-y: auto;
@@ -273,7 +285,58 @@ summary:focus-visible {
   border-left: 4px solid var(--primary-container);
 }
 
+.section-nav {
+  margin: 0.8rem 0 1.2rem;
+  padding: 0.65rem 0 0.15rem 0.8rem;
+  border-left: 3px solid var(--tertiary-container);
+  list-style: none;
+}
+
+.section-nav::before {
+  content: "On this page";
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--muted);
+  font: 700 0.65rem/1.3 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.section-nav li {
+  margin: 0;
+}
+
+.section-nav a {
+  display: block;
+  margin: 0.12rem 0;
+  padding: 0.24rem 0.35rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.section-nav .section-nav-level-3 a {
+  padding-left: 1rem;
+  font-size: 0.7rem;
+}
+
+.section-nav a:hover {
+  color: var(--white);
+  background: var(--tertiary);
+}
+
+.section-nav a[aria-current="location"] {
+  color: var(--on-secondary-container);
+  background: var(--secondary-container);
+  border: 1px solid var(--on-surface);
+  box-shadow: 3px 3px 0 var(--on-surface);
+}
+
 .page-column {
+  position: relative;
+  z-index: 1;
   min-width: 0;
 }
 
@@ -845,6 +908,10 @@ footer {
     display: block;
   }
 
+  .site-shell::before {
+    left: 0;
+  }
+
   .sidebar {
     display: none;
   }
@@ -886,6 +953,8 @@ footer {
     top: 2.8rem;
     right: 0;
     width: 17rem;
+    max-height: calc(100vh - 6rem);
+    overflow-y: auto;
     padding: 0.6rem;
     background: var(--white);
     border: var(--border);
@@ -909,6 +978,21 @@ footer {
     color: var(--on-primary-container);
     background: var(--primary-container);
     border: 2px solid var(--on-surface);
+  }
+
+  .mobile-nav .section-nav {
+    margin: 0.45rem 0 0.8rem;
+    padding-top: 0.4rem;
+  }
+
+  .mobile-nav .section-nav a {
+    padding: 0.3rem 0.4rem;
+    font-size: 0.78rem;
+  }
+
+  .mobile-nav .section-nav .section-nav-level-3 a {
+    padding-left: 1rem;
+    font-size: 0.72rem;
   }
 
   .content {
