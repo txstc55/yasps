@@ -19,15 +19,9 @@ from yasps.hessianKernelHeader import hessianKernelHeader
 from yasps.hessianKernelFullProject import hessianKernelFullProject
 from yasps.hessianKernelNoProject import hessianKernelNoProject
 from yasps.hessianKernelHost import hessianKernelHost
-from yasps.hessianKernelSeparateJacobian import (
-  hessianKernelSeparateJacobian,
-  USE_DIRECT_SEPARATED_JACOBIAN_CONTRACTION,
-)
+from yasps.hessianKernelSeparateJacobian import hessianKernelSeparateJacobian
 
-HESSIAN_KERNEL_CACHE_VERSION = (
-  "v4_shared_compact_jacobian" if USE_DIRECT_SEPARATED_JACOBIAN_CONTRACTION
-  else "v3_symbolic_jacobian_helpers"
-)
+HESSIAN_KERNEL_CACHE_VERSION = "v5_symbolic_jacobian_helpers"
 
 def _stable_content_signature(payload, length: int = 24) -> str:
   encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
@@ -127,12 +121,6 @@ class hessianAndGradientKernel:
       attributeName = f'attr_{self.__att.hash}'.replace("-", "_neg_")
     else:
       attributeName = self.__att.fullName
-    direct_contraction_support_unit = ""
-    if not self.__project_entire_hessian and self.__clear_separation:
-      direct_contraction_support_unit = (
-        separate_jacobian_kernel.generateDirectContractionSupportUnit(attributeName)
-      )
-
     hessian_header_string = hessianKernelHeader(
       self.__att,
       sorted_unique_gradient_sizes,
@@ -208,18 +196,6 @@ extern "C"{{
         "source": device_unit_source,
       })
       device_units.append((device_unit_signature, device_unit_source))
-    if direct_contraction_support_unit:
-      direct_support_signature = _stable_content_signature({
-        "cache_version": HESSIAN_KERNEL_CACHE_VERSION,
-        "compiler": compiler_identity,
-        "header": hessian_header_string,
-        "source": direct_contraction_support_unit,
-      })
-      device_units.append((
-        direct_support_signature,
-        direct_contraction_support_unit,
-      ))
-
     generation_metadata = {
       "cache_version": HESSIAN_KERNEL_CACHE_VERSION,
       "compiler": compiler_identity,
@@ -245,7 +221,6 @@ extern "C"{{
       "projection_method": int(self.__projection_method),
       "gradient_only": bool(self.__gradient_only),
       "clear_separation": bool(self.__clear_separation),
-      "direct_separated_contraction_enabled": bool(USE_DIRECT_SEPARATED_JACOBIAN_CONTRACTION),
       "jacobian_rows": int(self.__jacobian_rows),
       "jacobian_cols": int(self.__jacobian_cols),
       "hessian_row_size": int(self.__hessian_row_size),
