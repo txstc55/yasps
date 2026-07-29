@@ -409,8 +409,9 @@ __device__ void {attributeName}_device_function(
     # return the name of the intermediate value
 
     attribute_hash = attribute.hash
-    if attribute.operator == ya.SPD:
+    if attribute.operator == ya.SPD and attribute.children[0].size > 1:
       # for spd, let's do inplace projection
+      # but for size 1, we don't need to do it in place, instead we can just allocate a new intermediate variable
       attribute_hash = attribute.children[0].hash
     if attribute_hash not in self.__attribute_replacements:
       raise ValueError(f"codeGenerator.getIntermediateName: attribute hash not found in self.__attribute_replacements. {str(attribute)} hash is: {attribute_hash}")
