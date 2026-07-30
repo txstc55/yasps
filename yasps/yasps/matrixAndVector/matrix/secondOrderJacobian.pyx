@@ -44,9 +44,7 @@ class secondOrderJacobian(matrix):
     self.__compress_coordinates = bool(compress_coordinates)
     self.__indices_kernels: List[secondOrderJacobianIndicesKernel] = []
     self.__indices_kernels_dynamic: List[secondOrderJacobianIndicesKernel] = []
-    self.__mixed_derivatives: List[attribute] = []
-    self.__mixed_derivatives_dynamic: List[attribute] = []
-    # The retained mixed derivative evaluates the chain rule directly:
+    # Each term retains the second-order chain rule explicitly:
     # J_row^T H_inner J_column + H_recursive.
     self.__row_outer_jacobians: List[attribute] = []
     self.__column_outer_jacobians: List[attribute] = []
@@ -63,6 +61,7 @@ class secondOrderJacobian(matrix):
     self.__compression_kernel_dynamic: Optional[coordinateCompressionKernel] = None
     self.__numeric_kernel = secondOrderJacobianKernel()
     self.__is_setup = False
+    self.__has_numeric_value = False
 
   def __validateTargets(self, targets, name):
     if not isinstance(targets, list) or len(targets) == 0:
@@ -145,7 +144,6 @@ class secondOrderJacobian(matrix):
   def addTerm(
     self,
     indices_kernel,
-    mixed_derivative,
     row_outer_jacobian,
     column_outer_jacobian,
     inner_hessian,
@@ -157,7 +155,6 @@ class secondOrderJacobian(matrix):
         "secondOrderJacobian.addTerm: indices_kernel has the wrong type."
       )
     for value, name in [
-      (mixed_derivative, "mixed_derivative"),
       (row_outer_jacobian, "row_outer_jacobian"),
       (column_outer_jacobian, "column_outer_jacobian"),
       (inner_hessian, "inner_hessian"),
@@ -169,19 +166,18 @@ class secondOrderJacobian(matrix):
         )
     if dynamic:
       self.__indices_kernels_dynamic.append(indices_kernel)
-      self.__mixed_derivatives_dynamic.append(mixed_derivative)
       self.__row_outer_jacobians_dynamic.append(row_outer_jacobian)
       self.__column_outer_jacobians_dynamic.append(column_outer_jacobian)
       self.__inner_hessians_dynamic.append(inner_hessian)
       self.__recursive_mixed_terms_dynamic.append(recursive_mixed_term)
     else:
       self.__indices_kernels.append(indices_kernel)
-      self.__mixed_derivatives.append(mixed_derivative)
       self.__row_outer_jacobians.append(row_outer_jacobian)
       self.__column_outer_jacobians.append(column_outer_jacobian)
       self.__inner_hessians.append(inner_hessian)
       self.__recursive_mixed_terms.append(recursive_mixed_term)
     self.__is_setup = False
+    self.__has_numeric_value = False
 
   def __add__(self, other):
     if not isinstance(other, secondOrderJacobian):
@@ -208,7 +204,6 @@ class secondOrderJacobian(matrix):
       for i, indices in enumerate(owner.__indices_kernels):
         result.addTerm(
           indices,
-          owner.__mixed_derivatives[i],
           owner.__row_outer_jacobians[i],
           owner.__column_outer_jacobians[i],
           owner.__inner_hessians[i],
@@ -218,7 +213,6 @@ class secondOrderJacobian(matrix):
       for i, indices in enumerate(owner.__indices_kernels_dynamic):
         result.addTerm(
           indices,
-          owner.__mixed_derivatives_dynamic[i],
           owner.__row_outer_jacobians_dynamic[i],
           owner.__column_outer_jacobians_dynamic[i],
           owner.__inner_hessians_dynamic[i],
@@ -334,26 +328,45 @@ class secondOrderJacobian(matrix):
 
     self.blocks_flattened.fill(0)
     self.blocks_flattened_dynamic.fill(0)
-    for i, mixed_derivative in enumerate(self.__mixed_derivatives):
+    for i, row_outer in enumerate(self.__row_outer_jacobians):
       if self.__indices_kernels[i].numTotalCoordinates == 0:
         continue
-      mixed_derivative.compute()
-      self.__numeric_kernel.assemble(
-        mixed_derivative,
+      column_outer = self.__column_outer_jacobians[i]
+      inner_hessian = self.__inner_hessians[i]
+      recursive_mixed_term = self.__recursive_mixed_terms[i]
+      row_outer.compute()
+      column_outer.compute()
+      inner_hessian.compute()
+      recursive_mixed_term.compute()
+      self.__numeric_kernel.assembleChainRule(
+        row_outer,
+        column_outer,
+        inner_hessian,
+        recursive_mixed_term,
         self.__indices_kernels[i],
         self.__lookups[i],
         self.blocks_flattened
       )
-    for i, mixed_derivative in enumerate(self.__mixed_derivatives_dynamic):
+    for i, row_outer in enumerate(self.__row_outer_jacobians_dynamic):
       if self.__indices_kernels_dynamic[i].numTotalCoordinates == 0:
         continue
-      mixed_derivative.compute()
-      self.__numeric_kernel.assemble(
-        mixed_derivative,
+      column_outer = self.__column_outer_jacobians_dynamic[i]
+      inner_hessian = self.__inner_hessians_dynamic[i]
+      recursive_mixed_term = self.__recursive_mixed_terms_dynamic[i]
+      row_outer.compute()
+      column_outer.compute()
+      inner_hessian.compute()
+      recursive_mixed_term.compute()
+      self.__numeric_kernel.assembleChainRule(
+        row_outer,
+        column_outer,
+        inner_hessian,
+        recursive_mixed_term,
         self.__indices_kernels_dynamic[i],
         self.__lookups_dynamic[i],
         self.blocks_flattened_dynamic
       )
+    self.__has_numeric_value = True
     return self
 
   def __spmvRepresentation(
@@ -384,6 +397,8 @@ class secondOrderJacobian(matrix):
       coordinate_offset += count
 
   def matVecProduct(self, x: vector):
+    if not self.__has_numeric_value:
+      self.compute()
     if not isinstance(x, vector) or x.size != self.cols:
       raise ValueError(
         "secondOrderJacobian.matVecProduct: input vector has wrong size."
@@ -393,6 +408,8 @@ class secondOrderJacobian(matrix):
     return output
 
   def matVecProductInPlace(self, x: vector, output: vector):
+    if not self.__has_numeric_value:
+      self.compute()
     if x.size != self.cols or output.size != self.rows:
       raise ValueError(
         "secondOrderJacobian.matVecProductInPlace: vector size mismatch."
@@ -418,8 +435,14 @@ class secondOrderJacobian(matrix):
       output.value,
       False
     )
+    return output
+
+  def __matmul__(self, x):
+    return self.matVecProduct(x)
 
   def transposeMatVecProduct(self, x: vector):
+    if not self.__has_numeric_value:
+      self.compute()
     if not isinstance(x, vector) or x.size != self.rows:
       raise ValueError(
         "secondOrderJacobian.transposeMatVecProduct: input has wrong size."
@@ -429,6 +452,8 @@ class secondOrderJacobian(matrix):
     return output
 
   def transposeMatVecProductInPlace(self, x: vector, output: vector):
+    if not self.__has_numeric_value:
+      self.compute()
     if x.size != self.rows or output.size != self.cols:
       raise ValueError(
         "secondOrderJacobian.transposeMatVecProductInPlace: size mismatch."
@@ -454,6 +479,7 @@ class secondOrderJacobian(matrix):
       output.value,
       True
     )
+    return output
 
   def __addDenseRepresentation(
     self,

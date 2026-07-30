@@ -350,26 +350,18 @@ class differentiator:
         "differentiator.diff2: row/column outer Jacobians are incompatible "
         "with the inner Hessian or recursive mixed term."
       )
-    outer_inner_outer = row_outer.transpose().mul_explicit(
-      inner_hessian.mul_explicit(column_outer)
-    )
-    mixed_chain_rule = outer_inner_outer.add_explicit(
-      recursive_mixed_expression
-    )
-    mixed_chain_rule_name = (
-      f'd2_mixed_chain_{source.fullName}_d_'
-      f'{"__".join(x.fullName for x in row_targets)}_d_'
-      f'{"__".join(x.fullName for x in column_targets)}'
-    )
-    if mixed_chain_rule_name not in source.correspondance.attributes:
-      source.correspondance.addAttribute(
-        mixed_chain_rule_name,
-        computed_attribute=mixed_chain_rule
-      )
-    mixed_chain_rule = source.correspondance[mixed_chain_rule_name]
+    # Retain the second-order chain rule as four independent numeric factors.
+    # secondOrderJacobian assembles
+    #
+    #   row_outer^T * inner_hessian * column_outer
+    #     + recursive_mixed_expression
+    #
+    # directly.  In particular, do not symbolically collapse the two outer
+    # Jacobians and the inner Hessian into a precomputed dense mixed
+    # derivative: keeping this structure mirrors the Hessian path and avoids
+    # needlessly differentiating or materializing constant-only branches.
     result.addTerm(
       rectangular_indices,
-      mixed_chain_rule,
       row_outer,
       column_outer,
       inner_hessian,

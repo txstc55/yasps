@@ -14,10 +14,15 @@ from yasps.helper import timed
 second_order_jacobian_kernel_string = r'''
 #include <cuda_runtime.h>
 
-__global__ void assemble_rectangular_blocks_kernel(
-  const double* local_mixed_derivative,
-  unsigned int local_rows,
-  unsigned int local_cols,
+__global__ void assemble_rectangular_chain_rule_blocks_kernel(
+  const double* row_outer_jacobian,
+  const double* column_outer_jacobian,
+  const double* inner_hessian,
+  const double* recursive_mixed_term,
+  unsigned int inner_rows,
+  unsigned int inner_cols,
+  unsigned int combined_rows,
+  unsigned int combined_cols,
   const unsigned int* row_indices,
   const unsigned short* row_sizes,
   const short* row_permutations,
@@ -55,11 +60,42 @@ __global__ void assemble_rectangular_blocks_kernel(
       unsigned int output_offset = lookup[occurrence++];
       for (unsigned int r = 0; r < h; ++r) {
         for (unsigned int c = 0; c < w; ++c) {
-          double value = local_mixed_derivative[
-            instance * local_rows * local_cols
-            + (row_offset + r) * local_cols
-            + column_offset + c
+          unsigned int combined_row = row_offset + r;
+          unsigned int combined_col = column_offset + c;
+          double value = recursive_mixed_term[
+            instance * combined_rows * combined_cols
+            + combined_row * combined_cols
+            + combined_col
           ];
+          // Strict second-order chain rule:
+          //
+          //   J_row^T * H_inner * J_column + H_recursive.
+          //
+          // row_outer and column_outer have the inner variable as their row
+          // space and the combined differentiation variables as columns.
+          for (unsigned int a = 0; a < inner_rows; ++a) {
+            double left = row_outer_jacobian[
+              instance * inner_rows * combined_rows
+              + a * combined_rows
+              + combined_row
+            ];
+            if (left == 0.0) {
+              continue;
+            }
+            for (unsigned int b = 0; b < inner_cols; ++b) {
+              value += left
+                * inner_hessian[
+                    instance * inner_rows * inner_cols
+                    + a * inner_cols
+                    + b
+                  ]
+                * column_outer_jacobian[
+                    instance * inner_cols * combined_cols
+                    + b * combined_cols
+                    + combined_col
+                  ];
+            }
+          }
           atomicAdd(blocks + output_offset + r * w + c, value);
         }
       }
@@ -101,10 +137,15 @@ __global__ void rectangular_spmv_kernel(
 }
 
 extern "C"
-int assemble_rectangular_blocks(
-  const double* local_mixed_derivative,
-  unsigned int local_rows,
-  unsigned int local_cols,
+int assemble_rectangular_chain_rule_blocks(
+  const double* row_outer_jacobian,
+  const double* column_outer_jacobian,
+  const double* inner_hessian,
+  const double* recursive_mixed_term,
+  unsigned int inner_rows,
+  unsigned int inner_cols,
+  unsigned int combined_rows,
+  unsigned int combined_cols,
   const unsigned int* row_indices,
   const unsigned short* row_sizes,
   const short* row_permutations,
@@ -118,8 +159,12 @@ int assemble_rectangular_blocks(
   double* blocks,
   unsigned int num_instances
 ) {
-  assemble_rectangular_blocks_kernel<<<(num_instances + 255) / 256, 256>>>(
-    local_mixed_derivative, local_rows, local_cols,
+  assemble_rectangular_chain_rule_blocks_kernel<<<
+    (num_instances + 255) / 256, 256
+  >>>(
+    row_outer_jacobian, column_outer_jacobian,
+    inner_hessian, recursive_mixed_term,
+    inner_rows, inner_cols, combined_rows, combined_cols,
     row_indices, row_sizes, row_permutations, row_stride,
     column_indices, column_sizes, column_permutations, column_stride,
     coordinate_outer, lookup, blocks, num_instances
@@ -192,11 +237,13 @@ class secondOrderJacobianKernel:
         f"{(time.time() - time_start) * 1000.0} ms"
       )
     library = ctypes.CDLL(f"{file_name}.so")
-    self.__assemble_kernel = library.assemble_rectangular_blocks
+    self.__assemble_kernel = (
+      library.assemble_rectangular_chain_rule_blocks
+    )
     self.__assemble_kernel.restype = ctypes.c_int
     self.__assemble_kernel.argtypes = (
-      [ctypes.c_void_p]
-      + [ctypes.c_uint32] * 2
+      [ctypes.c_void_p] * 4
+      + [ctypes.c_uint32] * 4
       + [ctypes.c_void_p] * 3
       + [ctypes.c_uint32]
       + [ctypes.c_void_p] * 3
@@ -213,16 +260,40 @@ class secondOrderJacobianKernel:
       + [ctypes.c_bool]
     )
 
-  @timed("secondOrderJacobianKernel.assemble")
-  def assemble(self, local_mixed_derivative, indices_kernel, lookup, blocks):
+  @timed("secondOrderJacobianKernel.assembleChainRule")
+  def assembleChainRule(
+    self,
+    row_outer_jacobian,
+    column_outer_jacobian,
+    inner_hessian,
+    recursive_mixed_term,
+    indices_kernel,
+    lookup,
+    blocks
+  ):
     self.__context.useDefaultContext()
     self.__loadKernels()
+    if (
+      row_outer_jacobian.rows != inner_hessian.rows
+      or column_outer_jacobian.rows != inner_hessian.cols
+      or row_outer_jacobian.cols != recursive_mixed_term.rows
+      or column_outer_jacobian.cols != recursive_mixed_term.cols
+    ):
+      raise ValueError(
+        "secondOrderJacobianKernel: incompatible outer Jacobian, "
+        "inner Hessian, or recursive mixed-term dimensions."
+      )
     row = indices_kernel.rowIndicesKernel
     column = indices_kernel.columnIndicesKernel
     error_code = self.__assemble_kernel(
-      self.__to_void_p(local_mixed_derivative.value),
-      ctypes.c_uint32(local_mixed_derivative.rows),
-      ctypes.c_uint32(local_mixed_derivative.cols),
+      self.__to_void_p(row_outer_jacobian.value),
+      self.__to_void_p(column_outer_jacobian.value),
+      self.__to_void_p(inner_hessian.value),
+      self.__to_void_p(recursive_mixed_term.value),
+      ctypes.c_uint32(inner_hessian.rows),
+      ctypes.c_uint32(inner_hessian.cols),
+      ctypes.c_uint32(recursive_mixed_term.rows),
+      ctypes.c_uint32(recursive_mixed_term.cols),
       self.__to_void_p(row.outputIndices),
       self.__to_void_p(row.outputSizes),
       self.__to_void_p(row.outputPermutations),
@@ -238,7 +309,8 @@ class secondOrderJacobianKernel:
     )
     if error_code != 0:
       raise RuntimeError(
-        f"secondOrderJacobianKernel.assemble: CUDA kernel returned {error_code}."
+        "secondOrderJacobianKernel.assembleChainRule: CUDA kernel returned "
+        f"{error_code}."
       )
 
   @timed("secondOrderJacobianKernel.spmvCategory")

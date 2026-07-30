@@ -13,6 +13,9 @@ import pycuda.autoinit
 import pycuda.gpuarray as gpuarray
 from yasps.helper import timed
 from yasps.placementReorderKernel import placementReorderKernel
+from yasps.diagonalBlockInverseKernel import diagonalBlockInverseKernel
+from yasps.solver import solver
+from yasps.vector import vector
 
 
 class hessian(matrix):
@@ -100,6 +103,15 @@ class hessian(matrix):
 
     self.__compression_kernel: Optional[coordinateCompressionKernel] = None
     self.__compression_kernel_dynamic: Optional[coordinateCompressionKernel] = None
+
+    # Direct linear-system support.  This intentionally lives on the
+    # materialized Hessian so simulations and adjoint passes do not need to go
+    # through scene.minimizeEnergy merely to solve A x = b.
+    self.__linear_solver = solver()
+    self.__diagonal_block_inverse_kernel = None
+    self.__linear_initial_guess = gpuarray.empty(0, dtype=np.float64)
+    self.__last_solve_error_code = 0
+    self.__has_numeric_value = False
 
   def __compute_wrt_start_indices(self):
     gradient_sizes = [item.size * item.correspondance.numInstances for item in self.__wrt]
@@ -876,9 +888,29 @@ class hessian(matrix):
         merged_hessian_and_gradient.append(global_gradient[i])
       merged_hessian_rows = len(merged_hessian_and_gradient) // global_gradient.size
       merged_hessian_cols = global_gradient.size
-    merged_attribute = attribute.to_array(merged_hessian_and_gradient, rows=merged_hessian_rows, cols=merged_hessian_cols)
-    source.correspondance.addAttribute(f'hessian_and_gradient_d2_{source.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = merged_attribute, rows = merged_hessian_rows, cols = merged_hessian_cols)
-    return merged_attribute
+    merged_attribute = attribute.to_array(
+      merged_hessian_and_gradient,
+      rows=merged_hessian_rows,
+      cols=merged_hessian_cols
+    )
+    # Multiple matrix objects may differentiate the same source (for
+    # example, a forward Newton matrix and a converged-state adjoint matrix).
+    # Reuse an identical merged expression, while keeping projected/exact or
+    # otherwise different expressions distinct.  Naming only by source and
+    # target used to collide on the second matrix object.
+    merged_name = (
+      f'hessian_and_gradient_d2_{source.fullName}_d2_'
+      f'{"__".join([x.fullName for x in self.__wrt])}_'
+      f'expr_{merged_attribute.hash}'
+    )
+    if merged_name not in source.correspondance.attributes:
+      source.correspondance.addAttribute(
+        merged_name,
+        computed_attribute=merged_attribute,
+        rows=merged_hessian_rows,
+        cols=merged_hessian_cols
+      )
+    return source.correspondance[merged_name]
 
   def __ensureTermKernel(self, index: int, dynamic_term = False) -> None:
     if not dynamic_term:
@@ -1076,7 +1108,10 @@ class hessian(matrix):
       )
 
     for index, indices_kernel in enumerate(self.__indices_kernels_dynamic):
-      if indices_kernel.numTotalCoordinates == 0:
+      if (
+        indices_kernel.numTotalCoordinates == 0
+        or self.__sources_dynamic[index].correspondance.numInstances == 0
+      ):
         continue
       if index >= len(self.__block_indices_gpu_dynamic):
         raise ValueError("hessian.compute: dynamic sparse lookup is missing.")
@@ -1090,7 +1125,84 @@ class hessian(matrix):
         self.__intermediate_compute_pairs_dynamic,
         True
       )
+    self.__has_numeric_value = True
     return self
+
+  def __ensureLinearSolveBuffers(self):
+    if self.__diagonal_block_inverse_kernel is None:
+      self.__diagonal_block_inverse_kernel = diagonalBlockInverseKernel(
+        set([item.size for item in self.__wrt]),
+        self.__diagonal_blocks_start_cpu,
+        [item.correspondance.numInstances for item in self.__wrt],
+        [item.size for item in self.__wrt],
+        len(self.__wrt)
+      )
+    if self.__linear_initial_guess.size != self.rows:
+      self.__linear_initial_guess = gpuarray.zeros(
+        self.rows, dtype=np.float64
+      )
+
+  def solve(
+    self,
+    rhs=None,
+    tolerance=1e-6,
+    maxIterations=20000,
+    recompute=False,
+    zero_initial_guess=True
+  ):
+    """
+    Solve the materialized symmetric system ``self * x = rhs``.
+
+    ``rhs`` may be a YASPS vector/gradient, a NumPy array, or a CUDA
+    GPUArray.  If it is omitted, the energy gradient assembled by
+    ``compute`` is used.  Set ``recompute=True`` to rebuild the Hessian at
+    the attributes' current values before solving.
+    """
+    if recompute or not self.__has_numeric_value:
+      self.compute()
+    assert self.__gradient is not None
+    self.__ensureLinearSolveBuffers()
+
+    if self.__diagonal_blocks.size > 0:
+      self.__diagonal_block_inverse_kernel.computeDiagonalBlockInverse(
+        self.__diagonal_blocks,
+        self.__diagonal_blocks_inverse
+      )
+
+    rhs_gradient = gradient(self.__wrt, self)
+    if rhs is None:
+      rhs_gradient.updateValue(self.__gradient)
+    elif isinstance(rhs, vector):
+      if rhs.size != self.rows:
+        raise ValueError(
+          "hessian.solve: right-hand side size does not match the Hessian."
+        )
+      rhs_gradient.updateValue(rhs)
+    elif isinstance(rhs, np.ndarray):
+      rhs_gradient.updateValue(rhs)
+    elif isinstance(rhs, gpuarray.GPUArray):
+      rhs_gradient.updateValue(rhs)
+    else:
+      raise TypeError(
+        "hessian.solve: rhs must be a vector, NumPy array, GPUArray, or None."
+      )
+
+    self.__last_solve_error_code = self.__linear_solver.computeSolution(
+      self,
+      self.__wrt,
+      rhs_gradient,
+      self.__linear_initial_guess,
+      tolerance=tolerance,
+      maxIterations=maxIterations,
+      zero_initial_guess=zero_initial_guess
+    )
+    result = vector(self.rows)
+    result.updateValue(self.__linear_solver.solution)
+    return result
+
+  @property
+  def last_solve_error_code(self):
+    return self.__last_solve_error_code
 
   @property
   def hash(self) -> int:

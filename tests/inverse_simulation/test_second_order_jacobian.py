@@ -1,6 +1,6 @@
 import numpy as np
 
-from yasps import attribute, differentiator, scene, vector
+from yasps import attribute, differentiator, gradient, scene, vector
 
 
 def _finite_difference_mixed(energy, x, theta, x_values, theta_values):
@@ -108,6 +108,28 @@ def test_mixed_second_order_jacobian_constant_target_and_spmv():
   np.testing.assert_allclose(
     mixed.transposeMatVecProduct(left).value.get(),
     expected.T @ left.value.get()
+  )
+
+
+def test_matrix_product_accepts_gradient_and_materializes_lazily():
+  energy, x, theta, x_values, _ = _make_point_energy(
+    "mixed_lazy_matvec_regression"
+  )
+  mixed = differentiator().diff2([energy], [x], [theta])
+  right = gradient([theta])
+  right.updateValue(np.array([1.5, -2.0, 0.25]))
+
+  expected = np.zeros((6, 3), dtype=np.float64)
+  for instance in range(3):
+    expected[2 * instance:2 * instance + 2, instance] = (
+      2.0 * x_values[instance]
+    )
+
+  # No explicit mixed.compute() is required, and a gradient is a valid
+  # vector-valued right-hand side for the adjoint products.
+  result = mixed @ right
+  np.testing.assert_allclose(
+    result.value.get(), expected @ right.value.get()
   )
 
 
@@ -353,6 +375,7 @@ def test_uncompressed_occurrences_are_grouped_by_rectangular_block_size():
 
 if __name__ == "__main__":
   test_mixed_second_order_jacobian_constant_target_and_spmv()
+  test_matrix_product_accepts_gradient_and_materializes_lazily()
   test_mixed_second_order_jacobian_compressed_coordinates_and_orientation()
   test_dynamic_mixed_second_order_coordinates_regenerate()
   test_mixed_derivative_is_not_reused_from_projected_hessian_cache()
