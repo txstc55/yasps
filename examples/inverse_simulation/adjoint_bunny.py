@@ -21,10 +21,10 @@ second-order Jacobians for
 
 Every one of those rectangular matrices retains the strict second-order
 chain rule with two outer Jacobians, one inner Hessian, and the recursive
-second-order term.  The loss is the mean squared position error over an
-observed trajectory generated from a known target parameter.  The three
-supported design variables are Young's modulus, initial translation, and
-total mass.
+second-order term.  The loss is the final-frame mean squared position error
+to one target bunny configuration.  The three supported design variables
+are per-element Young/Poisson fields, initial translation, and per-vertex
+mass.
 """
 
 from __future__ import annotations
@@ -45,7 +45,8 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/yasps-adjoint-matplotlib")
 import numpy as np
 import pycuda.gpuarray as gpuarray
 import pyvista as pv
-import tetgen
+from scipy import sparse as scipy_sparse
+from scipy.sparse.linalg import minres
 
 from yasps import attribute, differentiator, scene, vector
 
@@ -160,30 +161,52 @@ def extract_surface_edges(triangles: np.ndarray) -> np.ndarray:
   return np.asarray(sorted(edges), dtype=np.uint32)
 
 
-def load_coarse_tetrahedral_bunny(
-  surface_path: Path,
-  reduction: float,
+def load_tetrahedral_bunny(
+  node_path: Path,
+  element_path: Path,
   height: float
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
   """
-  Decimate the repository bunny, tetrahedralize it, normalize it, and orient
-  every tetrahedron positively for the elastic energy.
+  Load the repository TetGen bunny, normalize it, and orient every
+  tetrahedron positively for the elastic energy.
   """
-  surface = pv.read(surface_path).triangulate().clean()
-  surface = surface.decimate(reduction).clean().triangulate()
-  if not surface.is_manifold:
-    raise RuntimeError("The decimated bunny surface is not manifold.")
+  with node_path.open("r", encoding="utf-8") as node_file:
+    node_header = [int(value) for value in node_file.readline().split()]
+  with element_path.open("r", encoding="utf-8") as element_file:
+    element_header = [
+      int(value) for value in element_file.readline().split()
+    ]
+  if len(node_header) < 2 or node_header[1] != 3:
+    raise ValueError(f"{node_path} is not a three-dimensional .node file.")
+  if len(element_header) < 2 or element_header[1] != 4:
+    raise ValueError(
+      f"{element_path} is not a tetrahedral .ele file."
+    )
 
-  tetrahedralizer = tetgen.TetGen(surface)
-  nodes, elements, _, _ = tetrahedralizer.tetrahedralize(
-    order=1,
-    mindihedral=10,
-    minratio=1.5,
-    nobisect=True,
-    quiet=True
+  node_data = np.loadtxt(node_path, skiprows=1, dtype=np.float64)
+  element_data = np.loadtxt(
+    element_path, skiprows=1, dtype=np.int64
   )
-  nodes = np.asarray(nodes, dtype=np.float64)
-  elements = np.asarray(elements, dtype=np.uint32)
+  if node_data.shape != (node_header[0], 4):
+    raise ValueError(
+      f"{node_path} contains {node_data.shape[0]} nodes with "
+      f"{node_data.shape[1] - 1} coordinates; expected "
+      f"{node_header[0]} nodes with 3 coordinates."
+    )
+  if element_data.shape != (element_header[0], 7):
+    raise ValueError(
+      f"{element_path} contains an unexpected element layout."
+    )
+  expected_node_ids = np.arange(1, node_header[0] + 1)
+  expected_element_ids = np.arange(1, element_header[0] + 1)
+  if not np.array_equal(node_data[:, 0].astype(np.int64), expected_node_ids):
+    raise ValueError(f"{node_path} node IDs must be contiguous and 1-based.")
+  if not np.array_equal(element_data[:, 0], expected_element_ids):
+    raise ValueError(
+      f"{element_path} element IDs must be contiguous and 1-based."
+    )
+  nodes = node_data[:, 1:4].copy()
+  elements = (element_data[:, 3:7] - 1).astype(np.uint32)
 
   center_xz = nodes[:, (0, 2)].mean(axis=0)
   nodes[:, 0] -= center_xz[0]
@@ -194,16 +217,16 @@ def load_coarse_tetrahedral_bunny(
     raise RuntimeError("The bunny mesh has zero height.")
   nodes *= height / source_height
 
-  for index, tet in enumerate(elements):
-    p0, p1, p2, p3 = nodes[tet]
-    signed_volume = np.linalg.det(
-      np.stack((p1 - p0, p2 - p0, p3 - p0), axis=1)
-    )
-    if signed_volume < 0.0:
-      elements[index, 2], elements[index, 3] = (
-        elements[index, 3],
-        elements[index, 2],
-      )
+  tet_positions = nodes[elements]
+  signed_volumes = np.linalg.det(np.stack((
+    tet_positions[:, 1] - tet_positions[:, 0],
+    tet_positions[:, 2] - tet_positions[:, 0],
+    tet_positions[:, 3] - tet_positions[:, 0],
+  ), axis=2))
+  inverted = signed_volumes < 0.0
+  swapped = elements[inverted, 2].copy()
+  elements[inverted, 2] = elements[inverted, 3]
+  elements[inverted, 3] = swapped
 
   surface_triangles = extract_surface_triangles(elements)
   surface_edges = extract_surface_edges(surface_triangles)
@@ -327,27 +350,172 @@ def gpu_inf_norm(value: gpuarray.GPUArray) -> float:
   return float(np.max(np.abs(host_value)))
 
 
+def hessian_to_scipy(hessian) -> scipy_sparse.csr_matrix:
+  """
+  Materialize YASPS's symmetric upper-block storage as a SciPy CSR matrix.
+
+  The block coordinates are already in the matrix ordering selected during
+  index generation.  Off-diagonal blocks are stored once; YASPS's CG kernel
+  applies their transpose implicitly, which is reproduced here.
+  """
+  row_parts = []
+  column_parts = []
+  value_parts = []
+
+  def append_storage(
+    dimensions,
+    counts,
+    starts,
+    positions_gpu,
+    values_gpu,
+  ):
+    total_count = sum(int(count) for count in counts)
+    if not dimensions or total_count == 0:
+      return
+    positions = positions_gpu.get()[:2 * total_count].reshape((-1, 2))
+    values = values_gpu.get()
+    position_start = 0
+    for dimension_index, count in enumerate(counts):
+      row_size = int(dimensions[2 * dimension_index])
+      column_size = int(dimensions[2 * dimension_index + 1])
+      count = int(count)
+      if count == 0:
+        continue
+      position_end = position_start + count
+      block_positions = positions[position_start:position_end]
+      value_start = int(starts[dimension_index])
+      value_end = value_start + count * row_size * column_size
+      blocks = values[value_start:value_end].reshape(
+        (count, row_size, column_size)
+      )
+      rows = (
+        block_positions[:, 0, None, None]
+        + np.arange(row_size, dtype=np.uint32)[None, :, None]
+      )
+      columns = (
+        block_positions[:, 1, None, None]
+        + np.arange(column_size, dtype=np.uint32)[None, None, :]
+      )
+      rows = np.broadcast_to(rows, blocks.shape).reshape(-1)
+      columns = np.broadcast_to(columns, blocks.shape).reshape(-1)
+      row_parts.append(rows)
+      column_parts.append(columns)
+      value_parts.append(blocks.reshape(-1))
+
+      off_diagonal = block_positions[:, 0] != block_positions[:, 1]
+      if np.any(off_diagonal):
+        transpose_blocks = blocks[off_diagonal].transpose((0, 2, 1))
+        transpose_positions = block_positions[off_diagonal]
+        transpose_rows = (
+          transpose_positions[:, 1, None, None]
+          + np.arange(column_size, dtype=np.uint32)[None, :, None]
+        )
+        transpose_columns = (
+          transpose_positions[:, 0, None, None]
+          + np.arange(row_size, dtype=np.uint32)[None, None, :]
+        )
+        row_parts.append(
+          np.broadcast_to(
+            transpose_rows, transpose_blocks.shape
+          ).reshape(-1)
+        )
+        column_parts.append(
+          np.broadcast_to(
+            transpose_columns, transpose_blocks.shape
+          ).reshape(-1)
+        )
+        value_parts.append(transpose_blocks.reshape(-1))
+      position_start = position_end
+
+  append_storage(
+    hessian.block_dimensions,
+    hessian.block_counts,
+    hessian.blocks_start_indices,
+    hessian.block_positions,
+    hessian.blocks_flattened,
+  )
+  append_storage(
+    hessian.block_dimensions_dynamic,
+    hessian.block_counts_dynamic,
+    hessian.blocks_start_indices_dynamic,
+    hessian.block_positions_dynamic,
+    hessian.blocks_flattened_dynamic,
+  )
+  if not value_parts:
+    return scipy_sparse.csr_matrix(
+      (hessian.rows, hessian.cols), dtype=np.float64
+    )
+  return scipy_sparse.coo_matrix(
+    (
+      np.concatenate(value_parts),
+      (np.concatenate(row_parts), np.concatenate(column_parts)),
+    ),
+    shape=(hessian.rows, hessian.cols),
+  ).tocsr()
+
+
+def solve_symmetric_indefinite(
+  hessian,
+  rhs: vector,
+  tolerance: float,
+  max_iterations: int,
+) -> Tuple[vector, float, int]:
+  """
+  Solve an exact, potentially indefinite stationarity Hessian with MINRES.
+
+  This is an example-side fallback for the backward system only.  Forward
+  Newton continues to use YASPS's GPU CG solve on its PSD globalization.
+  """
+  matrix_cpu = hessian_to_scipy(hessian)
+  rhs_cpu = rhs.value.get()
+  solution_cpu, info = minres(
+    matrix_cpu,
+    rhs_cpu,
+    rtol=tolerance,
+    maxiter=max_iterations,
+    show=False,
+    check=False,
+  )
+  residual = matrix_cpu @ solution_cpu - rhs_cpu
+  relative_residual = float(
+    np.linalg.norm(residual)
+    / max(np.linalg.norm(rhs_cpu), 1.0e-30)
+  )
+  if (
+    info != 0
+    or not np.all(np.isfinite(solution_cpu))
+    or relative_residual > max(10.0 * tolerance, 1.0e-5)
+  ):
+    raise RuntimeError(
+      "MINRES failed for the exact adjoint Hessian: "
+      f"info={info}, relative_residual={relative_residual:.6e}."
+    )
+  result = vector(hessian.rows)
+  result.updateValue(solution_cpu)
+  return result, relative_residual, info
+
+
 class AdjointBunnySimulation:
   def __init__(
     self,
     frames: int = 200,
     dt: float = 0.01,
-    mesh_reduction: float = 0.985,
     bunny_height: float = 0.35,
-    d_hat: float = 1.0e-4,
+    d_hat: float = 1.0e-6,
     kappa: float = 5.0e3,
-    young: float = 3.0e2,
-    poisson: float = 0.35,
-    mass: float = 1.5,
+    young: float = 2.5e3,
+    poisson: float = 0.32,
+    mass: float = 8.0e-5,
     initial_translation: np.ndarray = np.array(
-      [0.12, 0.35, 0.04], dtype=np.float64
+      [0.18, 0.45, 0.08], dtype=np.float64
     ),
-    centered_initial_translation: np.ndarray = np.array(
-      [0.0, 0.35, 0.0], dtype=np.float64
-    ),
-    newton_tolerance: float = 1.0e-6,
-    position_tolerance: float = 1.0e-10,
-    max_newton_iterations: int = 60,
+    target_position: Optional[np.ndarray] = None,
+    node_path: Optional[Path] = None,
+    element_path: Optional[Path] = None,
+    newton_tolerance: float = 1.0e-12,
+    contact_newton_tolerance: float = 2.0e-7,
+    position_tolerance: float = 1.0e-12,
+    max_newton_iterations: int = 300,
     linear_tolerance: float = 1.0e-10,
     max_linear_iterations: int = 2000,
     verbose: bool = True
@@ -356,14 +524,24 @@ class AdjointBunnySimulation:
       raise ValueError("frames must be positive.")
     if dt <= 0.0:
       raise ValueError("dt must be positive.")
-    if not 0.0 < mesh_reduction < 1.0:
-      raise ValueError("mesh_reduction must be in (0, 1).")
+    if d_hat <= 0.0:
+      raise ValueError("d_hat must be positive.")
+    if newton_tolerance <= 0.0 or contact_newton_tolerance <= 0.0:
+      raise ValueError("Newton tolerances must be positive.")
+    if max_newton_iterations <= 0:
+      raise ValueError("max_newton_iterations must be positive.")
+    if young <= 0.0 or mass <= 0.0:
+      raise ValueError("young and mass must be positive.")
+    if not 0.0 < poisson < 0.49:
+      raise ValueError("poisson must lie in (0, 0.49).")
     self.frames = int(frames)
     self.dt_value = float(dt)
     self.d_hat_value = float(d_hat)
     self.contact_distance = math.sqrt(self.d_hat_value)
     self.kappa_value = float(kappa)
+    self.floor_height_value = 0.0
     self.newton_tolerance = float(newton_tolerance)
+    self.contact_newton_tolerance = float(contact_newton_tolerance)
     self.position_tolerance = float(position_tolerance)
     self.max_newton_iterations = int(max_newton_iterations)
     self.linear_tolerance = float(linear_tolerance)
@@ -375,34 +553,52 @@ class AdjointBunnySimulation:
       self.tet_indices,
       self.surface_triangles,
       self.surface_edges,
-    ) = load_coarse_tetrahedral_bunny(
-      SCRIPT_DIR.parent / "data" / "bunny_small.obj",
-      mesh_reduction,
+    ) = load_tetrahedral_bunny(
+      node_path or SCRIPT_DIR.parent / "data" / "bunny.node",
+      element_path or SCRIPT_DIR.parent / "data" / "bunny.ele",
       bunny_height
     )
     self.num_vertices = self.rest_positions.shape[0]
+    self.num_tets = self.tet_indices.shape[0]
     self.num_dofs = 3 * self.num_vertices
-    self.target_center = np.asarray(
-      [0.0, self.contact_distance, 0.0], dtype=np.float64
-    )
-
-    self.default_young = float(young)
-    self.default_mass = float(mass)
     self.default_initial_translation = np.asarray(
       initial_translation, dtype=np.float64
     ).copy()
     if self.default_initial_translation.shape != (3,):
       raise ValueError("initial_translation must contain three values.")
-    self.centered_initial_translation = np.asarray(
-      centered_initial_translation, dtype=np.float64
-    ).copy()
-    if self.centered_initial_translation.shape != (3,):
-      raise ValueError(
-        "centered_initial_translation must contain three values."
-      )
     self.initial_translation = self.default_initial_translation.copy()
+    if target_position is None:
+      target_position = np.asarray(
+        [
+          self.default_initial_translation[0],
+          self.contact_distance,
+          self.default_initial_translation[2],
+        ],
+        dtype=np.float64,
+      )
+    self.target_position = np.asarray(
+      target_position, dtype=np.float64
+    ).copy()
+    if self.target_position.shape != (3,):
+      raise ValueError("target_position must contain three values.")
+    self.target_configuration = (
+      self.rest_positions + self.target_position
+    )
+    self.target_center = self.target_configuration.mean(axis=0)
 
-    self._build_scene(poisson)
+    self.default_young = np.full(
+      self.num_tets, float(young), dtype=np.float64
+    )
+    self.default_poisson = np.full(
+      self.num_tets, float(poisson), dtype=np.float64
+    )
+    self.default_vertex_mass = np.full(
+      self.num_vertices,
+      float(mass),
+      dtype=np.float64,
+    )
+
+    self._build_scene()
     self._build_collision_detector()
     self._build_derivatives()
 
@@ -418,7 +614,7 @@ class AdjointBunnySimulation:
     result.updateValue(np.asarray([value], dtype=np.float64))
     return result
 
-  def _build_scene(self, poisson_value: float):
+  def _build_scene(self):
     self.model = scene("adjoint_bunny_drop")
     self.dt = self._constant(self.model, "dt", self.dt_value)
     self.d_hat = self._constant(
@@ -428,20 +624,10 @@ class AdjointBunnySimulation:
       self.model, "kappa", self.kappa_value
     )
     self.floor_height = self._constant(
-      self.model, "floor_height", 0.0
+      self.model, "floor_height", self.floor_height_value
     )
 
     self.bunny = self.model.addMesh("bunny")
-    self.young = self._constant(
-      self.bunny, "young", self.default_young
-    )
-    self.poisson = self._constant(
-      self.bunny, "poisson", poisson_value
-    )
-    self.mass = self._constant(
-      self.bunny, "total_mass", self.default_mass
-    )
-    self.vertex_mass = self.mass / float(self.num_vertices)
 
     self.vertices = self.bunny.addPrimitive(
       "vertices", numInstances=self.num_vertices
@@ -459,10 +645,18 @@ class AdjointBunnySimulation:
       "rest_position", rows=3, cols=1
     )
     self.rest_position.updateValue(self.rest_positions.reshape(-1))
+    self.vertex_mass = self.vertices.addConstant(
+      "mass", rows=1, cols=1
+    )
+    self.vertex_mass.updateValue(self.default_vertex_mass)
 
     self.tets = self.bunny.addPrimitive(
       "tets", numInstances=self.tet_indices.shape[0]
     )
+    self.young = self.tets.addConstant("young", rows=1, cols=1)
+    self.young.updateValue(self.default_young)
+    self.poisson = self.tets.addConstant("poisson", rows=1, cols=1)
+    self.poisson.updateValue(self.default_poisson)
     self.tet_to_vertices = self.tets.addConnectivity(
       "tet_to_vertices",
       self.vertices,
@@ -737,10 +931,18 @@ class AdjointBunnySimulation:
     surface_indices = np.unique(
       self.surface_triangles.reshape(-1)
     ).astype(np.uint32)
+    broad_phase_capacity = max(
+      25_000_000,
+      512 * (
+        self.surface_triangles.shape[0]
+        + self.surface_edges.shape[0]
+      ),
+    )
     self.ccd = CCD(
       surface_indices.size,
       self.num_vertices,
-      max_ccd_pairs=2_000_000,
+      max_cd_pairs=1_000_000,
+      max_ccd_pairs=broad_phase_capacity,
       mesh_indices=np.zeros(self.num_vertices, dtype=np.uint32).tolist()
     )
     position_gpu = gpuarray.to_gpu(
@@ -826,26 +1028,23 @@ class AdjointBunnySimulation:
       [self.previous_velocity],
       compress_coordinates=False
     )
-    self.young_jacobian = differentiator().diff2(
+    self.material_jacobian = differentiator().diff2(
       [self.elastic_energy_exact],
       [self.position],
-      [self.young],
+      [self.young, self.poisson],
       compress_coordinates=False
     )
     self.mass_jacobian = differentiator().diff2(
       [self.inertia_energy],
       [self.position],
-      [self.mass],
+      [self.vertex_mass],
       compress_coordinates=False
     )
 
   def restore_default_design(self):
-    self.young.updateValue(
-      np.asarray([self.default_young], dtype=np.float64)
-    )
-    self.mass.updateValue(
-      np.asarray([self.default_mass], dtype=np.float64)
-    )
+    self.young.updateValue(self.default_young)
+    self.poisson.updateValue(self.default_poisson)
+    self.vertex_mass.updateValue(self.default_vertex_mass)
     self.initial_translation = (
       self.default_initial_translation.copy()
     )
@@ -854,38 +1053,49 @@ class AdjointBunnySimulation:
     """
     Reset every control before an independent optimization.
 
-    Young's modulus and mass cannot remove a horizontal rigid translation, so
-    their demonstrations start horizontally centered.  Initial-position
-    optimization deliberately starts offset to exercise all three translation
-    components.
+    Every first optimization trajectory starts offset from the world origin.
+    Each design then minimizes the same final-configuration position loss.
     """
     self.restore_default_design()
-    if design in (DESIGN_YOUNG, DESIGN_MASS):
-      self.initial_translation = (
-        self.centered_initial_translation.copy()
-      )
 
   def get_design_value(self, design: str):
     if design == DESIGN_YOUNG:
-      return float(self.young.value.get()[0])
+      return {
+        "young": self.young.value.get().copy(),
+        "poisson": self.poisson.value.get().copy(),
+      }
     if design == DESIGN_MASS:
-      return float(self.mass.value.get()[0])
+      return self.vertex_mass.value.get().copy()
     if design == DESIGN_INITIAL_POSITION:
       return self.initial_translation.copy()
     raise ValueError(f"Unknown design parameter: {design}")
 
   def set_design_value(self, design: str, value):
     if design == DESIGN_YOUNG:
-      numeric = float(value)
-      if numeric <= 0.0:
-        raise ValueError("Young's modulus must be positive.")
-      self.young.updateValue(np.asarray([numeric], dtype=np.float64))
+      if not isinstance(value, dict):
+        raise TypeError(
+          "Material design value must contain young and poisson fields."
+        )
+      young = np.asarray(value["young"], dtype=np.float64)
+      poisson = np.asarray(value["poisson"], dtype=np.float64)
+      if young.shape != (self.num_tets,):
+        raise ValueError("Young field must contain one value per element.")
+      if poisson.shape != (self.num_tets,):
+        raise ValueError("Poisson field must contain one value per element.")
+      if np.any(young <= 0.0):
+        raise ValueError("Every Young's modulus must be positive.")
+      if np.any(poisson <= 0.0) or np.any(poisson >= 0.49):
+        raise ValueError("Every Poisson ratio must lie in (0, 0.49).")
+      self.young.updateValue(young)
+      self.poisson.updateValue(poisson)
       return
     if design == DESIGN_MASS:
-      numeric = float(value)
-      if numeric <= 0.0:
-        raise ValueError("Mass must be positive.")
-      self.mass.updateValue(np.asarray([numeric], dtype=np.float64))
+      mass = np.asarray(value, dtype=np.float64)
+      if mass.shape != (self.num_vertices,):
+        raise ValueError("Mass field must contain one value per vertex.")
+      if np.any(mass <= 0.0):
+        raise ValueError("Every vertex mass must be positive.")
+      self.vertex_mass.updateValue(mass)
       return
     if design == DESIGN_INITIAL_POSITION:
       numeric = np.asarray(value, dtype=np.float64)
@@ -1170,14 +1380,17 @@ class AdjointBunnySimulation:
   def _floor_step_limit(
     self, positions: np.ndarray, direction: np.ndarray
   ) -> float:
-    old_height = positions[:, 1]
-    new_height = old_height - direction[:, 1]
-    moving_down = new_height < old_height
+    clearance = positions[:, 1] - self.floor_height_value
+    downward_step = direction[:, 1]
+    moving_down = downward_step > 0.0
     if not np.any(moving_down):
       return 1.0
-    denominator = old_height[moving_down] - new_height[moving_down]
-    numer = old_height[moving_down] - 0.8 * self.contact_distance
-    valid = denominator > 1.0e-14
+    # Keep ten percent of the current positive clearance.  The old
+    # contact-distance-based cap incorrectly made 0.8 * d_hat**0.5 a hard
+    # floor, even though it is only the barrier activation distance.
+    denominator = downward_step[moving_down]
+    numer = 0.9 * clearance[moving_down]
+    valid = (denominator > 1.0e-14) & (numer > 0.0)
     if not np.any(valid):
       return 1.0
     steps = numer[valid] / denominator[valid]
@@ -1188,10 +1401,10 @@ class AdjointBunnySimulation:
 
   def _collision_step_limit(self, direction) -> float:
     current = self.position.value.copy()
-    self.ccd.ccd(current, self.d_hat_value, direction, 0.5)
+    self.ccd.ccd(current, self.d_hat_value, direction, 1.0)
     return float(
       self.ccd.compute_largest_step_size(
-        0.5, current, direction
+        0.8, current, direction
       )
     )
 
@@ -1204,8 +1417,10 @@ class AdjointBunnySimulation:
     floor_limit = self._floor_step_limit(current, direction)
     collision_limit = self._collision_step_limit(step.value)
     alpha = min(1.0, floor_limit, collision_limit)
+    initial_alpha = alpha
     accepted_energy = base_energy
     accepted = False
+    candidate_energy = math.inf
     for _ in range(12):
       self.position.updateValue(
         current_gpu - step.value * alpha,
@@ -1225,6 +1440,15 @@ class AdjointBunnySimulation:
       self.position.updateValue(current_gpu, deepCopy=True)
       self.update_contacts()
       alpha = 0.0
+    self._last_line_search = {
+      "accepted": accepted,
+      "alpha": alpha,
+      "initial_alpha": initial_alpha,
+      "floor_limit": floor_limit,
+      "collision_limit": collision_limit,
+      "base_energy": base_energy,
+      "candidate_energy": candidate_energy,
+    }
     return alpha, accepted_energy
 
   def _solve_frame(self, frame: int) -> StepCheckpoint:
@@ -1234,6 +1458,7 @@ class AdjointBunnySimulation:
     )
     self.previous_position.updateValue(previous.reshape(-1))
     residual_inf = math.inf
+    residual_history: List[float] = []
     iterations = 0
     converged = False
     contacts = self.update_contacts()
@@ -1242,8 +1467,14 @@ class AdjointBunnySimulation:
       contacts = self.update_contacts()
       self.forward_system.compute()
       residual_inf = gpu_inf_norm(self.forward_system.gradient.value)
+      residual_history.append(residual_inf)
       iterations = iteration + 1
-      if residual_inf <= self.newton_tolerance:
+      convergence_tolerance = (
+        max(self.newton_tolerance, self.contact_newton_tolerance)
+        if contacts.floor_vertices.size > 0
+        else self.newton_tolerance
+      )
+      if residual_inf <= convergence_tolerance:
         converged = True
         break
 
@@ -1270,13 +1501,27 @@ class AdjointBunnySimulation:
         residual_inf = gpu_inf_norm(
           self.forward_system.gradient.value
         )
-        converged = residual_inf <= self.newton_tolerance
+        convergence_tolerance = (
+          max(self.newton_tolerance, self.contact_newton_tolerance)
+          if contacts.floor_vertices.size > 0
+          else self.newton_tolerance
+        )
+        converged = residual_inf <= convergence_tolerance
         break
 
     if not converged:
+      line_search = getattr(self, "_last_line_search", {})
       raise RuntimeError(
         f"Frame {frame} did not converge: residual_inf="
-        f"{residual_inf:.6e}, tolerance={self.newton_tolerance:.6e}."
+        f"{residual_inf:.6e}, tolerance={convergence_tolerance:.6e}, "
+        f"iterations={iterations}, recent_residuals="
+        f"{residual_history[-10:]}, contacts="
+        f"{{'floor': {contacts.floor_vertices.size}, "
+        f"'point_point': {contacts.point_point.count}, "
+        f"'point_edge': {contacts.point_edge.count}, "
+        f"'point_triangle': {contacts.point_triangle.count}, "
+        f"'edge_edge': {contacts.edge_edge.count}}}, "
+        f"line_search={line_search}."
       )
     if (
       self.verbose
@@ -1307,42 +1552,18 @@ class AdjointBunnySimulation:
     )
 
   def _trajectory_loss(
-    self,
-    positions: List[np.ndarray],
-    target_positions: Optional[List[np.ndarray]]
+    self, positions: List[np.ndarray]
   ) -> Tuple[float, List[np.ndarray], np.ndarray]:
-    if target_positions is None:
-      gradients = [np.zeros_like(position) for position in positions]
-      offset = positions[-1] - self.target_center
-      gradients[-1] = 2.0 * offset / float(self.num_vertices)
-      return (
-        float(np.mean(np.sum(offset * offset, axis=1))),
-        gradients,
-        offset.mean(axis=0),
-      )
+    gradients = [np.zeros_like(position) for position in positions]
+    offset = positions[-1] - self.target_configuration
+    gradients[-1] = 2.0 * offset / float(self.num_vertices)
+    return (
+      float(np.mean(np.sum(offset * offset, axis=1))),
+      gradients,
+      offset.mean(axis=0),
+    )
 
-    if len(target_positions) != len(positions):
-      raise ValueError(
-        "Target trajectory must contain the initial state and every "
-        "simulated frame."
-      )
-    normalization = float(self.num_vertices * len(positions))
-    offsets = [
-      position - np.asarray(target, dtype=np.float64)
-      for position, target in zip(positions, target_positions)
-    ]
-    loss = sum(
-      float(np.sum(offset * offset)) for offset in offsets
-    ) / normalization
-    gradients = [
-      2.0 * offset / normalization for offset in offsets
-    ]
-    return loss, gradients, offsets[-1].mean(axis=0)
-
-  def forward(
-    self,
-    target_positions: Optional[List[np.ndarray]] = None
-  ) -> Trajectory:
+  def forward(self) -> Trajectory:
     start = time.perf_counter()
     initial = self.rest_positions + self.initial_translation
     initial_velocity = np.zeros_like(initial)
@@ -1360,7 +1581,7 @@ class AdjointBunnySimulation:
       *(checkpoint.position for checkpoint in checkpoints),
     ]
     loss, state_loss_gradients, center_offset = (
-      self._trajectory_loss(positions, target_positions)
+      self._trajectory_loss(positions)
     )
     return Trajectory(
       initial_position=initial,
@@ -1428,14 +1649,20 @@ class AdjointBunnySimulation:
     velocity_adjoint = vector(self.num_dofs)
     velocity_adjoint.updateValue(np.zeros(self.num_dofs))
     direct_position_gradient = vector(self.num_dofs)
-    parameter_gradient = (
-      np.zeros(3, dtype=np.float64)
-      if design == DESIGN_INITIAL_POSITION
-      else 0.0
-    )
+    if design == DESIGN_YOUNG:
+      parameter_gradient = {
+        "young": np.zeros(self.num_tets, dtype=np.float64),
+        "poisson": np.zeros(self.num_tets, dtype=np.float64),
+      }
+    elif design == DESIGN_MASS:
+      parameter_gradient = np.zeros(
+        self.num_vertices, dtype=np.float64
+      )
+    else:
+      parameter_gradient = np.zeros(3, dtype=np.float64)
     parameter_jacobian = None
     if design == DESIGN_YOUNG:
-      parameter_jacobian = self.young_jacobian
+      parameter_jacobian = self.material_jacobian
     elif design == DESIGN_MASS:
       parameter_jacobian = self.mass_jacobian
 
@@ -1461,10 +1688,18 @@ class AdjointBunnySimulation:
         zero_initial_guess=True
       )
       if self.adjoint_system.last_solve_error_code < 0:
-        raise RuntimeError(
-          "Adjoint Hessian solve did not converge at reverse step "
-          f"{reverse_index}."
+        auxiliary, minres_residual, _ = solve_symmetric_indefinite(
+          self.adjoint_system,
+          implicit_rhs,
+          tolerance=self.linear_tolerance,
+          max_iterations=self.max_linear_iterations,
         )
+        if self.verbose:
+          print(
+            "adjoint exact-Hessian MINRES fallback at reverse step "
+            f"{reverse_index}: relative_residual="
+            f"{minres_residual:.3e}"
+          )
 
       self.previous_position_jacobian.compute()
       previous_position_contribution = (
@@ -1485,7 +1720,15 @@ class AdjointBunnySimulation:
           .value
           .get()
         )
-        parameter_gradient -= float(parameter_contribution[0])
+        if design == DESIGN_YOUNG:
+          parameter_gradient["young"] -= (
+            parameter_contribution[:self.num_tets]
+          )
+          parameter_gradient["poisson"] -= (
+            parameter_contribution[self.num_tets:]
+          )
+        else:
+          parameter_gradient -= parameter_contribution
 
       # Reverse the complete position/velocity state transition and then add
       # the loss derivative at x_k:
@@ -1530,7 +1773,8 @@ class AdjointBunnySimulation:
 
     if self.verbose:
       print(
-        f"adjoint {design}: gradient={parameter_gradient}, "
+        f"adjoint {design}: gradient_l2="
+        f"{gradient_l2(design, parameter_gradient):.6e}, "
         f"time={time.perf_counter() - backward_start:.3f}s"
       )
     return parameter_gradient
@@ -1539,31 +1783,27 @@ class AdjointBunnySimulation:
     self,
     design: str,
     epsilon: float,
-    target_positions: List[np.ndarray],
-    direction: Optional[np.ndarray] = None
+    direction
   ) -> float:
     base_value = self.get_design_value(design)
-    if design == DESIGN_INITIAL_POSITION:
-      if direction is None:
-        direction = np.asarray([1.0, -0.5, 0.25])
-      direction = np.asarray(direction, dtype=np.float64)
-      direction /= np.linalg.norm(direction)
-      plus_value = base_value + epsilon * direction
-      minus_value = base_value - epsilon * direction
-    else:
-      direction = np.asarray([1.0])
-      plus_value = float(base_value) + epsilon
-      minus_value = float(base_value) - epsilon
+    plus_value = perturb_parameter(
+      design, base_value, direction, epsilon
+    )
+    minus_value = perturb_parameter(
+      design, base_value, direction, -epsilon
+    )
 
     self.set_design_value(design, plus_value)
-    plus_loss = self.forward(target_positions).loss
+    plus_loss = self.forward().loss
     self.set_design_value(design, minus_value)
-    minus_loss = self.forward(target_positions).loss
+    minus_loss = self.forward().loss
     self.set_design_value(design, base_value)
     return (plus_loss - minus_loss) / (2.0 * epsilon)
 
 
 def _json_value(value):
+  if isinstance(value, dict):
+    return {key: _json_value(item) for key, item in value.items()}
   if isinstance(value, np.ndarray):
     return value.tolist()
   if isinstance(value, (np.floating, np.integer)):
@@ -1571,47 +1811,173 @@ def _json_value(value):
   return value
 
 
-def trajectory_positions(trajectory: Trajectory) -> List[np.ndarray]:
-  return [
-    trajectory.initial_position,
-    *(checkpoint.position for checkpoint in trajectory.checkpoints),
-  ]
+POISSON_MIN = 0.05
+POISSON_MAX = 0.45
+YOUNG_MIN = 100.0
+YOUNG_MAX = 2.0e4
+VERTEX_MASS_MIN = 1.0e-9
+VERTEX_MASS_MAX = 1.0
+
+
+def field_summary(value: np.ndarray) -> Dict:
+  value = np.asarray(value, dtype=np.float64)
+  return {
+    "count": int(value.size),
+    "minimum": float(value.min()),
+    "maximum": float(value.max()),
+    "mean": float(value.mean()),
+    "standard_deviation": float(value.std()),
+    "l2_norm": float(np.linalg.norm(value)),
+  }
+
+
+def summarize_design_value(design: str, value) -> Dict:
+  if design == DESIGN_YOUNG:
+    return {
+      "young_per_element": field_summary(value["young"]),
+      "poisson_per_element": field_summary(value["poisson"]),
+    }
+  if design == DESIGN_MASS:
+    result = field_summary(value)
+    result["total_mass"] = float(np.sum(value))
+    result["layout"] = "per-vertex"
+    return result
+  return {"translation": np.asarray(value, dtype=np.float64).tolist()}
+
+
+def summarize_gradient(design: str, value) -> Dict:
+  if design == DESIGN_YOUNG:
+    return {
+      "young_per_element": field_summary(value["young"]),
+      "poisson_per_element": field_summary(value["poisson"]),
+    }
+  if design == DESIGN_MASS:
+    return {"mass_per_vertex": field_summary(value)}
+  return {"translation": np.asarray(value, dtype=np.float64).tolist()}
+
+
+def gradient_l2(design: str, value) -> float:
+  if design == DESIGN_YOUNG:
+    return float(math.sqrt(
+      np.dot(value["young"], value["young"])
+      + np.dot(value["poisson"], value["poisson"])
+    ))
+  return float(np.linalg.norm(np.asarray(value, dtype=np.float64)))
+
+
+def _rms_normalized(value: np.ndarray) -> np.ndarray:
+  value = np.asarray(value, dtype=np.float64)
+  scale = float(np.sqrt(np.mean(value * value)))
+  if scale <= 1.0e-30:
+    return np.zeros_like(value)
+  return np.clip(value / scale, -2.0, 2.0)
+
+
+def _poisson_coordinate(poisson: np.ndarray) -> np.ndarray:
+  normalized = (
+    (np.asarray(poisson, dtype=np.float64) - POISSON_MIN)
+    / (POISSON_MAX - POISSON_MIN)
+  )
+  normalized = np.clip(normalized, 1.0e-9, 1.0 - 1.0e-9)
+  return np.log(normalized / (1.0 - normalized))
+
+
+def _poisson_coordinate_derivative(poisson: np.ndarray) -> np.ndarray:
+  poisson = np.asarray(poisson, dtype=np.float64)
+  return (
+    (poisson - POISSON_MIN)
+    * (POISSON_MAX - poisson)
+    / (POISSON_MAX - POISSON_MIN)
+  )
 
 
 def parameter_descent_direction(design: str, value, gradient_value):
-  if design in (DESIGN_YOUNG, DESIGN_MASS):
-    scalar_value = float(value)
-    log_gradient = scalar_value * float(gradient_value)
-    normalized = log_gradient / max(abs(log_gradient), 1.0e-30)
-    return normalized
+  if design == DESIGN_YOUNG:
+    return {
+      "young": _rms_normalized(
+        np.asarray(value["young"]) * gradient_value["young"]
+      ),
+      "poisson": _rms_normalized(
+        _poisson_coordinate_derivative(value["poisson"])
+        * gradient_value["poisson"]
+      ),
+    }
+  if design == DESIGN_MASS:
+    return _rms_normalized(
+      np.asarray(value, dtype=np.float64)
+      * np.asarray(gradient_value, dtype=np.float64)
+    )
   gradient_value = np.asarray(gradient_value, dtype=np.float64)
   return gradient_value / max(np.linalg.norm(gradient_value), 1.0e-30)
 
 
-def candidate_parameter(
-  design: str, value, direction, step_size: float
-):
-  if design in (DESIGN_YOUNG, DESIGN_MASS):
-    candidate = float(value) * math.exp(
-      -step_size * float(direction)
+def perturb_parameter(design: str, value, direction, delta: float):
+  if design == DESIGN_YOUNG:
+    young = np.clip(
+      np.asarray(value["young"], dtype=np.float64)
+      * np.exp(delta * np.asarray(direction["young"])),
+      YOUNG_MIN,
+      YOUNG_MAX,
     )
-    bounds = {
-      DESIGN_YOUNG: (20.0, 3.0e3),
-      DESIGN_MASS: (0.1, 10.0),
-    }[design]
-    return float(np.clip(candidate, *bounds))
-  candidate = (
-    np.asarray(value, dtype=np.float64) - step_size * direction
+    poisson_coordinate = (
+      _poisson_coordinate(value["poisson"])
+      + delta * np.asarray(direction["poisson"])
+    )
+    sigmoid = 1.0 / (1.0 + np.exp(-poisson_coordinate))
+    poisson = POISSON_MIN + (
+      POISSON_MAX - POISSON_MIN
+    ) * sigmoid
+    return {"young": young, "poisson": poisson}
+  if design == DESIGN_MASS:
+    return np.clip(
+      np.asarray(value, dtype=np.float64)
+      * np.exp(delta * np.asarray(direction, dtype=np.float64)),
+      VERTEX_MASS_MIN,
+      VERTEX_MASS_MAX,
+    )
+  candidate = np.asarray(value, dtype=np.float64) + (
+    delta * np.asarray(direction, dtype=np.float64)
   )
   candidate[[0, 2]] = np.clip(candidate[[0, 2]], -0.5, 0.5)
   candidate[1] = np.clip(candidate[1], 0.03, 1.0)
   return candidate
 
 
+def parameter_directional_derivative(
+  design: str, value, gradient_value, direction
+) -> float:
+  if design == DESIGN_YOUNG:
+    return float(
+      np.dot(
+        gradient_value["young"],
+        np.asarray(value["young"]) * direction["young"],
+      )
+      + np.dot(
+        gradient_value["poisson"],
+        _poisson_coordinate_derivative(value["poisson"])
+        * direction["poisson"],
+      )
+    )
+  if design == DESIGN_MASS:
+    return float(np.dot(
+      gradient_value,
+      np.asarray(value, dtype=np.float64) * direction,
+    ))
+  return float(np.dot(gradient_value, direction))
+
+
+def design_values_equal(design: str, first, second) -> bool:
+  if design == DESIGN_YOUNG:
+    return (
+      np.array_equal(first["young"], second["young"])
+      and np.array_equal(first["poisson"], second["poisson"])
+    )
+  return np.array_equal(np.asarray(first), np.asarray(second))
+
+
 def optimize_design(
   simulation: AdjointBunnySimulation,
   design: str,
-  target_value,
   optimization_steps: int,
   step_size: float,
   check_gradient: bool,
@@ -1619,51 +1985,41 @@ def optimize_design(
 ) -> Tuple[Dict, Trajectory, Trajectory]:
   simulation.prepare_design(design)
   initial_value = simulation.get_design_value(design)
-  simulation.set_design_value(design, target_value)
-  target_trajectory = simulation.forward()
-  target_positions = trajectory_positions(target_trajectory)
-  simulation.set_design_value(design, initial_value)
 
   history = []
-  trajectory = simulation.forward(target_positions)
+  trajectory = simulation.forward()
   initial_trajectory = trajectory
 
   for optimization_step in range(optimization_steps):
     value = simulation.get_design_value(design)
     gradient_value = simulation.adjoint(trajectory, design)
+    direction = parameter_descent_direction(
+      design, value, gradient_value
+    )
     record = {
       "iteration": optimization_step,
-      "value": _json_value(value),
+      "value": summarize_design_value(design, value),
       "loss": trajectory.loss,
       "center_distance": trajectory.center_distance,
       "horizontal_center_distance": (
         trajectory.horizontal_center_distance
       ),
-      "gradient": _json_value(gradient_value),
+      "gradient": summarize_gradient(design, gradient_value),
       "forward_seconds": trajectory.elapsed_seconds,
     }
 
     if check_gradient and optimization_step == 0:
-      if design == DESIGN_YOUNG:
-        epsilon = max(1.0, 1.0e-2 * float(value))
-      elif design == DESIGN_MASS:
-        epsilon = max(1.0e-2, 1.0e-2 * float(value))
-      else:
-        epsilon = 1.0e-3
-      direction = (
-        np.asarray(gradient_value, dtype=np.float64).copy()
+      epsilon = (
+        1.0e-3
         if design == DESIGN_INITIAL_POSITION
-        else None
+        else 1.0e-2
       )
-      if direction is not None:
-        direction /= max(np.linalg.norm(direction), 1.0e-30)
       finite_difference = simulation.finite_difference_gradient(
-        design, epsilon, target_positions, direction
+        design, epsilon, direction
       )
-      adjoint_directional = (
-        float(np.dot(gradient_value, direction))
-        if direction is not None
-        else float(gradient_value)
+      record["finite_difference_epsilon"] = epsilon
+      adjoint_directional = parameter_directional_derivative(
+        design, value, gradient_value, direction
       )
       record["finite_difference"] = finite_difference
       record["adjoint_directional"] = adjoint_directional
@@ -1677,22 +2033,19 @@ def optimize_design(
       )
       simulation.set_design_value(design, value)
 
-    direction = parameter_descent_direction(
-      design, value, gradient_value
-    )
     accepted = False
     trial_step = step_size
     record["failed_trials"] = []
     for _ in range(6):
-      candidate = candidate_parameter(
-        design, value, direction, trial_step
+      candidate = perturb_parameter(
+        design, value, direction, -trial_step
       )
-      if np.array_equal(np.asarray(candidate), np.asarray(value)):
+      if design_values_equal(design, candidate, value):
         trial_step *= 0.5
         continue
       simulation.set_design_value(design, candidate)
       try:
-        candidate_trajectory = simulation.forward(target_positions)
+        candidate_trajectory = simulation.forward()
       except RuntimeError as error:
         record["failed_trials"].append({
           "step": trial_step,
@@ -1705,7 +2058,9 @@ def optimize_design(
         trajectory = candidate_trajectory
         accepted = True
         record["accepted_step"] = trial_step
-        record["accepted_value"] = _json_value(candidate)
+        record["accepted_value"] = summarize_design_value(
+          design, candidate
+        )
         record["accepted_loss"] = trajectory.loss
         record["relative_improvement"] = (
           (previous_loss - trajectory.loss)
@@ -1723,7 +2078,7 @@ def optimize_design(
       f"optimization {design} {optimization_step + 1}/"
       f"{optimization_steps}: loss={record['loss']:.6e}, "
       f"center={record['center_distance']:.6e}, "
-      f"gradient={record['gradient']}, "
+      f"gradient_l2={gradient_l2(design, gradient_value):.6e}, "
       f"accepted_step={record['accepted_step']:.4g}"
     )
     if not accepted:
@@ -1745,9 +2100,8 @@ def optimize_design(
     "design": design,
     "frames": simulation.frames,
     "dt": simulation.dt_value,
-    "initial_value": _json_value(initial_value),
-    "target_value": _json_value(target_value),
-    "target_forward_seconds": target_trajectory.elapsed_seconds,
+    "target_position": simulation.target_position.tolist(),
+    "initial_value": summarize_design_value(design, initial_value),
     "initial_loss": initial_trajectory.loss,
     "final_loss": trajectory.loss,
     "initial_center_distance": initial_trajectory.center_distance,
@@ -1777,7 +2131,7 @@ def optimize_design(
     "maximum_residual_inf": trajectory.maximum_residual_inf,
     "mean_newton_iterations": trajectory.mean_newton_iterations,
     "optimization_iterations": len(history),
-    "final_value": _json_value(final_value),
+    "final_value": summarize_design_value(design, final_value),
     "history": history,
   }
   print(
@@ -1843,8 +2197,8 @@ def render_comparison_video(
   floor = pv.Plane(
     center=(0.0, 0.0, 0.0),
     direction=(0.0, 1.0, 0.0),
-    i_size=2.0 * horizontal_radius,
-    j_size=2.0 * horizontal_radius,
+    i_size=8.0 * horizontal_radius,
+    j_size=8.0 * horizontal_radius,
     i_resolution=1,
     j_resolution=1,
   )
@@ -1953,23 +2307,51 @@ def build_parser(
   parser.add_argument("--frames", type=int, default=200)
   parser.add_argument("--dt", type=float, default=0.01)
   parser.add_argument(
-    "--optimization-steps", type=int, default=8
+    "--optimization-steps", type=int, default=6
+  )
+  parser.add_argument("--bunny-height", type=float, default=0.35)
+  parser.add_argument(
+    "--node-path",
+    type=Path,
+    default=SCRIPT_DIR.parent / "data" / "bunny.node",
   )
   parser.add_argument(
-    "--mesh-reduction", type=float, default=0.99
+    "--element-path",
+    type=Path,
+    default=SCRIPT_DIR.parent / "data" / "bunny.ele",
   )
-  parser.add_argument("--d-hat", type=float, default=1.0e-4)
+  parser.add_argument("--d-hat", type=float, default=1.0e-6)
   parser.add_argument("--kappa", type=float, default=5.0e3)
-  parser.add_argument("--young", type=float, default=3.0e2)
-  parser.add_argument("--mass", type=float, default=1.5)
-  parser.add_argument("--target-young", type=float, default=1.0e2)
-  parser.add_argument("--target-mass", type=float, default=3.0)
-  parser.add_argument("--drop-height", type=float, default=0.35)
+  parser.add_argument("--young", type=float, default=2.5e3)
+  parser.add_argument("--poisson", type=float, default=0.32)
   parser.add_argument(
-    "--newton-tolerance", type=float, default=1.0e-6
+    "--mass",
+    type=float,
+    default=8.0e-5,
+    help="Initial mass assigned independently to each vertex.",
   )
-  parser.add_argument("--young-step", type=float, default=0.25)
-  parser.add_argument("--mass-step", type=float, default=0.25)
+  parser.add_argument(
+    "--target-position",
+    type=float,
+    nargs=3,
+    metavar=("X", "Y", "Z"),
+    help=(
+      "Translation of the target rest configuration. By default, x/z "
+      "match the initial offset and y is sqrt(d_hat)."
+    ),
+  )
+  parser.add_argument("--drop-height", type=float, default=0.45)
+  parser.add_argument(
+    "--newton-tolerance", type=float, default=1.0e-12
+  )
+  parser.add_argument(
+    "--contact-newton-tolerance", type=float, default=2.0e-7
+  )
+  parser.add_argument(
+    "--max-newton-iterations", type=int, default=300
+  )
+  parser.add_argument("--young-step", type=float, default=0.15)
+  parser.add_argument("--mass-step", type=float, default=0.15)
   parser.add_argument(
     "--initial-position-step", type=float, default=0.08
   )
@@ -1996,18 +2378,25 @@ def main(default_parameter: Optional[str] = None):
   simulation = AdjointBunnySimulation(
     frames=args.frames,
     dt=args.dt,
-    mesh_reduction=args.mesh_reduction,
+    bunny_height=args.bunny_height,
+    node_path=args.node_path,
+    element_path=args.element_path,
     d_hat=args.d_hat,
     kappa=args.kappa,
     young=args.young,
+    poisson=args.poisson,
     mass=args.mass,
     initial_translation=np.asarray(
-      [0.12, args.drop_height, 0.04], dtype=np.float64
+      [0.18, args.drop_height, 0.08], dtype=np.float64
     ),
-    centered_initial_translation=np.asarray(
-      [0.0, args.drop_height, 0.0], dtype=np.float64
+    target_position=(
+      None
+      if args.target_position is None
+      else np.asarray(args.target_position, dtype=np.float64)
     ),
     newton_tolerance=args.newton_tolerance,
+    contact_newton_tolerance=args.contact_newton_tolerance,
+    max_newton_iterations=args.max_newton_iterations,
     verbose=not args.quiet
   )
   parameters = (
@@ -2020,19 +2409,11 @@ def main(default_parameter: Optional[str] = None):
     DESIGN_INITIAL_POSITION: args.initial_position_step,
     DESIGN_MASS: args.mass_step,
   }
-  target_values = {
-    DESIGN_YOUNG: args.target_young,
-    DESIGN_INITIAL_POSITION: np.asarray(
-      [0.0, args.drop_height, 0.0], dtype=np.float64
-    ),
-    DESIGN_MASS: args.target_mass,
-  }
   results = {}
   for design in parameters:
     result, initial_trajectory, final_trajectory = optimize_design(
       simulation,
       design,
-      target_values[design],
       args.optimization_steps,
       step_sizes[design],
       args.check_gradient,

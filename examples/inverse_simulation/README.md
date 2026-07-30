@@ -1,41 +1,57 @@
 # Discrete-adjoint bunny drop
 
-`adjoint_bunny.py` is a complete implicit inverse-simulation example. It
-loads and tetrahedralizes the repository bunny, drops it for 200 steps of
-0.01 seconds, records every converged state and active contact set, and then
-walks the trajectory backward with the discrete adjoint method.
+`adjoint_bunny.py` is a complete implicit inverse-simulation example on the
+repository's full TetGen bunny:
 
-The three examples are parameter-identification problems. Each first
-generates a synthetic observed trajectory with a known target parameter, then
-starts from a different value and repeatedly performs
+- `19,193` vertices from `examples/data/bunny.node`
+- `79,935` tetrahedra from `examples/data/bunny.ele`
+- `20,832` extracted surface triangles
+- `31,248` extracted surface edges
+
+The mesh is normalized to a height of `0.35`. The default drop starts at the
+visibly off-origin translation `(0.18, 0.45, 0.08)`, uses a large rendered
+floor, and advances with `dt=0.01`.
+
+## Objective and design fields
+
+All three optimization modes minimize the same final-frame position loss:
 
 ```text
-forward simulation -> mixed second derivatives and adjoint -> trial forward
+L = 1/N sum(i=1..N) ||x[T,i] - (X_rest[i] + target_position)||².
 ```
 
-until the relative loss change converges, the line search cannot improve the
-loss, or the iteration limit is reached. The trajectory loss is
+There is no synthetic target trajectory and no target mass, Young's modulus,
+or Poisson ratio. The default target keeps the drop's horizontal offset and
+places the undeformed bunny's bottom at the contact activation height:
 
 ```text
-L = 1 / (N (T + 1)) sum(k=0..T) sum(i=1..N)
-      ||x[k,i] - x_observed[k,i]||².
+target_position = (0.18, sqrt(d_hat), 0.08).
 ```
 
-The default identification pairs are Young's modulus `300 -> 100`, total
-mass `1.5 -> 3.0`, and initial translation
-`(0.12, 0.35, 0.04) -> (0, 0.35, 0)`.
+Use `--target-position X Y Z` to select a different target configuration.
+Keeping the default horizontal offset is important: a horizontal,
+frictionless floor and internal elastic forces cannot change the bunny's
+rigid horizontal translation.
+
+The independently optimized controls are:
+
+- `young`: one Young value and one Poisson value per tetrahedron; both fields
+  are updated together.
+- `mass`: one mass value per vertex. The default `8e-5` per vertex gives a
+  total mass of about `1.54`.
+- `initial-position`: one three-component translation shared by the initial
+  vertex positions.
 
 ## Forward and backward systems
 
-The example intentionally does not call `scene.addEnergy`,
-`scene.addMinimizeTarget`, or `scene.minimizeEnergy`. Its forward Newton
-steps and backward adjoint steps use the differentiated objects directly.
-The converged forward step is
+The example does not call `scene.addEnergy`, `scene.addMinimizeTarget`, or
+`scene.minimizeEnergy`. Its forward Newton and backward adjoint operations use
+the differentiated matrices directly:
 
 ```text
 Phi[k+1](x; x[k], v[k], theta) =
-    inertia(x, x[k] + h v[k] + h² gravity, mass)
-  + h² elasticity(x, young)
+    inertia(x, x[k] + h v[k] + h² gravity, vertex_mass)
+  + h² elasticity(x, young, poisson)
   + floor_contact(x)
   + self_contact(x)
 
@@ -43,61 +59,62 @@ x[k+1] = argmin Phi[k+1]
 v[k+1] = (x[k+1] - x[k]) / h.
 ```
 
-For the stationarity residual, the backward pass computes
+The reverse pass uses the complete position/velocity state:
 
 ```text
 A   = d² Phi / d(position)²
 B_x = d² Phi / d(position) d(previous_position)
 B_v = d² Phi / d(position) d(previous_velocity)
-C   = d² Phi / d(position) d(parameter)
+C   = d² Phi / d(position) d(design)
 
 q[k+1] = lambda_x[k+1] + lambda_v[k+1] / h
 Aᵀ mu = q[k+1]
 
-parameter_gradient += -Cᵀ mu
+design_gradient += -Cᵀ mu
 lambda_x[k] = dL/dx[k] - B_xᵀ mu - lambda_v[k+1] / h
 lambda_v[k] = -B_vᵀ mu.
 ```
 
-The initial-translation gradient is the vertex sum of `lambda_x[0]`.
-Consequently, the backward state is the complete position/velocity state;
-velocity is not omitted from the chain rule.
-
-Every mixed second-order matrix is assembled in the same retained strict
-chain-rule form as the Hessian,
+Every rectangular second-order matrix retains the same strict chain rule as
+the Hessian:
 
 ```text
 J_rowᵀ H_inner J_column + H_recursive.
 ```
 
-The row and column outer Jacobians remain separate, the inner Hessian remains
-explicit, and the recursive second-order term is added independently.
-Constants that are not differentiation targets contribute zero, even when
-they occur inside a larger differentiated expression.
+The row and column outer Jacobians remain distinct, the inner Hessian remains
+explicit, and the recursive second-order term is added separately. A
+constant outside the differentiation targets contributes zero.
 
-The forward Newton globalization uses a PSD-projected Neo-Hookean Hessian.
-Self-contact barriers use closest-feature weights and normals lagged from
-collision detection, making separation linear in position and their Newton
-Hessians PSD. At convergence, the backward pass restores each recorded
-contact set and rebuilds the exact Hessian of the stationarity residual,
-including nonlinear elastic and contact terms. This follows the
-converged-stationarity prescription in `Adjoint_Method.pdf`; it does not
-differentiate the intermediate Newton iterations.
+Forward Newton uses a PSD globalization and GPU CG. The backward pass rebuilds
+the exact converged-stationarity Hessian. Exact geometric contact Hessians can
+be indefinite; if CG detects non-positive curvature, this example exports the
+same symmetric block matrix and solves it with MINRES. This fallback changes
+only the linear solver, not the Hessian or mixed-Jacobian chain rule.
 
-The default bunny is deliberately soft (`young=300`). Its barrier activation
-distance is `sqrt(d_hat)=0.01`, so the undeformed bunny begins with zero
-self-contact pairs and the measured pairs are generated by impact and
-deformation rather than being permanently active at rest.
+The defaults relevant to impact convergence are:
+
+```text
+dt                         = 0.01
+d_hat                      = 1e-6
+max_newton_iterations      = 300
+newton_tolerance           = 1e-12
+contact_newton_tolerance   = 2e-7
+```
+
+The looser contact threshold handles closest-feature switching at impact; the
+smooth frames retain the stricter tolerance needed for multi-step adjoint
+accuracy.
 
 ## Running and rendering
 
-Run all three examples:
+Run all three modes:
 
 ```bash
 PYTHONPATH=yasps python examples/inverse_simulation/adjoint_bunny.py
 ```
 
-Or run one design variable through its convenience entry point:
+Or use a convenience entry point:
 
 ```bash
 PYTHONPATH=yasps python examples/inverse_simulation/optimize_bunny_young.py
@@ -105,61 +122,59 @@ PYTHONPATH=yasps python examples/inverse_simulation/optimize_bunny_initial_posit
 PYTHONPATH=yasps python examples/inverse_simulation/optimize_bunny_mass.py
 ```
 
-Generate full before-versus-after comparisons:
+The measured large-mesh comparison uses 31 frames. This reaches the first
+floor impact and activates thousands of dynamic self-contact terms without
+entering the much more expensive severe-compression frames:
 
 ```bash
 PYTHONPATH=yasps python examples/inverse_simulation/adjoint_bunny.py \
-  --frames 200 --optimization-steps 8 \
-  --video-directory examples/inverse_simulation/videos \
-  --json-output /tmp/adjoint_bunny_results.json
+  --parameter all \
+  --frames 31 \
+  --optimization-steps 6 \
+  --video-directory examples/inverse_simulation/videos_large \
+  --json-output examples/inverse_simulation/videos_large/results.json
 ```
 
-For each design, the renderer retains all `201` PNG frames under
-`videos/<design>/frames/` and encodes only the first and final optimization
-trajectories side by side in `<design>_before_after.mp4`. It does not write
-OBJ intermediates.
+The example uses NumPy, SciPy, PyCUDA, and PyVista; video encoding additionally
+requires `ffmpeg`.
 
-Run a shorter directional finite-difference check with:
+For each design, the renderer keeps all 32 side-by-side PNGs under
+`videos_large/<design>/frames/` and writes a 32-frame, 1280x640 H.264 video
+to `videos_large/<design>_before_after.mp4`. It does not write OBJ
+intermediates.
+
+Add `--check-gradient` and use one optimization step for a central
+finite-difference comparison:
 
 ```bash
 PYTHONPATH=yasps python examples/inverse_simulation/adjoint_bunny.py \
-  --parameter all --frames 80 --optimization-steps 1 --check-gradient
+  --parameter all \
+  --frames 31 \
+  --optimization-steps 1 \
+  --check-gradient
 ```
 
-`pyvista` and `tetgen` are used only to make a small deterministic
-tetrahedral bunny from `examples/data/bunny_small.obj`. The default
-`--mesh-reduction 0.99` produces the 66-vertex validation mesh.
+## Measured validation
 
-## Validation
+The full 31-frame, six-step run produced:
 
-The table below records the full default 200-frame comparison on the
-66-vertex validation mesh. All runs start with zero self-contact pairs and
-keep their maximum stationarity residual below the `1.0e-6` Newton
-tolerance.
+| Design | Initial loss | Final loss | Reduction | Final design summary |
+| --- | ---: | ---: | ---: | --- |
+| Young + Poisson per element | 1.03861e-3 | 8.28047e-4 | 20.27% | means: Young `3680.07`, Poisson `0.333816` |
+| Initial translation | 1.03861e-3 | 5.77423e-9 | 99.9994% | `(0.180000, 0.487500, 0.080001)` |
+| Mass per vertex | 1.03861e-3 | 8.97285e-4 | 13.61% | mean `4.87524e-5`, total `0.935706` |
 
-| Design | Start -> target | Loss before | Loss after | Reduction | Final value | Peak self pairs |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Young's modulus | `300 -> 100` | 3.48513e-3 | 4.26020e-7 | 99.9878% | 99.7054 | 119 |
-| Initial position | `(0.12, 0.35, 0.04) -> (0, 0.35, 0)` | 1.60000e-2 | 1.01737e-6 | 99.9936% | `(-0.000949, 0.350030, -0.000342)` | 51 |
-| Mass | `1.5 -> 3.0` | 2.37149e-3 | 1.32727e-7 | 99.9944% | 3.00650 | 115 |
+The initial trajectory reached `3,521` self-contact pairs. The optimized
+material, initial-position, and mass trajectories peaked at `1,691`, `26`,
+and `1,147` pairs, respectively. Their maximum stationarity residuals were
+`1.03e-7`, `1.41e-7`, and `8.26e-8`, all below the contact threshold.
 
-The final Young, initial-position, and mass trajectories contain self-contact
-on 171, 76, and 171 of the 200 simulated frames, respectively. Their peak
-pair counts include all point-point, point-edge, point-triangle, and
-edge-edge pairs. This is impact-generated contact: every initial count is
-zero, while even the unoptimized default trajectory reaches 51 pairs.
+Directional adjoint checks through the first impact measured relative errors
+of:
 
-On the validation machine, one accepted 200-frame trajectory took
-`7.25-10.59 s` for Young's modulus (mean `9.27 s`), `7.25-7.32 s` for initial
-position (mean `7.28 s`), and `7.31-10.93 s` for mass (mean `9.46 s`).
-Mean Newton iteration counts in the final trajectories were `9.41`, `9.52`,
-and `10.83`; maximum residuals were `9.99e-7`, `9.97e-7`, and `9.98e-7`.
-These timings are wall-clock measurements of complete forward simulations,
-including contact detection, Hessian assembly, linear solves, and state
-updates.
+- joint Young/Poisson: `4.33e-3`
+- initial translation: `2.71e-4`
+- per-vertex mass: `4.00e-3`
 
-The 80-frame directional checks measured relative adjoint/central-difference
-errors of `0.97%` for Young's modulus, `4.54%` for mass, and
-`3.19e-8` for initial position. The scalar examples cross changing contact
-active sets during finite differences, so their validation errors are
-expected to be less smooth than the rigid-translation direction.
+A separate 20-frame smooth mass check reached `6.15e-5` relative error with
+the `1e-12` smooth Newton tolerance.
