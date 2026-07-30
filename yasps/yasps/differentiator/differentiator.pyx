@@ -26,6 +26,7 @@ class differentiator:
     self.__separate_hessian_jacobian: bool = False
     self.__gradient: Optional[attribute] = None
     self.__hessian: Optional[attribute] = None
+    self.__global_recursive_hessian: Optional[attribute] = None
     self.__derivative_name_suffix: str = ""
     self.__active_gradient_target_hashes: Optional[Set[int]] = None
 
@@ -61,6 +62,7 @@ class differentiator:
     self.__separate_hessian_jacobian = separate_hessian_jacobian
     self.__gradient = None
     self.__hessian = None
+    self.__global_recursive_hessian = None
     self.__derivative_name_suffix = ""
     self.__active_gradient_target_hashes = None
 
@@ -106,6 +108,17 @@ class differentiator:
       assert self.__source is not None
       result += f'_filled_for_{self.__source.fullName}'
     return result
+
+  def __globalRecursiveHessianName(
+    self,
+    current: attribute,
+    wrt: List[attribute]
+  ) -> str:
+    return (
+      f'd2_recursive_{current.fullName}_d2_'
+      f'{"__".join([x.fullName for x in wrt])}'
+      f'{self.__derivative_name_suffix}'
+    )
 
   def diff1(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False):
     # diff1 is used for gradient or first order jacobian
@@ -275,49 +288,43 @@ class differentiator:
     )
     engine = autodiff()
     self.__generateGradientThroughPathDict(combined_paths.wrt, engine)
+    assert self.__gradient is not None
     self.__generateHessianThroughPathDict(combined_paths.wrt, engine)
     assert self.__hessian is not None
     full_combined_hessian = self.__hessian
-    combined_outer = self.__global_jacobian
 
     children = combined_paths.path_dict[source]
-    local_hessian_name = (
-      f'd2_{source.fullName}_d2_'
-      f'{"__".join(x.fullName for x in children)}'
-    )
-    if local_hessian_name in source.correspondance.attributes:
-      inner_hessian = source.correspondance[local_hessian_name]
-    elif self.__global_inner_hessian is not None:
-      inner_hessian = self.__global_inner_hessian
+    if source.operator == JOIN or source.operator == UNION:
+      # JOIN and UNION are linear transport operators.  Their local Hessian is
+      # zero, so their entire global second derivative is recursive.
+      zero_inner_name = f'mixed_zero_inner_hessian_{source.fullName}'
+      if zero_inner_name not in source.correspondance.attributes:
+        source.correspondance.addAttribute(
+          zero_inner_name,
+          computed_attribute=attribute.zeros(source.size, source.size)
+        )
+      inner_hessian = source.correspondance[zero_inner_name]
+      recursive_mixed_expression = full_combined_hessian
     else:
-      # JOIN/UNION roots retain the complete chain-rule result, but may not
-      # expose their immediate local Hessian on the source correspondence.
-      inner_hessian = full_combined_hessian
-
-    if combined_outer is None and source.operator != JOIN and source.operator != UNION:
-      combined_outer_name = self.__combinedGradientName(
-        children, combined_targets
+      local_hessian_name = (
+        f'd2_{source.fullName}_d2_'
+        f'{"__".join(x.fullName for x in children)}'
       )
-      if combined_outer_name in source.correspondance.attributes:
-        combined_outer = source.correspondance[combined_outer_name]
-
-    if combined_outer is None:
-      raise RuntimeError(
-        "differentiator.diff2: could not construct the shared outer "
-        "Jacobian for the mixed second-order chain rule."
-      )
-    if (
-      inner_hessian.rows != combined_outer.rows
-      or inner_hessian.cols != combined_outer.rows
-    ):
-      raise RuntimeError(
-        "differentiator.diff2: inner Hessian and shared outer Jacobian "
-        "dimensions are incompatible."
-      )
-    first_part = combined_outer.transpose().mul_explicit(
-      inner_hessian.mul_explicit(combined_outer)
-    )
-    recursive_mixed = full_combined_hessian.sub_explicit(first_part)
+      if local_hessian_name in source.correspondance.attributes:
+        inner_hessian = source.correspondance[local_hessian_name]
+      elif self.__global_inner_hessian is not None:
+        inner_hessian = self.__global_inner_hessian
+      else:
+        raise RuntimeError(
+          "differentiator.diff2: could not construct the inner Hessian "
+          "for the mixed second-order chain rule."
+        )
+      if self.__global_recursive_hessian is None:
+        raise RuntimeError(
+          "differentiator.diff2: could not retain the recursive Hessian "
+          "term for the mixed second-order chain rule."
+        )
+      recursive_mixed_expression = self.__global_recursive_hessian
 
     row_outer = self.__maskedOuterJacobian(
       source,
@@ -336,8 +343,8 @@ class differentiator:
     if (
       row_outer.rows != inner_hessian.rows
       or column_outer.rows != inner_hessian.cols
-      or row_outer.cols != recursive_mixed.rows
-      or column_outer.cols != recursive_mixed.cols
+      or row_outer.cols != recursive_mixed_expression.rows
+      or column_outer.cols != recursive_mixed_expression.cols
     ):
       raise RuntimeError(
         "differentiator.diff2: row/column outer Jacobians are incompatible "
@@ -346,7 +353,9 @@ class differentiator:
     outer_inner_outer = row_outer.transpose().mul_explicit(
       inner_hessian.mul_explicit(column_outer)
     )
-    mixed_chain_rule = outer_inner_outer.add_explicit(recursive_mixed)
+    mixed_chain_rule = outer_inner_outer.add_explicit(
+      recursive_mixed_expression
+    )
     mixed_chain_rule_name = (
       f'd2_mixed_chain_{source.fullName}_d_'
       f'{"__".join(x.fullName for x in row_targets)}_d_'
@@ -364,7 +373,7 @@ class differentiator:
       row_outer,
       column_outer,
       inner_hessian,
-      recursive_mixed,
+      recursive_mixed_expression,
       dynamic_instances
     )
     return result
@@ -587,7 +596,16 @@ class differentiator:
     # it is separated into two parts, the first part is the local hessian multiplied by the global jacobian, and the second part is the local gradient multiplied by the global hessian of the children
     # if the second part is completely 0, then we can project the inner local hessian of the first part
     global_hessian_name = self.__globalHessianName(current, wrt)
+    recursive_hessian_name = self.__globalRecursiveHessianName(current, wrt)
     if global_hessian_name in current.correspondance.attributes:
+      if (
+        self.__source is not None
+        and current.hash == self.__source.hash
+        and recursive_hessian_name in current.correspondance.attributes
+      ):
+        self.__global_recursive_hessian = current.correspondance[
+          recursive_hessian_name
+        ]
       return current.correspondance[global_hessian_name]
 
     children = self.__path_dict[current]
@@ -621,6 +639,14 @@ class differentiator:
             second_part_hessian_array[(block_offset + i) * global_jacobian.cols + (block_offset + j)] += local_gradient[block_offset + k] * child_global_hessian[k * hessian_size + i * hessian_cols + j]
       block_offset += child_size
     second_part_hessian = attribute.to_array(second_part_hessian_array, rows=global_jacobian.cols, cols=global_jacobian.cols)
+    if recursive_hessian_name not in current.correspondance.attributes:
+      current.correspondance.addAttribute(
+        recursive_hessian_name,
+        computed_attribute=second_part_hessian
+      )
+    second_part_hessian = current.correspondance[recursive_hessian_name]
+    if self.__source is not None and current.hash == self.__source.hash:
+      self.__global_recursive_hessian = second_part_hessian
 
     local_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in children])}'
     local_hessian = current.correspondance[local_hessian_name]
@@ -1193,6 +1219,13 @@ class differentiator:
       self.__hessian = self.__source.correspondance.attributes[
         source_hessian_name
       ]
+      recursive_hessian_name = self.__globalRecursiveHessianName(
+        self.__source, wrt
+      )
+      if recursive_hessian_name in self.__source.correspondance.attributes:
+        self.__global_recursive_hessian = self.__source.correspondance[
+          recursive_hessian_name
+        ]
       assert self.__hessian is not None
       # ok this is a temp fix
       # this is for scenario that the children of the energy is just data, there's no join nor anything

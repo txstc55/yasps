@@ -46,9 +46,8 @@ class secondOrderJacobian(matrix):
     self.__indices_kernels_dynamic: List[secondOrderJacobianIndicesKernel] = []
     self.__mixed_derivatives: List[attribute] = []
     self.__mixed_derivatives_dynamic: List[attribute] = []
-
-    # Retain the chain-rule factors explicitly for inspection and future
-    # specialized kernels: J_row^T * H_inner * J_column + recursive term.
+    # The retained mixed derivative evaluates the chain rule directly:
+    # J_row^T H_inner J_column + H_recursive.
     self.__row_outer_jacobians: List[attribute] = []
     self.__column_outer_jacobians: List[attribute] = []
     self.__inner_hessians: List[attribute] = []

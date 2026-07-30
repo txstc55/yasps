@@ -1,6 +1,6 @@
 import numpy as np
 
-from yasps import differentiator, scene, vector
+from yasps import attribute, differentiator, scene, vector
 
 
 def _finite_difference_mixed(energy, x, theta, x_values, theta_values):
@@ -222,9 +222,140 @@ def test_mixed_derivative_is_not_reused_from_projected_hessian_cache():
   np.testing.assert_allclose(mixed_repeated.toDense(), np.array([[1.0]]))
 
 
+def test_mixed_chain_rule_retains_two_outer_jacobians_and_recursive_term():
+  model = scene("mixed_recursive_chain_regression")
+  mesh = model.addMesh("mesh")
+  points = mesh.addPrimitive("points", numInstances=1)
+  x = points.addAttribute("x", rows=1, cols=1)
+  theta = points.addConstant("theta", rows=1, cols=1)
+  x_value = 0.7
+  theta_value = -1.2
+  x.updateValue(np.array([x_value]))
+  theta.updateValue(np.array([theta_value]))
+
+  inner = points.addAttribute(
+    "inner", computed_attribute=x * theta
+  )
+  terms = mesh.addPrimitive("terms", numInstances=1)
+  term_to_point = terms.addConnectivity(
+    "term_to_point",
+    points,
+    np.array([[0]], dtype=np.uint32),
+    1
+  )
+  joined_inner = terms.addAttribute(
+    "inner", through=term_to_point, source=inner
+  )
+  energy = terms.addAttribute(
+    "energy", computed_attribute=joined_inner.sin()
+  )
+  mixed = differentiator().diff2([energy], [x], [theta])
+  mixed.compute()
+
+  product = x_value * theta_value
+  expected_outer_term = -product * np.sin(product)
+  expected_recursive_term = np.cos(product)
+  expected = expected_outer_term + expected_recursive_term
+  np.testing.assert_allclose(mixed.toDense(), np.array([[expected]]))
+
+  row_outer = mixed.row_outer_jacobians[0]
+  column_outer = mixed.column_outer_jacobians[0]
+  inner_hessian = mixed.inner_hessians[0]
+  row_outer.compute()
+  column_outer.compute()
+  inner_hessian.compute()
+
+  # Both outer Jacobians use the same inner-variable space and mask the
+  # differentiation target on the opposite side.
+  row_outer_value = row_outer.value.get().reshape(
+    row_outer.rows, row_outer.cols
+  )
+  column_outer_value = column_outer.value.get().reshape(
+    column_outer.rows, column_outer.cols
+  )
+  assert row_outer_value.shape == (1, 2)
+  assert column_outer_value.shape == (1, 2)
+  row_nonzero = np.flatnonzero(row_outer_value[0])
+  column_nonzero = np.flatnonzero(column_outer_value[0])
+  assert row_nonzero.size == 1
+  assert column_nonzero.size == 1
+  row_local = int(row_nonzero[0])
+  column_local = int(column_nonzero[0])
+  np.testing.assert_allclose(
+    row_outer_value[0, row_local], theta_value
+  )
+  np.testing.assert_allclose(
+    column_outer_value[0, column_local], x_value
+  )
+  np.testing.assert_allclose(
+    inner_hessian.value.get().reshape(
+      inner_hessian.rows, inner_hessian.cols
+    ),
+    np.array([[-np.sin(product)]])
+  )
+  inner_value = inner_hessian.value.get().reshape(
+    inner_hessian.rows, inner_hessian.cols
+  )
+  numeric_outer_term = (
+    row_outer_value.T @ inner_value @ column_outer_value
+  )
+  np.testing.assert_allclose(
+    mixed.toDense()[0, 0]
+    - numeric_outer_term[row_local, column_local],
+    expected_recursive_term
+  )
+
+
+def test_uncompressed_occurrences_are_grouped_by_rectangular_block_size():
+  model = scene("mixed_block_layout_regression")
+  mesh = model.addMesh("mesh")
+  points = mesh.addPrimitive("points", numInstances=2)
+  x = points.addAttribute("x", rows=2, cols=1)
+  a = points.addAttribute("a", rows=1, cols=1)
+  theta = points.addConstant("theta", rows=1, cols=1)
+  beta = points.addConstant("beta", rows=3, cols=1)
+  x.updateValue(np.array([[1.0, 2.0], [3.0, 4.0]]))
+  a.updateValue(np.array([5.0, 6.0]))
+  theta.updateValue(np.array([7.0, 8.0]))
+  beta.updateValue(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
+
+  ones2 = attribute.to_array([1.0, 1.0], rows=2, cols=1)
+  ones3 = attribute.to_array([1.0, 1.0, 1.0], rows=3, cols=1)
+  row_linear = x.dot(ones2) + a
+  column_linear = theta + beta.dot(ones3)
+  energy = points.addAttribute(
+    "energy", computed_attribute=row_linear * column_linear
+  )
+
+  # Duplicating the source produces two occurrences at every coordinate.
+  # With the default uncompressed layout they remain separate stored blocks.
+  mixed = differentiator().diff2(
+    [energy, energy], [x, a], [theta, beta]
+  )
+  mixed.compute()
+
+  assert mixed.compress_coordinates is False
+  assert mixed.block_dimensions == [1, 1, 1, 3, 2, 1, 2, 3]
+  assert mixed.block_counts == [4, 4, 4, 4]
+
+  expected = np.zeros((6, 8), dtype=np.float64)
+  for instance in range(2):
+    rows = [2 * instance, 2 * instance + 1, 4 + instance]
+    columns = [
+      instance,
+      2 + 3 * instance,
+      3 + 3 * instance,
+      4 + 3 * instance
+    ]
+    expected[np.ix_(rows, columns)] = 2.0
+  np.testing.assert_allclose(mixed.toDense(), expected)
+
+
 if __name__ == "__main__":
   test_mixed_second_order_jacobian_constant_target_and_spmv()
   test_mixed_second_order_jacobian_compressed_coordinates_and_orientation()
   test_dynamic_mixed_second_order_coordinates_regenerate()
   test_mixed_derivative_is_not_reused_from_projected_hessian_cache()
+  test_mixed_chain_rule_retains_two_outer_jacobians_and_recursive_term()
+  test_uncompressed_occurrences_are_grouped_by_rectangular_block_size()
   print("second-order Jacobian regression tests passed")

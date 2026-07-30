@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 import time
 
@@ -168,7 +169,12 @@ class secondOrderJacobianKernel:
   def __loadKernels(self):
     if self.__assemble_kernel is not None:
       return
-    file_name = ".yasps_constant/second_order_jacobian_kernel"
+    kernel_hash = hashlib.sha256(
+      second_order_jacobian_kernel_string.encode("utf-8")
+    ).hexdigest()[:20]
+    file_name = (
+      f".yasps_constant/second_order_jacobian_kernel_{kernel_hash}"
+    )
     if not os.path.exists(f"{file_name}.so"):
       time_start = time.time()
       with open(f"{file_name}.cu", "w") as output:
