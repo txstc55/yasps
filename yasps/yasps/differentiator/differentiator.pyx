@@ -2,12 +2,14 @@ from __future__ import annotations
 from typing import List, Tuple, Set, Optional, Dict
 import math
 
-from yasps.attribute import attribute, JOIN, UNION, DATA
+from yasps.attribute import attribute, JOIN, UNION, DATA, CONSTANT
 from yasps.autodiff import autodiff
 from yasps.hessian import hessian
 from yasps.path import path
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.placementReorderKernel import placementReorderKernel
+from yasps.secondOrderJacobian import secondOrderJacobian
+from yasps.secondOrderJacobianIndicesKernel import secondOrderJacobianIndicesKernel
 
 class differentiator:
   def __init__(self):
@@ -24,6 +26,8 @@ class differentiator:
     self.__separate_hessian_jacobian: bool = False
     self.__gradient: Optional[attribute] = None
     self.__hessian: Optional[attribute] = None
+    self.__derivative_name_suffix: str = ""
+    self.__active_gradient_target_hashes: Optional[Set[int]] = None
 
     # those are the attributes that helps with the separation of jacobian and hessian
     # when jacobian is created, it is very likely that it is not only block sparse
@@ -57,6 +61,8 @@ class differentiator:
     self.__separate_hessian_jacobian = separate_hessian_jacobian
     self.__gradient = None
     self.__hessian = None
+    self.__derivative_name_suffix = ""
+    self.__active_gradient_target_hashes = None
 
 
     self.__global_jacobian_block_nonzero_attributes = []
@@ -73,21 +79,295 @@ class differentiator:
         return False
     return True
 
+  def __globalGradientName(self, current: attribute, wrt: List[attribute]) -> str:
+    return (
+      f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+      f'{self.__derivative_name_suffix}'
+    )
+
+  def __combinedGradientName(self, children: List[attribute], wrt: List[attribute]) -> str:
+    return (
+      f'd_{"__".join([x.fullName for x in children])}'
+      f'_d_{"__".join([x.fullName for x in wrt])}'
+      f'{self.__derivative_name_suffix}'
+    )
+
+  def __globalHessianName(
+    self,
+    current: attribute,
+    wrt: List[attribute],
+    filled_for_source: bool = False
+  ) -> str:
+    result = (
+      f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+      f'{self.__derivative_name_suffix}'
+    )
+    if filled_for_source:
+      assert self.__source is not None
+      result += f'_filled_for_{self.__source.fullName}'
+    return result
+
   def diff1(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False):
     # diff1 is used for gradient or first order jacobian
     pass
 
-  def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
-    if not self.__sameTargets(target1, target2):
-      raise NotImplementedError("differentiator.diff2: second order Jacobian is not implemented yet.")
-
+  def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, compress_coordinates = False):
     if not isinstance(source, list):
       source = [source]
     if len(source) == 0:
       raise ValueError("differentiator.diff2: source can not be empty.")
-    if len(source) == 1:
-      return self.__diff2_hessian_single(source[0], target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
-    return self.__diff2_hessian_all(source, target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
+    if self.__sameTargets(target1, target2):
+      if len(source) == 1:
+        return self.__diff2_hessian_single(source[0], target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
+      return self.__diff2_hessian_all(source, target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
+
+    if len(local_targets) != 0:
+      raise ValueError(
+        "differentiator.diff2: local_targets is not supported for a mixed "
+        "second-order Jacobian; pass the explicit row and column targets."
+      )
+    total_jacobian = None
+    for item in source:
+      current = self.__diff2_mixed_single(
+        item,
+        target1,
+        target2,
+        dynamic_instances,
+        compress_coordinates
+      )
+      total_jacobian = current if total_jacobian is None else total_jacobian + current
+    return total_jacobian
+
+  def __validateMixedTargets(self, targets: List[attribute], name: str):
+    if not isinstance(targets, list) or len(targets) == 0:
+      raise ValueError(f"differentiator.diff2: {name} must be a non-empty list.")
+    seen = set()
+    for target in targets:
+      if not isinstance(target, attribute):
+        raise TypeError(
+          f"differentiator.diff2: every {name} item must be an attribute."
+        )
+      if target.operator != DATA and target.operator != CONSTANT:
+        raise ValueError(
+          f"differentiator.diff2: {name} targets must be DATA or CONSTANT "
+          f"attributes; got {target.fullName}."
+        )
+      if target.isDynamic:
+        raise ValueError(
+          f"differentiator.diff2: {name} cannot contain a dynamic attribute."
+        )
+      if target.hash in seen:
+        raise ValueError(
+          f"differentiator.diff2: {name} contains duplicate targets."
+        )
+      seen.add(target.hash)
+
+  def __maskedOuterJacobian(
+    self,
+    source: attribute,
+    combined_paths: path,
+    combined_targets: List[attribute],
+    active_targets: List[attribute],
+    role: str
+  ) -> attribute:
+    self.__resetDiff2State(
+      source,
+      combined_paths.path_dict,
+      combined_paths.unioned_child_to_its_children,
+      -1,
+      False,
+      False
+    )
+    self.__gradient_only = True
+    self.__active_gradient_target_hashes = {
+      target.hash for target in active_targets
+    }
+    self.__derivative_name_suffix = (
+      f'_mixed_{role}_{"__".join(x.fullName for x in combined_targets)}'
+    )
+    self.__generateGradientThroughPathDict(combined_targets, autodiff())
+    if self.__global_jacobian is not None:
+      return self.__global_jacobian
+    assert self.__gradient is not None
+    if source.operator != JOIN and source.operator != UNION:
+      children = combined_paths.path_dict[source]
+      outer_name = self.__combinedGradientName(children, combined_targets)
+      if outer_name in source.correspondance.attributes:
+        return source.correspondance[outer_name]
+    return self.__gradient
+
+  def __diff2_mixed_single(
+    self,
+    source: attribute,
+    row_targets: List[attribute],
+    column_targets: List[attribute],
+    dynamic_instances: bool,
+    compress_coordinates: bool
+  ) -> secondOrderJacobian:
+    if source.size != 1:
+      raise ValueError(
+        "differentiator.diff2: mixed second-order source must be scalar."
+      )
+    self.__validateMixedTargets(row_targets, "target1")
+    self.__validateMixedTargets(column_targets, "target2")
+
+    combined_targets = []
+    combined_hashes = set()
+    for target in row_targets + column_targets:
+      if target.hash not in combined_hashes:
+        combined_targets.append(target)
+        combined_hashes.add(target.hash)
+
+    result = secondOrderJacobian(
+      row_targets,
+      column_targets,
+      dynamic_instances,
+      compress_coordinates
+    )
+    combined_paths = path(combined_targets, [], include_all_data=False)
+    combined_paths.getRoots(source, [source], combined_targets)
+    combined_paths.getPathDict()
+
+    row_indices = gradientIndicesKernel(
+      combined_paths.path_dict,
+      combined_paths.unioned_child_to_its_children,
+      row_targets,
+      result.row_start_indices,
+      source,
+      True,
+      False
+    )
+    column_indices = gradientIndicesKernel(
+      combined_paths.path_dict,
+      combined_paths.unioned_child_to_its_children,
+      column_targets,
+      result.column_start_indices,
+      source,
+      True,
+      False
+    )
+    rectangular_indices = secondOrderJacobianIndicesKernel(
+      row_indices,
+      column_indices,
+      result.row_start_indices,
+      result.column_start_indices
+    )
+
+    # Generate the full local derivative over the union of both target paths.
+    # The existing Hessian recursion evaluates
+    #   J^T H_inner J + sum_k gradient[k] H_k
+    # with projection disabled.  The independent row/column index streams
+    # select precisely its (target1, target2) rectangular block, yielding
+    #   J_1^T H_inner J_2 + sum_k gradient[k] H_{k,12}.
+    self.__resetDiff2State(
+      source,
+      combined_paths.path_dict,
+      combined_paths.unioned_child_to_its_children,
+      -1,
+      False,
+      False
+    )
+    # Keep unprojected mixed derivatives isolated from an ordinary projected
+    # Hessian that may already exist for the same union of DATA targets.
+    self.__derivative_name_suffix = (
+      f'_mixed_unprojected_'
+      f'{"__".join(x.fullName for x in combined_targets)}'
+    )
+    engine = autodiff()
+    self.__generateGradientThroughPathDict(combined_paths.wrt, engine)
+    self.__generateHessianThroughPathDict(combined_paths.wrt, engine)
+    assert self.__hessian is not None
+    full_combined_hessian = self.__hessian
+    combined_outer = self.__global_jacobian
+
+    children = combined_paths.path_dict[source]
+    local_hessian_name = (
+      f'd2_{source.fullName}_d2_'
+      f'{"__".join(x.fullName for x in children)}'
+    )
+    if local_hessian_name in source.correspondance.attributes:
+      inner_hessian = source.correspondance[local_hessian_name]
+    elif self.__global_inner_hessian is not None:
+      inner_hessian = self.__global_inner_hessian
+    else:
+      # JOIN/UNION roots retain the complete chain-rule result, but may not
+      # expose their immediate local Hessian on the source correspondence.
+      inner_hessian = full_combined_hessian
+
+    if combined_outer is None and source.operator != JOIN and source.operator != UNION:
+      combined_outer_name = self.__combinedGradientName(
+        children, combined_targets
+      )
+      if combined_outer_name in source.correspondance.attributes:
+        combined_outer = source.correspondance[combined_outer_name]
+
+    if combined_outer is None:
+      raise RuntimeError(
+        "differentiator.diff2: could not construct the shared outer "
+        "Jacobian for the mixed second-order chain rule."
+      )
+    if (
+      inner_hessian.rows != combined_outer.rows
+      or inner_hessian.cols != combined_outer.rows
+    ):
+      raise RuntimeError(
+        "differentiator.diff2: inner Hessian and shared outer Jacobian "
+        "dimensions are incompatible."
+      )
+    first_part = combined_outer.transpose().mul_explicit(
+      inner_hessian.mul_explicit(combined_outer)
+    )
+    recursive_mixed = full_combined_hessian.sub_explicit(first_part)
+
+    row_outer = self.__maskedOuterJacobian(
+      source,
+      combined_paths,
+      combined_targets,
+      row_targets,
+      "row"
+    )
+    column_outer = self.__maskedOuterJacobian(
+      source,
+      combined_paths,
+      combined_targets,
+      column_targets,
+      "column"
+    )
+    if (
+      row_outer.rows != inner_hessian.rows
+      or column_outer.rows != inner_hessian.cols
+      or row_outer.cols != recursive_mixed.rows
+      or column_outer.cols != recursive_mixed.cols
+    ):
+      raise RuntimeError(
+        "differentiator.diff2: row/column outer Jacobians are incompatible "
+        "with the inner Hessian or recursive mixed term."
+      )
+    outer_inner_outer = row_outer.transpose().mul_explicit(
+      inner_hessian.mul_explicit(column_outer)
+    )
+    mixed_chain_rule = outer_inner_outer.add_explicit(recursive_mixed)
+    mixed_chain_rule_name = (
+      f'd2_mixed_chain_{source.fullName}_d_'
+      f'{"__".join(x.fullName for x in row_targets)}_d_'
+      f'{"__".join(x.fullName for x in column_targets)}'
+    )
+    if mixed_chain_rule_name not in source.correspondance.attributes:
+      source.correspondance.addAttribute(
+        mixed_chain_rule_name,
+        computed_attribute=mixed_chain_rule
+      )
+    mixed_chain_rule = source.correspondance[mixed_chain_rule_name]
+    result.addTerm(
+      rectangular_indices,
+      mixed_chain_rule,
+      row_outer,
+      column_outer,
+      inner_hessian,
+      recursive_mixed,
+      dynamic_instances
+    )
+    return result
 
   def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
     total_hessian: Optional[hessian] = None
@@ -111,8 +391,10 @@ class differentiator:
     hessian_local = hessian(global_targets, local_targets, dynamic_instances)
     wrt_start_indices = hessian_local.wrt_start_indices
 
-    paths = path(global_targets, local_targets)
-    paths.getRoots(source, [source])
+    paths = path(global_targets, local_targets, include_all_data=True)
+    # Hessians retain every DATA leaf for projection, while also treating an
+    # explicitly requested CONSTANT as a true differentiation leaf.
+    paths.getRoots(source, [source], global_targets)
     paths.getPathDict()
 
     indices_kernel = gradientIndicesKernel(paths.path_dict, paths.unioned_child_to_its_children, paths.wrt, wrt_start_indices, source, separate_hessian_jacobian)
@@ -172,8 +454,9 @@ class differentiator:
 
   def __generateGradientThroughPathDict(self, wrt: List[attribute], autodiff_engine: autodiff) -> None:
     assert self.__source is not None
-    if f'd_{self.__source.fullName}_d_{"__".join([x.fullName for x in wrt])}' in self.__source.correspondance.attributes:
-      self.__gradient = self.__source.correspondance.attributes[f'd_{self.__source.fullName}_d_{"__".join([x.fullName for x in wrt])}']
+    source_gradient_name = self.__globalGradientName(self.__source, wrt)
+    if source_gradient_name in self.__source.correspondance.attributes:
+      self.__gradient = self.__source.correspondance.attributes[source_gradient_name]
       return
 
     for parent in self.__path_dict.keys():
@@ -191,11 +474,14 @@ class differentiator:
 
   def __generateGradientThroughRecursion(self, current: attribute, wrt: List[attribute]) -> attribute:
     from yasps.attribute import JOIN, UNION, DATA, CONSTANT
-    if current.operator == CONSTANT:
-      raise ValueError("differentiator.__generateGradientThroughRecursion: CONSTANT attributes are not supposed to show up in the path dict.")
-    if current.operator == DATA:
+    if current.operator == DATA or current.operator == CONSTANT:
+      if (
+        self.__active_gradient_target_hashes is not None
+        and current.hash not in self.__active_gradient_target_hashes
+      ):
+        return attribute.zeros(current.size, current.size)
       return attribute.identity(current.size)
-    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+    gradient_attribute_name = self.__globalGradientName(current, wrt)
     if gradient_attribute_name in current.correspondance.attributes:
       return current.correspondance[gradient_attribute_name]
 
@@ -209,13 +495,28 @@ class differentiator:
     # this computes d energy / d children, where the children are the local children of the energy variable
     local_gradient_name = f'd_{parent.fullName}_d_{"__".join([x.fullName for x in children])}'
     if local_gradient_name not in parent.correspondance.attributes:
-      diff_energy_wrt_children_list: List[attribute] = []
+      local_gradient_rows = parent.size
+      local_gradient_cols = sum(child.size for child in children)
+      diff_energy_wrt_children_list: List[attribute] = [
+        attribute(float_value=0.0)
+        for _ in range(local_gradient_rows * local_gradient_cols)
+      ]
+      col_offset = 0
       for child in children:
         result = autodiff_engine.diff(parent, child)
-        for i in range(result.size):
-          diff_energy_wrt_children_list.append(result[i])
-      local_gradient = attribute.to_array(diff_energy_wrt_children_list, rows=1, cols=len(diff_energy_wrt_children_list))
+        for i in range(result.rows):
+          for j in range(result.cols):
+            diff_energy_wrt_children_list[i * local_gradient_cols + col_offset + j] = result[i, j]
+        col_offset += child.size
+      local_gradient = attribute.to_array(
+        diff_energy_wrt_children_list,
+        rows=local_gradient_rows,
+        cols=local_gradient_cols
+      )
       parent.correspondance.addAttribute(local_gradient_name, computed_attribute=local_gradient)
+
+    if self.__gradient_only:
+      return
 
     # this computes d2 energy / d children d children, where the children are the local children of the energy variable
     local_hessian_name = f'd2_{parent.fullName}_d2_{"__".join([x.fullName for x in children])}'
@@ -243,7 +544,7 @@ class differentiator:
 
   def __generateGlobalJacobianForEnergy(self, current: attribute, wrt: List[attribute]):
     # first access the local gradient d energy / d children, where the children are the local children of the energy variable
-    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+    gradient_attribute_name = self.__globalGradientName(current, wrt)
     if gradient_attribute_name in current.correspondance.attributes:
       result = current.correspondance[gradient_attribute_name]
       self.__global_jacobian = result
@@ -254,7 +555,7 @@ class differentiator:
     # we also assemble the global jacobian matrix here, which is d children /dx
     children = self.__path_dict[current]
     current_gradient: attribute = current.correspondance[f'd_{current.fullName}_d_{"__".join([x.fullName for x in children])}']
-    children_global_jacobian_name = f'd_{"__".join([x.fullName for x in children])}_d_{"__".join([x.fullName for x in wrt])}'
+    children_global_jacobian_name = self.__combinedGradientName(children, wrt)
     if children_global_jacobian_name in current.correspondance.attributes:
       next_jacobian = current.correspondance[children_global_jacobian_name]
       self.__global_jacobian = next_jacobian
@@ -285,7 +586,7 @@ class differentiator:
     # this function computes the global hessian
     # it is separated into two parts, the first part is the local hessian multiplied by the global jacobian, and the second part is the local gradient multiplied by the global hessian of the children
     # if the second part is completely 0, then we can project the inner local hessian of the first part
-    global_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    global_hessian_name = self.__globalHessianName(current, wrt)
     if global_hessian_name in current.correspondance.attributes:
       return current.correspondance[global_hessian_name]
 
@@ -293,7 +594,7 @@ class differentiator:
     local_gradient_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in children])}'
     local_gradient = current.correspondance[local_gradient_name]
 
-    global_jacobian_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+    global_jacobian_name = self.__globalGradientName(current, wrt)
     global_jacobian = current.correspondance[global_jacobian_name]
 
     second_part_hessian_array = [0.0 for _ in range(global_jacobian.cols * global_jacobian.cols)]
@@ -309,7 +610,7 @@ class differentiator:
       if child.operator == JOIN:
         block_sizes += [hessian_rows] * child.through.dimension  # this tells us in the final Hessian (local), what span does this child cover
         children_sizes += [child.size // child.through.dimension] * child.through.dimension # this tells us in the final Hessian (global), what span does this child cover
-      elif child.operator == UNION or child.operator == DATA:
+      elif child.operator == UNION or child.operator == DATA or child.operator == CONSTANT:
         block_sizes.append(hessian_rows)
         children_sizes.append(child.size)
       assert hessian_rows * hessian_rows == hessian_size, f"differentiator.__generateGlobalHessianForEnergy: hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
@@ -332,7 +633,7 @@ class differentiator:
     else:
       self.__project_entire_hessian = True
 
-    children_jacobian_name = f'd_{"__".join([x.fullName for x in children])}_d_{"__".join([x.fullName for x in wrt])}'
+    children_jacobian_name = self.__combinedGradientName(children, wrt)
     children_global_jacobian = current.correspondance[children_jacobian_name]
     self.__global_jacobian = children_global_jacobian
 
@@ -422,6 +723,9 @@ class differentiator:
       merged_jacobian = attribute.to_array(merged_jacobian_list, rows=jacobian_num_rows, cols=jacobian_num_cols)
       joined_child.correspondance.addAttribute(child_jacobian_name, computed_attribute=merged_jacobian)
 
+    if self.__gradient_only:
+      return
+
     local_hessian_name = f'd2_{joined_child.fullName}_d2_{"__".join([x.fullName for x in children])}'
     if local_hessian_name not in joined_child.correspondance.attributes:
       num_hessians = joined_child.size
@@ -450,14 +754,14 @@ class differentiator:
         joined_child.correspondance.addAttribute(local_hessian_name, computed_attribute=merged_hessian)
 
   def __generateGlobalJacobianForJoin(self, current: attribute, wrt: List[attribute]):
-    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+    gradient_attribute_name = self.__globalGradientName(current, wrt)
     if gradient_attribute_name in current.correspondance.attributes:
       result = current.correspondance[gradient_attribute_name]
       self.__global_jacobian = result
       return result
 
     joined_child = current.children[0]
-    joined_child_global_jacobian_name = f'd_{joined_child.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+    joined_child_global_jacobian_name = self.__globalGradientName(joined_child, wrt)
     if joined_child_global_jacobian_name in joined_child.correspondance.attributes:
       joined_child_global_jacobian = joined_child.correspondance[joined_child_global_jacobian_name]
     else:
@@ -465,7 +769,7 @@ class differentiator:
       joined_child_local_jacobian_name = f'd_{joined_child.fullName}_d_{"__".join([x.fullName for x in next_children])}'
       joined_child_local_jacobian = joined_child.correspondance[joined_child_local_jacobian_name]
 
-      children_global_jacobian_name = f'd_{"__".join([x.fullName for x in next_children])}_d_{"__".join([x.fullName for x in wrt])}'
+      children_global_jacobian_name = self.__combinedGradientName(next_children, wrt)
       if children_global_jacobian_name in joined_child.correspondance.attributes:
         children_global_jacobian = joined_child.correspondance[children_global_jacobian_name]
       else:
@@ -521,12 +825,16 @@ class differentiator:
     return actual_global_jacobian
 
   def __generateGlobalHessianForJoin(self, current: attribute, wrt: List[attribute]) -> attribute:
-    global_hessian_name = f'd2_{current.children[0].fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    global_hessian_name = self.__globalHessianName(
+      current.children[0], wrt
+    )
     if global_hessian_name in current.correspondance.attributes:
       return current.correspondance[global_hessian_name]
 
     joined_child = current.children[0]
-    joined_child_global_hessian_name = f'd2_{joined_child.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    joined_child_global_hessian_name = self.__globalHessianName(
+      joined_child, wrt
+    )
     if joined_child_global_hessian_name in joined_child.correspondance.attributes:
       joined_child_global_hessian = joined_child.correspondance[joined_child_global_hessian_name]
     else:
@@ -537,7 +845,9 @@ class differentiator:
       joined_child_local_hessian_name = f'd2_{joined_child.fullName}_d2_{"__".join([x.fullName for x in next_children])}'
       joined_child_local_hessian = joined_child.correspondance[joined_child_local_hessian_name]
 
-      next_children_global_jacobian_name = f'd_{"__".join([x.fullName for x in next_children])}_d_{"__".join([x.fullName for x in wrt])}'
+      next_children_global_jacobian_name = self.__combinedGradientName(
+        next_children, wrt
+      )
       next_children_global_jacobian = joined_child.correspondance[next_children_global_jacobian_name]
 
       next_children_global_hessian: List[attribute] = []
@@ -624,6 +934,9 @@ class differentiator:
       merged_jacobian = attribute.to_array(merged_jacobian_list, rows=jacobian_num_rows, cols=jacobian_num_cols)
       unioned_child.correspondance.addAttribute(child_jacobian_name, computed_attribute=merged_jacobian)
 
+    if self.__gradient_only:
+      return
+
     for unioned_child in unioned_children:
       unioned_child_used_children: List[attribute] = []
       for child in children:
@@ -664,7 +977,10 @@ class differentiator:
 
   def __generateGlobalJacobianForUnion(self, current: attribute, wrt: List[attribute]):
     assert self.__source is not None
-    gradient_attribute_name = f'd_{current.fullName}_d_{"__".join([x.fullName for x in wrt])}_filled_for_{self.__source.fullName}'
+    gradient_attribute_name = (
+      f'{self.__globalGradientName(current, wrt)}'
+      f'_filled_for_{self.__source.fullName}'
+    )
     if gradient_attribute_name in current.correspondance.attributes:
       result = current.correspondance[gradient_attribute_name]
       self.__global_jacobian = result
@@ -673,7 +989,7 @@ class differentiator:
     unioned_children_global_jacobians: List[attribute] = []
     children_on_path: List[attribute] = self.__path_dict[current]
     for unioned_child in current.children:
-      unioned_child_global_jacobian_name = f'd_{unioned_child.fullName}_d_{"__".join([x.fullName for x in wrt])}'
+      unioned_child_global_jacobian_name = self.__globalGradientName(unioned_child, wrt)
       if unioned_child_global_jacobian_name in unioned_child.correspondance.attributes:
         unioned_child_global_jacobian = unioned_child.correspondance[unioned_child_global_jacobian_name]
         unioned_children_global_jacobians.append(unioned_child_global_jacobian)
@@ -686,7 +1002,7 @@ class differentiator:
           unioned_children_global_jacobians.append(attribute.zeros(unioned_child.size, 1))
           continue
 
-        used_children_global_jacobian_name = f'd_{"__".join([x.fullName for x in used_children])}_d_{"__".join([x.fullName for x in wrt])}'
+        used_children_global_jacobian_name = self.__combinedGradientName(used_children, wrt)
         if used_children_global_jacobian_name in unioned_child.correspondance.attributes:
           children_global_jacobian = unioned_child.correspondance[used_children_global_jacobian_name]
         else:
@@ -749,14 +1065,18 @@ class differentiator:
 
   def __generateGlobalHessianForUnion(self, current: attribute, wrt: List[attribute]) -> attribute:
     assert self.__source is not None
-    global_hessian_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}_filled_for_{self.__source.fullName}'
+    global_hessian_name = self.__globalHessianName(
+      current, wrt, filled_for_source=True
+    )
     if global_hessian_name in current.correspondance.attributes:
       return current.correspondance[global_hessian_name]
 
     unioned_children_global_hessians: List[attribute] = []
     children_on_path: List[attribute] = self.__path_dict[current]
     for unioned_child in current.children:
-      unioned_child_global_hessian_name = f'd2_{unioned_child.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+      unioned_child_global_hessian_name = self.__globalHessianName(
+        unioned_child, wrt
+      )
       if unioned_child_global_hessian_name in unioned_child.correspondance.attributes:
         unioned_child_global_hessian = unioned_child.correspondance[unioned_child_global_hessian_name]
         unioned_children_global_hessians.append(unioned_child_global_hessian)
@@ -776,7 +1096,9 @@ class differentiator:
         unioned_child_local_hessian_name = f'd2_{unioned_child.fullName}_d2_{"__".join([x.fullName for x in next_children])}'
         unioned_child_local_hessian = unioned_child.correspondance[unioned_child_local_hessian_name]
 
-        next_children_global_jacobian_name = f'd_{"__".join([x.fullName for x in next_children])}_d_{"__".join([x.fullName for x in wrt])}'
+        next_children_global_jacobian_name = self.__combinedGradientName(
+          next_children, wrt
+        )
         next_children_global_jacobian = unioned_child.correspondance[next_children_global_jacobian_name]
 
         next_children_global_hessians: List[attribute] = []
@@ -865,9 +1187,12 @@ class differentiator:
   def __generateHessianThroughPathDict(self, wrt: List[attribute], autodiff_engine: autodiff) -> None:
 
     assert self.__source is not None
-    if f'd2_{self.__source.fullName}_d2_{"__".join([x.fullName for x in wrt])}' in self.__source.correspondance.attributes:
+    source_hessian_name = self.__globalHessianName(self.__source, wrt)
+    if source_hessian_name in self.__source.correspondance.attributes:
       from yasps.attribute import SPD
-      self.__hessian = self.__source.correspondance.attributes[f'd2_{self.__source.fullName}_d2_{"__".join([x.fullName for x in wrt])}']
+      self.__hessian = self.__source.correspondance.attributes[
+        source_hessian_name
+      ]
       assert self.__hessian is not None
       # ok this is a temp fix
       # this is for scenario that the children of the energy is just data, there's no join nor anything
@@ -881,11 +1206,9 @@ class differentiator:
 
   def __generateHessianThroughRecursion(self, current: attribute, wrt: List[attribute]) -> attribute:
     from yasps.attribute import JOIN, UNION, DATA, CONSTANT
-    if current.operator == CONSTANT:
-      raise ValueError("differentiator.__generateHessianThroughRecursion: CONSTANT attributes are not supposed to show up in the path dict")
-    if current.operator == DATA:
+    if current.operator == DATA or current.operator == CONSTANT:
       return attribute.zeros(current.size, current.size * current.size)
-    hessian_attribute_name = f'd2_{current.fullName}_d2_{"__".join([x.fullName for x in wrt])}'
+    hessian_attribute_name = self.__globalHessianName(current, wrt)
     if hessian_attribute_name in current.correspondance.attributes:
       return current.correspondance[hessian_attribute_name]
     if current.operator != JOIN and current.operator != UNION:

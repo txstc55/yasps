@@ -10,6 +10,7 @@ from .deviceKernel import deviceKernel
 from .codeGenerator import codeGenerator
 from .globalKernel import globalKernel
 from .gradientIndicesKernel import gradientIndicesKernel
+from .secondOrderJacobianIndicesKernel import secondOrderJacobianIndicesKernel
 from .hessianAndGradientKernel import hessianAndGradientKernel
 from .coordinateCompressionKernel import coordinateCompressionKernel
 from .diagonalBlockInverseKernel import diagonalBlockInverseKernel
@@ -19,6 +20,8 @@ from .vector import vector
 from .matrix import matrix
 from .gradient import gradient
 from .hessian import hessian
+from .secondOrderJacobian import secondOrderJacobian
+from .secondOrderJacobianKernel import secondOrderJacobianKernel
 from .energy import energy
 from .minimizer import minimizer
 from .autodiff import autodiff

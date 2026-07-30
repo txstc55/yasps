@@ -5,13 +5,14 @@ from typing import List, Tuple, Dict, Set
 import pycuda.gpuarray as gpuarray
 import ctypes
 import numpy as np
-from yasps.attribute import JOIN, DATA, UNION
+from yasps.attribute import JOIN, DATA, UNION, CONSTANT
 from yasps.helper import timed
 import os
 import pycuda.driver as cuda
 from yasps.helper import prune_duplicate_functions
 from yasps.context import context
 import time
+import hashlib
 
 ########################################################################
 # The gradient indices kernel has multiple functions
@@ -47,7 +48,7 @@ compression_kernel_string = '''
 inline void cudaAssert(cudaError_t code, const char *file, int line,
                         bool abort = true) {{
                         if (code != cudaSuccess) {{
-    fprintf(stderr, "CUDA Error: %s at %s:%from yasps.attribute import attributed\\n", cudaGetErrorString(code), file,
+    fprintf(stderr, "CUDA Error: %s at %s:%d\\n", cudaGetErrorString(code), file,
             line);
     if (abort)
       exit(code);
@@ -329,7 +330,16 @@ int computeCoordinates(
 # The first three things should have same dimension, as in the output array have the same size
 class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__init__")
-  def __init__(self, path_dict: Dict[attribute, List[attribute]], unioned_child_to_its_children: Dict[attribute, List[attribute]], wrt: List[attribute], wrt_start_indices: List[int], energy: attribute, no_local_permutation: bool = False):
+  def __init__(
+    self,
+    path_dict: Dict[attribute, List[attribute]],
+    unioned_child_to_its_children: Dict[attribute, List[attribute]],
+    wrt: List[attribute],
+    wrt_start_indices: List[int],
+    energy: attribute,
+    no_local_permutation: bool = False,
+    generate_coordinates: bool = True
+  ):
     self.__path_dict: Dict[attribute, List[attribute]] = path_dict # the path dict is basically from parent to children
     self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = unioned_child_to_its_children # this is the unioned child to its children
     # print("Checking unioned child to its children")
@@ -345,6 +355,10 @@ class gradientIndicesKernel:
     self.__used_primitive_unions_names: Set[str] = set() # we will use this to quickly check if a primitive union is already included
     self.__maxChildGradientSize = 0 # what is the maximum size of children's attribute. This will be used for when we are don't need to project the entire Hessian. We will use the max child gradient size for kernel data allocation (because the largest block is only size m * m, where m is max child gradeient size)
     self.__no_local_permutation = no_local_permutation # whether we want to do local permutation or not, if not, then we will just keep the original order of the indices, this is useful for when we do separation of the Hessian matrix and Jacobian matrix, and materializing local blocks
+    # Mixed second derivatives pair two independent index streams.  Their
+    # wrapper generates rectangular coordinates, so the per-stream symmetric
+    # coordinate pass is intentionally disabled.
+    self.__generate_coordinates = generate_coordinates
 
     self.__gradientSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the size of the gradient being used, this will always record the theoretical largest size of the gradient (the size before compression)
     self.__indexSizeForEachPart: Dict[attribute, int] = {} # determine for each attribute, the number of indices needed, again this is the theoretical largest size
@@ -398,7 +412,8 @@ class gradientIndicesKernel:
     self.__coordinate_kernel = None # the kernel for compressing the indices
     self.__generateKernel() # generate and compile the kernel
     self.__getCompressionKernel() # generate or just get the compression kernel
-    self.__getCoordinateKernel() # generate or just get the coordinate kernel
+    if self.__generate_coordinates:
+      self.__getCoordinateKernel() # generate or just get the coordinate kernel
 
     # we can pre allocate the spaces for unique sizes
     self.__outputUniqueGradientSizes = gpuarray.zeros(self.__gradientSizeForEachPart[energy] + 1, np.uint16) # this is the largest possible size
@@ -472,6 +487,10 @@ class gradientIndicesKernel:
   @property
   def outputCompressedCoordinateCountsOuter(self):
     return self.__outputCompressedCoordinateCountsOuter
+
+  @property
+  def numInstances(self):
+    return self.__numInstances
 
   @timed("gradientIndicesKernel.__getCompressionKernel")
   def __getCompressionKernel(self):
@@ -548,7 +567,7 @@ class gradientIndicesKernel:
       self.__gradientSizeForEachPart[current_attribute] = total_size
       self.__indexSizeForEachPart[current_attribute] = index_size
       return total_size, index_size
-    if current_attribute.operator == DATA:
+    if current_attribute.operator == DATA or current_attribute.operator == CONSTANT:
       self.__gradientSizeForEachPart[current_attribute] = current_attribute.size # the gradient size for the data attribute is its own size
       self.__indexSizeForEachPart[current_attribute] = 1 # the index size for the data attribute is 1
       self.__maxChildGradientSize = max(self.__maxChildGradientSize, current_attribute.size)
@@ -597,7 +616,17 @@ class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__generateKernel")
   def __generateKernel(self):
     # ok now we compile the kernel by saving it to a file and then calling nvcc
-    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"
+    path_signature = "|".join(
+      f"{parent.fullName}>{','.join(child.fullName for child in self.__path_dict[parent])}"
+      for parent in self.__path_dict
+    )
+    target_signature = "|".join(x.fullName for x in self.__wrt)
+    kernel_signature = (
+      f"{self.__energy.fullName}|{target_signature}|{path_signature}|"
+      f"no_local_permutation={self.__no_local_permutation}"
+    )
+    kernel_hash = hashlib.sha256(kernel_signature.encode("utf-8")).hexdigest()[:20]
+    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices_{kernel_hash}"
     if os.path.exists(f'{file_name}.so'):
       # we just use that file?
       self.__indices_kernel = ctypes.CDLL(f"{file_name}.so").get_indices # get the compiled kernel
@@ -652,7 +681,7 @@ __device__ inline void {parent.fullName}_get_indices_from_{child.fullName}(
   unsigned short int* outputSizes,
   unsigned int index
 ){{'''
-        if child.operator == DATA:
+        if child.operator == DATA or child.operator == CONSTANT:
           # we have reached the bottom
           # we now record that index, added by offset, and the size of this attribute
           # we determine its position in wrt
@@ -893,7 +922,17 @@ extern "C" int get_indices(
 '''
 
     # ok now we compile the kernel by saving it to a file and then calling nvcc
-    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices"
+    path_signature = "|".join(
+      f"{parent.fullName}>{','.join(child.fullName for child in self.__path_dict[parent])}"
+      for parent in self.__path_dict
+    )
+    target_signature = "|".join(x.fullName for x in self.__wrt)
+    kernel_signature = (
+      f"{self.__energy.fullName}|{target_signature}|{path_signature}|"
+      f"no_local_permutation={self.__no_local_permutation}"
+    )
+    kernel_hash = hashlib.sha256(kernel_signature.encode("utf-8")).hexdigest()[:20]
+    file_name = f".yasps_tmp/{self.__energy.fullName}_get_indices_{kernel_hash}"
     f = open(f"{file_name}.cu", 'w')
     self.__kernelString = prune_duplicate_functions(self.__kernelString) # just in case we have duplicated functions
     f.write(self.__kernelString)
@@ -1021,5 +1060,6 @@ extern "C" int get_indices(
     self.__context.useDefaultContext()
     self.__computeIndices(wrt_start_indices)
     self.__compressIndicesLocal()
-    self.__allocateSpaceForCoordinates()
-    self.__generateCoordinates()
+    if self.__generate_coordinates:
+      self.__allocateSpaceForCoordinates()
+      self.__generateCoordinates()

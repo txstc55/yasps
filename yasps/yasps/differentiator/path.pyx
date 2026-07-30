@@ -2,12 +2,22 @@ from yasps.attribute import attribute
 from typing import List, Dict, Set, Tuple
 from yasps.attribute import DATA, CONSTANT
 class path:
-  def __init__(self, global_targets: List[attribute], local_targets: List[attribute] = []):
+  def __init__(
+    self,
+    global_targets: List[attribute],
+    local_targets: List[attribute] = [],
+    include_all_data: bool = True
+  ):
     self.__path_dict: Dict[attribute, List[attribute]] = {}
     self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = {}
     self.__paths: List[List[attribute]] = []
     self.__global_targets = global_targets
     self.__local_targets = local_targets
+    # Hessian projection needs every data leaf that participates in a local
+    # energy, even when that leaf is not placed in the final Hessian.  A
+    # second-order Jacobian has no projection step, so it sets this to False
+    # and follows only its explicit row/column differentiation targets.
+    self.__include_all_data = include_all_data
     self.__wrt_start_indices: List[int] = []
     self.__compute_wrt_start_indices() # compute how the gradient is placed
     self.__wrt = global_targets if (len(local_targets) == 0) else local_targets
@@ -109,12 +119,14 @@ class path:
     # we perform dfs to extract a path and its children
     while stack:
       current: attribute = stack.pop()
-      if len(fixed_targets) != 0:
-        if current in fixed_targets:
-          if current not in seenRoots:
-            roots.append(current)
-            seenRoots.add(current)
-      elif current.operator == DATA:
+      if current in fixed_targets:
+        # An explicitly requested differentiation variable is a path leaf
+        # regardless of whether it was declared with addAttribute (DATA) or
+        # addConstant (CONSTANT).
+        if current not in seenRoots:
+          roots.append(current)
+          seenRoots.add(current)
+      elif self.__include_all_data and current.operator == DATA:
         ## we got to the bottom of this path
         if current not in seenRoots:
           roots.append(current)
@@ -154,7 +166,7 @@ class path:
         for child in root.children:
           if child not in self.__unioned_child_to_its_children:
             self.__unioned_child_to_its_children[child] = []
-          childrenRoots, childrenPaths = self.__getRoots(child, [])
+          childrenRoots, childrenPaths = self.__getRoots(child, [], fixed_targets)
           trueRoots += childrenRoots
           for childrenPath in childrenPaths:
             allPaths.append(parent_path + [root] + childrenPath)
