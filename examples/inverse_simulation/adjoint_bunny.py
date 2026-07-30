@@ -476,11 +476,26 @@ def solve_symmetric_indefinite(
     show=False,
     check=False,
   )
-  residual = matrix_cpu @ solution_cpu - rhs_cpu
-  relative_residual = float(
-    np.linalg.norm(residual)
-    / max(np.linalg.norm(rhs_cpu), 1.0e-30)
-  )
+  rhs_norm = max(np.linalg.norm(rhs_cpu), 1.0e-30)
+  residual = rhs_cpu - matrix_cpu @ solution_cpu
+  relative_residual = float(np.linalg.norm(residual) / rhs_norm)
+  for _ in range(3):
+    if relative_residual <= max(10.0 * tolerance, 1.0e-7):
+      break
+    correction, correction_info = minres(
+      matrix_cpu,
+      residual,
+      rtol=tolerance,
+      maxiter=max_iterations,
+      show=False,
+      check=False,
+    )
+    if correction_info != 0:
+      info = correction_info
+      break
+    solution_cpu += correction
+    residual = rhs_cpu - matrix_cpu @ solution_cpu
+    relative_residual = float(np.linalg.norm(residual) / rhs_norm)
   if (
     info != 0
     or not np.all(np.isfinite(solution_cpu))
@@ -498,16 +513,17 @@ def solve_symmetric_indefinite(
 class AdjointBunnySimulation:
   def __init__(
     self,
-    frames: int = 200,
+    frames: int = 500,
     dt: float = 0.01,
     bunny_height: float = 0.35,
     d_hat: float = 1.0e-6,
     kappa: float = 5.0e3,
-    young: float = 2.5e3,
+    young: float = 1.0e4,
     poisson: float = 0.32,
-    mass: float = 8.0e-5,
+    mass: float = 4.0e-5,
+    velocity_retention: float = 0.90,
     initial_translation: np.ndarray = np.array(
-      [0.18, 0.45, 0.08], dtype=np.float64
+      [-0.28, 0.15, -0.20], dtype=np.float64
     ),
     target_position: Optional[np.ndarray] = None,
     node_path: Optional[Path] = None,
@@ -532,6 +548,8 @@ class AdjointBunnySimulation:
       raise ValueError("max_newton_iterations must be positive.")
     if young <= 0.0 or mass <= 0.0:
       raise ValueError("young and mass must be positive.")
+    if not 0.0 <= velocity_retention <= 1.0:
+      raise ValueError("velocity_retention must lie in [0, 1].")
     if not 0.0 < poisson < 0.49:
       raise ValueError("poisson must lie in (0, 0.49).")
     self.frames = int(frames)
@@ -539,6 +557,7 @@ class AdjointBunnySimulation:
     self.d_hat_value = float(d_hat)
     self.contact_distance = math.sqrt(self.d_hat_value)
     self.kappa_value = float(kappa)
+    self.velocity_retention_value = float(velocity_retention)
     self.floor_height_value = 0.0
     self.newton_tolerance = float(newton_tolerance)
     self.contact_newton_tolerance = float(contact_newton_tolerance)
@@ -569,11 +588,7 @@ class AdjointBunnySimulation:
     self.initial_translation = self.default_initial_translation.copy()
     if target_position is None:
       target_position = np.asarray(
-        [
-          self.default_initial_translation[0],
-          self.contact_distance,
-          self.default_initial_translation[2],
-        ],
+        [0.0, self.contact_distance, 0.0],
         dtype=np.float64,
       )
     self.target_position = np.asarray(
@@ -622,6 +637,11 @@ class AdjointBunnySimulation:
     )
     self.kappa = self._constant(
       self.model, "kappa", self.kappa_value
+    )
+    self.velocity_retention = self._constant(
+      self.model,
+      "velocity_retention",
+      self.velocity_retention_value,
     )
     self.floor_height = self._constant(
       self.model, "floor_height", self.floor_height_value
@@ -736,7 +756,7 @@ class AdjointBunnySimulation:
     )
     predicted_position = (
       self.previous_position
-      + self.previous_velocity * self.dt_value
+      + self.previous_velocity * self.velocity_retention * self.dt
       + gravity_step
     )
     displacement = self.position - predicted_position
@@ -1675,10 +1695,21 @@ class AdjointBunnySimulation:
 
       # The next velocity is (x_{k+1} - x_k) / dt, so both next-state
       # adjoints act on the implicit x_{k+1} solve.
-      implicit_rhs = vector(self.num_dofs)
-      implicit_rhs.updateValue(
+      implicit_rhs_value = (
         position_adjoint.value
         + velocity_adjoint.value / self.dt_value
+      )
+      implicit_rhs_scale = max(
+        1.0, gpu_inf_norm(implicit_rhs_value)
+      )
+      if not np.isfinite(implicit_rhs_scale):
+        raise RuntimeError(
+          "Adjoint right-hand side became non-finite at reverse step "
+          f"{reverse_index}."
+        )
+      implicit_rhs = vector(self.num_dofs)
+      implicit_rhs.updateValue(
+        implicit_rhs_value / implicit_rhs_scale
       )
       auxiliary = self.adjoint_system.solve(
         implicit_rhs,
@@ -1700,6 +1731,14 @@ class AdjointBunnySimulation:
             f"{reverse_index}: relative_residual="
             f"{minres_residual:.3e}"
           )
+      auxiliary.updateValue(
+        auxiliary.value * implicit_rhs_scale
+      )
+      if not np.isfinite(gpu_inf_norm(auxiliary.value)):
+        raise RuntimeError(
+          "Adjoint solution became non-finite at reverse step "
+          f"{reverse_index}."
+        )
 
       self.previous_position_jacobian.compute()
       previous_position_contribution = (
@@ -1867,10 +1906,12 @@ def gradient_l2(design: str, value) -> float:
 
 def _rms_normalized(value: np.ndarray) -> np.ndarray:
   value = np.asarray(value, dtype=np.float64)
-  scale = float(np.sqrt(np.mean(value * value)))
-  if scale <= 1.0e-30:
+  maximum = float(np.max(np.abs(value)))
+  if maximum <= 1.0e-30:
     return np.zeros_like(value)
-  return np.clip(value / scale, -2.0, 2.0)
+  scaled = value / maximum
+  rms = float(np.sqrt(np.mean(scaled * scaled)))
+  return np.clip(scaled / rms, -2.0, 2.0)
 
 
 def _poisson_coordinate(poisson: np.ndarray) -> np.ndarray:
@@ -2011,7 +2052,7 @@ def optimize_design(
     if check_gradient and optimization_step == 0:
       epsilon = (
         1.0e-3
-        if design == DESIGN_INITIAL_POSITION
+        if design in (DESIGN_INITIAL_POSITION, DESIGN_MASS)
         else 1.0e-2
       )
       finite_difference = simulation.finite_difference_gradient(
@@ -2100,10 +2141,13 @@ def optimize_design(
     "design": design,
     "frames": simulation.frames,
     "dt": simulation.dt_value,
+    "velocity_retention": simulation.velocity_retention_value,
     "target_position": simulation.target_position.tolist(),
     "initial_value": summarize_design_value(design, initial_value),
     "initial_loss": initial_trajectory.loss,
     "final_loss": trajectory.loss,
+    "initial_forward_seconds": initial_trajectory.elapsed_seconds,
+    "final_forward_seconds": trajectory.elapsed_seconds,
     "initial_center_distance": initial_trajectory.center_distance,
     "final_center_distance": trajectory.center_distance,
     "initial_horizontal_center_distance": (
@@ -2197,8 +2241,8 @@ def render_comparison_video(
   floor = pv.Plane(
     center=(0.0, 0.0, 0.0),
     direction=(0.0, 1.0, 0.0),
-    i_size=8.0 * horizontal_radius,
-    j_size=8.0 * horizontal_radius,
+    i_size=1000.0,
+    j_size=1000.0,
     i_resolution=1,
     j_resolution=1,
   )
@@ -2304,7 +2348,7 @@ def build_parser(
     choices=(*DESIGN_PARAMETERS, "all"),
     default=default_parameter or "all"
   )
-  parser.add_argument("--frames", type=int, default=200)
+  parser.add_argument("--frames", type=int, default=500)
   parser.add_argument("--dt", type=float, default=0.01)
   parser.add_argument(
     "--optimization-steps", type=int, default=6
@@ -2322,12 +2366,18 @@ def build_parser(
   )
   parser.add_argument("--d-hat", type=float, default=1.0e-6)
   parser.add_argument("--kappa", type=float, default=5.0e3)
-  parser.add_argument("--young", type=float, default=2.5e3)
+  parser.add_argument("--young", type=float, default=1.0e4)
   parser.add_argument("--poisson", type=float, default=0.32)
+  parser.add_argument(
+    "--velocity-retention",
+    type=float,
+    default=0.90,
+    help="Fraction of velocity retained by each implicit time step.",
+  )
   parser.add_argument(
     "--mass",
     type=float,
-    default=8.0e-5,
+    default=4.0e-5,
     help="Initial mass assigned independently to each vertex.",
   )
   parser.add_argument(
@@ -2336,11 +2386,13 @@ def build_parser(
     nargs=3,
     metavar=("X", "Y", "Z"),
     help=(
-      "Translation of the target rest configuration. By default, x/z "
-      "match the initial offset and y is sqrt(d_hat)."
+      "Translation of the target rest configuration. The default is "
+      "(0, sqrt(d_hat), 0)."
     ),
   )
-  parser.add_argument("--drop-height", type=float, default=0.45)
+  parser.add_argument("--initial-x", type=float, default=-0.28)
+  parser.add_argument("--drop-height", type=float, default=0.15)
+  parser.add_argument("--initial-z", type=float, default=-0.20)
   parser.add_argument(
     "--newton-tolerance", type=float, default=1.0e-12
   )
@@ -2386,8 +2438,10 @@ def main(default_parameter: Optional[str] = None):
     young=args.young,
     poisson=args.poisson,
     mass=args.mass,
+    velocity_retention=args.velocity_retention,
     initial_translation=np.asarray(
-      [0.18, args.drop_height, 0.08], dtype=np.float64
+      [args.initial_x, args.drop_height, args.initial_z],
+      dtype=np.float64,
     ),
     target_position=(
       None
@@ -2435,12 +2489,11 @@ def main(default_parameter: Optional[str] = None):
         f"video={video_path}"
       )
     results[design] = result
-
-  if args.json_output is not None:
-    args.json_output.parent.mkdir(parents=True, exist_ok=True)
-    args.json_output.write_text(
-      json.dumps(results, indent=2), encoding="utf-8"
-    )
+    if args.json_output is not None:
+      args.json_output.parent.mkdir(parents=True, exist_ok=True)
+      args.json_output.write_text(
+        json.dumps(results, indent=2), encoding="utf-8"
+      )
   return results
 
 
