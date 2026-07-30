@@ -373,6 +373,80 @@ def test_uncompressed_occurrences_are_grouped_by_rectangular_block_size():
   np.testing.assert_allclose(mixed.toDense(), expected)
 
 
+def test_generated_kernel_cache_key_tracks_expression_structure():
+  def make_energy(include_velocity):
+    model = scene("expression_cache_key_regression")
+    mesh = model.addMesh("mesh")
+    points = mesh.addPrimitive("points", numInstances=2)
+    position = points.addAttribute("position", rows=2, cols=1)
+    previous = points.addConstant("previous", rows=2, cols=1)
+    velocity = points.addConstant("velocity", rows=2, cols=1)
+    position.updateValue(np.array([[1.0, 2.0], [3.0, 4.0]]))
+    previous.updateValue(np.array([[0.5, 1.5], [2.5, 3.5]]))
+    velocity.updateValue(np.array([[0.2, -0.1], [0.4, -0.3]]))
+    predicted = previous
+    if include_velocity:
+      predicted = predicted + 0.01 * velocity
+    displacement = position - predicted
+    energy = points.addAttribute(
+      "energy",
+      computed_attribute=0.5 * displacement.dot(displacement)
+    )
+    return model, energy, position
+
+  model_without, energy_without_velocity, position_without_velocity = (
+    make_energy(False)
+  )
+
+  hessian_without = differentiator().diff2(
+    [energy_without_velocity],
+    [position_without_velocity],
+    [position_without_velocity],
+    projection_method=-1
+  )
+  hessian_without.compute()
+  expected_without = np.array([0.25, 0.25])
+  np.testing.assert_allclose(
+    energy_without_velocity.compute().value.get(),
+    expected_without
+  )
+  np.testing.assert_allclose(
+    hessian_without.gradient.value.get(),
+    np.array([0.5, 0.5, 0.5, 0.5])
+  )
+
+  # Release only the global name reservation after the first graph has
+  # compiled.  Keeping its objects alive while constructing the second graph
+  # reproduces a cross-scene cache lookup with identical full names.
+  scene.scenes.pop(model_without.name)
+  model_with, energy_with_velocity, position_with_velocity = (
+    make_energy(True)
+  )
+  assert energy_without_velocity.fullName == energy_with_velocity.fullName
+  assert (
+    energy_without_velocity.fullNameWithHash
+    != energy_with_velocity.fullNameWithHash
+  )
+
+  hessian_with = differentiator().diff2(
+    [energy_with_velocity],
+    [position_with_velocity],
+    [position_with_velocity],
+    projection_method=-1
+  )
+  hessian_with.compute()
+  expected_with = np.array([0.2495025, 0.2495125])
+  np.testing.assert_allclose(
+    energy_with_velocity.compute().value.get(),
+    expected_with
+  )
+  np.testing.assert_allclose(
+    hessian_with.gradient.value.get(),
+    np.array([0.498, 0.501, 0.496, 0.503])
+  )
+  scene.scenes.pop(model_with.name)
+
+
 if __name__ == "__main__":
   test_mixed_second_order_jacobian_constant_target_and_spmv()
   test_matrix_product_accepts_gradient_and_materializes_lazily()
@@ -381,4 +455,5 @@ if __name__ == "__main__":
   test_mixed_derivative_is_not_reused_from_projected_hessian_cache()
   test_mixed_chain_rule_retains_two_outer_jacobians_and_recursive_term()
   test_uncompressed_occurrences_are_grouped_by_rectangular_block_size()
+  test_generated_kernel_cache_key_tracks_expression_structure()
   print("second-order Jacobian regression tests passed")

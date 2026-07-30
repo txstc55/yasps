@@ -94,9 +94,13 @@ class hessianAndGradientKernel:
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
-    wrt_names = "_".join([att.fullName for att in wrt])
+    wrt_names = "_".join([att.fullNameWithHash for att in wrt])
     size_names = "_".join([str(size) for size in unique_gradient_sizes])
-    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullName}_wrt_{wrt_names}_with_sizes_{size_names}"
+    full_file_name = (
+      f"compute_hessian_and_gradient_for_"
+      f"{self.__att.fullNameWithHash}_wrt_{wrt_names}_"
+      f"with_sizes_{size_names}"
+    )
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}" + ("" if self.__project_entire_hessian else "_no_proj")
     # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")

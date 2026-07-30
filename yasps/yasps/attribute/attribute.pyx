@@ -169,9 +169,13 @@ class attribute:
 
   @property
   def fullNameWithHash(self) -> str:
-    fullName = self.fullName
-    # hash the fullname
-    digest = hashlib.sha256(fullName.encode('utf-8')).hexdigest()
+    # A named computed attribute can keep the same full name while its
+    # expression graph, dependencies, and generated-kernel ABI change.
+    # Caching only by full name can therefore load an old shared object with
+    # the wrong argument list. Include the structural attribute hash so the
+    # dependency set and generated-kernel ABI are part of the cache identity.
+    signature = f"{self.fullName}:{self.hash}"
+    digest = hashlib.sha256(signature.encode('utf-8')).hexdigest()
     return 'att_' + digest.replace("-", "_neg_")[:16]
 
   @property
