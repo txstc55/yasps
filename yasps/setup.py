@@ -18,6 +18,7 @@ extensions = [
     Extension("yasps.gradient", ["yasps/matrixAndVector/vector/gradient.pyx"]),
     Extension("yasps.hessianAndGradientKernel", ["yasps/kernel/Hessian/hessianAndGradientKernel.pyx"]),
     Extension("yasps.hessian", ["yasps/matrixAndVector/matrix/hessian.pyx"]),
+    Extension("yasps.secondOrderJacobian", ["yasps/matrixAndVector/matrix/secondOrderJacobian.pyx"]),
     Extension("yasps.coordinateCompressionKernel", ["yasps/kernel/Coordinate/coordinateCompressionKernel.pyx"]),
     Extension("yasps.diagonalBlockInverseKernel", ["yasps/kernel/Solver/diagonalBlockInverseKernel.pyx"]),
     Extension("yasps.solverKernel", ["yasps/kernel/Solver/solverKernel.pyx"]),

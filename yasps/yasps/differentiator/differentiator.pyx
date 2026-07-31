@@ -5,6 +5,7 @@ import math
 from yasps.attribute import attribute, JOIN, UNION, DATA
 from yasps.autodiff import autodiff
 from yasps.hessian import hessian
+from yasps.secondOrderJacobian import secondOrderJacobian
 from yasps.path import path
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.placementReorderKernel import placementReorderKernel
@@ -78,16 +79,69 @@ class differentiator:
     pass
 
   def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
-    if not self.__sameTargets(target1, target2):
-      raise NotImplementedError("differentiator.diff2: second order Jacobian is not implemented yet.")
-
     if not isinstance(source, list):
       source = [source]
     if len(source) == 0:
       raise ValueError("differentiator.diff2: source can not be empty.")
+    if self.__sameTargets(target1, target2):
+      if len(source) == 1:
+        return self.__diff2_hessian_single(source[0], target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
+      return self.__diff2_hessian_all(source, target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
+
     if len(source) == 1:
-      return self.__diff2_hessian_single(source[0], target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
-    return self.__diff2_hessian_all(source, target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
+      return self.__diff2_jacobian_single(source[0], target1, target2, dynamic_instances)
+    return self.__diff2_jacobian_all(source, target1, target2, dynamic_instances)
+
+
+  def __diff2_jacobian_all(
+    self,
+    source: List[attribute],
+    row_targets: List[attribute],
+    column_targets: List[attribute],
+    dynamic_instances: bool = False
+  ) -> secondOrderJacobian:
+    total_jacobian: Optional[secondOrderJacobian] = None
+    for item in source:
+      current_jacobian = self.__diff2_jacobian_single(
+        item,
+        row_targets,
+        column_targets,
+        dynamic_instances
+      )
+      if total_jacobian is None:
+        total_jacobian = current_jacobian
+      else:
+        total_jacobian = total_jacobian + current_jacobian
+    assert total_jacobian is not None
+    return total_jacobian
+
+  #########################################################
+  ## Second-order Jacobian differentiation, each
+  ## differentiation will return a secondOrderJacobian
+  ## matrix object.
+  #########################################################
+  def __diff2_jacobian_single(
+    self,
+    source: attribute,
+    row_targets: List[attribute],
+    column_targets: List[attribute],
+    dynamic_instances: bool = False
+  ) -> secondOrderJacobian:
+    if source.size != 1:
+      raise ValueError(
+        "differentiator.__diff2_jacobian_single: source must be a scalar attribute."
+      )
+
+    result = secondOrderJacobian(
+      row_targets,
+      column_targets,
+      dynamic_instances
+    )
+    if dynamic_instances:
+      result.sources_dynamic = [source]
+    else:
+      result.sources = [source]
+    return result
 
   def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
     total_hessian: Optional[hessian] = None
