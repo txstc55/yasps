@@ -134,6 +134,7 @@ class differentiator:
         return self.__diff2_hessian_single(source[0], target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
       return self.__diff2_hessian_all(source, target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
 
+    # we are instead doing the second order jacobian now
     if len(local_targets) != 0:
       raise ValueError(
         "differentiator.diff2: local_targets is not supported for a mixed "
@@ -151,6 +152,7 @@ class differentiator:
       total_jacobian = current if total_jacobian is None else total_jacobian + current
     return total_jacobian
 
+  # check if the targets are valid
   def __validateMixedTargets(self, targets: List[attribute], name: str):
     if not isinstance(targets, list) or len(targets) == 0:
       raise ValueError(f"differentiator.diff2: {name} must be a non-empty list.")
@@ -209,6 +211,11 @@ class differentiator:
         return source.correspondance[outer_name]
     return self.__gradient
 
+
+  ##########################################################################
+  ## Mixed second-order Jacobian differentiation, each differentiation
+  ## will return us a secondOrderJacobian matrix object
+  ##########################################################################
   def __diff2_mixed_single(
     self,
     source: attribute,
@@ -231,16 +238,22 @@ class differentiator:
         combined_targets.append(target)
         combined_hashes.add(target.hash)
 
+    # create the second order jacobian first
     result = secondOrderJacobian(
       row_targets,
       column_targets,
       dynamic_instances,
       compress_coordinates
     )
+    # we construct the computation path for both row and column targets
     combined_paths = path(combined_targets, [], include_all_data=False)
     combined_paths.getRoots(source, [source], combined_targets)
     combined_paths.getPathDict()
 
+    # the second order jacobian is used mostly for the inverse simulation
+    # therefore we don't really care about the performance
+    # and we don't need to generate the coordinates yet
+    # so no local permutation is needed, and no computing the coordinates
     row_indices = gradientIndicesKernel(
       combined_paths.path_dict,
       combined_paths.unioned_child_to_its_children,
@@ -259,6 +272,8 @@ class differentiator:
       True,
       False
     )
+
+    # we generate all the coordinates for the second order jacobian
     rectangular_indices = secondOrderJacobianIndicesKernel(
       row_indices,
       column_indices,

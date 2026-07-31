@@ -337,7 +337,7 @@ class gradientIndicesKernel:
     wrt: List[attribute],
     wrt_start_indices: List[int],
     energy: attribute,
-    no_local_permutation: bool = False,
+    no_local_permutation: bool = False, # this is used for the separate jacobian and hessian method, where we don't do any local compressions
     generate_coordinates: bool = True
   ):
     self.__path_dict: Dict[attribute, List[attribute]] = path_dict # the path dict is basically from parent to children

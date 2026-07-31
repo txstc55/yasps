@@ -22,6 +22,12 @@ class path:
     self.__compute_wrt_start_indices() # compute how the gradient is placed
     self.__wrt = global_targets if (len(local_targets) == 0) else local_targets
 
+
+
+  #################################################
+  ## This will tell us how the gradient is placed
+  ## what are the boundaries
+  #################################################
   def __compute_wrt_start_indices(self):
     for item in self.__global_targets:
       if item.isDynamic:
