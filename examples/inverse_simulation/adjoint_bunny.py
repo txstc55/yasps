@@ -106,6 +106,7 @@ class StepCheckpoint:
   contacts: ContactState
   newton_iterations: int
   residual_inf: float
+  correction_rate_inf: float
 
 
 @dataclass
@@ -126,6 +127,7 @@ class Trajectory:
   frames_with_self_contact: int
   maximum_floor_contacts: int
   maximum_residual_inf: float
+  maximum_correction_rate_inf: float
   mean_newton_iterations: float
   elapsed_seconds: float
 
@@ -521,9 +523,8 @@ class AdjointBunnySimulation:
     young: float = 1.0e4,
     poisson: float = 0.32,
     mass: float = 4.0e-5,
-    velocity_retention: float = 0.90,
     initial_translation: np.ndarray = np.array(
-      [-0.28, 0.15, -0.20], dtype=np.float64
+      [-1.28, 0.15, -0.20], dtype=np.float64
     ),
     target_position: Optional[np.ndarray] = None,
     node_path: Optional[Path] = None,
@@ -531,6 +532,7 @@ class AdjointBunnySimulation:
     newton_tolerance: float = 1.0e-12,
     contact_newton_tolerance: float = 2.0e-7,
     position_tolerance: float = 1.0e-12,
+    correction_rate_tolerance: float = 1.0e-2,
     max_newton_iterations: int = 300,
     linear_tolerance: float = 1.0e-10,
     max_linear_iterations: int = 2000,
@@ -548,8 +550,8 @@ class AdjointBunnySimulation:
       raise ValueError("max_newton_iterations must be positive.")
     if young <= 0.0 or mass <= 0.0:
       raise ValueError("young and mass must be positive.")
-    if not 0.0 <= velocity_retention <= 1.0:
-      raise ValueError("velocity_retention must lie in [0, 1].")
+    if correction_rate_tolerance <= 0.0:
+      raise ValueError("correction_rate_tolerance must be positive.")
     if not 0.0 < poisson < 0.49:
       raise ValueError("poisson must lie in (0, 0.49).")
     self.frames = int(frames)
@@ -557,11 +559,13 @@ class AdjointBunnySimulation:
     self.d_hat_value = float(d_hat)
     self.contact_distance = math.sqrt(self.d_hat_value)
     self.kappa_value = float(kappa)
-    self.velocity_retention_value = float(velocity_retention)
     self.floor_height_value = 0.0
     self.newton_tolerance = float(newton_tolerance)
     self.contact_newton_tolerance = float(contact_newton_tolerance)
     self.position_tolerance = float(position_tolerance)
+    self.correction_rate_tolerance = float(
+      correction_rate_tolerance
+    )
     self.max_newton_iterations = int(max_newton_iterations)
     self.linear_tolerance = float(linear_tolerance)
     self.max_linear_iterations = int(max_linear_iterations)
@@ -637,11 +641,6 @@ class AdjointBunnySimulation:
     )
     self.kappa = self._constant(
       self.model, "kappa", self.kappa_value
-    )
-    self.velocity_retention = self._constant(
-      self.model,
-      "velocity_retention",
-      self.velocity_retention_value,
     )
     self.floor_height = self._constant(
       self.model, "floor_height", self.floor_height_value
@@ -756,7 +755,7 @@ class AdjointBunnySimulation:
     )
     predicted_position = (
       self.previous_position
-      + self.previous_velocity * self.velocity_retention * self.dt
+      + self.previous_velocity * self.dt
       + gravity_step
     )
     displacement = self.position - predicted_position
@@ -1478,6 +1477,7 @@ class AdjointBunnySimulation:
     )
     self.previous_position.updateValue(previous.reshape(-1))
     residual_inf = math.inf
+    correction_rate_inf = math.inf
     residual_history: List[float] = []
     iterations = 0
     converged = False
@@ -1495,6 +1495,7 @@ class AdjointBunnySimulation:
         else self.newton_tolerance
       )
       if residual_inf <= convergence_tolerance:
+        correction_rate_inf = 0.0
         converged = True
         break
 
@@ -1514,7 +1515,22 @@ class AdjointBunnySimulation:
         raise RuntimeError(
           f"Newton step became non-finite at frame {frame}."
         )
+      correction_rate_inf = step_inf / self.dt_value
       alpha, _ = self._line_search(step)
+      if correction_rate_inf < self.correction_rate_tolerance:
+        contacts = self.update_contacts()
+        self.forward_system.compute()
+        residual_inf = gpu_inf_norm(
+          self.forward_system.gradient.value
+        )
+        convergence_tolerance = (
+          max(self.newton_tolerance, self.contact_newton_tolerance)
+          if contacts.floor_vertices.size > 0
+          else self.newton_tolerance
+        )
+        if residual_inf <= convergence_tolerance:
+          converged = True
+          break
       if alpha == 0.0 or alpha * step_inf <= self.position_tolerance:
         contacts = self.update_contacts()
         self.forward_system.compute()
@@ -1529,11 +1545,27 @@ class AdjointBunnySimulation:
         converged = residual_inf <= convergence_tolerance
         break
 
+    # At the hard iteration cap, allow the dropping-in-container correction
+    # criterion to terminate a contact frame if its stationarity residual is
+    # already within a narrow numerical-stagnation band.  During all earlier
+    # iterations the ordinary contact residual threshold remains unchanged.
+    if (
+      not converged
+      and iterations == self.max_newton_iterations
+      and contacts.floor_vertices.size > 0
+      and correction_rate_inf < self.correction_rate_tolerance
+      and residual_inf <= 1.5 * self.contact_newton_tolerance
+    ):
+      converged = True
+
     if not converged:
       line_search = getattr(self, "_last_line_search", {})
       raise RuntimeError(
         f"Frame {frame} did not converge: residual_inf="
         f"{residual_inf:.6e}, tolerance={convergence_tolerance:.6e}, "
+        f"correction_rate_inf={correction_rate_inf:.6e}, "
+        f"correction_rate_tolerance="
+        f"{self.correction_rate_tolerance:.6e}, "
         f"iterations={iterations}, recent_residuals="
         f"{residual_history[-10:]}, contacts="
         f"{{'floor': {contacts.floor_vertices.size}, "
@@ -1554,6 +1586,7 @@ class AdjointBunnySimulation:
       print(
         f"forward frame {frame + 1:04d}/{self.frames}: "
         f"Newton={iterations:02d}, residual_inf={residual_inf:.3e}, "
+        f"correction_rate_inf={correction_rate_inf:.3e}, "
         f"floor={contacts.floor_vertices.size}, "
         f"self={contacts.self_pair_count}"
       )
@@ -1568,7 +1601,8 @@ class AdjointBunnySimulation:
       velocity=current_velocity,
       contacts=contacts,
       newton_iterations=iterations,
-      residual_inf=residual_inf
+      residual_inf=residual_inf,
+      correction_rate_inf=correction_rate_inf,
     )
 
   def _trajectory_loss(
@@ -1642,6 +1676,9 @@ class AdjointBunnySimulation:
       ),
       maximum_residual_inf=max(
         checkpoint.residual_inf for checkpoint in checkpoints
+      ),
+      maximum_correction_rate_inf=max(
+        checkpoint.correction_rate_inf for checkpoint in checkpoints
       ),
       mean_newton_iterations=float(np.mean([
         checkpoint.newton_iterations for checkpoint in checkpoints
@@ -1979,7 +2016,7 @@ def perturb_parameter(design: str, value, direction, delta: float):
   candidate = np.asarray(value, dtype=np.float64) + (
     delta * np.asarray(direction, dtype=np.float64)
   )
-  candidate[[0, 2]] = np.clip(candidate[[0, 2]], -0.5, 0.5)
+  candidate[[0, 2]] = np.clip(candidate[[0, 2]], -2.0, 2.0)
   candidate[1] = np.clip(candidate[1], 0.03, 1.0)
   return candidate
 
@@ -2007,33 +2044,41 @@ def parameter_directional_derivative(
   return float(np.dot(gradient_value, direction))
 
 
-def design_values_equal(design: str, first, second) -> bool:
-  if design == DESIGN_YOUNG:
-    return (
-      np.array_equal(first["young"], second["young"])
-      and np.array_equal(first["poisson"], second["poisson"])
-    )
-  return np.array_equal(np.asarray(first), np.asarray(second))
-
-
 def optimize_design(
   simulation: AdjointBunnySimulation,
   design: str,
   optimization_steps: int,
   step_size: float,
   check_gradient: bool,
-  convergence_tolerance: float = 1.0e-5
+  loss_tolerance: float = 1.0e-4
 ) -> Tuple[Dict, Trajectory, Trajectory]:
+  if optimization_steps < 0:
+    raise ValueError("optimization_steps must be non-negative.")
+  if step_size <= 0.0:
+    raise ValueError("step_size must be positive.")
+  if loss_tolerance < 0.0:
+    raise ValueError("loss_tolerance must be non-negative.")
+
   simulation.prepare_design(design)
   initial_value = simulation.get_design_value(design)
 
+  optimization_start = time.perf_counter()
   history = []
   trajectory = simulation.forward()
   initial_trajectory = trajectory
 
   for optimization_step in range(optimization_steps):
+    if trajectory.loss <= loss_tolerance:
+      print(
+        f"optimization {design} converged: loss "
+        f"{trajectory.loss:.6e} <= {loss_tolerance:.6e}."
+      )
+      break
+
     value = simulation.get_design_value(design)
+    backward_start = time.perf_counter()
     gradient_value = simulation.adjoint(trajectory, design)
+    backward_seconds = time.perf_counter() - backward_start
     direction = parameter_descent_direction(
       design, value, gradient_value
     )
@@ -2047,6 +2092,7 @@ def optimize_design(
       ),
       "gradient": summarize_gradient(design, gradient_value),
       "forward_seconds": trajectory.elapsed_seconds,
+      "backward_seconds": backward_seconds,
     }
 
     if check_gradient and optimization_step == 0:
@@ -2074,80 +2120,89 @@ def optimize_design(
       )
       simulation.set_design_value(design, value)
 
-    accepted = False
-    trial_step = step_size
-    record["failed_trials"] = []
-    for _ in range(6):
-      candidate = perturb_parameter(
-        design, value, direction, -trial_step
-      )
-      if design_values_equal(design, candidate, value):
-        trial_step *= 0.5
-        continue
-      simulation.set_design_value(design, candidate)
-      try:
-        candidate_trajectory = simulation.forward()
-      except RuntimeError as error:
-        record["failed_trials"].append({
-          "step": trial_step,
-          "reason": str(error),
-        })
-        trial_step *= 0.5
-        continue
-      if candidate_trajectory.loss < trajectory.loss:
-        previous_loss = trajectory.loss
-        trajectory = candidate_trajectory
-        accepted = True
-        record["accepted_step"] = trial_step
-        record["accepted_value"] = summarize_design_value(
-          design, candidate
-        )
-        record["accepted_loss"] = trajectory.loss
-        record["relative_improvement"] = (
-          (previous_loss - trajectory.loss)
-          / max(abs(previous_loss), 1.0e-30)
-        )
-        break
-      trial_step *= 0.5
-    if not accepted:
-      simulation.set_design_value(design, value)
-      record["accepted_step"] = 0.0
-      record["relative_improvement"] = 0.0
+    candidate = perturb_parameter(
+      design, value, direction, -step_size
+    )
+    simulation.set_design_value(design, candidate)
+    previous_loss = trajectory.loss
+    trajectory = simulation.forward()
+    record["applied_step"] = step_size
+    record["next_value"] = summarize_design_value(design, candidate)
+    record["next_loss"] = trajectory.loss
+    record["next_center_distance"] = trajectory.center_distance
+    record["next_forward_seconds"] = trajectory.elapsed_seconds
+    record["loss_change"] = trajectory.loss - previous_loss
+    record["relative_improvement"] = (
+      (previous_loss - trajectory.loss)
+      / max(abs(previous_loss), 1.0e-30)
+    )
     history.append(record)
 
     print(
       f"optimization {design} {optimization_step + 1}/"
-      f"{optimization_steps}: loss={record['loss']:.6e}, "
-      f"center={record['center_distance']:.6e}, "
+      f"{optimization_steps}: loss={record['loss']:.6e} -> "
+      f"{record['next_loss']:.6e}, center="
+      f"{record['center_distance']:.6e} -> "
+      f"{record['next_center_distance']:.6e}, "
       f"gradient_l2={gradient_l2(design, gradient_value):.6e}, "
-      f"accepted_step={record['accepted_step']:.4g}"
+      f"applied_step={record['applied_step']:.4g}"
     )
-    if not accepted:
+    if trajectory.loss <= loss_tolerance:
       print(
-        f"optimization {design} stopped: line search found no "
-        "loss-decreasing update."
+        f"optimization {design} converged: loss "
+        f"{trajectory.loss:.6e} <= {loss_tolerance:.6e}."
       )
       break
-    if record["relative_improvement"] <= convergence_tolerance:
-      print(
-        f"optimization {design} converged: relative loss improvement "
-        f"{record['relative_improvement']:.3e} <= "
-        f"{convergence_tolerance:.3e}."
-      )
-      break
+
+  observed_losses = [
+    initial_trajectory.loss,
+    *(record["next_loss"] for record in history),
+  ]
+  best_observed_iteration = int(np.argmin(observed_losses))
+  if best_observed_iteration == 0:
+    best_observed_center_distance = (
+      initial_trajectory.center_distance
+    )
+    best_observed_value = summarize_design_value(
+      design, initial_value
+    )
+  else:
+    best_record = history[best_observed_iteration - 1]
+    best_observed_center_distance = (
+      best_record["next_center_distance"]
+    )
+    best_observed_value = best_record["next_value"]
 
   final_value = simulation.get_design_value(design)
   result = {
     "design": design,
     "frames": simulation.frames,
     "dt": simulation.dt_value,
-    "velocity_retention": simulation.velocity_retention_value,
+    "loss_tolerance": loss_tolerance,
+    "contact_newton_tolerance": (
+      simulation.contact_newton_tolerance
+    ),
+    "correction_rate_tolerance": (
+      simulation.correction_rate_tolerance
+    ),
     "target_position": simulation.target_position.tolist(),
     "initial_value": summarize_design_value(design, initial_value),
     "initial_loss": initial_trajectory.loss,
     "final_loss": trajectory.loss,
     "initial_forward_seconds": initial_trajectory.elapsed_seconds,
     "final_forward_seconds": trajectory.elapsed_seconds,
+    "total_forward_seconds": (
+      initial_trajectory.elapsed_seconds
+      + sum(
+        record["next_forward_seconds"] for record in history
+      )
+    ),
+    "total_backward_seconds": sum(
+      record["backward_seconds"] for record in history
+    ),
+    "total_optimization_seconds": (
+      time.perf_counter() - optimization_start
+    ),
     "initial_center_distance": initial_trajectory.center_distance,
     "final_center_distance": trajectory.center_distance,
     "initial_horizontal_center_distance": (
@@ -2173,8 +2228,20 @@ def optimize_design(
     "frames_with_self_contact": trajectory.frames_with_self_contact,
     "maximum_floor_contacts": trajectory.maximum_floor_contacts,
     "maximum_residual_inf": trajectory.maximum_residual_inf,
+    "maximum_correction_rate_inf": (
+      trajectory.maximum_correction_rate_inf
+    ),
     "mean_newton_iterations": trajectory.mean_newton_iterations,
     "optimization_iterations": len(history),
+    "loss_increasing_updates": sum(
+      record["loss_change"] > 0.0 for record in history
+    ),
+    "best_observed_iteration": best_observed_iteration,
+    "best_observed_loss": observed_losses[best_observed_iteration],
+    "best_observed_center_distance": (
+      best_observed_center_distance
+    ),
+    "best_observed_value": best_observed_value,
     "final_value": summarize_design_value(design, final_value),
     "history": history,
   }
@@ -2228,14 +2295,27 @@ def render_comparison_video(
   )).reshape(-1)
   before_mesh = pv.PolyData(before_positions[0], faces)
   after_mesh = pv.PolyData(after_positions[0], faces)
+  before_center = pv.PolyData(
+    before_positions[0].mean(axis=0, keepdims=True)
+  )
+  after_center = pv.PolyData(
+    after_positions[0].mean(axis=0, keepdims=True)
+  )
 
   all_positions = np.concatenate(
     [*before_positions, *after_positions], axis=0
   )
+  horizontal_minimum = all_positions[:, [0, 2]].min(axis=0)
+  horizontal_maximum = all_positions[:, [0, 2]].max(axis=0)
+  horizontal_center = 0.5 * (
+    horizontal_minimum + horizontal_maximum
+  )
   horizontal_radius = max(
     0.45,
-    float(np.max(np.linalg.norm(all_positions[:, [0, 2]], axis=1)))
-    * 1.35,
+    float(np.max(np.linalg.norm(
+      all_positions[:, [0, 2]] - horizontal_center,
+      axis=1,
+    ))) * 1.35,
   )
   maximum_height = max(0.45, float(all_positions[:, 1].max()) * 1.15)
   floor = pv.Plane(
@@ -2257,13 +2337,27 @@ def render_comparison_video(
     f"After optimization\nloss={after.loss:.5e}",
   )
   meshes = (before_mesh, after_mesh)
+  centers = (before_center, after_center)
+  view_center = np.asarray(
+    [
+      horizontal_center[0],
+      0.42 * maximum_height,
+      horizontal_center[1],
+    ],
+    dtype=np.float64,
+  )
   camera_position = [
-    (2.6 * horizontal_radius, 1.15 * maximum_height,
-     3.8 * horizontal_radius),
-    (0.0, 0.42 * maximum_height, 0.0),
+    tuple(view_center + np.asarray([
+      2.6 * horizontal_radius,
+      0.73 * maximum_height,
+      3.8 * horizontal_radius,
+    ])),
+    tuple(view_center),
     (0.0, 1.0, 0.0),
   ]
-  for column, (mesh, title) in enumerate(zip(meshes, titles)):
+  for column, (mesh, center, title) in enumerate(
+    zip(meshes, centers, titles)
+  ):
     plotter.subplot(0, column)
     plotter.set_background("#f7f7f4")
     plotter.add_mesh(
@@ -2277,12 +2371,20 @@ def render_comparison_video(
     plotter.add_mesh(
       mesh,
       color="#d9784a",
+      opacity=0.62,
       smooth_shading=True,
       specular=0.18,
       show_edges=False,
     )
+    plotter.add_mesh(
+      center,
+      color="#00c8ff",
+      point_size=20,
+      render_points_as_spheres=True,
+      lighting=False,
+    )
     plotter.add_text(
-      title,
+      f"{title}\ncyan point = centroid",
       position="upper_left",
       font_size=13,
       color="#202124",
@@ -2305,6 +2407,8 @@ def render_comparison_video(
   ):
     before_mesh.points = before_position
     after_mesh.points = after_position
+    before_center.points = before_position.mean(axis=0, keepdims=True)
+    after_center.points = after_position.mean(axis=0, keepdims=True)
     plotter.render()
     plotter.screenshot(
       str(image_directory / f"frame_{frame_index:04d}.png")
@@ -2351,7 +2455,7 @@ def build_parser(
   parser.add_argument("--frames", type=int, default=500)
   parser.add_argument("--dt", type=float, default=0.01)
   parser.add_argument(
-    "--optimization-steps", type=int, default=6
+    "--optimization-steps", type=int, default=20
   )
   parser.add_argument("--bunny-height", type=float, default=0.35)
   parser.add_argument(
@@ -2369,12 +2473,6 @@ def build_parser(
   parser.add_argument("--young", type=float, default=1.0e4)
   parser.add_argument("--poisson", type=float, default=0.32)
   parser.add_argument(
-    "--velocity-retention",
-    type=float,
-    default=0.90,
-    help="Fraction of velocity retained by each implicit time step.",
-  )
-  parser.add_argument(
     "--mass",
     type=float,
     default=4.0e-5,
@@ -2390,7 +2488,7 @@ def build_parser(
       "(0, sqrt(d_hat), 0)."
     ),
   )
-  parser.add_argument("--initial-x", type=float, default=-0.28)
+  parser.add_argument("--initial-x", type=float, default=-1.28)
   parser.add_argument("--drop-height", type=float, default=0.15)
   parser.add_argument("--initial-z", type=float, default=-0.20)
   parser.add_argument(
@@ -2400,15 +2498,30 @@ def build_parser(
     "--contact-newton-tolerance", type=float, default=2.0e-7
   )
   parser.add_argument(
+    "--correction-rate-tolerance",
+    type=float,
+    default=1.0e-2,
+    help=(
+      "Stop a frame's Newton solve when max(abs(correction)) / dt "
+      "falls below this value."
+    ),
+  )
+  parser.add_argument(
     "--max-newton-iterations", type=int, default=300
   )
   parser.add_argument("--young-step", type=float, default=0.15)
   parser.add_argument("--mass-step", type=float, default=0.15)
   parser.add_argument(
-    "--initial-position-step", type=float, default=0.08
+    "--initial-position-step", type=float, default=0.25
   )
   parser.add_argument(
-    "--convergence-tolerance", type=float, default=1.0e-5
+    "--loss-tolerance",
+    type=float,
+    default=1.0e-4,
+    help=(
+      "Stop outer optimization once the final-position mean-square "
+      "loss is at or below this value."
+    ),
   )
   parser.add_argument("--check-gradient", action="store_true")
   parser.add_argument("--quiet", action="store_true")
@@ -2421,7 +2534,14 @@ def build_parser(
       "optimized design."
     ),
   )
-  parser.add_argument("--video-fps", type=int, default=30)
+  parser.add_argument(
+    "--video-fps",
+    type=int,
+    help=(
+      "Encoded playback FPS. The default round(1 / dt) plays the "
+      "simulation in real time."
+    ),
+  )
   return parser
 
 
@@ -2438,7 +2558,6 @@ def main(default_parameter: Optional[str] = None):
     young=args.young,
     poisson=args.poisson,
     mass=args.mass,
-    velocity_retention=args.velocity_retention,
     initial_translation=np.asarray(
       [args.initial_x, args.drop_height, args.initial_z],
       dtype=np.float64,
@@ -2450,6 +2569,7 @@ def main(default_parameter: Optional[str] = None):
     ),
     newton_tolerance=args.newton_tolerance,
     contact_newton_tolerance=args.contact_newton_tolerance,
+    correction_rate_tolerance=args.correction_rate_tolerance,
     max_newton_iterations=args.max_newton_iterations,
     verbose=not args.quiet
   )
@@ -2471,7 +2591,7 @@ def main(default_parameter: Optional[str] = None):
       args.optimization_steps,
       step_sizes[design],
       args.check_gradient,
-      args.convergence_tolerance,
+      args.loss_tolerance,
     )
     if args.video_directory is not None:
       image_directory, video_path = render_comparison_video(
@@ -2480,7 +2600,11 @@ def main(default_parameter: Optional[str] = None):
         initial_trajectory,
         final_trajectory,
         args.video_directory,
-        args.video_fps,
+        (
+          args.video_fps
+          if args.video_fps is not None
+          else max(1, round(1.0 / args.dt))
+        ),
       )
       result["frame_directory"] = str(image_directory)
       result["video"] = str(video_path)

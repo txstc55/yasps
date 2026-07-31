@@ -9,11 +9,10 @@ repository's full TetGen bunny:
 - `31,248` extracted surface edges
 
 The mesh is normalized to a height of `0.35`. The default drop starts low and
-visibly left/back at `(-0.28, 0.15, -0.20)`, advances for 500 steps with
-`dt=0.01`, and retains `0.90` of the velocity at each step. The collision
-floor is mathematically infinite. Its rendered plane is explicitly
-`1000 x 1000`, while camera framing still depends only on the bunny
-trajectory.
+visibly left/back at `(-1.28, 0.15, -0.20)` and advances for 500 steps with
+`dt=0.01`. There is no artificial velocity damping. The collision floor is
+mathematically infinite. Its rendered plane is explicitly `1000 x 1000`,
+while camera framing still depends only on the bunny trajectory.
 
 ## Objective and design fields
 
@@ -54,7 +53,7 @@ the differentiated matrices directly:
 
 ```text
 Phi[k+1](x; x[k], v[k], theta) =
-    inertia(x, x[k] + retention h v[k] + h² gravity, vertex_mass)
+    inertia(x, x[k] + h v[k] + h² gravity, vertex_mass)
   + h² elasticity(x, young, poisson)
   + floor_contact(x)
   + self_contact(x)
@@ -79,6 +78,22 @@ lambda_x[k] = dL/dx[k] - B_xᵀ mu - lambda_v[k+1] / h
 lambda_v[k] = -B_vᵀ mu.
 ```
 
+The mass and material controls are shared by the complete trajectory, not
+only its first frame. The differentiation graphs for `C` are constructed
+once, but their numerical values are recomputed at every restored timestep:
+
+```text
+C[k] = d² Phi[k] / d(position[k+1]) d(design)
+design_gradient = -sum(k=0..T-1) C[k]ᵀ mu[k].
+```
+
+Mass uses the inertia energy's `C[k]`; Young and Poisson use the elastic
+energy's `C[k]`. Initial-position optimization is different because its
+control enters the initial state directly, so its gradient is the accumulated
+initial-state adjoint rather than a per-frame `C[k]` product. The implicit
+adjoint differentiates each converged frame once; it does not backpropagate
+through the internal Newton iterations.
+
 Every rectangular second-order matrix retains the same strict chain rule as
 the Hessian:
 
@@ -101,16 +116,38 @@ The defaults relevant to impact convergence are:
 ```text
 dt                         = 0.01
 frames                     = 500
-velocity_retention         = 0.90
 d_hat                      = 1e-6
 max_newton_iterations      = 300
+correction_rate_tolerance  = 1e-2
 newton_tolerance           = 1e-12
 contact_newton_tolerance   = 2e-7
 ```
 
-The looser contact threshold handles closest-feature switching at impact; the
-smooth frames retain the stricter tolerance needed for multi-step adjoint
-accuracy.
+As in `dropping_in_container`, a frame's Newton correction must satisfy
+`max(abs(correction)) / dt < 1e-2`. The example additionally requires the
+stationarity residual to meet the smooth/contact threshold, because the
+implicit adjoint differentiates the converged stationarity equation rather
+than an unfinished Newton iterate. The looser contact threshold handles
+closest-feature switching at impact. Newton is hard-capped at 300 iterations.
+Only at that hard cap, a contact frame may terminate in the narrow residual
+stagnation band up to `3e-7` if its correction rate already meets `1e-2`;
+the ordinary `2e-7` threshold is unchanged during the preceding iterations.
+
+## Outer optimization
+
+There is no design-level acceptance test or backtracking line search. Each
+outer round performs exactly:
+
+1. one forward simulation whose converged states, velocities, and contacts
+   are checkpointed;
+2. one reverse adjoint sweep through all checkpoints;
+3. one normalized and bounded design update; and
+4. one new forward simulation from that updated design.
+
+The new design is retained even when the measured loss increases. Optimization
+stops after 20 updates or when the absolute loss reaches `1e-4`. The per-frame
+Newton solve and its energy line search remain in place; they are part of the
+implicit forward integrator, not an outer design line search.
 
 ## Running and rendering
 
@@ -136,8 +173,7 @@ settling trajectory:
 PYTHONPATH=yasps python examples/inverse_simulation/adjoint_bunny.py \
   --parameter all \
   --frames 500 \
-  --optimization-steps 6 \
-  --check-gradient \
+  --optimization-steps 20 \
   --video-directory examples/inverse_simulation/videos_large \
   --json-output examples/inverse_simulation/videos_large/results.json
 ```
@@ -147,8 +183,10 @@ requires `ffmpeg`.
 
 For each design, the renderer keeps all 501 side-by-side PNGs under
 `videos_large/<design>/frames/` and writes a 501-frame, 1280x640 H.264 video
-to `videos_large/<design>_before_after.mp4`. At 30 FPS each video lasts
-16.7 seconds. It does not write OBJ intermediates.
+to `videos_large/<design>_before_after.mp4`. By default, the playback rate is
+`round(1 / dt) = 100` FPS, so the video lasts 5.01 seconds and follows
+simulation time. Each bunny is translucent and contains an animated cyan
+vertex-centroid marker. The renderer does not write OBJ intermediates.
 
 Add `--check-gradient` and use one optimization step for a central
 finite-difference comparison:
@@ -163,30 +201,65 @@ PYTHONPATH=yasps python examples/inverse_simulation/adjoint_bunny.py \
 
 ## Measured validation
 
-The full 500-frame, six-step run produced:
+The full 500-frame, 20-update fixed-step comparison produced:
 
-| Design | Initial loss | Final loss | Reduction | Final design summary |
-| --- | ---: | ---: | ---: | --- |
-| Young + Poisson per element | 1.20168e-1 | 1.19288e-1 | 0.732% | means: Young `11086.58`, Poisson `0.322078` |
-| Initial translation | 1.20168e-1 | 1.78452e-3 | 98.515% | `(-0.003378, 0.150025, -0.002333)` |
-| Mass per vertex | 1.20168e-1 | 1.16435e-1 | 3.106% | mean `4.10979e-5`, total `0.788791` |
+| Design | Initial loss | Round-20 loss | Reduction | Best observed round/loss | Increasing updates |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Young + Poisson per element | 1.715823 | 1.707982 | 0.457% | 19 / 1.706975 | 9 |
+| Initial translation | 1.715821 | 0.0500833 | 97.081% | 11 / 0.0397940 | 8 |
+| Mass per vertex | 1.715824 | 1.596730 | 6.941% | 18 / 1.565240 | 8 |
 
-The optimized material, initial-position, and mass trajectories peaked at
-`165`, `276`, and `491` self-contact pairs, and at `684`, `696`, and `673`
-floor contacts, respectively. Their maximum stationarity residuals were
-`1.94e-7`, `1.99e-7`, and `1.97e-7`, all below the `2e-7` contact
-threshold. The initial 500-step forward trajectories took 11.5--12.1 seconds;
-the final ones took 8.76--14.1 seconds.
+The round-20 values are the actual retained designs; the best intermediate
+values are reported only for comparison. The final initial translation is
+`(-0.015558, 0.154651, -0.106151)`. The final material means are Young
+`10586.759` and Poisson `0.318490`. The final mean vertex mass is
+`6.26370e-5`, for total mass `1.20219`.
 
-Central directional finite-difference checks through all 500 frames measured
-relative errors of:
+Final-trajectory convergence and contact statistics were:
 
-- joint Young/Poisson: `3.86e-2`
-- initial translation: `1.40e-5`
-- per-vertex mass: `1.75e-1`
+| Design | Max residual | Max correction rate | Mean Newton iterations/frame | Max self pairs | Max floor contacts |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Young + Poisson | 1.956e-7 | 9.741e-3 | 2.958 | 1,189 | 889 |
+| Initial translation | 1.993e-7 | 9.196e-3 | 2.582 | 983 | 916 |
+| Mass | 2.000e-7 | 9.970e-3 | 4.834 | 2,743 | 854 |
 
-The material and mass checks are less tight because the perturbations switch
-closest features and active contacts during the five-second trajectory.
-Every accepted optimization update is nevertheless validated by a separate
-500-step forward simulation and backtracked until its measured loss
-decreases.
+All correction rates remain below `1e-2`; all reported final residuals remain
+below the ordinary `2e-7` contact threshold.
+
+### Real simulation timings
+
+Each mode performs 21 forward trajectories and 20 backward sweeps:
+
+| Design | Total forward | Total backward | Total optimization | Mean forward | Mean backward |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Initial translation | 762.94 s | 848.08 s | 1,611.06 s | 36.33 s | 42.40 s |
+| Young + Poisson | 726.61 s | 1,515.24 s | 2,242.49 s | 34.60 s | 75.76 s |
+| Mass | 1,247.20 s | 2,370.83 s | 3,618.38 s | 59.39 s | 118.54 s |
+
+The matrix logs include the complete forward and exact-adjoint Hessian
+assemblies:
+
+| Design | Hessian assemblies | Total Hessian time | Mean | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Initial translation | 46,302 | 321.681 s | 6.947 ms | 165.24 ms |
+| Young + Poisson | 44,467 | 306.206 s | 6.886 ms | 167.04 ms |
+| Mass | 63,144 | 459.492 s | 7.277 ms | 163.88 ms |
+
+For every one of the `500 x 20 = 10,000` reverse timesteps, the implementation
+also recomputes both state-transition mixed matrices. This gives 20,000
+mixed-matrix computations for initial-position optimization. Material and
+mass each add one `C[k]` computation per reverse timestep, giving 30,000:
+
+| Design | Mixed computations | Total time | Mean | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Initial translation (`B_x`, `B_v`) | 20,000 | 4.911 s | 0.246 ms | 14.75 ms |
+| Young + Poisson (`B_x`, `B_v`, `C`) | 30,000 | 120.594 s | 4.020 ms | 41.49 ms |
+| Mass (`B_x`, `B_v`, `C`) | 30,000 | 6.739 s | 0.225 ms | 10.61 ms |
+
+Focused central directional finite-difference checks through all 500 frames
+measured relative errors of `0.717%` for initial translation, `5.26%` for
+mass, and `44.2%` for joint Young/Poisson. The contact problem is only
+piecewise smooth: perturbing distributed material fields changes closest
+features and active contact pairs, which makes the material finite-difference
+comparison particularly sensitive. Production optimization did not enable
+`--check-gradient`, so it incurred no finite-difference trajectories.
