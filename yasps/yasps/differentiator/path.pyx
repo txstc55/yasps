@@ -109,12 +109,13 @@ class path:
     # we perform dfs to extract a path and its children
     while stack:
       current: attribute = stack.pop()
-      if len(fixed_targets) != 0:
-        if current in fixed_targets:
-          if current not in seenRoots:
-            roots.append(current)
-            seenRoots.add(current)
-      elif current.operator == DATA:
+      if current in fixed_targets:
+        # An explicitly requested target is a path leaf whether it is DATA or
+        # CONSTANT.
+        if current not in seenRoots:
+          roots.append(current)
+          seenRoots.add(current)
+      elif len(fixed_targets) == 0 and current.operator == DATA:
         ## we got to the bottom of this path
         if current not in seenRoots:
           roots.append(current)
@@ -154,7 +155,7 @@ class path:
         for child in root.children:
           if child not in self.__unioned_child_to_its_children:
             self.__unioned_child_to_its_children[child] = []
-          childrenRoots, childrenPaths = self.__getRoots(child, [])
+          childrenRoots, childrenPaths = self.__getRoots(child, [], fixed_targets)
           trueRoots += childrenRoots
           for childrenPath in childrenPaths:
             allPaths.append(parent_path + [root] + childrenPath)

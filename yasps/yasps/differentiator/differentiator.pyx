@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List, Tuple, Set, Optional, Dict
 import math
 
-from yasps.attribute import attribute, JOIN, UNION, DATA
+from yasps.attribute import attribute, JOIN, UNION, DATA, CONSTANT
 from yasps.autodiff import autodiff
 from yasps.hessian import hessian
 from yasps.secondOrderJacobian import secondOrderJacobian
@@ -74,6 +74,25 @@ class differentiator:
         return False
     return True
 
+  # helper function. For jacobian, the path should never include bottom attributes which are not inside the actual target
+  def __validateJacobianIndexPath(
+    self,
+    target_path: path,
+    targets: List[attribute],
+    role: str
+  ) -> None:
+    target_hashes = {target.hash for target in targets}
+    for children in target_path.path_dict.values():
+      for child in children:
+        if (
+          (child.operator == DATA or child.operator == CONSTANT)
+          and child.hash not in target_hashes
+        ):
+          raise RuntimeError(
+            f"differentiator.diff2: {role} index path contains terminal "
+            f"attribute {child.fullName}, which is not in {role}_targets."
+          )
+
   def diff1(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False):
     # diff1 is used for gradient or first order jacobian
     pass
@@ -132,11 +151,61 @@ class differentiator:
         "differentiator.__diff2_jacobian_single: source must be a scalar attribute."
       )
 
+    # The combined path will be used to differentiate with respect to the
+    # union of the row and column targets.  Preserve the caller's ordering and
+    # remove targets that occur in both lists.
+    combined_targets: List[attribute] = []
+    combined_target_hashes: Set[int] = set()
+    for target in row_targets + column_targets:
+      if target.hash not in combined_target_hashes:
+        combined_targets.append(target)
+        combined_target_hashes.add(target.hash)
+
+    combined_paths = path(combined_targets)
+    combined_paths.getRoots(source, [source], combined_targets)
+    combined_paths.getPathDict()
+
+    # These two paths retain the independent row and column occurrence
+    # layouts.  They will provide the two coordinate streams for the final
+    # rectangular matrix.
+    row_paths = path(row_targets)
+    row_paths.getRoots(source, [source], row_targets)
+    row_paths.getPathDict()
+    self.__validateJacobianIndexPath(row_paths, row_targets, "row")
+
+    column_paths = path(column_targets)
+    column_paths.getRoots(source, [source], column_targets)
+    column_paths.getPathDict()
+    self.__validateJacobianIndexPath(column_paths, column_targets, "column")
+
     result = secondOrderJacobian(
       row_targets,
       column_targets,
       dynamic_instances
     )
+
+    # Row and column coordinates are generated together by the rectangular
+    # second-order Jacobian kernel.  Each stream therefore computes only its
+    # indices and excludes every leaf that is not in its own target list.
+    row_indices_kernel = gradientIndicesKernel(
+      row_paths.path_dict,
+      row_paths.unioned_child_to_its_children,
+      row_targets,
+      result.row_start_indices,
+      source,
+      no_local_permutation=True,
+      generate_coordinates=False
+    )
+    column_indices_kernel = gradientIndicesKernel(
+      column_paths.path_dict,
+      column_paths.unioned_child_to_its_children,
+      column_targets,
+      result.column_start_indices,
+      source,
+      no_local_permutation=True,
+      generate_coordinates=False
+    )
+
     if dynamic_instances:
       result.sources_dynamic = [source]
     else:
