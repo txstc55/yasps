@@ -10,6 +10,7 @@ from .deviceKernel import deviceKernel
 from .codeGenerator import codeGenerator
 from .globalKernel import globalKernel
 from .gradientIndicesKernel import gradientIndicesKernel
+from .secondOrderJacobianIndicesKernel import secondOrderJacobianIndicesKernel
 from .hessianAndGradientKernel import hessianAndGradientKernel
 from .coordinateCompressionKernel import coordinateCompressionKernel
 from .diagonalBlockInverseKernel import diagonalBlockInverseKernel

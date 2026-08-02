@@ -4,6 +4,7 @@ from typing import List
 
 from yasps.attribute import attribute
 from yasps.matrix import matrix
+from yasps.secondOrderJacobianIndicesKernel import secondOrderJacobianIndicesKernel
 
 
 class secondOrderJacobian(matrix):
@@ -12,8 +13,7 @@ class secondOrderJacobian(matrix):
   def __init__(
     self,
     row_wrt: List[attribute],
-    column_wrt: List[attribute],
-    dynamic_instances: bool = False
+    column_wrt: List[attribute]
   ):
     self.__row_wrt = self.__validateTargets(row_wrt, "row_wrt")
     self.__column_wrt = self.__validateTargets(column_wrt, "column_wrt")
@@ -25,11 +25,12 @@ class secondOrderJacobian(matrix):
       self.__column_start_indices[-1]
     )
 
-    self.__dynamic_instances = bool(dynamic_instances)
+    self.__indices_kernels: List[secondOrderJacobianIndicesKernel] = []
     self.__sources: List[attribute] = []
     self.__second_order_jacobians: List[attribute] = []
 
 
+    self.__indices_kernels_dynamic: List[secondOrderJacobianIndicesKernel] = []
     self.__sources_dynamic: List[attribute] = []
     self.__second_order_jacobians_dynamic: List[attribute] = []
 
@@ -87,8 +88,40 @@ class secondOrderJacobian(matrix):
     return self.__column_start_indices
 
   @property
-  def dynamic_instances(self) -> bool:
-    return self.__dynamic_instances
+  def indices_kernels(self) -> List[secondOrderJacobianIndicesKernel]:
+    return self.__indices_kernels
+
+  @indices_kernels.setter
+  def indices_kernels(
+    self,
+    value: List[secondOrderJacobianIndicesKernel]
+  ) -> None:
+    if not isinstance(value, list):
+      raise TypeError("secondOrderJacobian.indices_kernels: value must be a list.")
+    if any(not isinstance(item, secondOrderJacobianIndicesKernel) for item in value):
+      raise TypeError(
+        "secondOrderJacobian.indices_kernels: every item must be a secondOrderJacobianIndicesKernel."
+      )
+    self.__indices_kernels = list(value)
+
+  @property
+  def indices_kernels_dynamic(self) -> List[secondOrderJacobianIndicesKernel]:
+    return self.__indices_kernels_dynamic
+
+  @indices_kernels_dynamic.setter
+  def indices_kernels_dynamic(
+    self,
+    value: List[secondOrderJacobianIndicesKernel]
+  ) -> None:
+    if not isinstance(value, list):
+      raise TypeError(
+        "secondOrderJacobian.indices_kernels_dynamic: value must be a list."
+      )
+    if any(not isinstance(item, secondOrderJacobianIndicesKernel) for item in value):
+      raise TypeError(
+        "secondOrderJacobian.indices_kernels_dynamic: every item must be a secondOrderJacobianIndicesKernel."
+      )
+    self.__indices_kernels_dynamic = list(value)
 
   @property
   def second_order_jacobians(self) -> List[attribute]:
@@ -165,13 +198,14 @@ class secondOrderJacobian(matrix):
     for left, right in zip(self.__column_wrt, other.column_wrt):
       if left.hash != right.hash:
         raise ValueError("secondOrderJacobian.__add__: column_wrt mismatch.")
-
     result = secondOrderJacobian(
       self.__row_wrt,
       self.__column_wrt
     )
+    result.indices_kernels = self.__indices_kernels + other.indices_kernels
     result.sources = self.__sources + other.sources
     result.second_order_jacobians = self.__second_order_jacobians + other.second_order_jacobians
     result.sources_dynamic = self.__sources_dynamic + other.sources_dynamic
+    result.indices_kernels_dynamic = self.__indices_kernels_dynamic + other.indices_kernels_dynamic
     result.second_order_jacobians_dynamic = self.__second_order_jacobians_dynamic + other.second_order_jacobians_dynamic
     return result

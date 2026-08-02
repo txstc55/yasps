@@ -8,6 +8,7 @@ from yasps.hessian import hessian
 from yasps.secondOrderJacobian import secondOrderJacobian
 from yasps.path import path
 from yasps.gradientIndicesKernel import gradientIndicesKernel
+from yasps.secondOrderJacobianIndicesKernel import secondOrderJacobianIndicesKernel
 from yasps.placementReorderKernel import placementReorderKernel
 
 class differentiator:
@@ -180,8 +181,7 @@ class differentiator:
 
     result = secondOrderJacobian(
       row_targets,
-      column_targets,
-      dynamic_instances
+      column_targets
     )
 
     # Row and column coordinates are generated together by the rectangular
@@ -206,10 +206,19 @@ class differentiator:
       generate_coordinates=False
     )
 
+    rectangular_indices_kernel = secondOrderJacobianIndicesKernel(
+      row_indices_kernel,
+      column_indices_kernel,
+      result.row_start_indices,
+      result.column_start_indices
+    )
+
     if dynamic_instances:
       result.sources_dynamic = [source]
+      result.indices_kernels_dynamic = [rectangular_indices_kernel]
     else:
       result.sources = [source]
+      result.indices_kernels = [rectangular_indices_kernel]
     return result
 
   def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
