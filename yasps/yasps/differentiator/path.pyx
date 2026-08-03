@@ -171,6 +171,15 @@ class path:
 
   def getRoots(self, att: attribute, parent_path: List[attribute], fixed_targets: List[attribute] = []):
     _, self.__paths = self.__getRoots(att, parent_path, fixed_targets)
+    if len(fixed_targets) != 0:
+      # Exact-target paths must retain the caller's target ordering.  The DFS
+      # stack discovers independent leaves in reverse expression order, which
+      # would otherwise make a combined row+column Hessian's local axes
+      # unrelated to the requested [row targets, column targets] layout.
+      target_positions = {
+        target.hash: index for index, target in enumerate(fixed_targets)
+      }
+      self.__paths.sort(key=lambda item: target_positions[item[-1].hash])
     return
 
   #########################################################

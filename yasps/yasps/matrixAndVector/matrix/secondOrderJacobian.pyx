@@ -27,11 +27,13 @@ class secondOrderJacobian(matrix):
 
     self.__indices_kernels: List[secondOrderJacobianIndicesKernel] = []
     self.__sources: List[attribute] = []
+    self.__combined_hessians: List[attribute] = []
     self.__second_order_jacobians: List[attribute] = []
 
 
     self.__indices_kernels_dynamic: List[secondOrderJacobianIndicesKernel] = []
     self.__sources_dynamic: List[attribute] = []
+    self.__combined_hessians_dynamic: List[attribute] = []
     self.__second_order_jacobians_dynamic: List[attribute] = []
 
   def __validateTargets(
@@ -127,6 +129,22 @@ class secondOrderJacobian(matrix):
   def second_order_jacobians(self) -> List[attribute]:
     return self.__second_order_jacobians
 
+  @property
+  def combined_hessians(self) -> List[attribute]:
+    return self.__combined_hessians
+
+  @combined_hessians.setter
+  def combined_hessians(self, value: List[attribute]) -> None:
+    if not isinstance(value, list):
+      raise TypeError(
+        "secondOrderJacobian.combined_hessians: value must be a list."
+      )
+    if any(not isinstance(item, attribute) for item in value):
+      raise TypeError(
+        "secondOrderJacobian.combined_hessians: every item must be an attribute."
+      )
+    self.__combined_hessians = list(value)
+
   @second_order_jacobians.setter
   def second_order_jacobians(self, value: List[attribute]) -> None:
     if not isinstance(value, list):
@@ -142,6 +160,22 @@ class secondOrderJacobian(matrix):
   @property
   def second_order_jacobians_dynamic(self) -> List[attribute]:
     return self.__second_order_jacobians_dynamic
+
+  @property
+  def combined_hessians_dynamic(self) -> List[attribute]:
+    return self.__combined_hessians_dynamic
+
+  @combined_hessians_dynamic.setter
+  def combined_hessians_dynamic(self, value: List[attribute]) -> None:
+    if not isinstance(value, list):
+      raise TypeError(
+        "secondOrderJacobian.combined_hessians_dynamic: value must be a list."
+      )
+    if any(not isinstance(item, attribute) for item in value):
+      raise TypeError(
+        "secondOrderJacobian.combined_hessians_dynamic: every item must be an attribute."
+      )
+    self.__combined_hessians_dynamic = list(value)
 
   @second_order_jacobians_dynamic.setter
   def second_order_jacobians_dynamic(self, value: List[attribute]) -> None:
@@ -204,8 +238,10 @@ class secondOrderJacobian(matrix):
     )
     result.indices_kernels = self.__indices_kernels + other.indices_kernels
     result.sources = self.__sources + other.sources
+    result.combined_hessians = self.__combined_hessians + other.combined_hessians
     result.second_order_jacobians = self.__second_order_jacobians + other.second_order_jacobians
     result.sources_dynamic = self.__sources_dynamic + other.sources_dynamic
     result.indices_kernels_dynamic = self.__indices_kernels_dynamic + other.indices_kernels_dynamic
+    result.combined_hessians_dynamic = self.__combined_hessians_dynamic + other.combined_hessians_dynamic
     result.second_order_jacobians_dynamic = self.__second_order_jacobians_dynamic + other.second_order_jacobians_dynamic
     return result

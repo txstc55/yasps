@@ -13,6 +13,7 @@ np.random.seed(13)      # for numpy
 import time
 
 import argparse
+from pathlib import Path
 
 parser = argparse.ArgumentParser(description="Bunny simulation")
 parser.add_argument(
@@ -27,6 +28,23 @@ parser.add_argument(
   default=False,
   help="Whether to save the obj files for each frame (default: False)"
 )
+parser.add_argument(
+  "--num-frames",
+  type=int,
+  default=200,
+  help="Number of simulation frames (default: 200)"
+)
+parser.add_argument(
+  "--render-frames",
+  action="store_true",
+  help="Render one image after each converged simulation frame"
+)
+parser.add_argument(
+  "--output-dir",
+  type=Path,
+  default=Path("outputs"),
+  help="Directory for rendered frames (default: outputs)"
+)
 
 import pycuda.driver as cuda
 
@@ -40,7 +58,15 @@ args = parser.parse_args()
 
 NUM_BUNNIES = args.num_bunnies
 SAVE_OBJ = args.save_obj
+NUM_FRAMES = args.num_frames
+RENDER_FRAMES = args.render_frames
+OUTPUT_DIR = args.output_dir
 NUM_AFFINE_BUNNIES = 1
+
+if NUM_FRAMES <= 0:
+  raise ValueError("--num-frames must be positive")
+if RENDER_FRAMES:
+  OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 DT_VALUE = 0.01 # for time step
 DHAT_VALUE = 1e-6 # for collision detection
@@ -443,8 +469,11 @@ print(f"Memory used by CCD: {(before - after) / 1e6:.2f} MB")
 ## plot the bunnies
 ##################################################################
 import pyvista as pv
-if SAVE_OBJ:
-  plotter = pv.Plotter(window_size=[3840, 2160])
+if SAVE_OBJ or RENDER_FRAMES:
+  plotter = pv.Plotter(
+    window_size=[1920, 1080],
+    off_screen=RENDER_FRAMES and not SAVE_OBJ
+  )
   all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
   triangles = triangle_indices_all
   soft_triangles = triangles[0 : (NUM_BUNNIES - NUM_AFFINE_BUNNIES) * NUM_BUNNY_SURFACE_TRIANGLES]
@@ -473,7 +502,8 @@ if SAVE_OBJ:
     (0, 1, 0)
   ]
   # plotter.show()
-  plotter.show(interactive_update=True, auto_close=False)
+  if SAVE_OBJ:
+    plotter.show(interactive_update=True, auto_close=False)
 # exit()
 position_copy = collision_mesh.vertices["position"].compute().value.copy()
 bunny_soft_position_copy = vertices_soft_position.compute().value.copy()
@@ -483,7 +513,7 @@ bunny_translations_copy = translations.compute().value.copy()
 
 
 start = time.time()
-for i in range(200):
+for i in range(NUM_FRAMES):
   start_data_transfer = time.time()
   bunnies_soft.vertices_soft["last_position"].updateValue(bunnies_soft.vertices_soft["position"].value, deepCopy = True)
   bunnies_abd.vertices_abd["last_position"].updateValue(bunnies_abd.vertices_abd["position"].compute().value, deepCopy = True)
@@ -628,6 +658,14 @@ for i in range(200):
   end_velocity_update = time.time()
   print(f"Time taken for velocity update: {end_velocity_update - start_velocity_update} seconds")
 
+  if RENDER_FRAMES:
+    soft_poly.points = vertices_soft_position.compute().value.get().reshape((-1, 3))
+    abd_poly.points = vertices_abd_position.compute().value.get().reshape((-1, 3))
+    frame_path = OUTPUT_DIR / f"bunny_drop_in_container_{i:04d}.jpg"
+    plotter.render()
+    plotter.screenshot(str(frame_path))
+    print(f"Saved rendered frame: {frame_path}")
+
   # all_vertices_computed = collision_mesh.vertices["position"].compute().value.get().reshape((-1, 3))
   # soft_vertices_computed = all_vertices_computed[0:(NUM_BUNNIES) * NUM_BUNNY_VERTICES]
   # container_vertices_computed = all_vertices_computed[(NUM_BUNNIES) * NUM_BUNNY_VERTICES:]
@@ -646,4 +684,6 @@ for i in range(200):
   # bunny_poly1.save(f"outputs/bunny_abd_soft1_{i:04d}.obj")
 end = time.time()
 print("Total time: ", end - start)
+if SAVE_OBJ or RENDER_FRAMES:
+  plotter.close()
 ccd.close()

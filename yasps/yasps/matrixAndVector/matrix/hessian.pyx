@@ -877,8 +877,18 @@ class hessian(matrix):
       merged_hessian_rows = len(merged_hessian_and_gradient) // global_gradient.size
       merged_hessian_cols = global_gradient.size
     merged_attribute = attribute.to_array(merged_hessian_and_gradient, rows=merged_hessian_rows, cols=merged_hessian_cols)
-    source.correspondance.addAttribute(f'hessian_and_gradient_d2_{source.fullName}_d2_{"__".join([x.fullName for x in self.__wrt])}', computed_attribute = merged_attribute, rows = merged_hessian_rows, cols = merged_hessian_cols)
-    return merged_attribute
+    # The symbolic Hessian name contains its full generation configuration.
+    # Carry that identity into the merged compute attribute as well so two
+    # Hessian modes for the same source and targets cannot collide here.
+    merged_attribute_name = f'hessian_and_gradient_{global_hessian.name}'
+    if merged_attribute_name in source.correspondance.attributes:
+      return source.correspondance[merged_attribute_name]
+    return source.correspondance.addAttribute(
+      merged_attribute_name,
+      computed_attribute=merged_attribute,
+      rows=merged_hessian_rows,
+      cols=merged_hessian_cols
+    )
 
   def __ensureTermKernel(self, index: int, dynamic_term = False) -> None:
     if not dynamic_term:
