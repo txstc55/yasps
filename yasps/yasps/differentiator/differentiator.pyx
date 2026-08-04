@@ -555,7 +555,11 @@ class differentiator:
       if child.operator == JOIN:
         block_sizes += [hessian_rows] * child.through.dimension  # this tells us in the final Hessian (local), what span does this child cover
         children_sizes += [child.size // child.through.dimension] * child.through.dimension # this tells us in the final Hessian (global), what span does this child cover
-      elif child.operator == UNION or child.operator == DATA:
+      elif (
+        child.operator == UNION
+        or child.operator == DATA
+        or child.operator == CONSTANT
+      ):
         block_sizes.append(hessian_rows)
         children_sizes.append(child.size)
       assert hessian_rows * hessian_rows == hessian_size, f"differentiator.__generateGlobalHessianForEnergy: hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"

@@ -1,11 +1,12 @@
 from yasps.attribute import attribute
 from typing import List, Dict, Set, Tuple
-from yasps.attribute import DATA, CONSTANT
+from yasps.attribute import DATA, CONSTANT, JOIN, UNION
 class path:
   def __init__(self, global_targets: List[attribute], local_targets: List[attribute] = []):
     self.__path_dict: Dict[attribute, List[attribute]] = {}
     self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = {}
     self.__paths: List[List[attribute]] = []
+    self.__root = None
     self.__global_targets = global_targets
     self.__local_targets = local_targets
     self.__wrt_start_indices: List[int] = []
@@ -96,7 +97,6 @@ class path:
     """Current differentiation variables represented by this path object."""
     return self.__wrt
 
-
   #########################################################
   ## Function to get the roots of an attribute
   ## as well as the path to that root
@@ -170,16 +170,8 @@ class path:
 
 
   def getRoots(self, att: attribute, parent_path: List[attribute], fixed_targets: List[attribute] = []):
+    self.__root = att
     _, self.__paths = self.__getRoots(att, parent_path, fixed_targets)
-    if len(fixed_targets) != 0:
-      # Exact-target paths must retain the caller's target ordering.  The DFS
-      # stack discovers independent leaves in reverse expression order, which
-      # would otherwise make a combined row+column Hessian's local axes
-      # unrelated to the requested [row targets, column targets] layout.
-      target_positions = {
-        target.hash: index for index, target in enumerate(fixed_targets)
-      }
-      self.__paths.sort(key=lambda item: target_positions[item[-1].hash])
     return
 
   #########################################################
@@ -221,3 +213,155 @@ class path:
 
   def getPathDict(self):
     self.__get_path_dict()
+
+  def __jacobianLayoutRole(
+    self,
+    target: attribute,
+    row_target_hashes: Set[int],
+    column_target_hashes: Set[int]
+  ) -> str:
+    in_row = target.hash in row_target_hashes
+    in_column = target.hash in column_target_hashes
+    if in_row and in_column:
+      return "rc"
+    if in_row:
+      return "r"
+    if in_column:
+      return "c"
+    raise ValueError(
+      "path.generateJacobianLayout: path contains terminal target "
+      f"{target.fullName}, which is in neither row_targets nor column_targets."
+    )
+
+  def __jacobianLayoutRoleMask(self, role: str) -> int:
+    if role == "r":
+      return 1
+    if role == "c":
+      return 2
+    if role == "rc":
+      return 3
+    raise ValueError(
+      f"path.generateJacobianLayout: unsupported layout role {role}."
+    )
+
+  def __jacobianLayoutRoleFromMask(self, role_mask: int) -> str:
+    if role_mask == 1:
+      return "r"
+    if role_mask == 2:
+      return "c"
+    if role_mask == 3:
+      return "rc"
+    raise ValueError(
+      "path.generateJacobianLayout: a layout block must belong to at least "
+      "one differentiation target set."
+    )
+
+  def __generateJacobianLayoutForAttribute(
+    self,
+    current: attribute,
+    row_target_hashes: Set[int],
+    column_target_hashes: Set[int]
+  ) -> List[Tuple[str, int]]:
+    if current.operator == DATA or current.operator == CONSTANT:
+      return [(
+        self.__jacobianLayoutRole(
+          current,
+          row_target_hashes,
+          column_target_hashes
+        ),
+        current.size
+      )]
+
+    if current not in self.__path_dict:
+      raise ValueError(
+        "path.generateJacobianLayout: attribute "
+        f"{current.fullName} is not present in path_dict."
+      )
+
+    if current.operator == UNION:
+      # Differentiation pads every primitive branch of a union to the largest
+      # branch Jacobian/Hessian span.  The union is consequently one block in
+      # its parent's layout.  Its role is the union of all target roles that
+      # can occupy that block.
+      largest_branch_size = 0
+      union_role_mask = 0
+      children_on_path = self.__path_dict[current]
+      for unioned_child in current.children:
+        branch_layout: List[Tuple[str, int]] = []
+        # get only this current unioned child's children
+        branch_children = self.__unioned_child_to_its_children.get(
+          unioned_child,
+          []
+        )
+        for child in children_on_path:
+          # we only care about this current unioned child's children
+          if child in branch_children:
+            branch_layout += self.__generateJacobianLayoutForAttribute(
+              child,
+              row_target_hashes,
+              column_target_hashes
+            )
+        # get this current unioned child's branch's size
+        branch_size = sum(item[1] for item in branch_layout)
+        largest_branch_size = max(largest_branch_size, branch_size)
+        for role, _ in branch_layout:
+          union_role_mask |= self.__jacobianLayoutRoleMask(role)
+
+      if largest_branch_size == 0:
+        raise ValueError(
+          "path.generateJacobianLayout: union attribute "
+          f"{current.fullName} has no row or column target path."
+        )
+      return [(
+        self.__jacobianLayoutRoleFromMask(union_role_mask),
+        largest_branch_size
+      )]
+
+    children_layout: List[Tuple[str, int]] = []
+    for child in self.__path_dict[current]:
+      children_layout += self.__generateJacobianLayoutForAttribute(
+        child,
+        row_target_hashes,
+        column_target_hashes
+      )
+
+    if current.operator == JOIN:
+      return children_layout * current.through.dimension
+    return children_layout
+
+  def generateJacobianLayout(
+    self,
+    row_targets: List[attribute],
+    column_targets: List[attribute]
+  ) -> List[Tuple[str, int]]:
+    """Return the combined Hessian's ordered row/column target blocks.
+
+    Each tuple is ``(role, size)``.  ``role`` is ``"r"`` for a row-only
+    block, ``"c"`` for a column-only block, and ``"rc"`` for a block that
+    can contain targets from both sets.  Sizes are scalar axis spans in the
+    uncompressed combined Hessian.
+    """
+    if not isinstance(row_targets, list) or len(row_targets) == 0:
+      raise ValueError(
+        "path.generateJacobianLayout: row_targets must be a non-empty list."
+      )
+    if not isinstance(column_targets, list) or len(column_targets) == 0:
+      raise ValueError(
+        "path.generateJacobianLayout: column_targets must be a non-empty list."
+      )
+    if (
+      len(self.__path_dict) == 0
+      or len(self.__paths) == 0
+      or self.__root is None
+    ):
+      raise RuntimeError(
+        "path.generateJacobianLayout: call getRoots and getPathDict first."
+      )
+
+    row_target_hashes = {target.hash for target in row_targets}
+    column_target_hashes = {target.hash for target in column_targets}
+    return self.__generateJacobianLayoutForAttribute(
+      self.__root,
+      row_target_hashes,
+      column_target_hashes
+    )
