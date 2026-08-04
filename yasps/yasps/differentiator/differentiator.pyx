@@ -416,12 +416,10 @@ class differentiator:
     if dynamic_instances:
       result.sources_dynamic = [source]
       result.indices_kernels_dynamic = [rectangular_indices_kernel]
-      result.combined_hessians_dynamic = [combined_hessian]
       result.second_order_jacobians_dynamic = [rectangular_jacobian]
     else:
       result.sources = [source]
       result.indices_kernels = [rectangular_indices_kernel]
-      result.combined_hessians = [combined_hessian]
       result.second_order_jacobians = [rectangular_jacobian]
     return result
 
