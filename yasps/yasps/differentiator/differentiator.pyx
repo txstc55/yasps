@@ -96,6 +96,7 @@ class differentiator:
         return False
     return True
 
+  # helper function for generating the current hessian name wrt the children
   def __hessianName(
     self,
     current: attribute,
@@ -111,6 +112,7 @@ class differentiator:
       result += f'_filled_for_{self.__source.fullName}'
     return result
 
+  # helper function for generating the current gradient/jacobian name wrt the children
   def __gradientName(
     self,
     current: attribute,
@@ -136,6 +138,100 @@ class differentiator:
       f'_d_{"__".join([x.fullName for x in wrt])}'
       f'{self.__derivative_name_suffix}'
     )
+
+  def __secondOrderJacobianName(
+    self,
+    source: attribute,
+    row_targets: List[attribute],
+    column_targets: List[attribute],
+    layout: List[Tuple[str, int]]
+  ) -> str:
+    layout_signature = "__".join(
+      f"{role}_{size}" for role, size in layout
+    )
+    return (
+      f'd2_rectangular_{source.fullName}'
+      f'_drow_{"__".join(x.fullName for x in row_targets)}'
+      f'_dcolumn_{"__".join(x.fullName for x in column_targets)}'
+      f'_layout_{layout_signature}'
+      f'{self.__derivative_name_suffix}'
+    )
+
+
+  # when computing the second order jacobian
+  # what we do is actually computing the hessian first for the combination of the row and column targets
+  # we then select the actual entries that we need for the second order jacobian
+  # the selection is done by passing the row and column targets to path
+  # and let it generate the actual layout
+  def __selectSecondOrderJacobian(
+    self,
+    source: attribute,
+    combined_hessian: attribute,
+    layout: List[Tuple[str, int]],
+    row_targets: List[attribute],
+    column_targets: List[attribute]
+  ) -> attribute:
+    combined_size = sum(size for _, size in layout)
+    if (
+      combined_hessian.rows != combined_size
+      or combined_hessian.cols != combined_size
+    ):
+      raise RuntimeError(
+        "differentiator.__selectSecondOrderJacobian: layout size "
+        f"{combined_size} does not match combined Hessian shape "
+        f"{combined_hessian.rows}x{combined_hessian.cols}."
+      )
+
+    row_positions: List[int] = []
+    column_positions: List[int] = []
+    offset = 0
+    for role, size in layout:
+      if role == "r" or role == "rc":
+        row_positions += list(range(offset, offset + size))
+      if role == "c" or role == "rc":
+        column_positions += list(range(offset, offset + size))
+      offset += size
+
+    if len(row_positions) == 0 or len(column_positions) == 0:
+      raise RuntimeError(
+        "differentiator.__selectSecondOrderJacobian: layout selected an "
+        "empty row or column axis."
+      )
+
+    second_order_jacobian_name = self.__secondOrderJacobianName(
+      source,
+      row_targets,
+      column_targets,
+      layout
+    )
+    if second_order_jacobian_name in source.correspondance.attributes:
+      result = source.correspondance[second_order_jacobian_name]
+      if (
+        result.rows != len(row_positions)
+        or result.cols != len(column_positions)
+      ):
+        raise RuntimeError(
+          "differentiator.__selectSecondOrderJacobian: cached attribute has "
+          "an incompatible shape."
+        )
+      return result
+
+    selected_items: List[attribute] = []
+    for row_position in row_positions:
+      for column_position in column_positions:
+        selected_items.append(
+          combined_hessian[row_position, column_position]
+        )
+    selected = attribute.to_array(
+      selected_items,
+      rows=len(row_positions),
+      cols=len(column_positions)
+    )
+    source.correspondance.addAttribute(
+      second_order_jacobian_name,
+      computed_attribute=selected
+    )
+    return source.correspondance[second_order_jacobian_name]
 
   # helper function. For jacobian, the path should never include bottom attributes which are not inside the actual target
   def __validateJacobianIndexPath(
@@ -258,6 +354,17 @@ class differentiator:
     )
     assert self.__hessian is not None
     combined_hessian = self.__hessian
+    combined_layout = combined_paths.generateJacobianLayout(
+      row_targets,
+      column_targets
+    )
+    rectangular_jacobian = self.__selectSecondOrderJacobian(
+      source,
+      combined_hessian,
+      combined_layout,
+      row_targets,
+      column_targets
+    )
 
     # These two paths retain the independent row and column occurrence
     # layouts.  They will provide the two coordinate streams for the final
@@ -310,10 +417,12 @@ class differentiator:
       result.sources_dynamic = [source]
       result.indices_kernels_dynamic = [rectangular_indices_kernel]
       result.combined_hessians_dynamic = [combined_hessian]
+      result.second_order_jacobians_dynamic = [rectangular_jacobian]
     else:
       result.sources = [source]
       result.indices_kernels = [rectangular_indices_kernel]
       result.combined_hessians = [combined_hessian]
+      result.second_order_jacobians = [rectangular_jacobian]
     return result
 
   def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
