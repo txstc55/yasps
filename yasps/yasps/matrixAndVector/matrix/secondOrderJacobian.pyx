@@ -6,10 +6,12 @@ import numpy as np
 import pycuda.gpuarray as gpuarray
 
 from yasps.attribute import attribute
+from yasps.codeGenerator import codeGenerator
 from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 from yasps.helper import timed
 from yasps.matrix import matrix
 from yasps.secondOrderJacobianIndicesKernel import secondOrderJacobianIndicesKernel
+from yasps.secondOrderJacobianKernel import secondOrderJacobianKernel
 
 
 class secondOrderJacobian(matrix):
@@ -33,16 +35,21 @@ class secondOrderJacobian(matrix):
     self.__indices_kernels: List[secondOrderJacobianIndicesKernel] = []
     self.__sources: List[attribute] = []
     self.__second_order_jacobians: List[attribute] = []
+    self.__computation_kernels: List[Optional[secondOrderJacobianKernel]] = []
 
 
     self.__indices_kernels_dynamic: List[secondOrderJacobianIndicesKernel] = []
     self.__sources_dynamic: List[attribute] = []
     self.__second_order_jacobians_dynamic: List[attribute] = []
+    self.__computation_kernels_dynamic: List[
+      Optional[secondOrderJacobianKernel]
+    ] = []
 
     self.__block_indices_gpu: List[gpuarray.GPUArray] = []
     self.__block_indices_gpu_dynamic: List[gpuarray.GPUArray] = []
     self.__compression_kernel: Optional[coordinateCompressionKernel] = None
     self.__compression_kernel_dynamic: Optional[coordinateCompressionKernel] = None
+    self.__is_setup = False
 
   def __validateTargets(
     self,
@@ -113,6 +120,7 @@ class secondOrderJacobian(matrix):
         "secondOrderJacobian.indices_kernels: every item must be a secondOrderJacobianIndicesKernel."
       )
     self.__indices_kernels = list(value)
+    self.__is_setup = False
 
   @property
   def indices_kernels_dynamic(self) -> List[secondOrderJacobianIndicesKernel]:
@@ -132,6 +140,7 @@ class secondOrderJacobian(matrix):
         "secondOrderJacobian.indices_kernels_dynamic: every item must be a secondOrderJacobianIndicesKernel."
       )
     self.__indices_kernels_dynamic = list(value)
+    self.__is_setup = False
 
   @property
   def block_indices_gpu(self) -> List[gpuarray.GPUArray]:
@@ -183,6 +192,7 @@ class secondOrderJacobian(matrix):
         "secondOrderJacobian.second_order_jacobians: every item must be an attribute."
       )
     self.__second_order_jacobians = list(value)
+    self.__is_setup = False
 
   @property
   def second_order_jacobians_dynamic(self) -> List[attribute]:
@@ -199,6 +209,58 @@ class secondOrderJacobian(matrix):
         "secondOrderJacobian.second_order_jacobians_dynamic: every item must be an attribute."
       )
     self.__second_order_jacobians_dynamic = list(value)
+    self.__is_setup = False
+
+  @property
+  def computation_kernels(self) -> List[Optional[secondOrderJacobianKernel]]:
+    return self.__computation_kernels
+
+  @computation_kernels.setter
+  def computation_kernels(
+    self,
+    value: List[Optional[secondOrderJacobianKernel]]
+  ) -> None:
+    if not isinstance(value, list):
+      raise TypeError(
+        "secondOrderJacobian.computation_kernels: value must be a list."
+      )
+    if any(
+      item is not None and not isinstance(item, secondOrderJacobianKernel)
+      for item in value
+    ):
+      raise TypeError(
+        "secondOrderJacobian.computation_kernels: every item must be a "
+        "secondOrderJacobianKernel or None."
+      )
+    self.__computation_kernels = list(value)
+    self.__is_setup = False
+
+  @property
+  def computation_kernels_dynamic(
+    self
+  ) -> List[Optional[secondOrderJacobianKernel]]:
+    return self.__computation_kernels_dynamic
+
+  @computation_kernels_dynamic.setter
+  def computation_kernels_dynamic(
+    self,
+    value: List[Optional[secondOrderJacobianKernel]]
+  ) -> None:
+    if not isinstance(value, list):
+      raise TypeError(
+        "secondOrderJacobian.computation_kernels_dynamic: value must be a "
+        "list."
+      )
+    if any(
+      item is not None and not isinstance(item, secondOrderJacobianKernel)
+      for item in value
+    ):
+      raise TypeError(
+        "secondOrderJacobian.computation_kernels_dynamic: every item must "
+        "be a secondOrderJacobianKernel or None."
+      )
+    self.__computation_kernels_dynamic = list(value)
+    self.__is_setup = False
 
   @property
   def sources(self) -> List[attribute]:
@@ -250,11 +312,30 @@ class secondOrderJacobian(matrix):
     result.indices_kernels = self.__indices_kernels + other.indices_kernels
     result.sources = self.__sources + other.sources
     result.second_order_jacobians = self.__second_order_jacobians + other.second_order_jacobians
+    result.computation_kernels = self.__computation_kernels + other.computation_kernels
     result.sources_dynamic = self.__sources_dynamic + other.sources_dynamic
     result.indices_kernels_dynamic = self.__indices_kernels_dynamic + other.indices_kernels_dynamic
     result.second_order_jacobians_dynamic = self.__second_order_jacobians_dynamic + other.second_order_jacobians_dynamic
+    result.computation_kernels_dynamic = self.__computation_kernels_dynamic + other.computation_kernels_dynamic
     result.block_indices_gpu = self.__block_indices_gpu + other.block_indices_gpu
     result.block_indices_gpu_dynamic = self.__block_indices_gpu_dynamic + other.block_indices_gpu_dynamic
+    return result
+
+  # the lookup array for sparse blocks
+  def __alignLookups(
+    self,
+    compression_kernel: coordinateCompressionKernel,
+    indices_kernels: List[secondOrderJacobianIndicesKernel]
+  ) -> List[gpuarray.GPUArray]:
+    compressed_lookups = compression_kernel.lookupArrays
+    result: List[gpuarray.GPUArray] = []
+    lookup_index = 0
+    for item in indices_kernels:
+      if item.numTotalCoordinates == 0:
+        result.append(gpuarray.empty(0, dtype=np.uint32))
+      else:
+        result.append(compressed_lookups[lookup_index])
+        lookup_index += 1
     return result
 
   @timed("secondOrderJacobian.getSparseIndices")
@@ -273,7 +354,10 @@ class secondOrderJacobian(matrix):
       self.__column_wrt
     )
     self.__compression_kernel.compressCoordinatesAndDimensions()
-    self.__block_indices_gpu = self.__compression_kernel.lookupArrays
+    self.__block_indices_gpu = self.__alignLookups(
+      self.__compression_kernel,
+      self.__indices_kernels
+    )
 
     total_block_size = self.__compression_kernel.totalBlockSize
     if self.blocks_flattened.size < total_block_size:
@@ -315,19 +399,10 @@ class secondOrderJacobian(matrix):
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
 
-    lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
-    self.__block_indices_gpu_dynamic = []
-    lookup_index = 0
-    for item in self.__indices_kernels_dynamic:
-      if item.numTotalCoordinates > 0:
-        self.__block_indices_gpu_dynamic.append(
-          lookup_arrays[lookup_index]
-        )
-        lookup_index += 1
-      else:
-        self.__block_indices_gpu_dynamic.append(
-          gpuarray.empty(0, dtype=np.uint32)
-        )
+    self.__block_indices_gpu_dynamic = self.__alignLookups(
+      self.__compression_kernel_dynamic,
+      self.__indices_kernels_dynamic
+    )
 
     total_block_size = self.__compression_kernel_dynamic.totalBlockSize
     if self.blocks_flattened_dynamic.size < total_block_size:
@@ -374,19 +449,10 @@ class secondOrderJacobian(matrix):
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
 
-    lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
-    self.__block_indices_gpu_dynamic = []
-    lookup_index = 0
-    for item in self.__indices_kernels_dynamic:
-      if item.numTotalCoordinates > 0:
-        self.__block_indices_gpu_dynamic.append(
-          lookup_arrays[lookup_index]
-        )
-        lookup_index += 1
-      else:
-        self.__block_indices_gpu_dynamic.append(
-          gpuarray.empty(0, dtype=np.uint32)
-        )
+    self.__block_indices_gpu_dynamic = self.__alignLookups(
+      self.__compression_kernel_dynamic,
+      self.__indices_kernels_dynamic
+    )
 
     total_block_size = self.__compression_kernel_dynamic.totalBlockSize
     if self.blocks_flattened_dynamic.size < total_block_size:
@@ -414,3 +480,117 @@ class secondOrderJacobian(matrix):
         :num_unique_dimensions * 2
       ]
     )
+
+  def __ensureTermKernel(self, index: int, dynamic_term: bool) -> None:
+    if dynamic_term:
+      local_jacobians = self.__second_order_jacobians_dynamic
+      indices_kernels = self.__indices_kernels_dynamic
+      computation_kernels = self.__computation_kernels_dynamic
+    else:
+      local_jacobians = self.__second_order_jacobians
+      indices_kernels = self.__indices_kernels
+      computation_kernels = self.__computation_kernels
+
+    if index >= len(local_jacobians) or index >= len(indices_kernels):
+      raise ValueError(
+        "secondOrderJacobian.__ensureTermKernel: symbolic term metadata is "
+        "incomplete."
+      )
+    while len(computation_kernels) <= index:
+      computation_kernels.append(None)
+    if computation_kernels[index] is not None:
+      return
+
+    local_jacobian = local_jacobians[index]
+    generator = codeGenerator(local_jacobian)
+    generator.generateCode()
+    kernel = secondOrderJacobianKernel(
+      local_jacobian,
+      dynamic_term=dynamic_term
+    )
+    kernel.generateKernel(
+      indices_kernels[index].rowIndicesKernel.maxNumIndicesNeeded,
+      indices_kernels[index].columnIndicesKernel.maxNumIndicesNeeded
+    )
+    computation_kernels[index] = kernel
+
+  def __setupCompute(self) -> None:
+    if self.__is_setup:
+      return
+    if len(self.__indices_kernels) != len(self.__second_order_jacobians):
+      raise ValueError(
+        "secondOrderJacobian.__setupCompute: static coordinate/value term "
+        "counts differ."
+      )
+    if (
+      len(self.__indices_kernels_dynamic)
+      != len(self.__second_order_jacobians_dynamic)
+    ):
+      raise ValueError(
+        "secondOrderJacobian.__setupCompute: dynamic coordinate/value term "
+        "counts differ."
+      )
+
+    if len(self.__indices_kernels) > 0:
+      self.getSparseIndices()
+    if len(self.__indices_kernels_dynamic) > 0:
+      self.getSparseIndicesDynamic()
+    for index in range(len(self.__indices_kernels)):
+      self.__ensureTermKernel(index, False)
+    for index in range(len(self.__indices_kernels_dynamic)):
+      self.__ensureTermKernel(index, True)
+    self.__is_setup = True
+
+  def __computeOneTerm(
+    self,
+    index: int,
+    indices_kernels: List[secondOrderJacobianIndicesKernel],
+    computation_kernels: List[Optional[secondOrderJacobianKernel]],
+    lookups: List[gpuarray.GPUArray],
+    blocks: gpuarray.GPUArray
+  ) -> None:
+    indices_kernel = indices_kernels[index]
+    if indices_kernel.numTotalCoordinates == 0:
+      return
+    if index >= len(lookups):
+      raise ValueError(
+        "secondOrderJacobian.__computeOneTerm: sparse lookup is missing."
+      )
+    if index >= len(computation_kernels):
+      raise ValueError(
+        "secondOrderJacobian.__computeOneTerm: computation kernel is "
+        "missing."
+      )
+    kernel = computation_kernels[index]
+    if kernel is None:
+      raise ValueError(
+        "secondOrderJacobian.__computeOneTerm: computation kernel is None."
+      )
+    kernel.compute(indices_kernel, lookups[index], blocks)
+
+  @timed("secondOrderJacobian.compute")
+  def compute(self):
+    if not self.__is_setup:
+      self.__setupCompute()
+    elif len(self.__indices_kernels_dynamic) > 0:
+      self.getSparseIndicesDynamicAgain()
+
+    self.blocks_flattened.fill(0)
+    self.blocks_flattened_dynamic.fill(0)
+    for index in range(len(self.__indices_kernels)):
+      self.__computeOneTerm(
+        index,
+        self.__indices_kernels,
+        self.__computation_kernels,
+        self.__block_indices_gpu,
+        self.blocks_flattened
+      )
+    for index in range(len(self.__indices_kernels_dynamic)):
+      self.__computeOneTerm(
+        index,
+        self.__indices_kernels_dynamic,
+        self.__computation_kernels_dynamic,
+        self.__block_indices_gpu_dynamic,
+        self.blocks_flattened_dynamic
+      )
+    return self

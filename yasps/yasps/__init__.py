@@ -11,6 +11,8 @@ from .codeGenerator import codeGenerator
 from .globalKernel import globalKernel
 from .gradientIndicesKernel import gradientIndicesKernel
 from .secondOrderJacobianIndicesKernel import secondOrderJacobianIndicesKernel
+from .secondOrderJacobianKernel import secondOrderJacobianKernel
+from .secondOrderJacobianKernelNoProject import secondOrderJacobianKernelNoProject
 from .hessianAndGradientKernel import hessianAndGradientKernel
 from .coordinateCompressionKernel import coordinateCompressionKernel
 from .diagonalBlockInverseKernel import diagonalBlockInverseKernel
