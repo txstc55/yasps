@@ -1,7 +1,7 @@
 from __future__ import annotations
 # from ast import Str
 from yasps.attribute import attribute
-from typing import List
+from typing import List, Optional
 import pycuda.gpuarray as gpuarray
 import ctypes
 import numpy as np
@@ -376,7 +376,14 @@ def gpu_copy_slice(dst: gpuarray.GPUArray, dst_offset: int, src: gpuarray.GPUArr
 # an outer array that indicates where the data starts for each dimension
 # and a really long array that indicates for each energy, the position we need to look for in the data array to put the data back
 class coordinateCompressionKernel:
-  def __init__(self, coordinates: List[gpuarray.GPUArray], dimensions: List[gpuarray.GPUArray], num_coordinates: List[int], wrt: List[attribute]):
+  def __init__(
+    self,
+    coordinates: List[gpuarray.GPUArray],
+    dimensions: List[gpuarray.GPUArray],
+    num_coordinates: List[int],
+    wrt: List[attribute],
+    column_wrt: Optional[List[attribute]] = None
+  ):
     self.__num_coordinates : List[int] = []
     self.__coordinates: List[gpuarray.GPUArray] = []
     self.__dimensions: List[gpuarray.GPUArray] = []
@@ -403,10 +410,17 @@ class coordinateCompressionKernel:
     self.__num_unique_dimensions: int = 0
     self.__total_coordinates: int = 0
 
-    # we compute the maximum possible number of unique dimensions
-    wrt_sizes = [x.size for x in wrt]
-    unique_wrt_sizes = set(wrt_sizes)
-    largest_num_unique_dimensions = len(unique_wrt_sizes) ** 2 # the maximum size is just the square of len
+    # We compute the maximum possible number of unique block dimensions.
+    # Hessians pass only ``wrt``, so their row and column size sets are the
+    # same. Rectangular matrices pass a separate column target list.
+    row_wrt_sizes = {x.size for x in wrt}
+    if column_wrt is None:
+      column_wrt_sizes = row_wrt_sizes
+    else:
+      column_wrt_sizes = {x.size for x in column_wrt}
+    largest_num_unique_dimensions = (
+      len(row_wrt_sizes) * len(column_wrt_sizes)
+    )
     # print(f"largest_num_unique_dimensions: {largest_num_unique_dimensions}")
     self.__uniqueDimensions = gpuarray.zeros(largest_num_unique_dimensions * 2, np.uint16)
     self.__uniqueDimensionsOuterIndices = gpuarray.zeros(largest_num_unique_dimensions + 1, np.uint32)
