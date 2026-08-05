@@ -4,6 +4,7 @@ import math
 
 from yasps.attribute import attribute, JOIN, UNION, DATA, CONSTANT
 from yasps.autodiff import autodiff
+from yasps.gradient import gradient
 from yasps.hessian import hessian
 from yasps.secondOrderJacobian import secondOrderJacobian
 from yasps.path import path
@@ -38,11 +39,12 @@ class differentiator:
     self.__global_jacobian_children_spans: List[int] = []
     # self.__local_hessian_reordered_array: List[attribute] = []
 
-  def __resetDiff2State(
+  def __resetDiffState(
     self,
     source: attribute,
     path_dict: Dict[attribute, List[attribute]],
     unioned_child_to_its_children: Dict[attribute, List[attribute]],
+    gradient_only: bool,
     projection_method: int,
     save_intermediate: bool,
     separate_hessian_jacobian: bool,
@@ -54,7 +56,7 @@ class differentiator:
     self.__unioned_child_to_its_children = unioned_child_to_its_children
     self.__save_intermediate = save_intermediate
     self.__intermediate_compute_pairs = {}
-    self.__gradient_only = False
+    self.__gradient_only = gradient_only
     self.__projection_method = projection_method
     self.__global_jacobian = None
     self.__global_inner_hessian = None
@@ -74,12 +76,14 @@ class differentiator:
       for character in generation_mode
     )
     self.__derivative_name_suffix = (
-      f'_hcfg_projection_{projection_flag}'
+      f'_spd_projection_{projection_flag}'
       f'_save_{int(save_intermediate)}'
       f'_separate_{int(separate_hessian_jacobian)}'
       f'_dynamic_{int(dynamic_instances)}'
       f'_mode_{mode_flag}'
     )
+    if gradient_only:
+      self.__derivative_name_suffix += '_gradient_only_1'
 
 
     self.__global_jacobian_block_nonzero_attributes = []
@@ -158,9 +162,41 @@ class differentiator:
             f"attribute {child.fullName}, which is not in {role}_targets."
           )
 
-  def diff1(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False):
-    # diff1 is used for gradient or first order jacobian
-    pass
+  def diff1(self, source, global_targets: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False) -> gradient:
+    """Differentiate scalar source terms and return their summed gradient."""
+    if not isinstance(source, list):
+      source = [source]
+    if len(source) == 0:
+      raise ValueError("differentiator.diff1: source can not be empty.")
+    if not isinstance(global_targets, list) or len(global_targets) == 0:
+      raise ValueError("differentiator.diff1: global_targets can not be empty.")
+
+    if len(source) == 1:
+      parent_hessian = self.__diff2_hessian_single(
+        source[0],
+        global_targets,
+        local_targets,
+        -1,
+        False,
+        False,
+        dynamic_instances,
+        True
+      )
+    else:
+      parent_hessian = self.__diff2_hessian_all(
+        source,
+        global_targets,
+        local_targets,
+        -1,
+        False,
+        False,
+        dynamic_instances,
+        True
+      )
+
+    result = gradient(global_targets, parent_hessian)
+    parent_hessian.gradient = result
+    return result
 
   def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
     if not isinstance(source, list):
@@ -225,17 +261,17 @@ class differentiator:
     row_paths.getPathDict()
     self.__validateJacobianIndexPath(row_paths, row_targets, "row")
 
-    self.__resetDiff2State(
+    self.__resetDiffState(
       source,
       row_paths.path_dict,
       row_paths.unioned_child_to_its_children,
+      True,
       -1,
       False,
       False,
       dynamic_instances,
       "second_order_jacobian_row_gradient"
     )
-    self.__gradient_only = True
     autodiff_engine = autodiff()
     self.__generateGradientThroughPathDict(
       row_targets,
@@ -266,17 +302,17 @@ class differentiator:
     # Differentiate the row gradient with respect to only the column targets.
     # This is a first-order Jacobian operation on a vector-valued source; no
     # combined Hessian or rectangular block selection is involved.
-    self.__resetDiff2State(
+    self.__resetDiffState(
       row_gradient,
       column_derivative_path_dict,
       column_paths.unioned_child_to_its_children,
+      True,
       -1,
       False,
       False,
       dynamic_instances,
       "second_order_jacobian_column_jacobian_row_major_complete_layout"
     )
-    self.__gradient_only = True
     self.__generateGradientThroughPathDict(
       column_targets,
       autodiff()
@@ -328,10 +364,10 @@ class differentiator:
       result.second_order_jacobians = [rectangular_jacobian]
     return result
 
-  def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
+  def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, gradient_only = False):
     total_hessian: Optional[hessian] = None
     for item in source:
-      current_hessian = self.__diff2_hessian_single(item, global_targets, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances)
+      current_hessian = self.__diff2_hessian_single(item, global_targets, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances, gradient_only)
       if total_hessian is None:
         total_hessian = current_hessian
       else:
@@ -343,7 +379,7 @@ class differentiator:
   ## Hessian differentiation, each differentiation
   ## will return us a Hessian matrix object
   #########################################################
-  def __diff2_hessian_single(self, source: attribute, global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False) -> hessian:
+  def __diff2_hessian_single(self, source: attribute, global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, gradient_only = False) -> hessian:
     if source.size != 1:
       raise ValueError("differentiator.__diff2_hessian_single: source must be a scalar attribute.")
 
@@ -354,23 +390,33 @@ class differentiator:
     paths.getRoots(source, [source])
     paths.getPathDict()
 
-    indices_kernel = gradientIndicesKernel(paths.path_dict, paths.unioned_child_to_its_children, paths.wrt, wrt_start_indices, source, separate_hessian_jacobian)
+    indices_kernel = gradientIndicesKernel(
+      paths.path_dict,
+      paths.unioned_child_to_its_children,
+      paths.wrt,
+      wrt_start_indices,
+      source,
+      separate_hessian_jacobian,
+      generate_coordinates=not gradient_only
+    )
 
-    self.__resetDiff2State(
+    self.__resetDiffState(
       source,
       paths.path_dict,
       paths.unioned_child_to_its_children,
+      gradient_only,
       projection_method,
       save_intermediate,
       separate_hessian_jacobian,
       dynamic_instances,
-      "hessian"
+      "gradient" if gradient_only else "hessian"
     )
     autodiff_engine = autodiff()
     self.__generateGradientThroughPathDict(paths.wrt, autodiff_engine)
     assert self.__gradient is not None
-    self.__generateHessianThroughPathDict(paths.wrt, autodiff_engine)
-    assert self.__hessian is not None
+    if not gradient_only:
+      self.__generateHessianThroughPathDict(paths.wrt, autodiff_engine)
+      assert self.__hessian is not None
 
     global_jacobian_block_nonzero_attributes = [list(self.__global_jacobian_block_nonzero_attributes)]
     global_jacobian_block_nonzero_local_positions = [list(self.__global_jacobian_block_nonzero_local_positions)]
@@ -382,6 +428,7 @@ class differentiator:
       hessian_local.indices_kernels = [indices_kernel]
       hessian_local.global_gradients = [self.__gradient]
       hessian_local.global_hessians = [self.__hessian]
+      hessian_local.gradient_only = [gradient_only]
       hessian_local.global_jacobians = [self.__global_jacobian]
       hessian_local.global_inner_hessians = [self.__global_inner_hessian]
       hessian_local.project_entire_hessian = [self.__project_entire_hessian]
@@ -401,6 +448,7 @@ class differentiator:
       hessian_local.indices_kernels_dynamic = [indices_kernel]
       hessian_local.global_gradients_dynamic = [self.__gradient]
       hessian_local.global_hessians_dynamic = [self.__hessian]
+      hessian_local.gradient_only_dynamic = [gradient_only]
       hessian_local.global_jacobians_dynamic = [self.__global_jacobian]
       hessian_local.global_inner_hessians_dynamic = [self.__global_inner_hessian]
       hessian_local.project_entire_hessian_dynamic = [self.__project_entire_hessian]
