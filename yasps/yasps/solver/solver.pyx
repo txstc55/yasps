@@ -6,6 +6,7 @@ import numpy as np
 import pycuda.gpuarray as gpuarray
 
 from yasps.solverKernel import solverKernel
+from yasps.vector import vector
 
 
 class solver:
@@ -36,11 +37,11 @@ class solver:
     self.__cg_scalars = gpuarray.empty(0, dtype=np.float64)
     self.__solution = gpuarray.empty(0, dtype=np.float64)
 
-  def __ensureBuffers(self, active_hessian, gradient_object) -> None:
-    gradient = gradient_object.value
-    if gradient.size == 0:
+  def __ensureBuffers(self, active_hessian, right_hand_side: vector) -> None:
+    values = right_hand_side.value
+    if values.size == 0:
       return
-    if self.__solution.size == gradient.size and self.__solverKernel is not None:
+    if self.__solution.size == values.size and self.__solverKernel is not None:
       return
     if active_hessian is None:
       return
@@ -48,26 +49,33 @@ class solver:
     if self.__solverKernel is not None:
       self.__solverKernel.cleanupStreams()
     self.__solverKernel = solverKernel(active_hessian.block_dimensions + active_hessian.block_dimensions_dynamic)
-    self.__d_p1_b = gpuarray.empty(gradient.shape, dtype=np.float64)
-    self.__d_r = gpuarray.empty(gradient.shape, dtype=np.float64)
-    self.__d_c = gpuarray.empty(gradient.shape, dtype=np.float64)
-    self.__d_q = gpuarray.empty(gradient.shape, dtype=np.float64)
-    self.__d_s = gpuarray.empty(gradient.shape, dtype=np.float64)
+    self.__d_p1_b = gpuarray.empty(values.shape, dtype=np.float64)
+    self.__d_r = gpuarray.empty(values.shape, dtype=np.float64)
+    self.__d_c = gpuarray.empty(values.shape, dtype=np.float64)
+    self.__d_q = gpuarray.empty(values.shape, dtype=np.float64)
+    self.__d_s = gpuarray.empty(values.shape, dtype=np.float64)
     # Persistent device-side CG recurrence state; see CgScalarSlot in solverKernel.
     self.__cg_scalars = gpuarray.empty(8, dtype=np.float64)
-    self.__solution = gpuarray.empty(gradient.shape, dtype=np.float64)
+    self.__solution = gpuarray.empty(values.shape, dtype=np.float64)
 
-  def computeSolution(self, active_hessian, wrt, gradient_object, initial_guess, tolerance = 1e-3, maxIterations = 20000, zero_initial_guess = False):
-    gradient = gradient_object.value
-    if gradient.size == 0:
+  def computeSolution(self, active_hessian, right_hand_side: vector, initial_guess, tolerance = 1e-3, maxIterations = 20000, zero_initial_guess = False):
+    if not isinstance(right_hand_side, vector):
+      raise TypeError("solver.computeSolution: right_hand_side must be a yasps.vector.vector.")
+    values = right_hand_side.value
+    if values.size == 0:
       return 0
     if active_hessian is None:
-      self.__ensureBuffers(active_hessian, gradient_object)
+      self.__ensureBuffers(active_hessian, right_hand_side)
       if self.__solution.size > 0:
         self.__solution.fill(0)
       return 0
 
-    self.__ensureBuffers(active_hessian, gradient_object)
+    if right_hand_side.size != active_hessian.rows:
+      raise ValueError(
+        "solver.computeSolution: right_hand_side size must match the Hessian size."
+      )
+
+    self.__ensureBuffers(active_hessian, right_hand_side)
     assert self.__solverKernel is not None
     self.__solverKernel.updateBlockDimensions(active_hessian.block_dimensions + active_hessian.block_dimensions_dynamic)
 
@@ -87,11 +95,11 @@ class solver:
       active_hessian.diagonal,
       active_hessian.diagonal_blocks_inverse,
       active_hessian.diagonal_blocks_start_cpu,
-      [item.correspondance.numInstances for item in wrt],
-      [item.size for item in wrt],
-      gradient_object.gradient_segments_start_cpu,
-      len(wrt),
-      gradient,
+      [item.correspondance.numInstances for item in active_hessian.wrt],
+      [item.size for item in active_hessian.wrt],
+      active_hessian.gradient_segments_start_cpu,
+      len(active_hessian.wrt),
+      values,
       self.__d_p1_b,
       self.__d_r,
       self.__d_c,

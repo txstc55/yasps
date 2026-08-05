@@ -333,7 +333,6 @@ class minimizer:
       self.__ensureInitialGuess()
     error_code = self.__solver.computeSolution(
       self.__active_hessian,
-      self.__wrt,
       self.__gradient_object,
       self.__initial_guess,
       tolerance=tolerance,

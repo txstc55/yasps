@@ -33,7 +33,7 @@ class hessian(matrix):
     if total_size <= 0:
       raise ValueError(f"hessian.__init__: total size {total_size} must be positive.")
 
-    super().__init__(total_size, total_size)
+    super().__init__(total_size, total_size, symmetric_storage=True)
 
     self.__dynamic_instances: bool = dynamic_instances
     self.__gradient: Optional[gradient] = None
@@ -54,7 +54,8 @@ class hessian(matrix):
 
     # Each list entry corresponds to one symbolic contribution before Hessian addition.
     self.__global_gradients: List[attribute] = []
-    self.__global_hessians: List[attribute] = []
+    self.__global_hessians: List[Optional[attribute]] = []
+    self.__gradient_only: List[bool] = []
     self.__global_jacobians: List[Optional[attribute]] = []
     self.__global_inner_hessians: List[Optional[attribute]] = []
     self.__project_entire_hessian: List[bool] = []
@@ -73,7 +74,8 @@ class hessian(matrix):
     self.__placement_reorder_kernels: List[placementReorderKernel] = []
 
     self.__global_gradients_dynamic: List[attribute] = []
-    self.__global_hessians_dynamic: List[attribute] = []
+    self.__global_hessians_dynamic: List[Optional[attribute]] = []
+    self.__gradient_only_dynamic: List[bool] = []
     self.__global_jacobians_dynamic: List[Optional[attribute]] = []
     self.__global_inner_hessians_dynamic: List[Optional[attribute]] = []
     self.__project_entire_hessian_dynamic: List[bool] = []
@@ -223,16 +225,26 @@ class hessian(matrix):
     self.__global_gradients = value
 
   @property
-  def global_hessians(self) -> List[attribute]:
+  def global_hessians(self) -> List[Optional[attribute]]:
     return self.__global_hessians
 
   @global_hessians.setter
-  def global_hessians(self, value: List[attribute]) -> None:
+  def global_hessians(self, value: List[Optional[attribute]]) -> None:
     if not isinstance(value, list):
       raise TypeError("hessian.global_hessians: value must be a list.")
-    if any(not isinstance(item, attribute) for item in value):
-      raise TypeError("hessian.global_hessians: all items must be yasps.attribute.attribute.")
+    if any(item is not None and not isinstance(item, attribute) for item in value):
+      raise TypeError("hessian.global_hessians: all items must be attributes or None.")
     self.__global_hessians = value
+
+  @property
+  def gradient_only(self) -> List[bool]:
+    return self.__gradient_only
+
+  @gradient_only.setter
+  def gradient_only(self, value: List[bool]) -> None:
+    if not isinstance(value, list) or any(not isinstance(item, bool) for item in value):
+      raise TypeError("hessian.gradient_only: value must be a list of bool.")
+    self.__gradient_only = list(value)
 
   @property
   def global_jacobians(self) -> List[Optional[attribute]]:
@@ -406,16 +418,26 @@ class hessian(matrix):
     self.__global_gradients_dynamic = value
 
   @property
-  def global_hessians_dynamic(self) -> List[attribute]:
+  def global_hessians_dynamic(self) -> List[Optional[attribute]]:
     return self.__global_hessians_dynamic
 
   @global_hessians_dynamic.setter
-  def global_hessians_dynamic(self, value: List[attribute]) -> None:
+  def global_hessians_dynamic(self, value: List[Optional[attribute]]) -> None:
     if not isinstance(value, list):
       raise TypeError("hessian.global_hessians_dynamic: value must be a list.")
-    if any(not isinstance(item, attribute) for item in value):
-      raise TypeError("hessian.global_hessians_dynamic: all items must be yasps.attribute.attribute.")
+    if any(item is not None and not isinstance(item, attribute) for item in value):
+      raise TypeError("hessian.global_hessians_dynamic: all items must be attributes or None.")
     self.__global_hessians_dynamic = value
+
+  @property
+  def gradient_only_dynamic(self) -> List[bool]:
+    return self.__gradient_only_dynamic
+
+  @gradient_only_dynamic.setter
+  def gradient_only_dynamic(self, value: List[bool]) -> None:
+    if not isinstance(value, list) or any(not isinstance(item, bool) for item in value):
+      raise TypeError("hessian.gradient_only_dynamic: value must be a list of bool.")
+    self.__gradient_only_dynamic = list(value)
 
   @property
   def global_jacobians_dynamic(self) -> List[Optional[attribute]]:
@@ -661,6 +683,7 @@ class hessian(matrix):
     result.local_targets = self.__local_targets + other.local_targets
     result.global_gradients = self.__global_gradients + other.global_gradients
     result.global_hessians = self.__global_hessians + other.global_hessians
+    result.gradient_only = self.__gradient_only + other.gradient_only
     result.global_jacobians = self.__global_jacobians + other.global_jacobians
     result.global_inner_hessians = self.__global_inner_hessians + other.global_inner_hessians
     result.project_entire_hessian = self.__project_entire_hessian + other.project_entire_hessian
@@ -678,6 +701,7 @@ class hessian(matrix):
 
     result.global_gradients_dynamic = self.__global_gradients_dynamic + other.global_gradients_dynamic
     result.global_hessians_dynamic = self.__global_hessians_dynamic + other.global_hessians_dynamic
+    result.gradient_only_dynamic = self.__gradient_only_dynamic + other.gradient_only_dynamic
     result.global_jacobians_dynamic = self.__global_jacobians_dynamic + other.global_jacobians_dynamic
     result.global_inner_hessians_dynamic = self.__global_inner_hessians_dynamic + other.global_inner_hessians_dynamic
     result.project_entire_hessian_dynamic = self.__project_entire_hessian_dynamic + other.project_entire_hessian_dynamic
@@ -843,7 +867,8 @@ class hessian(matrix):
   def __buildMergedHessianAndGradientAttribute(
     self,
     global_gradient: attribute,
-    global_hessian: attribute,
+    global_hessian: Optional[attribute],
+    gradient_only: bool,
     global_jacobian: Optional[attribute],
     global_inner_hessian: Optional[attribute],
     project_entire_hessian: bool,
@@ -855,7 +880,12 @@ class hessian(matrix):
     merged_hessian_rows = 0
     merged_hessian_cols = 0
 
-    if separate_hessian_jacobian and not project_entire_hessian:
+    if gradient_only:
+      for i in range(global_gradient.size):
+        merged_hessian_and_gradient.append(global_gradient[i])
+      merged_hessian_rows = 1
+      merged_hessian_cols = global_gradient.size
+    elif separate_hessian_jacobian and not project_entire_hessian:
       assert global_jacobian is not None
       assert global_inner_hessian is not None
       for i in range(global_inner_hessian.rows):
@@ -869,6 +899,7 @@ class hessian(matrix):
       merged_hessian_cols = len(merged_hessian_and_gradient)
 
     else:
+      assert global_hessian is not None
       for i in range(global_hessian.rows):
         for j in range(global_hessian.cols):
           merged_hessian_and_gradient.append(global_hessian[i, j])
@@ -880,7 +911,11 @@ class hessian(matrix):
     # The symbolic Hessian name contains its full generation configuration.
     # Carry that identity into the merged compute attribute as well so two
     # Hessian modes for the same source and targets cannot collide here.
-    merged_attribute_name = f'hessian_and_gradient_{global_hessian.name}'
+    derivative_name = global_gradient.name if global_hessian is None else global_hessian.name
+    if gradient_only:
+      merged_attribute_name = f'hessian_and_gradient_gradient_only_{derivative_name}'
+    else:
+      merged_attribute_name = f'hessian_and_gradient_{derivative_name}'
     if merged_attribute_name in source.correspondance.attributes:
       return source.correspondance[merged_attribute_name]
     return source.correspondance.addAttribute(
@@ -894,6 +929,7 @@ class hessian(matrix):
     if not dynamic_term:
       global_gradients = self.__global_gradients
       global_hessians = self.__global_hessians
+      gradient_only = self.__gradient_only
       global_jacobians = self.__global_jacobians
       global_inner_hessians = self.__global_inner_hessians
       project_entire_hessian = self.__project_entire_hessian
@@ -910,6 +946,7 @@ class hessian(matrix):
     else:
       global_gradients = self.__global_gradients_dynamic
       global_hessians = self.__global_hessians_dynamic
+      gradient_only = self.__gradient_only_dynamic
       global_jacobians = self.__global_jacobians_dynamic
       global_inner_hessians = self.__global_inner_hessians_dynamic
       project_entire_hessian = self.__project_entire_hessian_dynamic
@@ -925,7 +962,11 @@ class hessian(matrix):
       global_jacobian_children_spans = self.__global_jacobian_children_spans_dynamic
 
 
-    if index >= len(global_gradients) or index >= len(global_hessians):
+    if (
+      index >= len(global_gradients)
+      or index >= len(global_hessians)
+      or index >= len(gradient_only)
+    ):
       raise ValueError("hessian.__ensureTermKernel: symbolic term metadata is incomplete.")
 
     while len(merged_attributes) <= index:
@@ -937,6 +978,7 @@ class hessian(matrix):
       merged_attributes[index] = self.__buildMergedHessianAndGradientAttribute(
         global_gradients[index],
         global_hessians[index],
+        gradient_only[index],
         global_jacobians[index] if index < len(global_jacobians) else None,
         global_inner_hessians[index] if index < len(global_inner_hessians) else None,
         project_entire_hessian[index],
@@ -961,7 +1003,7 @@ class hessian(matrix):
         merged_attributes[index],
         project_entire_hessian[index],
         projection_methods[index],
-        False,
+        gradient_only[index],
         (separate_hessian_jacobian[index] and not project_entire_hessian[index]),
         jacobian_rows,
         jacobian_cols,
@@ -1048,7 +1090,7 @@ class hessian(matrix):
       self.__diagonal,
       self.__diagonal_blocks,
       self.__diagonal_blocks_start,
-      self.__gradient.gradient_segments_start
+      self.__gradient_segments_start
     )
 
   @timed("hessian.compute")

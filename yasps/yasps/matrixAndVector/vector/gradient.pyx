@@ -4,7 +4,6 @@ from typing import Optional, Any, List
 from yasps.vector import vector
 from yasps.attribute import attribute
 import pycuda.autoinit
-import numpy as np
 import pycuda.gpuarray as gpuarray
 
 
@@ -24,19 +23,11 @@ class gradient(vector):
     super().__init__(total_size)
     self.__hessian = hessian
 
-    gradient_segment_start = [0]
-    for size in self.__gradient_sizes:
-      gradient_segment_start.append(gradient_segment_start[-1] + size)
-    self.__gradient_segments_start = gpuarray.to_gpu(np.array(gradient_segment_start, dtype=np.uint32))
-    self.__gradient_segments_start_cpu = gradient_segment_start
-
     start = 0
-    self.__wrt_start_indices: List[int] = [0]
     self.__gradient_segments: List[gpuarray.GPUArray] = []
     for size in self.__gradient_sizes:
       self.__gradient_segments.append(self.value[start:start + size])
       start += size
-      self.__wrt_start_indices.append(start)
 
   @property
   def hessian(self) -> Optional[Any]:
@@ -51,20 +42,8 @@ class gradient(vector):
     return self.__wrt
 
   @property
-  def gradient_segments_start(self) -> gpuarray.GPUArray:
-    return self.__gradient_segments_start
-
-  @property
-  def gradient_segments_start_cpu(self) -> List[int]:
-    return self.__gradient_segments_start_cpu
-
-  @property
   def gradient_segments(self) -> List[gpuarray.GPUArray]:
     return self.__gradient_segments
-
-  @property
-  def wrt_start_indices(self) -> List[int]:
-    return self.__wrt_start_indices
 
   @property
   def gradient_sizes(self) -> List[int]:
