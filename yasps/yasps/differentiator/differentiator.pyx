@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Tuple, Set, Optional, Dict
+from typing import List, Tuple, Optional, Dict
 import math
 
 from yasps.attribute import attribute, JOIN, UNION, DATA, CONSTANT
@@ -139,100 +139,6 @@ class differentiator:
       f'{self.__derivative_name_suffix}'
     )
 
-  def __secondOrderJacobianName(
-    self,
-    source: attribute,
-    row_targets: List[attribute],
-    column_targets: List[attribute],
-    layout: List[Tuple[str, int]]
-  ) -> str:
-    layout_signature = "__".join(
-      f"{role}_{size}" for role, size in layout
-    )
-    return (
-      f'd2_rectangular_{source.fullName}'
-      f'_drow_{"__".join(x.fullName for x in row_targets)}'
-      f'_dcolumn_{"__".join(x.fullName for x in column_targets)}'
-      f'_layout_{layout_signature}'
-      f'{self.__derivative_name_suffix}'
-    )
-
-
-  # when computing the second order jacobian
-  # what we do is actually computing the hessian first for the combination of the row and column targets
-  # we then select the actual entries that we need for the second order jacobian
-  # the selection is done by passing the row and column targets to path
-  # and let it generate the actual layout
-  def __selectSecondOrderJacobian(
-    self,
-    source: attribute,
-    combined_hessian: attribute,
-    layout: List[Tuple[str, int]],
-    row_targets: List[attribute],
-    column_targets: List[attribute]
-  ) -> attribute:
-    combined_size = sum(size for _, size in layout)
-    if (
-      combined_hessian.rows != combined_size
-      or combined_hessian.cols != combined_size
-    ):
-      raise RuntimeError(
-        "differentiator.__selectSecondOrderJacobian: layout size "
-        f"{combined_size} does not match combined Hessian shape "
-        f"{combined_hessian.rows}x{combined_hessian.cols}."
-      )
-
-    row_positions: List[int] = []
-    column_positions: List[int] = []
-    offset = 0
-    for role, size in layout:
-      if role == "r" or role == "rc":
-        row_positions += list(range(offset, offset + size))
-      if role == "c" or role == "rc":
-        column_positions += list(range(offset, offset + size))
-      offset += size
-
-    if len(row_positions) == 0 or len(column_positions) == 0:
-      raise RuntimeError(
-        "differentiator.__selectSecondOrderJacobian: layout selected an "
-        "empty row or column axis."
-      )
-
-    second_order_jacobian_name = self.__secondOrderJacobianName(
-      source,
-      row_targets,
-      column_targets,
-      layout
-    )
-    if second_order_jacobian_name in source.correspondance.attributes:
-      result = source.correspondance[second_order_jacobian_name]
-      if (
-        result.rows != len(row_positions)
-        or result.cols != len(column_positions)
-      ):
-        raise RuntimeError(
-          "differentiator.__selectSecondOrderJacobian: cached attribute has "
-          "an incompatible shape."
-        )
-      return result
-
-    selected_items: List[attribute] = []
-    for row_position in row_positions:
-      for column_position in column_positions:
-        selected_items.append(
-          combined_hessian[row_position, column_position]
-        )
-    selected = attribute.to_array(
-      selected_items,
-      rows=len(row_positions),
-      cols=len(column_positions)
-    )
-    source.correspondance.addAttribute(
-      second_order_jacobian_name,
-      computed_attribute=selected
-    )
-    return source.correspondance[second_order_jacobian_name]
-
   # helper function. For jacobian, the path should never include bottom attributes which are not inside the actual target
   def __validateJacobianIndexPath(
     self,
@@ -310,74 +216,73 @@ class differentiator:
         "differentiator.__diff2_jacobian_single: source must be a scalar attribute."
       )
 
-    # The combined path will be used to differentiate with respect to the
-    # union of the row and column targets.  Preserve the caller's ordering and
-    # remove targets that occur in both lists.
-    combined_targets: List[attribute] = []
-    combined_target_hashes: Set[int] = set()
-    for target in row_targets + column_targets:
-      if target.hash not in combined_target_hashes:
-        combined_targets.append(target)
-        combined_target_hashes.add(target.hash)
-
-    combined_paths = path(combined_targets)
-    combined_paths.getRoots(source, [source], combined_targets)
-    combined_paths.getPathDict()
-    self.__validateJacobianIndexPath(
-      combined_paths,
-      combined_targets,
-      "combined"
-    )
-
-    # First generate the complete, unprojected Hessian with respect to the
-    # union of the row and column targets.  A later step will select its
-    # rectangular row-target/column-target blocks.
-    self.__resetDiff2State(
-      source,
-      combined_paths.path_dict,
-      combined_paths.unioned_child_to_its_children,
-      -1,
-      False,
-      False,
-      dynamic_instances,
-      "second_order_jacobian"
-    )
-    autodiff_engine = autodiff()
-    self.__generateGradientThroughPathDict(
-      combined_targets,
-      autodiff_engine
-    )
-    assert self.__gradient is not None
-    self.__generateHessianThroughPathDict(
-      combined_targets,
-      autodiff_engine
-    )
-    assert self.__hessian is not None
-    combined_hessian = self.__hessian
-    combined_layout = combined_paths.generateJacobianLayout(
-      row_targets,
-      column_targets
-    )
-    rectangular_jacobian = self.__selectSecondOrderJacobian(
-      source,
-      combined_hessian,
-      combined_layout,
-      row_targets,
-      column_targets
-    )
-
-    # These two paths retain the independent row and column occurrence
-    # layouts.  They will provide the two coordinate streams for the final
-    # rectangular matrix.
+    # First differentiate the scalar source with respect to only the row
+    # targets.  The resulting 1 x R gradient is reshaped in-place to R x 1 so
+    # that differentiating it with respect to the column targets directly
+    # produces the desired R x C second-order Jacobian.
     row_paths = path(row_targets)
     row_paths.getRoots(source, [source], row_targets)
     row_paths.getPathDict()
     self.__validateJacobianIndexPath(row_paths, row_targets, "row")
 
+    self.__resetDiff2State(
+      source,
+      row_paths.path_dict,
+      row_paths.unioned_child_to_its_children,
+      -1,
+      False,
+      False,
+      dynamic_instances,
+      "second_order_jacobian_row_gradient"
+    )
+    self.__gradient_only = True
+    autodiff_engine = autodiff()
+    self.__generateGradientThroughPathDict(
+      row_targets,
+      autodiff_engine
+    )
+    assert self.__gradient is not None
+    row_gradient = self.__gradient
+    row_gradient.reshape(row_gradient.size, 1)
+
+    # Preserve the complete column occurrence layout from the original
+    # scalar source, including columns whose mixed derivative is structurally
+    # zero.  Re-rooting that compile-time path at the row gradient makes the
+    # second pass differentiate the new vector-valued source while retaining
+    # the exact column ordering used by the coordinate stream.
     column_paths = path(column_targets)
     column_paths.getRoots(source, [source], column_targets)
     column_paths.getPathDict()
     self.__validateJacobianIndexPath(column_paths, column_targets, "column")
+    if source not in column_paths.path_dict:
+      raise RuntimeError(
+        "differentiator.__diff2_jacobian_single: the column path has no "
+        "entry for the scalar source."
+      )
+    column_derivative_path_dict = dict(column_paths.path_dict)
+    source_column_children = column_derivative_path_dict.pop(source)
+    column_derivative_path_dict[row_gradient] = source_column_children
+
+    # Differentiate the row gradient with respect to only the column targets.
+    # This is a first-order Jacobian operation on a vector-valued source; no
+    # combined Hessian or rectangular block selection is involved.
+    self.__resetDiff2State(
+      row_gradient,
+      column_derivative_path_dict,
+      column_paths.unioned_child_to_its_children,
+      -1,
+      False,
+      False,
+      dynamic_instances,
+      "second_order_jacobian_column_jacobian_row_major_complete_layout"
+    )
+    self.__gradient_only = True
+    self.__generateGradientThroughPathDict(
+      column_targets,
+      autodiff()
+    )
+    assert self.__gradient is not None
+    rectangular_jacobian = self.__gradient
 
     result = secondOrderJacobian(
       row_targets,
@@ -556,16 +461,45 @@ class differentiator:
     return self.__generateGlobalJacobianForUnion(current, wrt)
 
   def __generateNeighborJacobianForEnergy(self, parent: attribute, children: List[attribute], autodiff_engine: autodiff) -> None:
-    # this computes d energy / d children, where the children are the local children of the energy variable
+    # This computes d(parent) / d(children).  For the usual scalar energy the
+    # result has one row.  A second-order Jacobian's second pass uses a
+    # vector-valued row gradient, so retain one row per parent component.
     local_gradient_name = f'd_{parent.fullName}_d_{"__".join([x.fullName for x in children])}'
     if local_gradient_name not in parent.correspondance.attributes:
-      diff_energy_wrt_children_list: List[attribute] = []
+      local_gradient_cols = sum(child.size for child in children)
+      diff_energy_wrt_children_list: List[attribute] = [
+        attribute(float_value=0.0)
+        for _ in range(parent.size * local_gradient_cols)
+      ]
+      column_offset = 0
       for child in children:
         result = autodiff_engine.diff(parent, child)
-        for i in range(result.size):
-          diff_energy_wrt_children_list.append(result[i])
-      local_gradient = attribute.to_array(diff_energy_wrt_children_list, rows=1, cols=len(diff_energy_wrt_children_list))
+        if result.rows != parent.size or result.cols != child.size:
+          raise RuntimeError(
+            "differentiator.__generateNeighborJacobianForEnergy: local "
+            f"Jacobian block has shape {result.rows}x{result.cols}, "
+            f"expected {parent.size}x{child.size}."
+          )
+        for row in range(result.rows):
+          for column in range(result.cols):
+            diff_energy_wrt_children_list[
+              row * local_gradient_cols + column_offset + column
+            ] = result[row, column]
+        column_offset += child.size
+      if column_offset != local_gradient_cols:
+        raise RuntimeError(
+          "differentiator.__generateNeighborJacobianForEnergy: local "
+          "Jacobian column assembly is inconsistent."
+        )
+      local_gradient = attribute.to_array(
+        diff_energy_wrt_children_list,
+        rows=parent.size,
+        cols=local_gradient_cols
+      )
       parent.correspondance.addAttribute(local_gradient_name, computed_attribute=local_gradient)
+
+    if self.__gradient_only:
+      return
 
     # this computes d2 energy / d children d children, where the children are the local children of the energy variable
     local_hessian_name = self.__hessianName(parent, children)
