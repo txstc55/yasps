@@ -396,8 +396,7 @@ class differentiator:
       paths.wrt,
       wrt_start_indices,
       source,
-      separate_hessian_jacobian,
-      generate_coordinates=not gradient_only
+      separate_hessian_jacobian
     )
 
     self.__resetDiffState(
