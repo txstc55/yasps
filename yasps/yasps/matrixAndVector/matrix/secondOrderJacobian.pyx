@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
+
+import numpy as np
+import pycuda.gpuarray as gpuarray
 
 from yasps.attribute import attribute
+from yasps.coordinateCompressionKernel import coordinateCompressionKernel
+from yasps.helper import timed
 from yasps.matrix import matrix
 from yasps.secondOrderJacobianIndicesKernel import secondOrderJacobianIndicesKernel
 
@@ -33,6 +38,11 @@ class secondOrderJacobian(matrix):
     self.__indices_kernels_dynamic: List[secondOrderJacobianIndicesKernel] = []
     self.__sources_dynamic: List[attribute] = []
     self.__second_order_jacobians_dynamic: List[attribute] = []
+
+    self.__block_indices_gpu: List[gpuarray.GPUArray] = []
+    self.__block_indices_gpu_dynamic: List[gpuarray.GPUArray] = []
+    self.__compression_kernel: Optional[coordinateCompressionKernel] = None
+    self.__compression_kernel_dynamic: Optional[coordinateCompressionKernel] = None
 
   def __validateTargets(
     self,
@@ -124,6 +134,41 @@ class secondOrderJacobian(matrix):
     self.__indices_kernels_dynamic = list(value)
 
   @property
+  def block_indices_gpu(self) -> List[gpuarray.GPUArray]:
+    return self.__block_indices_gpu
+
+  @block_indices_gpu.setter
+  def block_indices_gpu(self, value: List[gpuarray.GPUArray]) -> None:
+    if not isinstance(value, list):
+      raise TypeError(
+        "secondOrderJacobian.block_indices_gpu: value must be a list."
+      )
+    if any(not isinstance(item, gpuarray.GPUArray) for item in value):
+      raise TypeError(
+        "secondOrderJacobian.block_indices_gpu: every item must be a GPUArray."
+      )
+    self.__block_indices_gpu = list(value)
+
+  @property
+  def block_indices_gpu_dynamic(self) -> List[gpuarray.GPUArray]:
+    return self.__block_indices_gpu_dynamic
+
+  @block_indices_gpu_dynamic.setter
+  def block_indices_gpu_dynamic(
+    self,
+    value: List[gpuarray.GPUArray]
+  ) -> None:
+    if not isinstance(value, list):
+      raise TypeError(
+        "secondOrderJacobian.block_indices_gpu_dynamic: value must be a list."
+      )
+    if any(not isinstance(item, gpuarray.GPUArray) for item in value):
+      raise TypeError(
+        "secondOrderJacobian.block_indices_gpu_dynamic: every item must be a GPUArray."
+      )
+    self.__block_indices_gpu_dynamic = list(value)
+
+  @property
   def second_order_jacobians(self) -> List[attribute]:
     return self.__second_order_jacobians
 
@@ -208,4 +253,164 @@ class secondOrderJacobian(matrix):
     result.sources_dynamic = self.__sources_dynamic + other.sources_dynamic
     result.indices_kernels_dynamic = self.__indices_kernels_dynamic + other.indices_kernels_dynamic
     result.second_order_jacobians_dynamic = self.__second_order_jacobians_dynamic + other.second_order_jacobians_dynamic
+    result.block_indices_gpu = self.__block_indices_gpu + other.block_indices_gpu
+    result.block_indices_gpu_dynamic = self.__block_indices_gpu_dynamic + other.block_indices_gpu_dynamic
     return result
+
+  @timed("secondOrderJacobian.getSparseIndices")
+  def getSparseIndices(self):
+    if len(self.__indices_kernels) == 0:
+      return
+
+    for item in self.__indices_kernels:
+      item.computeIndices()
+
+    self.__compression_kernel = coordinateCompressionKernel(
+      [x.outputCoordinates for x in self.__indices_kernels],
+      [x.outputBlockDimensions for x in self.__indices_kernels],
+      [x.numTotalCoordinates for x in self.__indices_kernels],
+      self.__row_wrt,
+      self.__column_wrt
+    )
+    self.__compression_kernel.compressCoordinatesAndDimensions()
+    self.__block_indices_gpu = self.__compression_kernel.lookupArrays
+
+    total_block_size = self.__compression_kernel.totalBlockSize
+    if self.blocks_flattened.size < total_block_size:
+      self.blocks_flattened = gpuarray.zeros(
+        total_block_size,
+        dtype=np.float64
+      )
+
+    num_unique_dimensions = self.__compression_kernel.numUniqueDimensions
+    self.blocks_start_indices = (
+      self.__compression_kernel.uniqueDimensionsOuterIndices.get().tolist()[
+        :num_unique_dimensions + 1
+      ]
+    )
+    self.block_positions = self.__compression_kernel.uniqueCoordinates
+    self.block_counts = (
+      self.__compression_kernel.uniqueDimensionsBlockCounts.get().tolist()
+    )
+    self.block_dimensions = (
+      self.__compression_kernel.uniqueDimensions.get().tolist()[
+        :num_unique_dimensions * 2
+      ]
+    )
+
+  @timed("secondOrderJacobian.getSparseIndicesDynamic")
+  def getSparseIndicesDynamic(self):
+    if len(self.__indices_kernels_dynamic) == 0:
+      return
+
+    for item in self.__indices_kernels_dynamic:
+      item.computeIndices()
+
+    self.__compression_kernel_dynamic = coordinateCompressionKernel(
+      [x.outputCoordinates for x in self.__indices_kernels_dynamic],
+      [x.outputBlockDimensions for x in self.__indices_kernels_dynamic],
+      [x.numTotalCoordinates for x in self.__indices_kernels_dynamic],
+      self.__row_wrt,
+      self.__column_wrt
+    )
+    self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
+
+    lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
+    self.__block_indices_gpu_dynamic = []
+    lookup_index = 0
+    for item in self.__indices_kernels_dynamic:
+      if item.numTotalCoordinates > 0:
+        self.__block_indices_gpu_dynamic.append(
+          lookup_arrays[lookup_index]
+        )
+        lookup_index += 1
+      else:
+        self.__block_indices_gpu_dynamic.append(
+          gpuarray.empty(0, dtype=np.uint32)
+        )
+
+    total_block_size = self.__compression_kernel_dynamic.totalBlockSize
+    if self.blocks_flattened_dynamic.size < total_block_size:
+      self.blocks_flattened_dynamic = gpuarray.zeros(
+        total_block_size,
+        dtype=np.float64
+      )
+
+    num_unique_dimensions = (
+      self.__compression_kernel_dynamic.numUniqueDimensions
+    )
+    self.blocks_start_indices_dynamic = (
+      self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get(
+      ).tolist()[:num_unique_dimensions + 1]
+    )
+    self.block_positions_dynamic = (
+      self.__compression_kernel_dynamic.uniqueCoordinates
+    )
+    self.block_counts_dynamic = (
+      self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get(
+      ).tolist()
+    )
+    self.block_dimensions_dynamic = (
+      self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[
+        :num_unique_dimensions * 2
+      ]
+    )
+
+  @timed("secondOrderJacobian.getSparseIndicesDynamicAgain")
+  def getSparseIndicesDynamicAgain(self):
+    if len(self.__indices_kernels_dynamic) == 0:
+      return
+    if self.__compression_kernel_dynamic is None:
+      self.getSparseIndicesDynamic()
+      return
+
+    for item in self.__indices_kernels_dynamic:
+      item.computeIndices()
+
+    self.__compression_kernel_dynamic.updateCoordinates(
+      [x.outputCoordinates for x in self.__indices_kernels_dynamic],
+      [x.outputBlockDimensions for x in self.__indices_kernels_dynamic],
+      [x.numTotalCoordinates for x in self.__indices_kernels_dynamic]
+    )
+    self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
+
+    lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
+    self.__block_indices_gpu_dynamic = []
+    lookup_index = 0
+    for item in self.__indices_kernels_dynamic:
+      if item.numTotalCoordinates > 0:
+        self.__block_indices_gpu_dynamic.append(
+          lookup_arrays[lookup_index]
+        )
+        lookup_index += 1
+      else:
+        self.__block_indices_gpu_dynamic.append(
+          gpuarray.empty(0, dtype=np.uint32)
+        )
+
+    total_block_size = self.__compression_kernel_dynamic.totalBlockSize
+    if self.blocks_flattened_dynamic.size < total_block_size:
+      self.blocks_flattened_dynamic = gpuarray.zeros(
+        total_block_size,
+        dtype=np.float64
+      )
+
+    num_unique_dimensions = (
+      self.__compression_kernel_dynamic.numUniqueDimensions
+    )
+    self.blocks_start_indices_dynamic = (
+      self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get(
+      ).tolist()[:num_unique_dimensions + 1]
+    )
+    self.block_positions_dynamic = (
+      self.__compression_kernel_dynamic.uniqueCoordinates
+    )
+    self.block_counts_dynamic = (
+      self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get(
+      ).tolist()
+    )
+    self.block_dimensions_dynamic = (
+      self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[
+        :num_unique_dimensions * 2
+      ]
+    )
