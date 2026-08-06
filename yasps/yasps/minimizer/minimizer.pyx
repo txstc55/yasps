@@ -345,7 +345,8 @@ class minimizer:
 
   @timed("minimizer.computeSolution")
   def computeSolution(self, tolerance = 1e-3, maxIterations = 20000) -> List[gpuarray.GPUArray]:
-    error_code = self.computeHessianAndGradient(tolerance=tolerance, maxIterations=maxIterations)
+    self.computeHessianAndGradient()
+    error_code = self.__solveLinearSystem(tolerance=tolerance, maxIterations=maxIterations)
     if error_code < 0:
       print("Warning: solver did not converge. Returning the best solution found.")
     return self.solutionSegments
@@ -355,9 +356,9 @@ class minimizer:
     self.__active_hessian = None
     self.__active_hessian_ignore_hashes = tuple()
 
-  def computeHessianAndGradient(self, tolerance = 1e-3, maxIterations = 20000):
+  def computeHessianAndGradient(self):
     self.computeNumericValue()
-    return self.__solveLinearSystem(tolerance=tolerance, maxIterations=maxIterations)
+    return
 
   def computeTotalEnergy(self) -> float:
     total_energy = 0.0
