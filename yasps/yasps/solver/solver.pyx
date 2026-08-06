@@ -6,6 +6,7 @@ import numpy as np
 import pycuda.gpuarray as gpuarray
 
 from yasps.solverKernel import solverKernel
+from yasps.diagonalBlockInverseKernel import diagonalBlockInverseKernel
 from yasps.vector import vector
 
 
@@ -19,6 +20,8 @@ class solver:
     self.__d_s: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
     self.__cg_scalars: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
     self.__solution: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
+    self.__diagonalBlockInverseKernel: Optional[diagonalBlockInverseKernel] = None
+    self.__diagonalBlockLayout = None
 
   @property
   def solution(self) -> gpuarray.GPUArray:
@@ -36,6 +39,19 @@ class solver:
     self.__d_s = gpuarray.empty(0, dtype=np.float64)
     self.__cg_scalars = gpuarray.empty(0, dtype=np.float64)
     self.__solution = gpuarray.empty(0, dtype=np.float64)
+    self.__diagonalBlockInverseKernel = None
+    self.__diagonalBlockLayout = None
+
+  def __computeDiagonalBlockInverse(self, active_hessian) -> None:
+    block_counts = tuple(item.correspondance.numInstances for item in active_hessian.wrt)
+    block_sizes = tuple(item.size for item in active_hessian.wrt)
+    block_starts = tuple(active_hessian.diagonal_blocks_start_cpu)
+    layout = (block_starts, block_counts, block_sizes)
+    if self.__diagonalBlockInverseKernel is None or self.__diagonalBlockLayout != layout:
+      self.__diagonalBlockInverseKernel = diagonalBlockInverseKernel(set(block_sizes), list(block_starts), list(block_counts), list(block_sizes), len(block_sizes))
+      self.__diagonalBlockLayout = layout
+    if active_hessian.diagonal_blocks.size > 0:
+      self.__diagonalBlockInverseKernel.computeDiagonalBlockInverse(active_hessian.diagonal_blocks, active_hessian.diagonal_blocks_inverse)
 
   def __ensureBuffers(self, active_hessian, right_hand_side: vector) -> None:
     values = right_hand_side.value
@@ -75,6 +91,7 @@ class solver:
         "solver.computeSolution: right_hand_side size must match the Hessian size."
       )
 
+    self.__computeDiagonalBlockInverse(active_hessian)
     self.__ensureBuffers(active_hessian, right_hand_side)
     assert self.__solverKernel is not None
     self.__solverKernel.updateBlockDimensions(active_hessian.block_dimensions + active_hessian.block_dimensions_dynamic)

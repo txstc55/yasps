@@ -12,7 +12,6 @@ from yasps.differentiator import differentiator
 from yasps.gradient import gradient
 from yasps.hessian import hessian
 from yasps.solver import solver
-from yasps.diagonalBlockInverseKernel import diagonalBlockInverseKernel
 from yasps.helper import timed
 
 
@@ -91,7 +90,6 @@ class minimizer:
     self.__initial_guess: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
     self.__solutionSegments: List[gpuarray.GPUArray] = []
 
-    self.__diagonalBlockInverseKernel: Optional[diagonalBlockInverseKernel] = None
     self.__ignoredEnergyHashList: List[int] = []
 
   @property
@@ -137,7 +135,6 @@ class minimizer:
     self.__solver.reset()
     self.__initial_guess = gpuarray.empty(0, dtype=np.float64)
     self.__solutionSegments = []
-    self.__diagonalBlockInverseKernel = None
 
   def __initializeGradientLayout(self) -> None:
     self.__gradient_object = gradient(self.__wrt)
@@ -291,17 +288,6 @@ class minimizer:
     self.__active_hessian = active_hessian
     self.__gradient_object = active_hessian.gradient
 
-    if self.__diagonalBlockInverseKernel is None:
-      self.__diagonalBlockInverseKernel = diagonalBlockInverseKernel(
-        set([item.size for item in self.wrt]),
-        active_hessian.diagonal_blocks_start_cpu,
-        [item.correspondance.numInstances for item in self.__wrt],
-        [item.size for item in self.__wrt],
-        len(self.__wrt)
-      )
-    assert self.__diagonalBlockInverseKernel is not None
-    if active_hessian.diagonal_blocks.size > 0:
-      self.__diagonalBlockInverseKernel.computeDiagonalBlockInverse(active_hessian.diagonal_blocks, active_hessian.diagonal_blocks_inverse)
     return active_hessian
 
   def __ensureInitialGuess(self) -> None:
@@ -345,8 +331,7 @@ class minimizer:
 
   @timed("minimizer.computeSolution")
   def computeSolution(self, tolerance = 1e-3, maxIterations = 20000) -> List[gpuarray.GPUArray]:
-    self.computeHessianAndGradient()
-    error_code = self.__solveLinearSystem(tolerance=tolerance, maxIterations=maxIterations)
+    error_code = self.computeHessianAndGradient(tolerance=tolerance, maxIterations=maxIterations)
     if error_code < 0:
       print("Warning: solver did not converge. Returning the best solution found.")
     return self.solutionSegments
@@ -356,9 +341,9 @@ class minimizer:
     self.__active_hessian = None
     self.__active_hessian_ignore_hashes = tuple()
 
-  def computeHessianAndGradient(self):
+  def computeHessianAndGradient(self, tolerance = 1e-3, maxIterations = 20000):
     self.computeNumericValue()
-    return
+    return self.__solveLinearSystem(tolerance=tolerance, maxIterations=maxIterations)
 
   def computeTotalEnergy(self) -> float:
     total_energy = 0.0
