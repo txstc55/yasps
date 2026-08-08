@@ -499,7 +499,7 @@ class differentiator:
     wrt_start_indices = hessian_local.wrt_start_indices
 
     paths = path(global_targets, local_targets)
-    paths.getRoots(source, [source])
+    paths.getRoots(source, [source], paths.wrt if gradient_only else [])
     paths.getPathDict()
 
     indices_kernel = gradientIndicesKernel(
