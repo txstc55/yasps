@@ -6,6 +6,7 @@ from yasps.attribute import attribute, JOIN, UNION, DATA, CONSTANT
 from yasps.autodiff import autodiff
 from yasps.gradient import gradient
 from yasps.hessian import hessian
+from yasps.firstOrderJacobian import firstOrderJacobian
 from yasps.secondOrderJacobian import secondOrderJacobian
 from yasps.path import path
 from yasps.gradientIndicesKernel import gradientIndicesKernel
@@ -162,14 +163,37 @@ class differentiator:
             f"attribute {child.fullName}, which is not in {role}_targets."
           )
 
-  def diff1(self, source, global_targets: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False) -> gradient:
-    """Differentiate scalar source terms and return their summed gradient."""
+  def diff1(self, source, global_targets: List[attribute], local_targets: List[attribute] = [], dynamic_instances = False):
+    """Differentiate once, returning a vector or a sparse matrix.
+
+    Scalar source terms retain the existing summed-gradient behavior. A
+    vector-valued source produces its first-order Jacobian: source components
+    define the rows and ``global_targets`` define the columns.
+    """
     if not isinstance(source, list):
       source = [source]
     if len(source) == 0:
       raise ValueError("differentiator.diff1: source can not be empty.")
     if not isinstance(global_targets, list) or len(global_targets) == 0:
       raise ValueError("differentiator.diff1: global_targets can not be empty.")
+
+    vector_valued = [item.size != 1 for item in source]
+    if any(vector_valued):
+      if not all(vector_valued):
+        raise ValueError(
+          "differentiator.diff1: scalar and vector-valued sources cannot be "
+          "mixed in one call."
+        )
+      if len(local_targets) != 0:
+        raise ValueError(
+          "differentiator.diff1: local_targets are not yet supported for a "
+          "first-order Jacobian."
+        )
+      return self.__diff1_jacobian_all(
+        source,
+        global_targets,
+        dynamic_instances
+      )
 
     if len(source) == 1:
       parent_hessian = self.__diff2_hessian_single(
@@ -196,6 +220,123 @@ class differentiator:
 
     result = gradient(global_targets, parent_hessian)
     parent_hessian.gradient = result
+    return result
+
+  def __diff1_jacobian_all(
+    self,
+    source: List[attribute],
+    targets: List[attribute],
+    dynamic_instances: bool = False
+  ) -> firstOrderJacobian:
+    total_jacobian: Optional[firstOrderJacobian] = None
+    for item in source:
+      current_jacobian = self.__diff1_jacobian_single(
+        item,
+        targets,
+        dynamic_instances
+      )
+      if total_jacobian is None:
+        total_jacobian = current_jacobian
+      else:
+        total_jacobian = total_jacobian + current_jacobian
+    assert total_jacobian is not None
+    return total_jacobian
+
+  def __diff1_jacobian_single(
+    self,
+    source: attribute,
+    targets: List[attribute],
+    dynamic_instances: bool = False
+  ) -> firstOrderJacobian:
+    if source.size == 1:
+      raise ValueError(
+        "differentiator.__diff1_jacobian_single: source must be vector-valued."
+      )
+
+    source_target_index = next(
+      (
+        index
+        for index, target in enumerate(targets)
+        if target.hash == source.hash
+      ),
+      None
+    )
+    if source_target_index is not None:
+      result = firstOrderJacobian(source, targets)
+      identity_name = f'd_{source.fullName}_d_self_first_order_jacobian_identity'
+      if identity_name not in source.correspondance.attributes:
+        source.correspondance.addAttribute(
+          identity_name,
+          computed_attribute=attribute.identity(source.size)
+        )
+      local_jacobian = source.correspondance[identity_name]
+      rectangular_indices_kernel = secondOrderJacobianIndicesKernel(
+        result.createSequentialRowIndicesKernel(),
+        result.createSequentialRowIndicesKernel(
+          result.column_start_indices[source_target_index]
+        ),
+        result.row_start_indices,
+        result.column_start_indices
+      )
+      if dynamic_instances:
+        result.sources_dynamic = [source]
+        result.indices_kernels_dynamic = [rectangular_indices_kernel]
+        result.second_order_jacobians_dynamic = [local_jacobian]
+      else:
+        result.sources = [source]
+        result.indices_kernels = [rectangular_indices_kernel]
+        result.second_order_jacobians = [local_jacobian]
+      return result
+
+    target_paths = path(targets)
+    target_paths.getRoots(source, [source], targets)
+    target_paths.getPathDict()
+    self.__validateJacobianIndexPath(
+      target_paths,
+      targets,
+      "first-order Jacobian column"
+    )
+
+    self.__resetDiffState(
+      source,
+      target_paths.path_dict,
+      target_paths.unioned_child_to_its_children,
+      True,
+      -1,
+      False,
+      False,
+      dynamic_instances,
+      "first_order_jacobian"
+    )
+    self.__generateGradientThroughPathDict(targets, autodiff())
+    assert self.__gradient is not None
+    local_jacobian = self.__gradient
+
+    result = firstOrderJacobian(source, targets)
+    column_indices_kernel = gradientIndicesKernel(
+      target_paths.path_dict,
+      target_paths.unioned_child_to_its_children,
+      targets,
+      result.column_start_indices,
+      source,
+      no_local_permutation=True,
+      generate_coordinates=False
+    )
+    rectangular_indices_kernel = secondOrderJacobianIndicesKernel(
+      result.createSequentialRowIndicesKernel(),
+      column_indices_kernel,
+      result.row_start_indices,
+      result.column_start_indices
+    )
+
+    if dynamic_instances:
+      result.sources_dynamic = [source]
+      result.indices_kernels_dynamic = [rectangular_indices_kernel]
+      result.second_order_jacobians_dynamic = [local_jacobian]
+    else:
+      result.sources = [source]
+      result.indices_kernels = [rectangular_indices_kernel]
+      result.second_order_jacobians = [local_jacobian]
     return result
 
   def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):
@@ -613,7 +754,10 @@ class differentiator:
       self.__global_jacobian = next_jacobian
     full_gradient = current_gradient.mul_explicit(next_jacobian)
     current.correspondance.addAttribute(gradient_attribute_name, computed_attribute=full_gradient)
-    return full_gradient
+    # addAttribute may copy a broadcast expression onto current's primitive.
+    # Return that registered attribute so its instance stream matches current,
+    # even when every derivative entry depends only on a scene constant.
+    return current.correspondance[gradient_attribute_name]
 
   def __generateGlobalHessianForEnergy(self, current: attribute, wrt: List[attribute]) -> attribute:
     # this function computes the global hessian

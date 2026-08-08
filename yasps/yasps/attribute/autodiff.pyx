@@ -91,6 +91,7 @@ class autodiff:
     dB = self.__diff(current.children[1], wrt)
     return dA.sub_explicit(dB)
 
+  # MARK, THIS IS NOT CORRECT.
   def __diff_abs(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     dA = self.__diff(current.children[0], wrt)
     # return dA.abs()

@@ -22,6 +22,7 @@ from .vector import vector
 from .matrix import matrix
 from .gradient import gradient
 from .hessian import hessian
+from .firstOrderJacobian import firstOrderJacobian
 from .energy import energy
 from .minimizer import minimizer
 from .autodiff import autodiff
