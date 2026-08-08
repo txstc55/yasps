@@ -184,6 +184,14 @@ class differentiator:
           "differentiator.diff1: scalar and vector-valued sources cannot be "
           "mixed in one call."
         )
+      if any(
+        target.operator != DATA and target.operator != CONSTANT
+        for target in global_targets
+      ):
+        raise ValueError(
+          "differentiator.diff1: first-order Jacobian targets must be DATA "
+          "or CONSTANT attributes."
+        )
       if len(local_targets) != 0:
         raise ValueError(
           "differentiator.diff1: local_targets are not yet supported for a "
@@ -253,41 +261,6 @@ class differentiator:
         "differentiator.__diff1_jacobian_single: source must be vector-valued."
       )
 
-    source_target_index = next(
-      (
-        index
-        for index, target in enumerate(targets)
-        if target.hash == source.hash
-      ),
-      None
-    )
-    if source_target_index is not None:
-      result = firstOrderJacobian(source, targets)
-      identity_name = f'd_{source.fullName}_d_self_first_order_jacobian_identity'
-      if identity_name not in source.correspondance.attributes:
-        source.correspondance.addAttribute(
-          identity_name,
-          computed_attribute=attribute.identity(source.size)
-        )
-      local_jacobian = source.correspondance[identity_name]
-      rectangular_indices_kernel = secondOrderJacobianIndicesKernel(
-        result.createSequentialRowIndicesKernel(),
-        result.createSequentialRowIndicesKernel(
-          result.column_start_indices[source_target_index]
-        ),
-        result.row_start_indices,
-        result.column_start_indices
-      )
-      if dynamic_instances:
-        result.sources_dynamic = [source]
-        result.indices_kernels_dynamic = [rectangular_indices_kernel]
-        result.second_order_jacobians_dynamic = [local_jacobian]
-      else:
-        result.sources = [source]
-        result.indices_kernels = [rectangular_indices_kernel]
-        result.second_order_jacobians = [local_jacobian]
-      return result
-
     target_paths = path(targets)
     target_paths.getRoots(source, [source], targets)
     target_paths.getPathDict()
@@ -310,21 +283,19 @@ class differentiator:
     )
     self.__generateGradientThroughPathDict(targets, autodiff())
     assert self.__gradient is not None
-    local_jacobian = self.__gradient
 
     result = firstOrderJacobian(source, targets)
-    column_indices_kernel = gradientIndicesKernel(
-      target_paths.path_dict,
-      target_paths.unioned_child_to_its_children,
-      targets,
-      result.column_start_indices,
-      source,
-      no_local_permutation=True,
-      generate_coordinates=False
-    )
     rectangular_indices_kernel = secondOrderJacobianIndicesKernel(
       result.createSequentialRowIndicesKernel(),
-      column_indices_kernel,
+      gradientIndicesKernel(
+        target_paths.path_dict,
+        target_paths.unioned_child_to_its_children,
+        targets,
+        result.column_start_indices,
+        source,
+        no_local_permutation=True,
+        generate_coordinates=False
+      ),
       result.row_start_indices,
       result.column_start_indices
     )
@@ -332,11 +303,11 @@ class differentiator:
     if dynamic_instances:
       result.sources_dynamic = [source]
       result.indices_kernels_dynamic = [rectangular_indices_kernel]
-      result.second_order_jacobians_dynamic = [local_jacobian]
+      result.second_order_jacobians_dynamic = [self.__gradient]
     else:
       result.sources = [source]
       result.indices_kernels = [rectangular_indices_kernel]
-      result.second_order_jacobians = [local_jacobian]
+      result.second_order_jacobians = [self.__gradient]
     return result
 
   def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False):

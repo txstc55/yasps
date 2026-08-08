@@ -17,7 +17,7 @@ class _sequentialRowIndicesKernel:
   the small interface consumed by the rectangular coordinate/value kernels.
   """
 
-  def __init__(self, source: attribute, start_index: int = 0):
+  def __init__(self, source: attribute):
     if source.size <= 0:
       raise ValueError(
         "_sequentialRowIndicesKernel: source size must be positive."
@@ -26,12 +26,7 @@ class _sequentialRowIndicesKernel:
       raise ValueError(
         "_sequentialRowIndicesKernel: source block size exceeds uint16."
       )
-    if start_index < 0 or start_index > np.iinfo(np.uint32).max:
-      raise ValueError(
-        "_sequentialRowIndicesKernel: start_index is outside uint32 range."
-      )
     self.__source = source
-    self.__start_index = start_index
     self.__output_indices = gpuarray.empty(0, dtype=np.uint32)
     self.__output_sizes = gpuarray.empty(0, dtype=np.uint16)
     self.__output_permutations = gpuarray.empty(0, dtype=np.int16)
@@ -83,7 +78,6 @@ class _sequentialRowIndicesKernel:
     self.__output_indices[:] = (
       gpuarray.arange(num_instances, dtype=np.uint32)
       * np.uint32(self.__source.size)
-      + np.uint32(self.__start_index)
       + np.uint32(2)
     )
     self.__output_sizes.fill(np.uint16(self.__source.size))
@@ -123,8 +117,8 @@ class firstOrderJacobian(secondOrderJacobian):
   def wrt(self) -> List[attribute]:
     return self.column_wrt
 
-  def createSequentialRowIndicesKernel(self, start_index: int = 0):
-    return _sequentialRowIndicesKernel(self.__row_source, start_index)
+  def createSequentialRowIndicesKernel(self):
+    return _sequentialRowIndicesKernel(self.__row_source)
 
   def __add__(self, other: firstOrderJacobian):
     if not isinstance(other, firstOrderJacobian):
