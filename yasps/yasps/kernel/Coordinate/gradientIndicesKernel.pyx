@@ -1029,8 +1029,12 @@ extern "C" int get_indices(
       self.__outputCoordinates = gpuarray.zeros(int(spaceNeeded * 1), dtype=np.uint32)
       self.__outputBlockDimensions = gpuarray.zeros(int(spaceNeeded * 1), dtype=np.uint16)
     # fill in 0
-    self.__outputCoordinates.fill(0)
-    self.__outputBlockDimensions.fill(0)
+    # PyCUDA cannot launch its fill kernel for a zero-length GPUArray.  A
+    # gradient-only derivative can legitimately have no matrix coordinates,
+    # so leave the two already-empty buffers untouched in that case.
+    if self.__outputCoordinates.size != 0:
+      self.__outputCoordinates.fill(0)
+      self.__outputBlockDimensions.fill(0)
 
   @timed("gradientIndicesKernel.generateCoordinates")
   def __generateCoordinates(self):
