@@ -24,7 +24,7 @@ OPTIMIZATION_TARGET = "mass-poisson-and-young"
 OUTPUT_ROOT = SCRIPT_DIR
 
 NUM_FRAMES = 200
-NUM_ADJOINT_STEPS = 30
+NUM_ADJOINT_STEPS = 20
 DT_VALUE = 0.01
 DHAT_VALUE = 1e-6
 KAPPA_VALUE = 10.0
@@ -32,12 +32,9 @@ FRICTION_RATE = 0.3
 FLOOR_SIZE = 1000.0
 FLOOR_HEIGHT = 0.0
 FLOOR_CENTER = np.array([0.0, FLOOR_HEIGHT, 0.0], dtype=np.float64)
-LOSS_TARGET = np.array([0.0, 2.0, 0.0], dtype=np.float64)
-EVERY_FRAME_LOSS_WEIGHT_VALUE = 1.0
-FINAL_FRAME_LOSS_WEIGHT_VALUE = 500.0
-MOTION_LOSS_WEIGHT_VALUE = 30.0
-DESIRED_DISPLACEMENT_VALUE = 0.2
-MOTION_NORM_EPSILON = 1e-12
+AWAY_TARGET = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+AWAY_LOSS_WEIGHT_VALUE = 10.0
+AWAY_DISTANCE_EPSILON_VALUE = 1e-6
 BUNNY_TOTAL_MASS = 10.0
 MINIMUM_VERTEX_MASS_FRACTION = 0.1
 
@@ -69,7 +66,7 @@ VIDEO_FPS = round(1.0 / DT_VALUE)
 
 
 # Parse runtime, rendering, optimization, and checkpoint options.
-parser = argparse.ArgumentParser(description="Drop one soft tetrahedral bunny onto a large static floor.")
+parser = argparse.ArgumentParser(description=("Optimize a soft bunny on a large static floor using a per-frame " "distance-from-origin objective."))
 parser.add_argument("--num-frames", type=int, default=NUM_FRAMES)
 parser.add_argument("--adjoint-steps", type=int, default=NUM_ADJOINT_STEPS, help=("Exact number of backward passes, each followed by one forward pass " f"(default: {NUM_ADJOINT_STEPS})."),)
 parser.add_argument("--adam-learning-rate", type=float, default=ADAM_LEARNING_RATE, help="Adam learning rate before applying the update-length cap.",)
@@ -81,7 +78,6 @@ parser.add_argument("--save-frames", action="store_true", help="Save one PNG per
 parser.add_argument("--save-obj", action="store_true", help="Save only the bunny surface as one OBJ per frame.",)
 parser.add_argument("--video-fps", type=int, default=VIDEO_FPS, help=("MP4 frame rate used with --save-frames " f"(default: {VIDEO_FPS}, matching dt={DT_VALUE})."),)
 parser.add_argument("--no-gui", action="store_true", help="Run and render off screen without opening the interactive window.",)
-parser.add_argument("--target-loss-final-frame-only", action="store_true", help=("Apply the target-position loss only at the final converged frame; " "the motion loss remains active at every frame."),)
 resume_checkpoint_help = ("Resume an interrupted Adam optimization from latest_checkpoint.npz. " "The checkpoint design is replayed once to reconstruct its converged " "state trajectory before the next backward pass.")
 parser.add_argument("--resume-checkpoint", type=str, default=None, help=resume_checkpoint_help)
 parser.add_argument("--output-directory", type=str, default=None, help="Override the inverse-simulation output directory.")
@@ -101,9 +97,6 @@ if args.mass_adam_learning_rate <= 0.0:
   raise ValueError("--mass-adam-learning-rate must be positive.")
 if args.video_fps <= 0:
   raise ValueError("--video-fps must be positive.")
-loss_weight_value = FINAL_FRAME_LOSS_WEIGHT_VALUE if args.target_loss_final_frame_only else EVERY_FRAME_LOSS_WEIGHT_VALUE
-
-
 # Small utilities for YASPS constants, mesh construction, statistics, and memory reporting.
 def add_scalar_constant(owner, name, value):
   result = owner.addConstant(name, rows=1, cols=1)
@@ -317,15 +310,13 @@ minimum_vertex_masses = initial_vertex_masses * MINIMUM_VERTEX_MASS_FRACTION
 
 # Build the YASPS scene and simulation state.
 
-simulation = scene("bunny_material_optimization")
+simulation = scene("bunny_material_optimization_surface_motion_away_from_origin")
 dt = add_scalar_constant(simulation, "dt", DT_VALUE)
 dhat = add_scalar_constant(simulation, "dhat", DHAT_VALUE)
 kappa = add_scalar_constant(simulation, "kappa", KAPPA_VALUE)
 friction_rate = add_scalar_constant(simulation, "friction_rate", FRICTION_RATE)
-loss_weight = add_scalar_constant(simulation, "loss_weight", loss_weight_value)
-motion_loss_weight = add_scalar_constant(simulation, "motion_loss_weight", MOTION_LOSS_WEIGHT_VALUE)
-desired_displacement = add_scalar_constant(simulation, "desired_displacement", DESIRED_DISPLACEMENT_VALUE)
-motion_norm_epsilon = add_scalar_constant(simulation, "motion_norm_epsilon", MOTION_NORM_EPSILON)
+away_loss_weight = add_scalar_constant(simulation, "away_loss_weight", AWAY_LOSS_WEIGHT_VALUE)
+away_distance_epsilon = add_scalar_constant(simulation, "away_distance_epsilon", AWAY_DISTANCE_EPSILON_VALUE)
 
 bunny = simulation.addMesh("bunny_soft")
 
@@ -445,15 +436,11 @@ pp_friction_energy = pp_friction_pairs.addAttribute("friction_energy", computed_
 pe_friction_energy = pe_friction_pairs.addAttribute("friction_energy", computed_attribute=friction_energy_pe(pe_friction_positions, pe_friction_last_positions, dhat, dt, friction_rate, pe_friction_coord, pe_friction_tangent_basis.row(0), pe_friction_tangent_basis.row(1), pe_friction_lambda_last_h))
 pt_friction_energy = pt_friction_pairs.addAttribute("friction_energy", computed_attribute=friction_energy_pt(pt_friction_positions, pt_friction_last_positions, dhat, dt, friction_rate, pt_friction_coord, pt_friction_tangent_basis.row(0), pt_friction_tangent_basis.row(1), pt_friction_lambda_last_h))
 ee_friction_energy = ee_friction_pairs.addAttribute("friction_energy", computed_attribute=friction_energy_ee(ee_friction_positions, ee_friction_last_positions, dhat, dt, friction_rate, ee_friction_coord, ee_friction_tangent_basis.row(0), ee_friction_tangent_basis.row(1), ee_friction_lambda_last_h))
-loss_offset = position - attribute.to_array(LOSS_TARGET.tolist(), rows=3, cols=1)
-target_position_loss = vertices_soft.addAttribute("target_position_loss", computed_attribute=(loss_offset.dot(loss_offset)) * loss_weight)
-frame_displacement = position - last_position
-frame_displacement_magnitude = (frame_displacement.dot(frame_displacement) + motion_norm_epsilon).sqrt()
-motion_error = frame_displacement_magnitude - desired_displacement
-motion_reward_loss = vertices_soft.addAttribute("motion_reward_loss", computed_attribute=motion_loss_weight * motion_error * motion_error)
-target_state_loss_gradient = differentiator().diff1([target_position_loss], [position])
-motion_state_loss_gradient = differentiator().diff1([motion_reward_loss], [position])
-previous_state_loss_gradient = differentiator().diff1([motion_reward_loss], [last_position])
+away_offset = position - attribute.to_array(AWAY_TARGET.tolist(), rows=3, cols=1)
+away_distance = (away_offset.dot(away_offset) + away_distance_epsilon * away_distance_epsilon).sqrt()
+away_distance_denominator = away_distance + away_distance_epsilon
+away_from_target_loss = vertices_soft.addAttribute("away_from_target_loss", computed_attribute=away_loss_weight / (away_distance_denominator * away_distance_denominator))
+away_state_loss_gradient = differentiator().diff1([away_from_target_loss], [position])
 
 simulation.addEnergy(elastic_energy, projection_method=1)
 simulation.addEnergy(inertia_energy, projection_method=-1)
@@ -649,7 +636,7 @@ plotter.add_mesh(bunny_poly, color="lightgreen", opacity=0.65, smooth_shading=Tr
 plotter.add_mesh(floor_poly, color="lightgray", opacity=0.25, show_edges=True)
 floor_center_marker = pv.Sphere(radius=0.05, center=FLOOR_CENTER, theta_resolution=32, phi_resolution=32)
 plotter.add_mesh(floor_center_marker, color="red", ambient=1.0, pickable=False,)
-loss_target_marker = pv.Sphere(radius=0.08, center=LOSS_TARGET, theta_resolution=32, phi_resolution=32)
+loss_target_marker = pv.Sphere(radius=0.08, center=AWAY_TARGET, theta_resolution=32, phi_resolution=32)
 plotter.add_mesh(loss_target_marker, color="blue", ambient=1.0, pickable=False,)
 plotter.add_text("Initial configuration", name="optimization_status", position="upper_left", font_size=16, color="black")
 plotter.camera_position = [
@@ -672,7 +659,7 @@ if args.preview_only:
 if not args.no_gui:
   plotter.show(interactive_update=True, auto_close=False)
 
-default_output_name = f"inverse_{OPTIMIZATION_TARGET.replace('-', '_')}_projected_adam"
+default_output_name = f"inverse_{OPTIMIZATION_TARGET.replace('-', '_')}_projected_adam_surface_motion_away_from_origin"
 output_directory = args.output_directory or os.path.join(OUTPUT_ROOT, "outputs", default_output_name,)
 output_directory = os.path.abspath(output_directory)
 os.makedirs(output_directory, exist_ok=True)
@@ -714,7 +701,7 @@ def encode_saved_frames(adjoint_round, loss, baseline_loss=None):
     loss_text = (
       f"adjoint {adjoint_round:02d}/{args.adjoint_steps:02d}   "
       f"loss {loss:.8f}   baseline {baseline_loss:.8f}   "
-      f"relative reduction {(baseline_loss - loss) / baseline_loss:.6f}"
+      f"relative reduction {(baseline_loss - loss) / max(abs(baseline_loss), 1e-30):.6f}"
     )
 
   ffmpeg_command = [
@@ -763,7 +750,6 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
   saved_friction_pairs = []
   frame_losses = []
   target_frame_losses = []
-  motion_frame_losses = []
   mean_step_displacements = []
   maximum_step_displacements = []
   mean_vertical_step_displacements = []
@@ -777,7 +763,6 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
   centroid_y_values = [float(initial_position[:, 1].mean())]
   loss = 0.0
   target_loss = 0.0
-  motion_loss = 0.0
   saved_video = None
   obj_directory = None
 
@@ -906,23 +891,16 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
       f"penetrating_vertex_indices_sample={penetrating_vertex_indices[:16]}"
     )
     print(floor_check_message)
-    target_loss_is_active = (
-      not args.target_loss_final_frame_only
-      or frame == args.num_frames - 1
-    )
-    target_frame_loss = float(target_position_loss.compute().value.get().sum()) if target_loss_is_active else 0.0
-    motion_frame_loss = float(motion_reward_loss.compute().value.get().sum())
-    frame_loss = target_frame_loss + motion_frame_loss
+    target_frame_loss = float(away_from_target_loss.compute().value.get().sum())
+    frame_loss = target_frame_loss
     frame_losses.append(frame_loss)
     target_frame_losses.append(target_frame_loss)
-    motion_frame_losses.append(motion_frame_loss)
     loss += frame_loss
     target_loss += target_frame_loss
-    motion_loss += motion_frame_loss
-    step_displacements = np.linalg.norm(current_positions - saved_positions[-1], axis=1,)
+    step_displacements = np.linalg.norm(current_positions[bunny_surface_indices] - saved_positions[-1][bunny_surface_indices], axis=1,)
     mean_step_displacements.append(float(step_displacements.mean()))
     maximum_step_displacements.append(float(step_displacements.max()))
-    vertical_step_displacements = np.abs(current_positions[:, 1] - saved_positions[-1][:, 1])
+    vertical_step_displacements = np.abs(current_positions[bunny_surface_indices, 1] - saved_positions[-1][bunny_surface_indices, 1])
     mean_vertical_step_displacements.append(float(vertical_step_displacements.mean()))
     maximum_vertical_step_displacements.append(float(vertical_step_displacements.max()))
     centroid_y_values.append(float(current_positions[:, 1].mean()))
@@ -950,10 +928,11 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
     "maximum": max(frame_losses) if frame_losses else 0.0,
     "sum": loss,
     "target_sum": target_loss,
-    "motion_reward_sum": motion_loss,
   }
   apex_state_index = int(np.argmax(centroid_y_values))
-  motion_summary = {
+  movement_summary = {
+    "vertex_scope": "surface-only",
+    "num_vertices": int(bunny_surface_indices.size),
     "mean_step_displacement": float(np.mean(mean_step_displacements)) if mean_step_displacements else 0.0,
     "maximum_mean_step_displacement": max(mean_step_displacements) if mean_step_displacements else 0.0,
     "maximum_vertex_step_displacement": max(maximum_step_displacements) if maximum_step_displacements else 0.0,
@@ -990,9 +969,9 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
     f"Finished forward "
     f"{'initial' if adjoint_round in (None, 0) else adjoint_round} in "
     f"{elapsed:.2f}s: loss={loss:.8e} "
-    f"(target={target_loss:.8e}, motion={motion_loss:.8e}), "
+    f"(target={target_loss:.8e}), "
     f"centroid_height={centroid_height_summary}, "
-    f"motion={motion_summary}, "
+    f"movement={movement_summary}, "
     f"floor_collision={floor_collision_summary}, "
     f"newton_cap={max_newton_iterations}, gpu_memory={memory}."
   )
@@ -1007,7 +986,7 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
     "friction_pairs": saved_friction_pairs,
     "loss": loss,
     "frame_loss_summary": frame_loss_summary,
-    "motion_summary": motion_summary,
+    "movement_summary": movement_summary,
     "floor_collision_summary": floor_collision_summary,
     "centroid_height_summary": centroid_height_summary,
     "elapsed_seconds": elapsed,
@@ -1036,7 +1015,7 @@ def run_backward(trajectory, adjoint_round):
   # stores the adjoint of q[i], including index 0 for the synthetic q[-1]
   # used to impose the initial zero velocity.
   position_adjoints = [
-    vector(motion_state_loss_gradient.size)
+    vector(away_state_loss_gradient.size)
     for _ in range(args.num_frames + 2)
   ]
   young_gradient = vector(young_jacobian.cols)
@@ -1044,8 +1023,6 @@ def run_backward(trajectory, adjoint_round):
   mass_gradient = vector(mass_jacobian.cols)
   state_loss_gradient_inf_min = float("inf")
   state_loss_gradient_inf_max = 0.0
-  previous_state_loss_gradient_inf_min = float("inf")
-  previous_state_loss_gradient_inf_max = 0.0
   gpu_start_used, gpu_total = gpu_memory_used()
   gpu_peak_used = gpu_start_used
   backward_start = time.time()
@@ -1066,33 +1043,17 @@ def run_backward(trajectory, adjoint_round):
     restore_friction_pairs(trajectory["friction_pairs"][frame])
     timing["state_restore_seconds"] += time.time() - restore_start
 
-    # The motion reward contributes at every frame to q[k + 1] and q[k].
-    # The target term contributes to q[k + 1] either at every frame or only
-    # at the final frame, according to the selected loss schedule.
+    # The reciprocal-distance term contributes to q[k + 1] at every frame,
+    # so minimizing the total loss drives every state away from the origin.
     loss_gradient_start = time.time()
-    motion_state_loss_gradient.compute()
-    previous_state_loss_gradient.compute()
-    current_state_loss_gradient = vector(motion_state_loss_gradient.size)
-    current_state_loss_gradient.updateValue(motion_state_loss_gradient)
-    if not args.target_loss_final_frame_only or frame == args.num_frames - 1:
-      target_state_loss_gradient.compute()
-      current_target_state_loss_gradient = vector(target_state_loss_gradient.size)
-      current_target_state_loss_gradient.updateValue(target_state_loss_gradient)
-      current_state_loss_gradient = current_state_loss_gradient + current_target_state_loss_gradient
-    current_previous_state_loss_gradient = vector(previous_state_loss_gradient.size)
-    current_previous_state_loss_gradient.updateValue(previous_state_loss_gradient)
+    away_state_loss_gradient.compute()
+    current_state_loss_gradient = vector(away_state_loss_gradient.size)
+    current_state_loss_gradient.updateValue(away_state_loss_gradient)
     current_state_loss_gradient_inf = float(gpuarray.max(abs(current_state_loss_gradient.value)).get())
-    current_previous_state_loss_gradient_inf = float(gpuarray.max(abs(current_previous_state_loss_gradient.value)).get())
     state_loss_gradient_inf_min = min(state_loss_gradient_inf_min, current_state_loss_gradient_inf,)
     state_loss_gradient_inf_max = max(state_loss_gradient_inf_max, current_state_loss_gradient_inf,)
-    previous_state_loss_gradient_inf_min = min(previous_state_loss_gradient_inf_min, current_previous_state_loss_gradient_inf,)
-    previous_state_loss_gradient_inf_max = max(previous_state_loss_gradient_inf_max, current_previous_state_loss_gradient_inf,)
     position_adjoints[frame + 2] = (
       position_adjoints[frame + 2] + current_state_loss_gradient
-    )
-    position_adjoints[frame + 1] = (
-      position_adjoints[frame + 1]
-      + current_previous_state_loss_gradient
     )
     timing["state_loss_gradient_seconds"] += (
       time.time() - loss_gradient_start
@@ -1137,14 +1098,7 @@ def run_backward(trajectory, adjoint_round):
       or frame == 0
       or frame % max(1, args.num_frames // 10) == 0
     ):
-      adjoint_frame_message = (
-        f"adjoint={adjoint_round:02d} reverse_frame={frame:03d} "
-        f"|g_current|_inf={current_state_loss_gradient_inf:.6e} "
-        f"|g_previous|_inf={current_previous_state_loss_gradient_inf:.6e} "
-        f"|lambda_x|_inf={float(gpuarray.max(abs(position_adjoints[frame + 1].value)).get()):.6e} "
-        "solver=gpu_cg"
-      )
-      print(adjoint_frame_message)
+      print(f"adjoint={adjoint_round:02d} reverse_frame={frame:03d} " f"|g_current|_inf={current_state_loss_gradient_inf:.6e} " f"|lambda_x|_inf={float(gpuarray.max(abs(position_adjoints[frame + 1].value)).get()):.6e} " "solver=gpu_cg")
 
   young_gradient_values = young_gradient.value.get()
   poisson_gradient_values = poisson_gradient.value.get()
@@ -1166,15 +1120,11 @@ def run_backward(trajectory, adjoint_round):
   timing["other_seconds"] = elapsed - sum(timing.values())
   if not np.isfinite(state_loss_gradient_inf_min):
     state_loss_gradient_inf_min = 0.0
-  if not np.isfinite(previous_state_loss_gradient_inf_min):
-    previous_state_loss_gradient_inf_min = 0.0
   adjoint_summary_message = (
     f"Finished adjoint {adjoint_round:02d} in {elapsed:.2f}s: "
     f"{gradient_summary}, "
     f"state_loss_gradient_inf_range="
     f"[{state_loss_gradient_inf_min:.6e}, {state_loss_gradient_inf_max:.6e}], "
-    f"previous_state_loss_gradient_inf_range="
-    f"[{previous_state_loss_gradient_inf_min:.6e}, {previous_state_loss_gradient_inf_max:.6e}], "
     f"timing={timing}, gpu_memory={memory}."
   )
   print(adjoint_summary_message)
@@ -1281,7 +1231,7 @@ else:
     "max_newton_iterations": REFRESH_MAX_NEWTON_ITERATIONS,
     "gpu_memory": None,
     "frame_loss_summary": None,
-    "motion_summary": None,
+    "movement_summary": None,
     "floor_collision_summary": None,
     "centroid_height_summary": None,
     "video": baseline_video_path if os.path.isfile(baseline_video_path) else None,
@@ -1361,7 +1311,7 @@ for adjoint_round in range(resume_completed_adjoint_round + 1, args.adjoint_step
     "loss_before": previous_loss,
     "loss_after": trajectory["loss"],
     "relative_loss": trajectory["loss"] / initial_loss,
-    "relative_reduction": 1.0 - trajectory["loss"] / initial_loss,
+    "relative_reduction": (initial_loss - trajectory["loss"]) / max(abs(initial_loss), 1e-30),
     "proposed_young_step_norm": proposed_young_step_norm,
     "young_step_was_capped": (
       proposed_young_step_norm > args.young_step_size
@@ -1378,7 +1328,7 @@ for adjoint_round in range(resume_completed_adjoint_round + 1, args.adjoint_step
     "forward_max_newton_iterations": trajectory["max_newton_iterations"],
     "forward_gpu_memory": trajectory["gpu_memory"],
     "frame_loss_summary": trajectory["frame_loss_summary"],
-    "motion_summary": trajectory["motion_summary"],
+    "movement_summary": trajectory["movement_summary"],
     "floor_collision_summary": trajectory["floor_collision_summary"],
     "centroid_height_summary": trajectory["centroid_height_summary"],
     "terminal_position_summary": trajectory[
@@ -1463,7 +1413,7 @@ for adjoint_round in range(resume_completed_adjoint_round + 1, args.adjoint_step
     f"optimization={adjoint_round:02d}/{args.adjoint_steps:02d} "
     f"loss={previous_loss:.8e}->{trajectory['loss']:.8e} "
     f"relative_loss={trajectory['loss'] / initial_loss:.8e} "
-    f"relative_reduction={1.0 - trajectory['loss'] / initial_loss:.8e} "
+    f"relative_reduction={(initial_loss - trajectory['loss']) / max(abs(initial_loss), 1e-30):.8e} "
     f"{format_material_statistics(trajectory['material_summary'])} "
     f"{format_mass_statistics(trajectory['mass_summary'])} "
     f"young_step={maximum_element_norm(applied_young_step):.6e} "
@@ -1508,27 +1458,25 @@ results = {
   "adam_beta2": ADAM_BETA2,
   "adam_epsilon": ADAM_EPSILON,
   "loss_definition": (
-    "the weighted target-position loss at "
-    + ("only the final converged frame" if args.target_loss_final_frame_only else "every converged frame")
-    + ", plus the squared desired 3D displacement-magnitude loss at every converged frame"
+    "the positive weighted reciprocal squared distance "
+    "1 / (sqrt(||position - origin||^2 + epsilon^2) + epsilon)^2 at every converged frame"
   ),
-  "target_loss_schedule": "final-frame-only" if args.target_loss_final_frame_only else "every-frame",
+  "target_loss_schedule": "every-converged-frame",
+  "target_loss_sign": "positive-reciprocal-squared-distance (minimization maximizes distance)",
+  "relative_reduction_definition": "(initial_loss - current_loss) / abs(initial_loss); positive means improvement",
   "floor_center": FLOOR_CENTER.tolist(),
   "floor_collision_diagnostic": "strict per-frame count of bunny vertices with y below floor height; diagnostic only, not an energy",
-  "loss_target": LOSS_TARGET.tolist(),
-  "loss_weight": loss_weight_value,
-  "motion_loss_weight": MOTION_LOSS_WEIGHT_VALUE,
-  "motion_loss_axis": "xyz-magnitude",
-  "desired_displacement_per_frame": DESIRED_DISPLACEMENT_VALUE,
-  "desired_speed": DESIRED_DISPLACEMENT_VALUE / DT_VALUE,
-  "motion_norm_epsilon": MOTION_NORM_EPSILON,
+  "loss_target": AWAY_TARGET.tolist(),
+  "loss_weight": AWAY_LOSS_WEIGHT_VALUE,
+  "away_distance_epsilon": AWAY_DISTANCE_EPSILON_VALUE,
+  "motion_loss": None,
   "initial_loss": initial_loss,
   "baseline_max_newton_iterations": baseline_trajectory["max_newton_iterations"],
   "baseline_gpu_memory": baseline_trajectory["gpu_memory"],
   "baseline_frame_loss_summary": baseline_trajectory[
     "frame_loss_summary"
   ],
-  "baseline_motion_summary": baseline_trajectory["motion_summary"],
+  "baseline_movement_summary": baseline_trajectory["movement_summary"],
   "baseline_floor_collision_summary": baseline_trajectory[
     "floor_collision_summary"
   ],

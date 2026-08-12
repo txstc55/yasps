@@ -11,24 +11,9 @@ import pycuda.driver as cuda
 import pycuda.gpuarray as gpuarray
 import pyvista as pv
 
-from yasps import (
-  attribute,
-  differentiator,
-  scene,
-  solver,
-  vector,
-)
+from yasps import attribute, differentiator, scene, solver, vector
 
-from helpers import (
-  edge_edge,
-  extract_edges_from_triangles,
-  extract_surface_triangles,
-  inertia,
-  point_edge,
-  point_point,
-  point_triangle,
-  stable_neo_hookean,
-)
+from helpers import edge_edge, extract_edges_from_triangles, extract_surface_triangles, inertia, point_edge, point_point, point_triangle, stable_neo_hookean
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -65,8 +50,6 @@ REFRESH_NEWTON_EVERY = 5
 MAX_CG_ITERATIONS = 20000
 MAX_LINE_SEARCH_STEPS = 8
 INITIAL_POSITION_STEP_SIZE = 1.0
-STEP_SIZE_GROWTH = 1.1
-STEP_SIZE_SHRINK = 0.5
 ADAM_LEARNING_RATE = 1.0
 ADAM_BETA1 = 0.9
 ADAM_BETA2 = 0.999
@@ -74,74 +57,17 @@ ADAM_EPSILON = 1e-8
 VIDEO_FPS = round(1.0 / DT_VALUE)
 
 
-parser = argparse.ArgumentParser(
-  description="Drop one soft tetrahedral bunny onto a large static floor."
-)
+# Parse runtime, rendering, optimization, and checkpoint options.
+parser = argparse.ArgumentParser(description="Drop one soft tetrahedral bunny onto a large static floor.")
 parser.add_argument("--num-frames", type=int, default=NUM_FRAMES)
-parser.add_argument(
-  "--adjoint-steps",
-  type=int,
-  default=NUM_ADJOINT_STEPS,
-  help=(
-    "Exact number of backward passes, each followed by one forward pass "
-    f"(default: {NUM_ADJOINT_STEPS})."
-  ),
-)
-parser.add_argument(
-  "--optimizer",
-  choices=("history-gradient", "adam"),
-  default="history-gradient",
-  help="Outer optimizer; neither choice performs a line search.",
-)
-parser.add_argument(
-  "--adam-learning-rate",
-  type=float,
-  default=ADAM_LEARNING_RATE,
-  help="Adam learning rate before applying the update-length cap.",
-)
-parser.add_argument(
-  "--initial-position-step-size",
-  type=float,
-  default=INITIAL_POSITION_STEP_SIZE,
-  help=(
-    "Initial and maximum L2 length of one normalized-gradient "
-    "initial-translation update."
-  ),
-)
-parser.add_argument(
-  "--preview-only",
-  action="store_true",
-  help="Show the initial PyVista scene without running the simulation.",
-)
-parser.add_argument(
-  "--save-frames",
-  action="store_true",
-  help="Save one PNG per frame and encode the frames into an MP4.",
-)
-parser.add_argument(
-  "--save-obj",
-  action="store_true",
-  help="Save only the bunny surface as one OBJ per frame.",
-)
-parser.add_argument(
-  "--video-fps",
-  type=int,
-  default=VIDEO_FPS,
-  help=(
-    "MP4 frame rate used with --save-frames "
-    f"(default: {VIDEO_FPS}, matching dt={DT_VALUE})."
-  ),
-)
-parser.add_argument(
-  "--no-gui",
-  action="store_true",
-  help="Run and render off screen without opening the interactive window.",
-)
-parser.add_argument(
-  "--check-gradient",
-  action="store_true",
-  help="Check the first adjoint gradient with a central finite difference.",
-)
+parser.add_argument("--adjoint-steps", type=int, default=NUM_ADJOINT_STEPS, help=("Exact number of backward passes, each followed by one forward pass " f"(default: {NUM_ADJOINT_STEPS})."),)
+parser.add_argument("--adam-learning-rate", type=float, default=ADAM_LEARNING_RATE, help="Adam learning rate before applying the update-length cap.",)
+parser.add_argument("--initial-position-step-size", type=float, default=INITIAL_POSITION_STEP_SIZE, help=("Initial and maximum L2 length of one normalized-gradient " "initial-translation update."),)
+parser.add_argument("--preview-only", action="store_true", help="Show the initial PyVista scene without running the simulation.",)
+parser.add_argument("--save-frames", action="store_true", help="Save one PNG per frame and encode the frames into an MP4.",)
+parser.add_argument("--save-obj", action="store_true", help="Save only the bunny surface as one OBJ per frame.",)
+parser.add_argument("--video-fps", type=int, default=VIDEO_FPS, help=("MP4 frame rate used with --save-frames " f"(default: {VIDEO_FPS}, matching dt={DT_VALUE})."),)
+parser.add_argument("--no-gui", action="store_true", help="Run and render off screen without opening the interactive window.",)
 parser.add_argument("--output-directory", type=str, default=None, help="Override the inverse-simulation output directory.")
 args = parser.parse_args()
 
@@ -157,6 +83,7 @@ if args.video_fps <= 0:
   raise ValueError("--video-fps must be positive.")
 
 
+# Small utilities for YASPS constants, mesh construction, statistics, and memory reporting.
 def add_scalar_constant(owner, name, value):
   result = owner.addConstant(name, rows=1, cols=1)
   result.updateValue([value])
@@ -204,16 +131,8 @@ def load_bunny():
 
 def make_floor():
   half_size = 0.5 * FLOOR_SIZE
-  positions = np.array([
-    [-half_size, FLOOR_HEIGHT, -half_size],
-    [half_size, FLOOR_HEIGHT, -half_size],
-    [half_size, FLOOR_HEIGHT, half_size],
-    [-half_size, FLOOR_HEIGHT, half_size],
-  ], dtype=np.float64)
-  triangles = np.array([
-    [0, 2, 1],
-    [0, 3, 2],
-  ], dtype=np.uint32)
+  positions = np.array([[-half_size, FLOOR_HEIGHT, -half_size], [half_size, FLOOR_HEIGHT, -half_size], [half_size, FLOOR_HEIGHT, half_size], [-half_size, FLOOR_HEIGHT, half_size],], dtype=np.float64)
+  triangles = np.array([[0, 2, 1], [0, 3, 2],], dtype=np.uint32)
   return positions, triangles
 
 
@@ -230,9 +149,7 @@ num_bunny_vertices = bunny_positions.shape[0]
 num_bunny_tetrahedra = bunny_tetrahedra.shape[0]
 floor_vertex_offset = num_bunny_vertices
 
-############################################################
-# create the scene and attributes
-############################################################
+# Build the YASPS scene and simulation state.
 
 simulation = scene("bunny_dropping_on_ground")
 dt = add_scalar_constant(simulation, "dt", DT_VALUE)
@@ -277,9 +194,7 @@ floor_triangles_to_vertices = floor_triangle_primitive.addConnectivity("triangle
 floor_triangle_primitive.addAttribute("positions", through=floor_triangles_to_vertices, source=floor_position)
 
 
-############################################################
-# add collision mesh
-############################################################
+# Register the bunny and floor collision topology.
 
 collision_mesh = simulation.addMesh("collision_mesh")
 collision_vertices = collision_mesh.addPrimitiveUnion("vertices", [vertices_soft, floor_vertices])
@@ -302,9 +217,7 @@ ee_positions = collision_mesh.ee.addAttribute("positions", through=ee_to_vertice
 
 
 
-############################################################
-# add energies
-############################################################
+# Define inertia, elasticity, contact, friction, and loss energies.
 
 elastic_energy = tets_soft.addAttribute("elastic_energy", computed_attribute=stable_neo_hookean(tet_rest_positions, tet_positions, mu, lam, dt))
 inertia_energy = vertices_soft.addAttribute("inertia_energy", computed_attribute=inertia(last_position, velocity, dt, position, mass))
@@ -324,21 +237,10 @@ simulation.addEnergy(pt_energy, dynamic_instances=True, projection_method=2)
 simulation.addEnergy(ee_energy, dynamic_instances=True, projection_method=2)
 simulation.addMinimizeTarget([position])
 
-############################################################
-# add ccd
-############################################################
-triangle_indices = np.vstack([
-  bunny_surface_triangles,
-  floor_triangles + floor_vertex_offset,
-]).astype(np.uint32)
-edge_indices = np.vstack([
-  bunny_edges,
-  floor_edges + floor_vertex_offset,
-]).astype(np.uint32)
-surface_indices = np.hstack([
-  bunny_surface_indices,
-  floor_surface_indices + floor_vertex_offset,
-]).astype(np.uint32)
+# Configure continuous collision detection for each Newton step.
+triangle_indices = np.vstack([bunny_surface_triangles, floor_triangles + floor_vertex_offset,]).astype(np.uint32)
+edge_indices = np.vstack([bunny_edges, floor_edges + floor_vertex_offset,]).astype(np.uint32)
+surface_indices = np.hstack([bunny_surface_indices, floor_surface_indices + floor_vertex_offset,]).astype(np.uint32)
 
 initial_collision_positions = collision_position.compute().value.get()
 ccd = CCD(surface_indices.size, num_bunny_vertices + floor_positions.shape[0], max_ccd_pairs=10000000, max_cd_pairs=30000000)
@@ -347,6 +249,7 @@ ccd.init_faces(ccd_positions, gpuarray.to_gpu(triangle_indices.reshape(-1)), gpu
 ccd.init_edges(ccd_positions, ccd_positions, gpuarray.to_gpu(edge_indices.reshape(-1)), edge_indices.shape[0])
 
 
+# Snapshot and restore dynamic contact state needed by the reverse pass.
 def save_collision_pairs():
   pp_count = collision_mesh.pp.numInstances
   pe_count = collision_mesh.pe.numInstances
@@ -403,10 +306,7 @@ def update_collision_pairs():
 
   return pp_count, pe_count, pt_count, ee_count
 
-############################################################
-# here we define the hessians
-# those will be used for the backward solves
-############################################################
+# Prebuild the projected Hessian used by the approximate adjoint solve.
 
 def add_matrices(matrices):
   result = matrices[0]
@@ -418,18 +318,17 @@ def add_matrices(matrices):
 # This is an approximate adjoint: use exactly the same per-energy Hessian
 # projections as the forward Newton solve.  The resulting SPD matrix can be
 # solved entirely by the existing GPU PCG solver without CPU assembly.
-adjoint_hessian = add_matrices([
+adjoint_hessian_terms = [
   differentiator().diff2([elastic_energy], [position], [position], projection_method=1),
   differentiator().diff2([inertia_energy], [position], [position], projection_method=-1),
   differentiator().diff2([pp_energy], [position], [position], projection_method=2, dynamic_instances=True),
   differentiator().diff2([pe_energy], [position], [position], projection_method=2, dynamic_instances=True),
   differentiator().diff2([pt_energy], [position], [position], projection_method=2, dynamic_instances=True),
   differentiator().diff2([ee_energy], [position], [position], projection_method=2, dynamic_instances=True),
-])
+]
+adjoint_hessian = add_matrices(adjoint_hessian_terms)
 
-############################################################
-# here we define the jacobians, used for inverse adjoint
-############################################################
+# Build residual Jacobians used to propagate adjoints and design gradients.
 
 previous_position_jacobian = differentiator().diff2([inertia_energy], [position], [last_position])
 previous_previous_position_jacobian = differentiator().diff2([inertia_energy], [position], [last_last_position])
@@ -444,14 +343,7 @@ def solve_adjoint_system(right_hand_side):
   hessian_seconds = time.time() - hessian_start
 
   solve_start = time.time()
-  error_code = adjoint_linear_solver.computeSolution(
-    adjoint_hessian,
-    right_hand_side,
-    adjoint_initial_guess,
-    tolerance=ADJOINT_SOLVER_TOLERANCE,
-    maxIterations=MAX_CG_ITERATIONS,
-    zero_initial_guess=True,
-  )
+  error_code = adjoint_linear_solver.computeSolution(adjoint_hessian, right_hand_side, adjoint_initial_guess, tolerance=ADJOINT_SOLVER_TOLERANCE, maxIterations=MAX_CG_ITERATIONS, zero_initial_guess=True)
   solve_seconds = time.time() - solve_start
   if error_code < 0:
     raise RuntimeError(f"Projected adjoint GPU CG failed with error code {error_code}.")
@@ -459,9 +351,7 @@ def solve_adjoint_system(right_hand_side):
   result.updateValue(adjoint_linear_solver.solution)
   return result, hessian_seconds, solve_seconds
 
-############################################################
-# plotter
-############################################################
+# Configure rendering and surface-only output.
 bunny_cells = np.hstack([np.full((bunny_surface_triangles.shape[0], 1), 3, dtype=np.uint32), bunny_surface_triangles])
 floor_cells = np.hstack([np.full((floor_triangles.shape[0], 1), 3, dtype=np.uint32), floor_triangles])
 
@@ -494,15 +384,8 @@ if args.preview_only:
 if not args.no_gui:
   plotter.show(interactive_update=True, auto_close=False)
 
-default_output_name = (
-  "inverse_initial_position_projected_"
-  f"{args.optimizer.replace('-', '_')}"
-)
-output_directory = args.output_directory or os.path.join(
-  OUTPUT_ROOT,
-  "outputs",
-  default_output_name,
-)
+default_output_name = "inverse_initial_position_projected_adam"
+output_directory = args.output_directory or os.path.join(OUTPUT_ROOT, "outputs", default_output_name,)
 output_directory = os.path.abspath(output_directory)
 os.makedirs(output_directory, exist_ok=True)
 
@@ -546,34 +429,24 @@ def encode_saved_frames(adjoint_round, loss, baseline_loss=None):
       f"relative reduction {(baseline_loss - loss) / baseline_loss:.6f}"
     )
 
-  subprocess.run(
-    [
-      ffmpeg,
-      "-y",
-      "-loglevel", "error",
-      "-framerate", str(args.video_fps),
-      "-start_number", "0",
-      "-i", os.path.join(frame_directory, "frame_%04d.png"),
-      "-frames:v", str(args.num_frames),
-      "-vf", (
+  ffmpeg_command = [
+      ffmpeg, "-y", "-loglevel", "error", "-framerate", str(args.video_fps),
+      "-start_number", "0", "-i", os.path.join(frame_directory, "frame_%04d.png"),
+      "-frames:v", str(args.num_frames), "-vf", (
         "drawtext="
         f"text='{loss_text}':"
         "fontcolor=black:fontsize=36:"
         "box=1:boxcolor=white@0.78:boxborderw=12:"
         "x=40:y=h-th-40"
       ),
-      "-c:v", "libx264",
-      "-pix_fmt", "yuv420p",
-      "-crf", "18",
-      "-movflags", "+faststart",
-      video_path,
-    ],
-    check=True,
-  )
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", video_path,
+  ]
+  subprocess.run(ffmpeg_command, check=True)
   print(f"Saved {round_name} video: {video_path}")
   return video_path
 
 
+# Run one complete forward trajectory and record every converged state.
 def run_forward(design_parameters, adjoint_round=None, baseline_loss=None):
   forward_index = 0 if adjoint_round is None else adjoint_round
   max_newton_iterations = (
@@ -597,9 +470,7 @@ def run_forward(design_parameters, adjoint_round=None, baseline_loss=None):
 
   save_this_forward = adjoint_round is not None
   if save_this_forward:
-    round_name, frame_directory, obj_directory, _ = output_paths(
-      adjoint_round
-    )
+    _, frame_directory, obj_directory, _ = output_paths(adjoint_round)
     design_status = (
       f"initial x/z translation = "
       f"({initial_translation[0]:.5f}, "
@@ -632,10 +503,7 @@ def run_forward(design_parameters, adjoint_round=None, baseline_loss=None):
       energy_before = simulation.computeTotalEnergy()
 
       solve_start = time.time()
-      result = simulation.minimizeEnergy(
-        tolerance=SOLVER_TOLERANCE,
-        maxIterations=MAX_CG_ITERATIONS,
-      )
+      result = simulation.minimizeEnergy(tolerance=SOLVER_TOLERANCE, maxIterations=MAX_CG_ITERATIONS)
       gpu_current_used, _ = gpu_memory_used()
       gpu_peak_used = max(gpu_peak_used, gpu_current_used)
       solve_duration = time.time() - solve_start
@@ -669,13 +537,14 @@ def run_forward(design_parameters, adjoint_round=None, baseline_loss=None):
         step_taken *= 0.5
 
       prefix = "initial" if adjoint_round in (None, 0) else f"adjoint={adjoint_round:02d}"
-      print(
+      iteration_message = (
         f"{prefix} frame={frame:03d} newton={newton_iteration:03d} "
         f"solver={solve_duration:.4f}s step={step_taken:.6f} "
         f"max_movement={max_movement:.6f} "
         f"energy={energy_before:.8e}->{energy_after:.8e} "
         f"pairs={collision_counts_after}"
       )
+      print(iteration_message)
 
       if not args.no_gui:
         refresh_gui()
@@ -685,10 +554,7 @@ def run_forward(design_parameters, adjoint_round=None, baseline_loss=None):
         break
 
     if not converged:
-      print(
-        f"Warning: frame {frame} reached the "
-        f"{max_newton_iterations}-iteration Newton cap."
-      )
+      print(f"Warning: frame {frame} reached the " f"{max_newton_iterations}-iteration Newton cap.")
 
     update_collision_pairs()
     current_positions = refresh_gui()
@@ -700,15 +566,9 @@ def run_forward(design_parameters, adjoint_round=None, baseline_loss=None):
     saved_collision_pairs.append(save_collision_pairs())
 
     if save_this_forward and args.save_frames:
-      plotter.screenshot(os.path.join(
-        frame_directory,
-        f"frame_{frame:04d}.png",
-      ))
+      plotter.screenshot(os.path.join(frame_directory, f"frame_{frame:04d}.png",))
     if save_this_forward and args.save_obj:
-      bunny_poly.save(os.path.join(
-        obj_directory,
-        f"bunny_{frame:04d}.obj",
-      ))
+      bunny_poly.save(os.path.join(obj_directory, f"bunny_{frame:04d}.obj",))
 
   # here we compute the loss, and the gradient of loss wrt the final position
   loss = float(terminal_loss.compute().value.get().sum())
@@ -719,19 +579,10 @@ def run_forward(design_parameters, adjoint_round=None, baseline_loss=None):
   gpu_peak_used = max(gpu_peak_used, gpu_end_used)
   memory = gpu_memory_summary(gpu_start_used, gpu_peak_used, gpu_end_used, gpu_total)
   elapsed = time.time() - forward_start
-  print(
-    f"Finished forward "
-    f"{'initial' if adjoint_round in (None, 0) else adjoint_round} in "
-    f"{elapsed:.2f}s: loss={loss:.8e}, "
-    f"newton_cap={max_newton_iterations}, gpu_memory={memory}."
-  )
+  print(f"Finished forward " f"{'initial' if adjoint_round in (None, 0) else adjoint_round} in " f"{elapsed:.2f}s: loss={loss:.8e}, " f"newton_cap={max_newton_iterations}, gpu_memory={memory}.")
 
   if save_this_forward and args.save_frames:
-    saved_video = encode_saved_frames(
-      adjoint_round,
-      loss,
-      baseline_loss=baseline_loss,
-    )
+    saved_video = encode_saved_frames(adjoint_round, loss, baseline_loss=baseline_loss,)
 
   return {
     "positions": saved_positions,
@@ -745,6 +596,7 @@ def run_forward(design_parameters, adjoint_round=None, baseline_loss=None):
   }
 
 
+# Replay the saved trajectory backward to accumulate adjoints and design gradients.
 def run_backward(trajectory, adjoint_round):
   # The position-only state is second order: step k depends on q[k] and
   # q[k - 1].  Keep an explicitly indexed accumulator so that the two
@@ -755,9 +607,7 @@ def run_backward(trajectory, adjoint_round):
     vector(trajectory["final_loss_gradient"].size)
     for _ in range(args.num_frames + 2)
   ]
-  position_adjoints[args.num_frames + 1].updateValue(
-    trajectory["final_loss_gradient"]
-  )
+  position_adjoints[args.num_frames + 1].updateValue(trajectory["final_loss_gradient"])
   gpu_start_used, gpu_total = gpu_memory_used()
   gpu_peak_used = gpu_start_used
   backward_start = time.time()
@@ -778,25 +628,15 @@ def run_backward(trajectory, adjoint_round):
 
     # q[k + 1] is stored at adjoint index k + 2.
     # This solves mu[k+1] = A[k+1]^{-T} lambda[k+1].
-    auxiliary, hessian_seconds, solve_seconds = solve_adjoint_system(
-      position_adjoints[frame + 2]
-    )
+    auxiliary, hessian_seconds, solve_seconds = solve_adjoint_system(position_adjoints[frame + 2])
     timing["projected_hessian_seconds"] += hessian_seconds
     timing["gpu_cg_seconds"] += solve_seconds
 
     jacobian_start = time.time()
     previous_position_jacobian.compute()
-    previous_position_contribution = previous_position_jacobian.spmv(
-      auxiliary,
-      transpose=True,
-    )
+    previous_position_contribution = previous_position_jacobian.spmv(auxiliary, transpose=True)
     previous_previous_position_jacobian.compute()
-    previous_previous_position_contribution = (
-      previous_previous_position_jacobian.spmv(
-        auxiliary,
-        transpose=True,
-      )
-    )
+    previous_previous_position_contribution = previous_previous_position_jacobian.spmv(auxiliary, transpose=True)
     timing["jacobian_and_transpose_spmv_seconds"] += (
       time.time() - jacobian_start
     )
@@ -819,77 +659,27 @@ def run_backward(trajectory, adjoint_round):
       or frame == 0
       or frame % max(1, args.num_frames // 10) == 0
     ):
-      print(
-        f"adjoint={adjoint_round:02d} reverse_frame={frame:03d} "
-        f"|lambda_x|_inf={float(gpuarray.max(abs(position_adjoints[frame + 1].value)).get()):.6e} "
-        "solver=gpu_cg"
-      )
+      print(f"adjoint={adjoint_round:02d} reverse_frame={frame:03d} " f"|lambda_x|_inf={float(gpuarray.max(abs(position_adjoints[frame + 1].value)).get()):.6e} " "solver=gpu_cg")
 
   # q[-1] and q[0] are both initialized by the same map Gamma(theta), so
   # their independently accumulated adjoints both contribute to theta.
   initial_state_adjoint = position_adjoints[0] + position_adjoints[1]
   initial_translation_jacobian.compute()
-  gradient = initial_translation_jacobian.spmv(
-    initial_state_adjoint,
-    transpose=True,
-  ).value.get()
+  gradient = initial_translation_jacobian.spmv(initial_state_adjoint, transpose=True).value.get()
   gradient_summary = f"translation_gradient={gradient}"
   elapsed = time.time() - backward_start
   gpu_end_used, _ = gpu_memory_used()
   gpu_peak_used = max(gpu_peak_used, gpu_end_used)
-  memory = gpu_memory_summary(
-    gpu_start_used,
-    gpu_peak_used,
-    gpu_end_used,
-    gpu_total,
-  )
+  memory = gpu_memory_summary(gpu_start_used, gpu_peak_used, gpu_end_used, gpu_total,)
   timing["other_seconds"] = elapsed - sum(timing.values())
-  print(
-    f"Finished adjoint {adjoint_round:02d} in {elapsed:.2f}s: "
-    f"{gradient_summary}, timing={timing}, gpu_memory={memory}."
-  )
+  print(f"Finished adjoint {adjoint_round:02d} in {elapsed:.2f}s: " f"{gradient_summary}, timing={timing}, gpu_memory={memory}.")
   return gradient, elapsed, timing, memory
-
-
-def finite_difference_check(initial_translation, gradient):
-  direction = gradient.copy()
-  direction[1] = 0.0
-  direction /= max(np.linalg.norm(direction), 1e-30)
-  epsilon = 1e-4
-  plus = run_forward(
-    initial_translation + epsilon * direction,
-    adjoint_round=None,
-  )["loss"]
-  minus = run_forward(
-    initial_translation - epsilon * direction,
-    adjoint_round=None,
-  )["loss"]
-  finite_difference = (plus - minus) / (2.0 * epsilon)
-  adjoint_directional = float(np.dot(gradient, direction))
-  relative_error = (
-    abs(finite_difference - adjoint_directional)
-    / max(
-      abs(finite_difference),
-      abs(adjoint_directional),
-      1e-14,
-    )
-  )
-  print(
-    "Gradient check: "
-    f"finite_difference={finite_difference:.8e}, "
-    f"adjoint={adjoint_directional:.8e}, "
-    f"relative_error={relative_error:.6e}."
-  )
-  return {
-    "finite_difference": finite_difference,
-    "adjoint": adjoint_directional,
-    "relative_error": relative_error,
-  }
 
 
 update_collision_pairs()
 refresh_gui()
 
+# Initialize or restore the design, then alternate one backward and one forward solve.
 optimization_start = time.time()
 design_parameters = np.zeros(3, dtype=np.float64)
 baseline_trajectory = run_forward(design_parameters, adjoint_round=0)
@@ -900,22 +690,12 @@ best_adjoint_round = 0
 best_design_parameters = design_parameters.copy()
 optimization_history = []
 maximum_step_size = args.initial_position_step_size
-optimizer_step_size = maximum_step_size
 adam_first_moment = np.zeros_like(design_parameters)
 adam_second_moment = np.zeros_like(design_parameters)
-gradient_check = None
 
 for adjoint_round in range(1, args.adjoint_steps + 1):
-  gradient, backward_seconds, backward_timing, backward_memory = (
-    run_backward(trajectory, adjoint_round)
-  )
+  gradient, backward_seconds, backward_timing, backward_memory = run_backward(trajectory, adjoint_round)
   gradient_values = gradient
-
-  if args.check_gradient and adjoint_round == 1:
-    gradient_check = finite_difference_check(
-      design_parameters,
-      gradient_values,
-    )
 
   constrained_gradient = gradient_values.copy()
   constrained_gradient[1] = 0.0
@@ -926,41 +706,23 @@ for adjoint_round in range(1, args.adjoint_steps + 1):
 
   previous_loss = trajectory["loss"]
   previous_design = design_parameters.copy()
-  if args.optimizer == "adam":
-    adam_first_moment = ADAM_BETA1 * adam_first_moment + (1.0 - ADAM_BETA1) * constrained_gradient
-    adam_second_moment = ADAM_BETA2 * adam_second_moment + (1.0 - ADAM_BETA2) * constrained_gradient * constrained_gradient
-    corrected_first_moment = adam_first_moment / (1.0 - ADAM_BETA1 ** adjoint_round)
-    corrected_second_moment = adam_second_moment / (1.0 - ADAM_BETA2 ** adjoint_round)
-    raw_update = -args.adam_learning_rate * corrected_first_moment / (np.sqrt(corrected_second_moment) + ADAM_EPSILON)
-    raw_update[1] = 0.0
-    raw_update_norm = float(np.linalg.norm(raw_update))
-    step_size_before = min(maximum_step_size, raw_update_norm)
-    descent_direction = raw_update / raw_update_norm
-  else:
-    step_size_before = optimizer_step_size
-    descent_direction = -constrained_gradient / gradient_norm
-  applied_step = step_size_before * descent_direction
+  adam_first_moment = ADAM_BETA1 * adam_first_moment + (1.0 - ADAM_BETA1) * constrained_gradient
+  adam_second_moment = ADAM_BETA2 * adam_second_moment + (1.0 - ADAM_BETA2) * constrained_gradient * constrained_gradient
+  corrected_first_moment = adam_first_moment / (1.0 - ADAM_BETA1 ** adjoint_round)
+  corrected_second_moment = adam_second_moment / (1.0 - ADAM_BETA2 ** adjoint_round)
+  raw_update = -args.adam_learning_rate * corrected_first_moment / (np.sqrt(corrected_second_moment) + ADAM_EPSILON)
+  raw_update[1] = 0.0
+  raw_update_norm = float(np.linalg.norm(raw_update))
+  applied_step = min(maximum_step_size, raw_update_norm) * raw_update / raw_update_norm
   design_parameters = design_parameters + applied_step
 
-  trajectory = run_forward(
-    design_parameters,
-    adjoint_round=adjoint_round,
-    baseline_loss=initial_loss,
-  )
+  trajectory = run_forward(design_parameters, adjoint_round=adjoint_round, baseline_loss=initial_loss,)
   loss_decreased = trajectory["loss"] < previous_loss
-  if args.optimizer == "history-gradient":
-    if loss_decreased:
-      optimizer_step_size = min(maximum_step_size, STEP_SIZE_GROWTH * optimizer_step_size)
-    else:
-      optimizer_step_size = STEP_SIZE_SHRINK * optimizer_step_size
-  step_size_after = optimizer_step_size if args.optimizer == "history-gradient" else step_size_before
 
   record = {
     "adjoint_round": adjoint_round,
     "loss_before": previous_loss,
     "loss_after": trajectory["loss"],
-    "step_size_before": step_size_before,
-    "step_size_after": step_size_after,
     "loss_decreased": loss_decreased,
     "forward_seconds": trajectory["elapsed_seconds"],
     "forward_max_newton_iterations": trajectory["max_newton_iterations"],
@@ -972,7 +734,7 @@ for adjoint_round in range(1, args.adjoint_steps + 1):
     "adjoint_solver_count": args.num_frames,
     "video": trajectory["video"],
     "gradient": gradient_values.tolist(),
-    "descent_direction": descent_direction.tolist(),
+    "raw_adam_update": raw_update.tolist(),
     "applied_step": applied_step.tolist(),
     "design_parameters_before": previous_design.tolist(),
     "design_parameters_after": design_parameters.tolist(),
@@ -985,14 +747,9 @@ for adjoint_round in range(1, args.adjoint_steps + 1):
     best_loss = trajectory["loss"]
     best_adjoint_round = adjoint_round
     best_design_parameters = design_parameters.copy()
-  print(
-    f"optimization={adjoint_round:02d}/{args.adjoint_steps:02d} "
-    f"loss={previous_loss:.8e}->{trajectory['loss']:.8e} "
-    f"{design_summary} "
-    f"step_norm={np.linalg.norm(applied_step):.6e} "
-    f"next_step_size={step_size_after:.6e}"
-  )
+  print(f"optimization={adjoint_round:02d}/{args.adjoint_steps:02d} " f"loss={previous_loss:.8e}->{trajectory['loss']:.8e} " f"{design_summary} " f"step_norm={np.linalg.norm(applied_step):.6e}")
 
+# Save final metrics and the best/current parameter arrays for later inspection.
 results = {
   "num_frames": args.num_frames,
   "dt": DT_VALUE,
@@ -1007,10 +764,8 @@ results = {
   "optimization_target": "initial-position",
   "adjoint_type": "approximate_projected_hessian",
   "adjoint_solver": "gpu_cg",
-  "optimizer": args.optimizer,
+  "optimizer": "adam",
   "initial_position_step_size": args.initial_position_step_size,
-  "step_size_growth": STEP_SIZE_GROWTH,
-  "step_size_shrink": STEP_SIZE_SHRINK,
   "adam_learning_rate": args.adam_learning_rate,
   "adam_beta1": ADAM_BETA1,
   "adam_beta2": ADAM_BETA2,
@@ -1030,7 +785,6 @@ results = {
   "final_design_parameters": design_parameters.tolist(),
   "best_initial_translation": best_design_parameters.tolist(),
   "final_initial_translation": design_parameters.tolist(),
-  "gradient_check": gradient_check,
   "history": optimization_history,
   "total_seconds": time.time() - optimization_start,
 }
@@ -1038,11 +792,7 @@ results_path = os.path.join(output_directory, "results.json")
 with open(results_path, "w", encoding="utf-8") as file:
   json.dump(results, file, indent=2)
 
-print(
-  f"Inverse simulation finished in {results['total_seconds']:.2f}s: "
-  f"loss={initial_loss:.8e}->{trajectory['loss']:.8e}, "
-  "target=initial-position."
-)
+print(f"Inverse simulation finished in {results['total_seconds']:.2f}s: " f"loss={initial_loss:.8e}->{trajectory['loss']:.8e}, " "target=initial-position.")
 print(f"Saved optimization results: {results_path}")
 if not args.no_gui:
   plotter.close()
