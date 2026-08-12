@@ -84,3 +84,5 @@ examples/swing/*
 examples/pendulum/*
 examples/affine_hand_collision/*
 examples/pendulum_midpoint
+
+mas/*
