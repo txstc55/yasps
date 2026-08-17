@@ -224,9 +224,9 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
   #if {int(not self.__gradient_only)} // did we compute the hessian
-      atomicAdd(&gradient[segment_placement + j], hg_mat[gradient_offset + {self.__merged_hessian_jacobian_nonzeros} + j]);
+      atomic_add_grouped(&gradient[segment_placement + j], hg_mat[gradient_offset + {self.__merged_hessian_jacobian_nonzeros} + j]);
   #else
-      atomicAdd(&gradient[segment_placement + j], hg_mat[gradient_offset + j]);
+      atomic_add_grouped(&gradient[segment_placement + j], hg_mat[gradient_offset + j]);
   #endif
     }}
     gradient_offset += segment_size;
@@ -297,14 +297,14 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
         // correct placement, no transpose
         for (unsigned short int k = 0; k < row_size; k++){{
           for (unsigned short int l = 0; l < col_size; l++){{
-            atomicAdd(&hessian_blocks[placement + k * col_size + l], multiplied_block[(row_offset + k) * {multiplied_block.cols} + col_offset + l]);
+            atomic_add_grouped(&hessian_blocks[placement + k * col_size + l], multiplied_block[(row_offset + k) * {multiplied_block.cols} + col_offset + l]);
           }}
         }}
       }}else{{
         // we need to do transpose
         for (unsigned short int k = 0; k < col_size; k++){{
           for (unsigned short int l = 0; l < row_size; l++){{
-            atomicAdd(&hessian_blocks[placement + k * row_size + l], multiplied_block[(row_offset + l) * {multiplied_block.cols} + col_offset + k]);
+            atomic_add_grouped(&hessian_blocks[placement + k * row_size + l], multiplied_block[(row_offset + l) * {multiplied_block.cols} + col_offset + k]);
           }}
         }}
       }}
@@ -313,7 +313,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
         // so we also add the transpose
         for (unsigned short int k = 0; k < col_size; k++){{
           for (unsigned short int l = 0; l < row_size; l++){{
-            atomicAdd(&hessian_blocks[placement + k * row_size + l], multiplied_block[(row_offset + l) * {multiplied_block.cols} + col_offset + k]);
+            atomic_add_grouped(&hessian_blocks[placement + k * row_size + l], multiplied_block[(row_offset + l) * {multiplied_block.cols} + col_offset + k]);
           }}
         }}
       }}
@@ -336,7 +336,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
         // now we place the diagonal block
         for (unsigned short int k = 0; k < row_size; k++){{
           for (unsigned short int l = 0; l < row_size; l++){{
-            atomicAdd(
+            atomic_add_grouped(
               &diagonal_blocks[diagonal_block_placement + k * row_size + l],
               multiplied_block[(row_offset + k) * {multiplied_block.cols} + col_offset + l]
             );
@@ -346,7 +346,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
           // we are on the diagonal, but they are permuted differently, which means in the uncompressed hessian, they are on the off diagonal, so we also need to place the transpose
           for (unsigned short int k = 0; k < row_size; k++){{
             for (unsigned short int l = 0; l < row_size; l++){{
-              atomicAdd(
+              atomic_add_grouped(
                 &diagonal_blocks[diagonal_block_placement + k * row_size + l],
                 multiplied_block[(row_offset + l) * {multiplied_block.cols} + col_offset + k]
               );

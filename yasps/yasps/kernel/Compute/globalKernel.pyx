@@ -51,6 +51,50 @@ class globalKernel:
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 
+// Fast FP64 LDLT test for a local Hessian that is already positive
+// semidefinite. It avoids the eigendecomposition without modifying A.
+template <unsigned int N>
+__device__ __forceinline__ bool is_positive_semidefinite(const double *A) {
+  double lower[N * N] = {};
+  double diagonal[N] = {};
+  double scale = 1.0;
+  for (unsigned int i = 0; i < N; ++i) {
+    const double magnitude = A[i * N + i] < 0.0 ? -A[i * N + i] : A[i * N + i];
+    scale = scale > magnitude ? scale : magnitude;
+    lower[i * N + i] = 1.0;
+  }
+  const double tolerance = scale * 1.0e-10;
+  for (unsigned int column = 0; column < N; ++column) {
+    double pivot = A[column * N + column];
+    for (unsigned int k = 0; k < column; ++k) {
+      const double value = lower[column * N + k];
+      pivot -= value * value * diagonal[k];
+    }
+    if (pivot < -tolerance) return false;
+    const double pivot_magnitude = pivot < 0.0 ? -pivot : pivot;
+    if (pivot_magnitude <= tolerance) {
+      diagonal[column] = 0.0;
+      for (unsigned int row = column + 1; row < N; ++row) {
+        double residual = A[row * N + column];
+        for (unsigned int k = 0; k < column; ++k) {
+          residual -= lower[row * N + k] * lower[column * N + k] * diagonal[k];
+        }
+        const double residual_magnitude = residual < 0.0 ? -residual : residual;
+        if (residual_magnitude > tolerance) return false;
+      }
+      continue;
+    }
+    diagonal[column] = pivot;
+    for (unsigned int row = column + 1; row < N; ++row) {
+      double value = A[row * N + column];
+      for (unsigned int k = 0; k < column; ++k) {
+        value -= lower[row * N + k] * lower[column * N + k] * diagonal[k];
+      }
+      lower[row * N + column] = value / pivot;
+    }
+  }
+  return true;
+}
 // For small matrix < 4
 template <unsigned int N>
 __device__ void spd_projection_small(const double *A, double* output, int choice) {
@@ -62,6 +106,10 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
   }
   if (N == 1){
     output[0] = choice == 1 ? abs(A[0]) : (A[0] < 1e-6 ? 1e-6: A[0]);
+    return;
+  }
+  if (is_positive_semidefinite<N>(A)) {
+    for (unsigned int i = 0; i < N * N; ++i) output[i] = A[i];
     return;
   }
 
@@ -106,6 +154,10 @@ __device__ void spd_projection(const double *A, double* output, int choice) {
     }
     return;
   }
+  if (is_positive_semidefinite<N>(A)) {
+    for (unsigned int i = 0; i < N * N; ++i) output[i] = A[i];
+    return;
+  }
 
   // Map A to an N x N Eigen matrix without copying
   Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
@@ -132,6 +184,7 @@ __device__ void spd_projection_inplace(double *A, int choice) {
   if (choice == 0){
     return;
   }
+  if (is_positive_semidefinite<N>(A)) return;
   // Map A to an N x N Eigen matrix without copying
   Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);

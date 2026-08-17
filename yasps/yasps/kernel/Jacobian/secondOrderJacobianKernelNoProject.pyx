@@ -91,7 +91,7 @@ __global__ void compute_second_order_jacobian_no_project_global(
             lookups[coordinate_start + valid_block_count];
           for (unsigned int r = 0; r < row_size; ++r) {{
             for (unsigned int c = 0; c < column_size; ++c) {{
-              atomicAdd(
+              atomic_add_grouped(
                 &jacobian_blocks[placement + r * column_size + c],
                 local_jacobian(row_offset + r, column_offset + c)
               );

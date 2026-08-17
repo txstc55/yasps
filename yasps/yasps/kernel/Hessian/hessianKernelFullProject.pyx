@@ -82,9 +82,9 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
   #if {int(not gradient_only)} // did we compute the hessian
-      atomicAdd(&gradient[segment_placement + j], hg_mat({self.__att.rows - 1}, gradient_offset + j));
+      atomic_add_grouped(&gradient[segment_placement + j], hg_mat({self.__att.rows - 1}, gradient_offset + j));
   #else
-      atomicAdd(&gradient[segment_placement + j], hg_mat(0, gradient_offset + j));
+      atomic_add_grouped(&gradient[segment_placement + j], hg_mat(0, gradient_offset + j));
   #endif
     }}
     gradient_offset += segment_size;
@@ -175,14 +175,14 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             for (unsigned int k = 0; k < segment_size_i; k++){{
               for (unsigned int l = 0; l < segment_size_j; l++){{
                 // this is a block in the upper triangle
-                atomicAdd(&hessian_blocks[placement_index + k * segment_size_j + l], compressed_hessian(permutation_i + k, permutation_j + l));
+                atomic_add_grouped(&hessian_blocks[placement_index + k * segment_size_j + l], compressed_hessian(permutation_i + k, permutation_j + l));
               }}
             }}
           }}else{{
             for (unsigned int k = 0; k < segment_size_j; k++){{
               for (unsigned int l = 0; l < segment_size_i; l++){{
                 // put the transpose block in
-                atomicAdd(&hessian_blocks[placement_index + k * segment_size_i + l], compressed_hessian(permutation_i + l, permutation_j + k));
+                atomic_add_grouped(&hessian_blocks[placement_index + k * segment_size_i + l], compressed_hessian(permutation_i + l, permutation_j + k));
               }}
             }}
           }}
@@ -191,7 +191,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             // get the placement
             unsigned int segment_index = segment_indices[instance * {max_num_indices} + i] - 2;
             for (unsigned int k = 0; k < segment_size_i; k++){{
-              atomicAdd(&diagonal[segment_index + k], compressed_hessian(permutation_i + k, permutation_j + k));
+              atomic_add_grouped(&diagonal[segment_index + k], compressed_hessian(permutation_i + k, permutation_j + k));
             }}
             // now we do the block diagonal placement
             // we first need to determine where to put it in the global diagonal blocks array
@@ -210,7 +210,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             // now we put the diagonal block
             for (unsigned int k = 0; k < segment_size_i; k++){{
               for (unsigned int l = 0; l < segment_size_i; l++){{
-              atomicAdd(&diagonal_blocks[diagonal_block_placement + k * segment_size_i + l], compressed_hessian(permutation_i + k, permutation_j + l));
+              atomic_add_grouped(&diagonal_blocks[diagonal_block_placement + k * segment_size_i + l], compressed_hessian(permutation_i + k, permutation_j + l));
               }}
             }}
           }}
