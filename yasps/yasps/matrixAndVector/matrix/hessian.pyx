@@ -889,8 +889,15 @@ class hessian(matrix):
       assert global_jacobian is not None
       assert global_inner_hessian is not None
       for i in range(global_inner_hessian.rows):
-        for j in range(global_inner_hessian.cols):
-          merged_hessian_and_gradient.append(global_inner_hessian[i, j])
+        for j in range(i, global_inner_hessian.cols):
+          # The separate path reconstructs the symmetric local Hessian from
+          # only its structurally nonzero upper-triangular entries.
+          if global_inner_hessian[i, j].isZero == 0:
+            merged_hessian_and_gradient.append(global_inner_hessian[i, j])
+          elif i != j and global_inner_hessian[j, i].isZero == 0:
+            # Symbolic construction should be symmetric, but retain the
+            # reflected entry if simplification only marked one side nonzero.
+            merged_hessian_and_gradient.append(global_inner_hessian[j, i])
       for item in global_jacobian_block_nonzero_attributes:
         merged_hessian_and_gradient.append(item)
       for i in range(global_gradient.size):
@@ -901,12 +908,12 @@ class hessian(matrix):
     else:
       assert global_hessian is not None
       for i in range(global_hessian.rows):
-        for j in range(global_hessian.cols):
+        for j in range(i, global_hessian.cols):
           merged_hessian_and_gradient.append(global_hessian[i, j])
       for i in range(global_gradient.size):
         merged_hessian_and_gradient.append(global_gradient[i])
-      merged_hessian_rows = len(merged_hessian_and_gradient) // global_gradient.size
-      merged_hessian_cols = global_gradient.size
+      merged_hessian_rows = 1
+      merged_hessian_cols = len(merged_hessian_and_gradient)
     merged_attribute = attribute.to_array(merged_hessian_and_gradient, rows=merged_hessian_rows, cols=merged_hessian_cols)
     # The symbolic Hessian name contains its full generation configuration.
     # Carry that identity into the merged compute attribute as well so two
@@ -994,11 +1001,29 @@ class hessian(matrix):
       jacobian_rows = 0
       jacobian_cols = 0
       inner_hessian_rows = 0
+      local_hessian_nonzero_upper_positions = []
       if index < len(global_jacobians) and global_jacobians[index] is not None:
         jacobian_rows = global_jacobians[index].rows
         jacobian_cols = global_jacobians[index].cols
-      if index < len(global_inner_hessians) and global_inner_hessians[index] is not None:
+      if (
+        separate_hessian_jacobian[index]
+        and not project_entire_hessian[index]
+        and index < len(global_inner_hessians)
+        and global_inner_hessians[index] is not None
+      ):
         inner_hessian_rows = global_inner_hessians[index].rows
+        for row in range(global_inner_hessians[index].rows):
+          for col in range(row, global_inner_hessians[index].cols):
+            if (
+              global_inner_hessians[index][row, col].isZero == 0
+              or (
+                row != col
+                and global_inner_hessians[index][col, row].isZero == 0
+              )
+            ):
+              local_hessian_nonzero_upper_positions.extend([row, col])
+      elif index < len(global_hessians) and global_hessians[index] is not None:
+        inner_hessian_rows = global_hessians[index].rows
       kernels[index] = hessianAndGradientKernel(
         merged_attributes[index],
         project_entire_hessian[index],
@@ -1008,6 +1033,7 @@ class hessian(matrix):
         jacobian_rows,
         jacobian_cols,
         inner_hessian_rows,
+        local_hessian_nonzero_upper_positions,
         dynamic_term = dynamic_term
       )
       kernels[index].generateKernel(
