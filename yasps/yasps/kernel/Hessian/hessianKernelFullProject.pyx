@@ -4,7 +4,7 @@ from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 class hessianKernelFullProject:
-  def __init__(self, att: attribute, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int):
+  def __init__(self, att: attribute, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int, hessian_row_size: int):
     self.__att = att
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
@@ -44,13 +44,9 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   }}
   index = start + index; // add to begin
   const unsigned int instance = groupedIndicesInner[index]; // this will tell us which instance of the hessian we are computing
-// The generated device function writes every entry, so default construction
-// avoids a redundant local-memory zero pass before that complete overwrite.
-#if {int(not gradient_only)} // are we computing both the hessian and gradient
-  Eigen::Matrix<double, {self.__att.rows}, {self.__att.cols}{", Eigen::RowMajor" if self.__att.cols > 1 else ""}> hg_mat;
-#else // we are only computing the gradient
-  Eigen::Matrix<double, 1, {self.__att.cols}> hg_mat;
-#endif
+  constexpr unsigned int HESSIAN_ROWS = {hessian_row_size};
+  constexpr unsigned int PACKED_HESSIAN_SIZE = HESSIAN_ROWS * (HESSIAN_ROWS + 1) / 2;
+  double hg_mat[{self.__att.size}]; // [packed upper Hessian, gradient]
 
 
   // now we call the device function
@@ -60,7 +56,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
     {"".join([f"{x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
     instance,
-    hg_mat.data()
+    hg_mat
   );
   // ok we now first put the gradient into the correct place
   unsigned int gradient_offset = 0;
@@ -82,9 +78,9 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
   #if {int(not gradient_only)} // did we compute the hessian
-      atomic_add_grouped(&gradient[segment_placement + j], hg_mat({self.__att.rows - 1}, gradient_offset + j));
-  #else
-      atomic_add_grouped(&gradient[segment_placement + j], hg_mat(0, gradient_offset + j));
+      atomic_add_grouped(&gradient[segment_placement + j], hg_mat[PACKED_HESSIAN_SIZE + gradient_offset + j]);
+#else
+      atomic_add_grouped(&gradient[segment_placement + j], hg_mat[gradient_offset + j]);
   #endif
     }}
     gradient_offset += segment_size;
@@ -126,7 +122,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
       for (unsigned int k = 0; k < segment_size_i; k++){{
         for (unsigned int l = 0; l < segment_size_j; l++){{
           // we put the block into the compressed hessian
-          compressed_hessian(permutation_i + k, permutation_j + l) += hg_mat(row_offset + k, col_offset + l);
+          compressed_hessian(permutation_i + k, permutation_j + l) += symmetric_upper_get<HESSIAN_ROWS>(hg_mat, row_offset + k, col_offset + l);
         }}
       }}
       col_offset += segment_size_j;

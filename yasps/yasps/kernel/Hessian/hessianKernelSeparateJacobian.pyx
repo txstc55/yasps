@@ -18,6 +18,7 @@ class hessianKernelSeparateJacobian:
     self.__gradient_size: str = ""
     self.__att = att
     self.__merged_hessian_jacobian_nonzeros = 0
+    self.__local_hessian_nonzero_count = 0
     self.__global_jacobian_children_sizes: List[int] = []
     self.__global_jacobian_children_spans: List[int] = []
     self.__gradient_only = gradient_only
@@ -27,13 +28,18 @@ class hessianKernelSeparateJacobian:
     global_jacobian_block_nonzero_attributes: List[attribute],
     global_jacobian_block_nonzero_local_positions: List[int],
     global_jacobian_children_sizes: List[int],
-    global_jacobian_children_spans: List[int]
+    global_jacobian_children_spans: List[int],
+    local_hessian_nonzero_upper_positions: List[int]
   ):
     self.__global_jacobian_children_sizes = list(global_jacobian_children_sizes)
     self.__global_jacobian_children_spans = list(global_jacobian_children_spans)
     # if we need to separate the jacobian and hessian, the first thing we need to do is reconstruct the jacobian and hessian symbolically
     # which we will use to figure out how to compute the final hessian block by performing J_i^T H_ij J_j for each block
-    self.__merged_hessian_jacobian_nonzeros = sum(global_jacobian_children_sizes) * sum(global_jacobian_children_sizes) + len(global_jacobian_block_nonzero_attributes)
+    if len(local_hessian_nonzero_upper_positions) % 2 != 0:
+      raise ValueError("hessianKernelSeparateJacobian: local Hessian positions must contain row/column pairs.")
+    local_hessian_nonzero_count = len(local_hessian_nonzero_upper_positions) // 2
+    self.__local_hessian_nonzero_count = local_hessian_nonzero_count
+    self.__merged_hessian_jacobian_nonzeros = local_hessian_nonzero_count + len(global_jacobian_block_nonzero_attributes)
     if self.__gradient_only:
       return
     base_scene_name = f"{self.__att.fullName}_tmp_variables_scene"
@@ -55,8 +61,28 @@ class hessianKernelSeparateJacobian:
     jacobian_cols = sum(children_spans)
     # we don't actually care about the actual attributes
     # we just want to make replacement attributes so we can do the multiplications
-    local_hessian_replaced_att = tmp_scene.addAttribute("local_hessian", rows = local_hessian_rows, cols = local_hessian_rows)
+    local_hessian_replaced_att = tmp_scene.addAttribute("local_hessian_nonzeros", rows = 1, cols = local_hessian_nonzero_count)
     global_jacobian_replaced_att = tmp_scene.addAttribute("global_jacobian_nonzeros", rows = 1, cols = len(global_jacobian_block_nonzero_attributes))
+
+    # Reconstruct an unnamed symmetric symbolic matrix. Keeping this ARRAY
+    # unnamed lets each generated multiplication helper consume the packed
+    # values without materializing another standalone attribute kernel.
+    local_hessian_array = [0.0 for _ in range(local_hessian_rows * local_hessian_rows)]
+    for packed_index in range(local_hessian_nonzero_count):
+      row = local_hessian_nonzero_upper_positions[packed_index * 2]
+      col = local_hessian_nonzero_upper_positions[packed_index * 2 + 1]
+      if row > col or col >= local_hessian_rows:
+        raise ValueError(
+          f"hessianKernelSeparateJacobian: invalid upper-triangular local Hessian position ({row}, {col})."
+        )
+      local_hessian_array[row * local_hessian_rows + col] = local_hessian_replaced_att[packed_index]
+      if row != col:
+        local_hessian_array[col * local_hessian_rows + row] = local_hessian_replaced_att[packed_index]
+    local_hessian = attribute.to_array(
+      local_hessian_array,
+      rows = local_hessian_rows,
+      cols = local_hessian_rows
+    )
 
 
     # ok we have created the local hessian, we now need to create the global jacobians
@@ -83,7 +109,7 @@ class hessianKernelSeparateJacobian:
         J_j_block_cols = children_spans[j]
         jj_block = self.__getSubBlock(global_jacobian, row_offset = sum(children_sizes[:j]), col_offset = sum(children_spans[:j]), block_rows = J_j_block_rows, block_cols = J_j_block_cols)
 
-        hij_block = self.__getSubBlock(local_hessian_replaced_att, row_offset = sum(children_sizes[:i]), col_offset = sum(children_sizes[:j]), block_rows = J_i_block_rows, block_cols = J_j_block_rows)
+        hij_block = self.__getSubBlock(local_hessian, row_offset = sum(children_sizes[:i]), col_offset = sum(children_sizes[:j]), block_rows = J_i_block_rows, block_cols = J_j_block_rows)
         multiplied_block = ji_block.mul_explicit(hij_block).mul_explicit(jj_block)
         multiplied_block = tmp_scene.addAttribute(f"multiplied_block_{i}_{j}", computed_attribute = multiplied_block)
         self.__stored_multiplied_blocks.append(multiplied_block)
@@ -192,7 +218,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   index = start + index; // add to begin
   const unsigned int instance = groupedIndicesInner[index]; // this will tell us which instance of the hessian we are computing
 // determine if we are computing both the hessian and gradient
-  double hg_mat[{self.__att.cols}]; // packed [local Hessian, sparse Jacobian nonzeros, gradient]
+  double hg_mat[{self.__att.size}]; // packed [upper local Hessian nonzeros, sparse Jacobian nonzeros, gradient]
 
 
   // now we call the device function
@@ -262,7 +288,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
       for j in range(i, len(self.__global_jacobian_children_sizes)):
         multiplied_block = self.__stored_multiplied_blocks[block_count]
         self.__kernelString += f'''
-  {multiplied_block.fullName}_device_function(hg_mat, hg_mat + {hessian_rows * hessian_rows}, multiplied_block);
+  {multiplied_block.fullName}_device_function(hg_mat, hg_mat + {self.__local_hessian_nonzero_count}, multiplied_block);
   row_offset = 0;
   col_offset = 0;
   // The generated symbolic path materializes child block ({i}, {j}) before scattering it.

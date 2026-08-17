@@ -133,6 +133,11 @@ class differentiator:
       result += f'_filled_for_{self.__source.fullName}'
     return result
 
+  def __turnOffGenerateCode(self, derivative_attribute: attribute) -> attribute:
+    """Inline a derivative attribute into its consuming kernel."""
+    derivative_attribute.generate_code = False
+    return derivative_attribute
+
   def __combinedGradientName(
     self,
     children: List[attribute],
@@ -655,7 +660,9 @@ class differentiator:
         rows=parent.size,
         cols=local_gradient_cols
       )
-      parent.correspondance.addAttribute(local_gradient_name, computed_attribute=local_gradient)
+      self.__turnOffGenerateCode(
+        parent.correspondance.addAttribute(local_gradient_name, computed_attribute=local_gradient)
+      )
 
     if self.__gradient_only:
       return
@@ -679,10 +686,14 @@ class differentiator:
           hessian_data_attribute = parent.correspondance.addAttribute(local_hessian_name, rows=local_hessian.rows, cols=local_hessian.cols)
           if hessian_data_attribute.fullName not in self.__intermediate_compute_pairs:
             new_name = hessian_data_attribute.name + "_pre_evaluated"
-            parent.correspondance.addAttribute(new_name, computed_attribute=local_hessian)
+            self.__turnOffGenerateCode(
+              parent.correspondance.addAttribute(new_name, computed_attribute=local_hessian)
+            )
             self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (local_hessian, hessian_data_attribute)
       else:
-        parent.correspondance.addAttribute(local_hessian_name, computed_attribute=local_hessian)
+        self.__turnOffGenerateCode(
+          parent.correspondance.addAttribute(local_hessian_name, computed_attribute=local_hessian)
+        )
 
   def __generateGlobalJacobianForEnergy(self, current: attribute, wrt: List[attribute]):
     # first access the local gradient d energy / d children, where the children are the local children of the energy variable
@@ -721,10 +732,14 @@ class differentiator:
         row_offset += item.rows
       next_jacobian = attribute.to_array(next_jacobian_children, rows=next_jacobian_rows, cols=next_jacobian_cols)
       if children_global_jacobian_name not in current.correspondance.attributes:
-        current.correspondance.addAttribute(children_global_jacobian_name, computed_attribute=next_jacobian)
+        self.__turnOffGenerateCode(
+          current.correspondance.addAttribute(children_global_jacobian_name, computed_attribute=next_jacobian)
+        )
       self.__global_jacobian = next_jacobian
     full_gradient = current_gradient.mul_explicit(next_jacobian)
-    current.correspondance.addAttribute(gradient_attribute_name, computed_attribute=full_gradient)
+    self.__turnOffGenerateCode(
+      current.correspondance.addAttribute(gradient_attribute_name, computed_attribute=full_gradient)
+    )
     # addAttribute may copy a broadcast expression onto current's primitive.
     # Return that registered attribute so its instance stream matches current,
     # even when every derivative entry depends only on a scene constant.
@@ -850,7 +865,9 @@ class differentiator:
 
 
     final_hessian = children_global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(children_global_jacobian)).add_explicit(second_part_hessian)
-    current.correspondance.addAttribute(global_hessian_name, computed_attribute=final_hessian)
+    self.__turnOffGenerateCode(
+      current.correspondance.addAttribute(global_hessian_name, computed_attribute=final_hessian)
+    )
     return final_hessian
 
   def __generateNeighborJacobianForJoin(self, parent: attribute, children: List[attribute], autodiff_engine: autodiff) -> None:
@@ -873,7 +890,9 @@ class differentiator:
             merged_jacobian_list[i * jacobian_num_cols + col_offset + j] = child[i, j]
         col_offset += child.cols
       merged_jacobian = attribute.to_array(merged_jacobian_list, rows=jacobian_num_rows, cols=jacobian_num_cols)
-      joined_child.correspondance.addAttribute(child_jacobian_name, computed_attribute=merged_jacobian)
+      self.__turnOffGenerateCode(
+        joined_child.correspondance.addAttribute(child_jacobian_name, computed_attribute=merged_jacobian)
+      )
 
     local_hessian_name = self.__hessianName(joined_child, children)
     if local_hessian_name not in joined_child.correspondance.attributes:
@@ -897,10 +916,14 @@ class differentiator:
           hessian_data_attribute = joined_child.correspondance.addAttribute(local_hessian_name, rows=merged_hessian.rows, cols=merged_hessian.cols)
           if hessian_data_attribute.fullName not in self.__intermediate_compute_pairs:
             new_name = hessian_data_attribute.name + "_pre_evaluated"
-            joined_child.correspondance.addAttribute(new_name, computed_attribute=merged_hessian)
+            self.__turnOffGenerateCode(
+              joined_child.correspondance.addAttribute(new_name, computed_attribute=merged_hessian)
+            )
             self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (merged_hessian, hessian_data_attribute)
       else:
-        joined_child.correspondance.addAttribute(local_hessian_name, computed_attribute=merged_hessian)
+        self.__turnOffGenerateCode(
+          joined_child.correspondance.addAttribute(local_hessian_name, computed_attribute=merged_hessian)
+        )
 
   def __generateGlobalJacobianForJoin(self, current: attribute, wrt: List[attribute]):
     gradient_attribute_name = self.__gradientName(current, wrt)
@@ -946,13 +969,17 @@ class differentiator:
           row_offset += item.rows
         children_global_jacobian = attribute.to_array(children_global_jacobian_items, rows=children_global_jacobian_rows, cols=children_global_jacobian_cols)
         if children_global_jacobian_name not in joined_child.correspondance.attributes:
-          joined_child.correspondance.addAttribute(children_global_jacobian_name, computed_attribute=children_global_jacobian)
+          self.__turnOffGenerateCode(
+            joined_child.correspondance.addAttribute(children_global_jacobian_name, computed_attribute=children_global_jacobian)
+          )
 
       child_global_jacobian = joined_child_local_jacobian.mul_explicit(children_global_jacobian)
       if joined_child_global_jacobian_name in joined_child.correspondance.attributes:
         joined_child_global_jacobian = joined_child.correspondance[joined_child_global_jacobian_name]
       else:
-        joined_child_global_jacobian = joined_child.correspondance.addAttribute(joined_child_global_jacobian_name, computed_attribute=child_global_jacobian)
+        joined_child_global_jacobian = self.__turnOffGenerateCode(
+          joined_child.correspondance.addAttribute(joined_child_global_jacobian_name, computed_attribute=child_global_jacobian)
+        )
 
     if self.__save_intermediate:
       if joined_child_global_jacobian.fullName not in self.__intermediate_compute_pairs:
@@ -964,7 +991,9 @@ class differentiator:
       else:
         joined_child_global_jacobian = self.__intermediate_compute_pairs[joined_child_global_jacobian.fullName][1]
 
-    res = current.correspondance.addAttribute(gradient_attribute_name + "_unresized", through=current.through, source=joined_child_global_jacobian)
+    res = self.__turnOffGenerateCode(
+      current.correspondance.addAttribute(gradient_attribute_name + "_unresized", through=current.through, source=joined_child_global_jacobian)
+    )
     assert (joined_child_global_jacobian.rows * current.through.dimension) == current.size, f"differentiator.__generateGlobalJacobianForJoin: joined child global jacobian rows {joined_child_global_jacobian.rows} * current.through.dimension {current.through.dimension} is not equal to current size {current.size}"
     actual_global_jacobian_rows = current.size
     actual_global_jacobian_cols = joined_child_global_jacobian.cols * current.through.dimension
@@ -975,7 +1004,9 @@ class differentiator:
           actual_global_jacobian_items[(index * joined_child_global_jacobian.rows + i) * actual_global_jacobian_cols + (index * joined_child_global_jacobian.cols) + j] = res[index, i * joined_child_global_jacobian.cols + j]
 
     actual_global_jacobian = attribute.to_array(actual_global_jacobian_items, rows=actual_global_jacobian_rows, cols=actual_global_jacobian_cols)
-    current.correspondance.addAttribute(gradient_attribute_name, computed_attribute=actual_global_jacobian)
+    self.__turnOffGenerateCode(
+      current.correspondance.addAttribute(gradient_attribute_name, computed_attribute=actual_global_jacobian)
+    )
     self.__global_jacobian = actual_global_jacobian
     return actual_global_jacobian
 
@@ -1048,7 +1079,9 @@ class differentiator:
           joined_child_global_hessian_items.append(final_hessian[i])
 
       joined_child_global_hessian = attribute.to_array(joined_child_global_hessian_items, rows=num_hessians * next_children_global_jacobian.cols, cols=next_children_global_jacobian.cols)
-      joined_child.correspondance.addAttribute(joined_child_global_hessian_name, computed_attribute=joined_child_global_hessian)
+      self.__turnOffGenerateCode(
+        joined_child.correspondance.addAttribute(joined_child_global_hessian_name, computed_attribute=joined_child_global_hessian)
+      )
 
     if self.__save_intermediate:
       if joined_child_global_hessian.fullName not in self.__intermediate_compute_pairs:
@@ -1059,7 +1092,9 @@ class differentiator:
           joined_child_global_hessian = evaluated_result
       else:
         joined_child_global_hessian = self.__intermediate_compute_pairs[joined_child_global_hessian.fullName][1]
-    current.correspondance.addAttribute(global_hessian_name, through=current.through, source=joined_child_global_hessian)
+    self.__turnOffGenerateCode(
+      current.correspondance.addAttribute(global_hessian_name, through=current.through, source=joined_child_global_hessian)
+    )
     return current.correspondance[global_hessian_name]
 
   def __generateNeighborJacobianForUnion(self, parent: attribute, children: List[attribute], autodiff_engine: autodiff):
@@ -1090,7 +1125,9 @@ class differentiator:
             merged_jacobian_list[i * jacobian_num_cols + col_offset + j] = child[i, j]
         col_offset += child.cols
       merged_jacobian = attribute.to_array(merged_jacobian_list, rows=jacobian_num_rows, cols=jacobian_num_cols)
-      unioned_child.correspondance.addAttribute(child_jacobian_name, computed_attribute=merged_jacobian)
+      self.__turnOffGenerateCode(
+        unioned_child.correspondance.addAttribute(child_jacobian_name, computed_attribute=merged_jacobian)
+      )
 
     for unioned_child in unioned_children:
       unioned_child_used_children: List[attribute] = []
@@ -1127,11 +1164,15 @@ class differentiator:
           hessian_data_attribute = unioned_child.correspondance.addAttribute(child_hessian_name, rows=merged_hessian.rows, cols=merged_hessian.cols)
           if hessian_data_attribute.fullName not in self.__intermediate_compute_pairs:
             new_name = hessian_data_attribute.name + "_pre_evaluated"
-            unioned_child.correspondance.addAttribute(new_name, computed_attribute=merged_hessian)
+            self.__turnOffGenerateCode(
+              unioned_child.correspondance.addAttribute(new_name, computed_attribute=merged_hessian)
+            )
             self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (merged_hessian, hessian_data_attribute)
       else:
         if child_hessian_name not in unioned_child.correspondance.attributes:
-          unioned_child.correspondance.addAttribute(child_hessian_name, computed_attribute=merged_hessian)
+          self.__turnOffGenerateCode(
+            unioned_child.correspondance.addAttribute(child_hessian_name, computed_attribute=merged_hessian)
+          )
 
   def __generateGlobalJacobianForUnion(self, current: attribute, wrt: List[attribute]):
     assert self.__source is not None
@@ -1189,13 +1230,17 @@ class differentiator:
             row_offset += item.rows
           children_global_jacobian = attribute.to_array(children_global_jacobian_items, rows=children_global_jacobian_rows, cols=children_global_jacobian_cols)
           if used_children_global_jacobian_name not in unioned_child.correspondance.attributes:
-            unioned_child.correspondance.addAttribute(used_children_global_jacobian_name, computed_attribute=children_global_jacobian)
+            self.__turnOffGenerateCode(
+              unioned_child.correspondance.addAttribute(used_children_global_jacobian_name, computed_attribute=children_global_jacobian)
+            )
 
         child_jacobian_name = f'd_{unioned_child.fullName}_d_{"__".join([x.fullName for x in used_children])}'
         child_local_jacobian = unioned_child.correspondance[child_jacobian_name]
         unioned_child_global_jacobian = child_local_jacobian.mul_explicit(children_global_jacobian)
         if unioned_child_global_jacobian_name not in unioned_child.correspondance.attributes:
-          unioned_child.correspondance.addAttribute(unioned_child_global_jacobian_name, computed_attribute=unioned_child_global_jacobian)
+          self.__turnOffGenerateCode(
+            unioned_child.correspondance.addAttribute(unioned_child_global_jacobian_name, computed_attribute=unioned_child_global_jacobian)
+          )
         unioned_children_global_jacobians.append(unioned_child.correspondance[unioned_child_global_jacobian_name])
 
     if self.__save_intermediate:
@@ -1222,9 +1267,13 @@ class differentiator:
           expanded_jacobian_list[i * max_cols + j] = jacobian[i, j]
       expanded_jacobian = attribute.to_array(expanded_jacobian_list, rows=max_rows, cols=max_cols)
       if gradient_attribute_name not in current.children[index].correspondance.attributes:
-        current.children[index].correspondance.addAttribute(gradient_attribute_name, computed_attribute=expanded_jacobian)
+        self.__turnOffGenerateCode(
+          current.children[index].correspondance.addAttribute(gradient_attribute_name, computed_attribute=expanded_jacobian)
+        )
 
-    res = current.correspondance.addAttribute(gradient_attribute_name)
+    res = self.__turnOffGenerateCode(
+      current.correspondance.addAttribute(gradient_attribute_name)
+    )
     self.__global_jacobian = res
     return res
 
@@ -1311,7 +1360,9 @@ class differentiator:
             unioned_child_global_hessian_items.append(final_hessian[i])
         unioned_child_global_hessian = attribute.to_array(unioned_child_global_hessian_items, rows=num_hessians * next_children_global_jacobian.cols, cols=next_children_global_jacobian.cols)
         if unioned_child_global_hessian_name not in unioned_child.correspondance.attributes:
-          unioned_child.correspondance.addAttribute(unioned_child_global_hessian_name, computed_attribute=unioned_child_global_hessian)
+          self.__turnOffGenerateCode(
+            unioned_child.correspondance.addAttribute(unioned_child_global_hessian_name, computed_attribute=unioned_child_global_hessian)
+          )
         unioned_children_global_hessians.append(unioned_child.correspondance[unioned_child_global_hessian_name])
 
     if self.__save_intermediate:
@@ -1347,13 +1398,19 @@ class differentiator:
           if hessian_data_attribute.fullName not in self.__intermediate_compute_pairs:
             new_name = hessian_data_attribute.name + "_pre_evaluated"
             if new_name not in unioned_child.correspondance.attributes:
-              unioned_child.correspondance.addAttribute(new_name, computed_attribute=expanded_hessian)
+              self.__turnOffGenerateCode(
+                unioned_child.correspondance.addAttribute(new_name, computed_attribute=expanded_hessian)
+              )
               self.__intermediate_compute_pairs[hessian_data_attribute.fullName] = (expanded_hessian, hessian_data_attribute)
       else:
         if global_hessian_name not in unioned_child.correspondance.attributes:
-          unioned_child.correspondance.addAttribute(global_hessian_name, computed_attribute=expanded_hessian)
+          self.__turnOffGenerateCode(
+            unioned_child.correspondance.addAttribute(global_hessian_name, computed_attribute=expanded_hessian)
+          )
 
-    res = current.correspondance.addAttribute(global_hessian_name)
+    res = self.__turnOffGenerateCode(
+      current.correspondance.addAttribute(global_hessian_name)
+    )
     return res
 
   def __generateHessianThroughPathDict(self, wrt: List[attribute], autodiff_engine: autodiff) -> None:
