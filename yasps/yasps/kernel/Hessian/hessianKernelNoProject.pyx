@@ -82,9 +82,9 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
   #if {int(not gradient_only)} // did we compute the hessian
-      atomicAdd(&gradient[segment_placement + j], hg_mat({self.__att.rows - 1}, gradient_offset + j));
+      atomic_add_grouped(&gradient[segment_placement + j], hg_mat({self.__att.rows - 1}, gradient_offset + j));
   #else
-      atomicAdd(&gradient[segment_placement + j], hg_mat(0, gradient_offset + j));
+      atomic_add_grouped(&gradient[segment_placement + j], hg_mat(0, gradient_offset + j));
   #endif
     }}
     gradient_offset += segment_size;
@@ -225,7 +225,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
               }}
             }}
 
-            atomicAdd(
+            atomic_add_grouped(
               &hessian_blocks[placement_index + k * segment_size_j + l],
               acc
             );
@@ -248,13 +248,13 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
                 acc += hg_mat(column_offset_i + l, column_offset_j + k);
               }}
             }}
-            atomicAdd(
+            atomic_add_grouped(
               &hessian_blocks[placement_index + k * segment_size_i + l],
               acc
             );
             if (i == j) {{
               const unsigned int segment_index = segment_index_i - 2;
-              atomicAdd(
+              atomic_add_grouped(
                 &diagonal_blocks[diagonal_block_placement + k * segment_size_i + l],
                 acc
               );

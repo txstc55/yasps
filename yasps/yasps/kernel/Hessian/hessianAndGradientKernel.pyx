@@ -154,11 +154,12 @@ extern "C"{{
         if True: # always regenerate the kernel because header has been replaced
           with open(cu_file, 'w') as f:
             if self.__project_entire_hessian:
-              f.write(hessianKernelFullProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt)).kernelString)
+              kernel_source = hessianKernelFullProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt)).kernelString
             elif not self.__clear_separation:
-              f.write(hessianKernelNoProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt)).kernelString)
+              kernel_source = hessianKernelNoProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt)).kernelString
             else:
-              f.write(separate_jacobian_kernel.generateKernelString(unique_gradient_size, max_num_indices, attributeName, len(wrt)))
+              kernel_source = separate_jacobian_kernel.generateKernelString(unique_gradient_size, max_num_indices, attributeName, len(wrt))
+            f.write(kernel_source)
             f.close()
           compile_cmd = [
             "nvcc", "-dc", "-Xcompiler", "-fPIC", "-std=c++17", "-arch=sm_89",
