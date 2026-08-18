@@ -82,6 +82,7 @@ parser.add_argument("--save-obj", action="store_true", help="Save only the bunny
 parser.add_argument("--video-fps", type=int, default=VIDEO_FPS, help=("MP4 frame rate used with --save-frames " f"(default: {VIDEO_FPS}, matching dt={DT_VALUE})."),)
 parser.add_argument("--no-gui", action="store_true", help="Run and render off screen without opening the interactive window.",)
 parser.add_argument("--target-loss-final-frame-only", action="store_true", help=("Apply the target-position loss only at the final converged frame; " "the motion loss remains active at every frame."),)
+parser.add_argument("--forward-only", choices=("initial", "best"), default=None, help="Run one forward trajectory without optimization, using either the initial design or the best design stored in --resume-checkpoint.")
 resume_checkpoint_help = ("Resume an interrupted Adam optimization from latest_checkpoint.npz. " "The checkpoint design is replayed once to reconstruct its converged " "state trajectory before the next backward pass.")
 parser.add_argument("--resume-checkpoint", type=str, default=None, help=resume_checkpoint_help)
 parser.add_argument("--output-directory", type=str, default=None, help="Override the inverse-simulation output directory.")
@@ -101,6 +102,8 @@ if args.mass_adam_learning_rate <= 0.0:
   raise ValueError("--mass-adam-learning-rate must be positive.")
 if args.video_fps <= 0:
   raise ValueError("--video-fps must be positive.")
+if args.forward_only == "best" and args.resume_checkpoint is None:
+  raise ValueError("--forward-only best requires --resume-checkpoint.")
 loss_weight_value = FINAL_FRAME_LOSS_WEIGHT_VALUE if args.target_loss_final_frame_only else EVERY_FRAME_LOSS_WEIGHT_VALUE
 
 
@@ -687,12 +690,15 @@ def refresh_gui():
   return current_positions
 
 
-def output_paths(adjoint_round):
-  round_name = (
-    "baseline"
-    if adjoint_round == 0
-    else f"adjoint_{adjoint_round:02d}"
-  )
+# Export the current surface-only bunny directly through PyVista's OBJ writer.
+def save_bunny_obj(obj_directory, frame):
+  obj_path = os.path.join(obj_directory, f"bunny_{frame:04d}.obj")
+  pv.PolyData(bunny_poly.points, bunny_poly.faces).save(obj_path)
+  return obj_path
+
+
+def output_paths(adjoint_round=None, run_name=None):
+  round_name = run_name if run_name is not None else ("baseline" if adjoint_round == 0 else f"adjoint_{adjoint_round:02d}")
   round_directory = os.path.join(output_directory, round_name)
   return (
     round_name,
@@ -702,13 +708,15 @@ def output_paths(adjoint_round):
   )
 
 
-def encode_saved_frames(adjoint_round, loss, baseline_loss=None):
-  round_name, frame_directory, _, video_path = output_paths(adjoint_round)
+def encode_saved_frames(adjoint_round, loss, baseline_loss=None, run_name=None):
+  round_name, frame_directory, _, video_path = output_paths(adjoint_round, run_name)
   ffmpeg = shutil.which("ffmpeg")
   if ffmpeg is None:
     raise RuntimeError("--save-frames requires ffmpeg to create the final MP4.")
 
-  if adjoint_round == 0:
+  if run_name is not None:
+    loss_text = f"{run_name.replace('_', ' ')}   loss {loss:.8f}"
+  elif adjoint_round == 0:
     loss_text = f"unoptimized baseline   loss {loss:.8f}"
   else:
     loss_text = (
@@ -735,7 +743,7 @@ def encode_saved_frames(adjoint_round, loss, baseline_loss=None):
 
 
 # Run one complete forward trajectory and record every converged state.
-def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, baseline_loss=None):
+def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, baseline_loss=None, run_name=None):
   forward_index = 0 if adjoint_round is None else adjoint_round
   max_newton_iterations = (
     REFRESH_MAX_NEWTON_ITERATIONS
@@ -758,7 +766,9 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
   update_collision_pairs()
   refresh_gui()
 
-  saved_positions = [initial_position.copy()]
+  record_adjoint_state = run_name is None
+  previous_converged_positions = initial_position.copy()
+  saved_positions = [initial_position.copy()] if record_adjoint_state else []
   saved_collision_pairs = []
   saved_friction_pairs = []
   frame_losses = []
@@ -781,23 +791,22 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
   saved_video = None
   obj_directory = None
 
-  save_this_forward = adjoint_round is not None
+  save_this_forward = adjoint_round is not None or run_name is not None
+  forward_label = run_name if run_name is not None else ("initial" if adjoint_round in (None, 0) else f"adjoint={adjoint_round:02d}")
   if save_this_forward:
-    _, frame_directory, _, _ = output_paths(adjoint_round)
+    _, frame_directory, default_obj_directory, _ = output_paths(adjoint_round, run_name)
     design_status = (
       f"{format_material_statistics(material_summary)}\n"
       f"{format_mass_statistics(vertex_mass_summary)}"
     )
-    status_title = (
-      "Unoptimized baseline"
-      if adjoint_round == 0
-      else f"After adjoint {adjoint_round:02d}/{args.adjoint_steps:02d}"
-    )
+    status_title = run_name.replace("_", " ").title() if run_name is not None else ("Unoptimized baseline" if adjoint_round == 0 else f"After adjoint {adjoint_round:02d}/{args.adjoint_steps:02d}")
     plotter.add_text(f"{status_title}\n{design_status}", name="optimization_status", position="upper_left", font_size=16, color="black")
     if args.save_frames:
       os.makedirs(frame_directory, exist_ok=True)
     if args.save_obj:
-      if adjoint_round == 0:
+      if run_name is not None:
+        obj_directory = default_obj_directory
+      elif adjoint_round == 0:
         obj_directory = os.path.join(output_directory, "baseline", "bunny_obj")
       else:
         candidate_directory = os.path.join(output_directory, "_candidate_best")
@@ -857,7 +866,7 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
           break
         step_taken *= 0.5
 
-      prefix = "initial" if adjoint_round in (None, 0) else f"adjoint={adjoint_round:02d}"
+      prefix = forward_label
       iteration_message = (
         f"{prefix} frame={frame:03d} newton={newton_iteration:03d} "
         f"solver={solve_duration:.4f}s step={step_taken:.6f} "
@@ -894,7 +903,7 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
     floor_minimum_surface_y_values.append(minimum_surface_y)
     floor_penetrating_surface_vertex_counts.append(penetrating_surface_vertex_count)
     floor_maximum_surface_penetrations.append(maximum_surface_penetration)
-    frame_prefix = "initial" if adjoint_round in (None, 0) else f"adjoint={adjoint_round:02d}"
+    frame_prefix = forward_label
     floor_check_message = (
       f"floor_check {frame_prefix} frame={frame:03d} "
       f"minimum_y={minimum_y:.12e} "
@@ -919,10 +928,10 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
     loss += frame_loss
     target_loss += target_frame_loss
     motion_loss += motion_frame_loss
-    step_displacements = np.linalg.norm(current_positions - saved_positions[-1], axis=1,)
+    step_displacements = np.linalg.norm(current_positions - previous_converged_positions, axis=1,)
     mean_step_displacements.append(float(step_displacements.mean()))
     maximum_step_displacements.append(float(step_displacements.max()))
-    vertical_step_displacements = np.abs(current_positions[:, 1] - saved_positions[-1][:, 1])
+    vertical_step_displacements = np.abs(current_positions[:, 1] - previous_converged_positions[:, 1])
     mean_vertical_step_displacements.append(float(vertical_step_displacements.mean()))
     maximum_vertical_step_displacements.append(float(vertical_step_displacements.max()))
     centroid_y_values.append(float(current_positions[:, 1].mean()))
@@ -930,14 +939,16 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
     # Only converged state data are checkpointed.  Numeric Hessian and
     # Jacobian values are deliberately not stored; the reverse loop restores
     # these inputs and recomputes all matrices on demand.
-    saved_positions.append(current_positions.copy())
-    saved_collision_pairs.append(save_collision_pairs())
-    saved_friction_pairs.append(frame_friction_pairs)
+    if record_adjoint_state:
+      saved_positions.append(current_positions.copy())
+      saved_collision_pairs.append(save_collision_pairs())
+      saved_friction_pairs.append(frame_friction_pairs)
+    previous_converged_positions = current_positions.copy()
 
     if save_this_forward and args.save_frames:
       plotter.screenshot(os.path.join(frame_directory, f"frame_{frame:04d}.png",))
     if save_this_forward and args.save_obj:
-      bunny_poly.save(os.path.join(obj_directory, f"bunny_{frame:04d}.obj",))
+      save_bunny_obj(obj_directory, frame)
 
   final_positions = position.compute().value.get().reshape((-1, 3))
   terminal_position_summary = {
@@ -988,7 +999,7 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
   elapsed = time.time() - forward_start
   forward_summary_message = (
     f"Finished forward "
-    f"{'initial' if adjoint_round in (None, 0) else adjoint_round} in "
+    f"{forward_label} in "
     f"{elapsed:.2f}s: loss={loss:.8e} "
     f"(target={target_loss:.8e}, motion={motion_loss:.8e}), "
     f"centroid_height={centroid_height_summary}, "
@@ -999,7 +1010,7 @@ def run_forward(young_design, poisson_design, mass_design, adjoint_round=None, b
   print(forward_summary_message)
 
   if save_this_forward and args.save_frames:
-    saved_video = encode_saved_frames(adjoint_round, loss, baseline_loss=baseline_loss,)
+    saved_video = encode_saved_frames(adjoint_round, loss, baseline_loss=baseline_loss, run_name=run_name)
 
   return {
     "positions": saved_positions,
@@ -1188,8 +1199,49 @@ def run_backward(trajectory, adjoint_round):
   )
 
 
+# Run a baseline or saved-best trajectory without retaining adjoint checkpoints.
+def run_forward_only():
+  young_design = np.zeros(num_bunny_tetrahedra, dtype=np.float64)
+  poisson_design = np.zeros(num_bunny_tetrahedra, dtype=np.float64)
+  mass_design = np.zeros(num_bunny_vertices, dtype=np.float64)
+  best_round = None
+  checkpoint_best_loss = None
+  run_name = "initial"
+  if args.forward_only == "best":
+    checkpoint_path = os.path.abspath(args.resume_checkpoint)
+    if not os.path.isfile(checkpoint_path):
+      raise FileNotFoundError(f"Forward checkpoint does not exist: {checkpoint_path}")
+    with np.load(checkpoint_path, allow_pickle=False) as checkpoint:
+      required_values = {"best_adjoint_round", "best_loss", "best_young_design", "best_poisson_design", "best_mass_design"}
+      missing_values = required_values.difference(checkpoint.files)
+      if missing_values:
+        raise ValueError(f"Forward checkpoint is missing: {sorted(missing_values)}")
+      best_round = int(checkpoint["best_adjoint_round"].item())
+      checkpoint_best_loss = float(checkpoint["best_loss"].item())
+      young_design = checkpoint["best_young_design"].copy()
+      poisson_design = checkpoint["best_poisson_design"].copy()
+      mass_design = checkpoint["best_mass_design"].copy()
+    expected_shapes = ((young_design, (num_bunny_tetrahedra,)), (poisson_design, (num_bunny_tetrahedra,)), (mass_design, (num_bunny_vertices,)))
+    if any(value.shape != expected_shape for value, expected_shape in expected_shapes):
+      raise ValueError("The saved best design dimensions do not match the current bunny mesh.")
+    run_name = f"best_round_{best_round:02d}"
+  trajectory = run_forward(young_design, poisson_design, mass_design, run_name=run_name)
+  _, _, obj_directory, _ = output_paths(run_name=run_name)
+  summary = {"run_name": run_name, "num_frames": args.num_frames, "checkpoint_best_round": best_round, "checkpoint_best_loss": checkpoint_best_loss, "recomputed_loss": trajectory["loss"], "elapsed_seconds": trajectory["elapsed_seconds"], "gpu_memory": trajectory["gpu_memory"], "material_summary": trajectory["material_summary"], "mass_summary": trajectory["mass_summary"], "terminal_position_summary": trajectory["terminal_position_summary"], "floor_collision_summary": trajectory["floor_collision_summary"], "obj_directory": obj_directory if args.save_obj else None}
+  summary_path = os.path.join(output_directory, f"{run_name}_summary.json")
+  with open(summary_path, "w", encoding="utf-8") as file:
+    json.dump(summary, file, indent=2)
+  print(f"Finished forward-only run {run_name}: loss={trajectory['loss']:.8e}, elapsed={trajectory['elapsed_seconds']:.2f}s, objs={summary['obj_directory']}.")
+  print(f"Saved forward-only summary: {summary_path}")
+  plotter.close()
+
+
 update_collision_pairs()
 refresh_gui()
+
+if args.forward_only is not None:
+  run_forward_only()
+  raise SystemExit(0)
 
 # Initialize or restore the design, then alternate one backward and one forward solve.
 optimization_start = time.time()
