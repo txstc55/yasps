@@ -1828,14 +1828,14 @@ class DeviceMASRuntime:
     self._pcg_solution = self._empty(self.fine_dofs, np.float64)
     self._pcg_residual = self._empty(self.fine_dofs, np.float64)
     self._pcg_direction = self._empty(self.fine_dofs, np.float64)
-    self._pcg_state = self._zeros(12, np.float64)
+    self._pcg_state = self._zeros(13, np.float64)
     self._pcg_curvature = self._pcg_state[2:3]
     self._pcg_next_values = self._pcg_state[3:5]
-    self._pcg_tolerance_squared = self._pcg_state[9:10]
+    self._pcg_relative_tolerance = self._pcg_state[9:10]
     self._pcg_host_status = self.cuda.pagelocked_empty(2, np.float64)
     self._pcg_host_completion = self.cuda.pagelocked_empty(4, np.float64)
-    self._pcg_host_initial = self.cuda.pagelocked_empty(12, np.float64)
-    self._pcg_host_control = self.cuda.pagelocked_empty(12, np.float64)
+    self._pcg_host_initial = self.cuda.pagelocked_empty(13, np.float64)
+    self._pcg_host_control = self.cuda.pagelocked_empty(13, np.float64)
     self._pcg_initial_start_event = self.cuda.Event()
     self._pcg_initial_end_event = self.cuda.Event()
     # status[0] reports block-assembly validation; status[1] folds every
@@ -3584,7 +3584,7 @@ class DeviceMASRuntime:
       raise ValueError("device initial guess has the wrong scalar size")
     initial_control = self._pcg_host_control
     initial_control.fill(0.0)
-    initial_control[9] = tolerance * tolerance
+    initial_control[9] = tolerance
     initial_control[11] = max_iterations
     self._pcg_initial_start_event.record(self._pcg_stream)
     self.cuda.memcpy_htod_async(
@@ -3612,6 +3612,24 @@ class DeviceMASRuntime:
       )
 
     reduction_grid = (min(64, (self.fine_dofs + 255) // 256), 1, 1)
+    residual_is_rhs = initial_guess is None
+    if not residual_is_rhs:
+      if use_mas:
+        self.packed_residual[self.fine_dofs :].fill(
+          0.0, stream=self._pcg_stream
+        )
+        self.precondition(
+          rhs, reuse_workspace=True, stream=self._pcg_stream,
+          clear_workspace=True,
+        )
+        reference_vector = preconditioned
+      else:
+        reference_vector = rhs
+      self.dot_single_kernel(
+        rhs, reference_vector, self._pcg_state, np.uint32(12),
+        np.uint32(self.fine_dofs), block=(256, 1, 1),
+        grid=reduction_grid, stream=self._pcg_stream,
+      )
     if use_mas:
       self.packed_residual[self.fine_dofs :].fill(
         0.0, stream=self._pcg_stream
@@ -3628,6 +3646,7 @@ class DeviceMASRuntime:
     self.initialize_recurrence_kernel(
       self._pcg_state, rhs, residual, preconditioned, direction,
       np.uint32(self.fine_dofs),
+      np.uint32(residual_is_rhs),
       block=(256, 1, 1), grid=reduction_grid,
       stream=self._pcg_stream,
     )
@@ -3653,7 +3672,10 @@ class DeviceMASRuntime:
     denominator = max(rhs_norm, np.finfo(np.float64).tiny)
     residual_norm = float(np.sqrt(max(initial_state[4], 0.0)))
     rz = float(initial_state[1])
-    if residual_norm <= tolerance * denominator:
+    reference_rz = float(initial_state[12])
+    if (np.isfinite(rz) and rz >= 0.0 and
+        np.isfinite(reference_rz) and reference_rz > 0.0 and
+        rz <= tolerance * reference_rz):
       return PCGResult(
         x, 0, residual_norm, residual_norm / denominator, True,
         initial_seconds,
@@ -3663,7 +3685,8 @@ class DeviceMASRuntime:
         x, 0, residual_norm, residual_norm / denominator, False,
         initial_seconds,
       )
-    if not np.isfinite(rz) or rz <= 0.0:
+    if (not np.isfinite(rz) or rz <= 0.0 or
+        not np.isfinite(reference_rz) or reference_rz <= 0.0):
       return PCGResult(
         x, 0, residual_norm, residual_norm / denominator, False,
         initial_seconds, "preconditioner is not positive definite",
@@ -3748,13 +3771,14 @@ class DeviceMASRuntime:
     rhs_norm = self._dot(rhs, rhs) ** 0.5
     residual_norm = self._dot(residual, residual) ** 0.5
     denominator = max(rhs_norm, np.finfo(np.float64).tiny)
-    if residual_norm <= tolerance * denominator or max_iterations == 0:
-      return PCGResult(
-        x, 0, residual_norm, residual_norm / denominator,
-        residual_norm <= tolerance * denominator, perf_counter() - started,
-      )
+    reference_rz = rhs_norm * rhs_norm
     z = residual.copy()
     rz = self._dot(residual, z)
+    if rz <= tolerance * reference_rz or max_iterations == 0:
+      return PCGResult(
+        x, 0, residual_norm, residual_norm / denominator,
+        rz <= tolerance * reference_rz, perf_counter() - started,
+      )
     direction = z.copy()
     for iteration in range(1, max_iterations + 1):
       product = self.matvec(direction, level_index)
@@ -3768,13 +3792,13 @@ class DeviceMASRuntime:
       x = x + alpha * direction
       residual = residual - alpha * product
       residual_norm = self._dot(residual, residual) ** 0.5
-      if residual_norm <= tolerance * denominator:
+      z = residual.copy()
+      next_rz = self._dot(residual, z)
+      if next_rz <= tolerance * reference_rz:
         return PCGResult(
           x, iteration, residual_norm, residual_norm / denominator,
           True, perf_counter() - started,
         )
-      z = residual.copy()
-      next_rz = self._dot(residual, z)
       direction = z + (next_rz / rz) * direction
       rz = next_rz
     return PCGResult(

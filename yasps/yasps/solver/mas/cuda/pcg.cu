@@ -12,10 +12,11 @@ enum PCGScalar : std::uint32_t {
   PCG_BETA = 6,
   PCG_STATUS = 7,
   PCG_STATUS_VALUE = 8,
-  PCG_TOLERANCE_SQUARED = 9,
+  PCG_RELATIVE_TOLERANCE = 9,
   PCG_ITERATION = 10,
   PCG_MAX_ITERATIONS = 11,
-  PCG_SCALAR_COUNT = 12
+  PCG_REFERENCE_RZ = 12,
+  PCG_SCALAR_COUNT = 13
 };
 
 constexpr double PCG_NON_SPD = -1.0;
@@ -234,7 +235,7 @@ extern "C" __global__ void yasps_mas_finish_iteration(double* state) {
   const double rz = state[PCG_RZ];
   const double next_rz = state[PCG_NEXT_RZ];
   const double residual2 = state[PCG_RESIDUAL_NORM2];
-  if (!isfinite(next_rz) || next_rz <= 0.0 ||
+  if (!isfinite(next_rz) || next_rz < 0.0 ||
       !isfinite(residual2) || residual2 < 0.0 ||
       !isfinite(rz) || rz <= 0.0) {
     state[PCG_BETA] = 0.0;
@@ -245,8 +246,9 @@ extern "C" __global__ void yasps_mas_finish_iteration(double* state) {
   state[PCG_BETA] = restart ? 0.0 : next_rz / rz;
   state[PCG_RZ] = next_rz;
   state[PCG_STATUS_VALUE] = residual2;
-  const double denominator = fmax(state[PCG_RHS_NORM2], 1.0e-300);
-  state[PCG_STATUS] = residual2 <= state[PCG_TOLERANCE_SQUARED] * denominator
+  const double denominator = fmax(state[PCG_REFERENCE_RZ], 1.0e-300);
+  state[PCG_STATUS] = next_rz
+          <= state[PCG_RELATIVE_TOLERANCE] * denominator
       ? PCG_CONVERGED : PCG_CONTINUE;
 }
 
@@ -264,7 +266,7 @@ extern "C" __global__ void yasps_mas_finish_iteration_partials(
   const double rz = state[PCG_RZ];
   state[PCG_NEXT_RZ] = next_rz;
   state[PCG_RESIDUAL_NORM2] = residual2;
-  if (checked && (!isfinite(next_rz) || next_rz <= 0.0 ||
+  if (checked && (!isfinite(next_rz) || next_rz < 0.0 ||
                   !isfinite(residual2) || residual2 < 0.0 ||
                   !isfinite(rz) || rz <= 0.0)) {
     state[PCG_BETA] = 0.0;
@@ -276,9 +278,9 @@ extern "C" __global__ void yasps_mas_finish_iteration_partials(
   state[PCG_RZ] = next_rz;
   state[PCG_STATUS_VALUE] = residual2;
   if (checked) {
-    const double denominator = fmax(state[PCG_RHS_NORM2], 1.0e-300);
-    state[PCG_STATUS] = residual2
-            <= state[PCG_TOLERANCE_SQUARED] * denominator
+    const double denominator = fmax(state[PCG_REFERENCE_RZ], 1.0e-300);
+    state[PCG_STATUS] = next_rz
+            <= state[PCG_RELATIVE_TOLERANCE] * denominator
         ? PCG_CONVERGED : PCG_CONTINUE;
   }
 }
@@ -304,7 +306,8 @@ extern "C" __global__ void yasps_mas_update_direction(
 
 extern "C" __global__ void yasps_mas_initialize_recurrence(
     double* state, const double* rhs, const double* residual,
-    const double* preconditioned, double* direction, std::uint32_t count) {
+    const double* preconditioned, double* direction, std::uint32_t count,
+    std::uint32_t residual_is_rhs) {
   double rhs2 = 0.0;
   double residual2 = 0.0;
   double rz = 0.0;
@@ -342,6 +345,8 @@ extern "C" __global__ void yasps_mas_initialize_recurrence(
       atomic_add_double(state + PCG_RHS_NORM2, rhs2);
       atomic_add_double(state + PCG_RESIDUAL_NORM2, residual2);
       atomic_add_double(state + PCG_RZ, rz);
+      if (residual_is_rhs)
+        atomic_add_double(state + PCG_REFERENCE_RZ, rz);
     }
   }
 }
