@@ -35,6 +35,8 @@ class primitiveUnion:
     ## the primitives are now stacked in the order
     self.__primitives: List[Union[primitive, primitiveUnion]] = primitives
     self.__attributes: Dict[str, attribute] = {}
+    self.__children_primitive_counts = None
+    self.__children_primitive_counts_gpu = gpuarray.empty(0, dtype=np.uint32)
 
   # the name of the primitive union
   @property
@@ -92,7 +94,15 @@ class primitiveUnion:
 
   @property
   def children_primitive_counts_gpu(self):
-    return gpuarray.to_gpu(np.array([child.numInstances for child in self.__primitives], dtype=np.uint32))
+    counts = tuple(int(child.numInstances) for child in self.__primitives)
+    if counts != self.__children_primitive_counts:
+      counts_cpu = np.asarray(counts, dtype=np.uint32)
+      if self.__children_primitive_counts_gpu.size == counts_cpu.size:
+        self.__children_primitive_counts_gpu.set(counts_cpu)
+      else:
+        self.__children_primitive_counts_gpu = gpuarray.to_gpu(counts_cpu)
+      self.__children_primitive_counts = counts
+    return self.__children_primitive_counts_gpu
 
   def addConstant(self, name: str, rows: int = 1, cols: int = 1):
     if name in self.__attributes:

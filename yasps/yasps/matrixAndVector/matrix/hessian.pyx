@@ -816,11 +816,10 @@ class hessian(matrix):
     if self.blocks_flattened.size < total_block_size:
       self.blocks_flattened = gpuarray.zeros(total_block_size, dtype=np.float64)
 
-    num_unique_dimensions = self.__compression_kernel.numUniqueDimensions
-    self.blocks_start_indices = self.__compression_kernel.uniqueDimensionsOuterIndices.get().tolist()[:num_unique_dimensions + 1]
+    self.blocks_start_indices = self.__compression_kernel.uniqueDimensionsOuterIndicesCPU.tolist()
     self.block_positions = self.__compression_kernel.uniqueCoordinates
-    self.block_counts = self.__compression_kernel.uniqueDimensionsBlockCounts.get().tolist()[:num_unique_dimensions]
-    self.block_dimensions = self.__compression_kernel.uniqueDimensions.get().tolist()[:num_unique_dimensions * 2]
+    self.block_counts = self.__compression_kernel.uniqueDimensionsBlockCountsCPU.tolist()
+    self.block_dimensions = self.__compression_kernel.uniqueDimensionsCPU.tolist()
 
   @timed("hessian.getSparseIndicesDynamic")
   def getSparseIndicesDynamic(self):
@@ -867,11 +866,10 @@ class hessian(matrix):
     if self.blocks_flattened_dynamic.size < total_block_size:
       self.blocks_flattened_dynamic = gpuarray.zeros(total_block_size, dtype=np.float64)
 
-    num_unique_dimensions = self.__compression_kernel_dynamic.numUniqueDimensions
-    self.blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get().tolist()[:num_unique_dimensions + 1]
+    self.blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndicesCPU.tolist()
     self.block_positions_dynamic = self.__compression_kernel_dynamic.uniqueCoordinates
-    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get().tolist()[:num_unique_dimensions]
-    self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[:num_unique_dimensions * 2]
+    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCountsCPU.tolist()
+    self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsCPU.tolist()
 
   @timed("hessian.getSparseIndicesDynamicAgain")
   def getSparseIndicesDynamicAgain(self):
@@ -914,11 +912,10 @@ class hessian(matrix):
     if self.blocks_flattened_dynamic.size < total_block_size:
       self.blocks_flattened_dynamic = gpuarray.zeros(total_block_size, dtype=np.float64)
 
-    num_unique_dimensions = self.__compression_kernel_dynamic.numUniqueDimensions
-    self.blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get().tolist()[:num_unique_dimensions + 1]
+    self.blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndicesCPU.tolist()
     self.block_positions_dynamic = self.__compression_kernel_dynamic.uniqueCoordinates
-    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get().tolist()[:num_unique_dimensions]
-    self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[:num_unique_dimensions * 2]
+    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCountsCPU.tolist()
+    self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsCPU.tolist()
 
   def __buildMergedHessianAndGradientAttribute(
     self,
