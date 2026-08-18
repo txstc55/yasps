@@ -1,5 +1,6 @@
 # cython: language_level=3
 from __future__ import annotations
+from time import perf_counter
 from typing import Optional
 
 import numpy as np
@@ -10,7 +11,7 @@ from yasps.diagonalBlockInverseKernel import diagonalBlockInverseKernel
 from yasps.vector import vector
 
 
-class solver:
+class jacobianPCGSolver:
   def __init__(self):
     self.__solverKernel: Optional[solverKernel] = None
     self.__d_p1_b: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
@@ -22,10 +23,15 @@ class solver:
     self.__solution: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
     self.__diagonalBlockInverseKernel: Optional[diagonalBlockInverseKernel] = None
     self.__diagonalBlockLayout = None
+    self.__statistics = {}
 
   @property
   def solution(self) -> gpuarray.GPUArray:
     return self.__solution
+
+  @property
+  def statistics(self) -> dict:
+    return dict(self.__statistics)
 
   def reset(self) -> None:
     if self.__solverKernel is not None:
@@ -41,6 +47,7 @@ class solver:
     self.__solution = gpuarray.empty(0, dtype=np.float64)
     self.__diagonalBlockInverseKernel = None
     self.__diagonalBlockLayout = None
+    self.__statistics = {}
 
   def __computeDiagonalBlockInverse(self, active_hessian) -> None:
     block_counts = tuple(item.correspondance.numInstances for item in active_hessian.wrt)
@@ -76,27 +83,43 @@ class solver:
 
   def computeSolution(self, active_hessian, right_hand_side: vector, initial_guess, tolerance = 1e-3, maxIterations = 20000, zero_initial_guess = False):
     if not isinstance(right_hand_side, vector):
-      raise TypeError("solver.computeSolution: right_hand_side must be a yasps.vector.vector.")
+      raise TypeError("jacobianPCGSolver.computeSolution: right_hand_side must be a yasps.vector.vector.")
+    total_started = perf_counter()
     values = right_hand_side.value
     if values.size == 0:
+      self.__statistics = {
+        "solver": "jacobian",
+        "converged": True,
+        "iterations": 0,
+        "solve_seconds": perf_counter() - total_started,
+      }
       return 0
     if active_hessian is None:
       self.__ensureBuffers(active_hessian, right_hand_side)
       if self.__solution.size > 0:
         self.__solution.fill(0)
+      self.__statistics = {
+        "solver": "jacobian",
+        "converged": True,
+        "iterations": 0,
+        "solve_seconds": perf_counter() - total_started,
+      }
       return 0
 
     if right_hand_side.size != active_hessian.rows:
       raise ValueError(
-        "solver.computeSolution: right_hand_side size must match the Hessian size."
+        "jacobianPCGSolver.computeSolution: right_hand_side size must match the Hessian size."
       )
 
+    inverse_started = perf_counter()
     self.__computeDiagonalBlockInverse(active_hessian)
+    inverse_seconds = perf_counter() - inverse_started
     self.__ensureBuffers(active_hessian, right_hand_side)
     assert self.__solverKernel is not None
     self.__solverKernel.updateBlockDimensions(active_hessian.block_dimensions + active_hessian.block_dimensions_dynamic)
 
-    return self.__solverKernel.computeSolution(
+    pcg_started = perf_counter()
+    result = self.__solverKernel.computeSolution(
       maxIterations,
       tolerance,
       active_hessian.blocks_flattened,
@@ -127,3 +150,17 @@ class solver:
       zero_initial_guess=zero_initial_guess,
       cg_scalars=self.__cg_scalars
     )
+    pcg_seconds = perf_counter() - pcg_started
+    self.__statistics = {
+      "solver": "jacobian",
+      "converged": result >= 0,
+      "iterations": int(self.__solverKernel.iterations),
+      "result": int(result),
+      "diagonal_inverse_seconds": inverse_seconds,
+      "pcg_seconds": pcg_seconds,
+      "solve_seconds": perf_counter() - total_started,
+      "dynamic_block_count": int(sum(active_hessian.block_counts_dynamic)),
+      "matrix_size": int(active_hessian.rows),
+      "tolerance": float(tolerance),
+    }
+    return result

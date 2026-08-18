@@ -26,7 +26,7 @@ extensions = [
     Extension("yasps.coordinateCompressionKernel", ["yasps/kernel/Coordinate/coordinateCompressionKernel.pyx"]),
     Extension("yasps.diagonalBlockInverseKernel", ["yasps/kernel/Solver/diagonalBlockInverseKernel.pyx"]),
     Extension("yasps.solverKernel", ["yasps/kernel/Solver/solverKernel.pyx"]),
-    Extension("yasps.solver", ["yasps/solver/solver.pyx"]),
+    Extension("yasps.solver.jacobianPCGSolver", ["yasps/solver/jacobianPCGSolver.pyx"]),
     Extension("yasps.energy", ["yasps/energy/energy.pyx"]),
     Extension("yasps.minimizer", ["yasps/minimizer/minimizer.pyx"]),
     Extension("yasps.autodiff", ["yasps/attribute/autodiff.pyx"]),
@@ -53,7 +53,10 @@ setup(
     long_description_content_type='text/markdown',  # The content type of the long description
     url='https://github.com/yourusername/yasps',  # The URL to the repository
     packages=find_packages(),  # Finds all packages in the directory
-    package_data={'yasps': ['*.txt', '*.cuh', '*.cu']},
+    package_data={
+      'yasps': ['*.txt', '*.cuh', '*.cu'],
+      'yasps.solver.mas': ['cuda/*.cu'],
+    },
     ext_modules=cythonize(
       extensions,
       annotate=False,        # Generates the HTML .html annotation files
@@ -70,8 +73,9 @@ setup(
     ],
     install_requires=[
         'numpy',
-        'pycuda'
+        'pycuda',
+        'pymetis>=2023.1'
     ],
-    python_requires='>=3.6',  # Minimum version requirement of the package
+    python_requires='>=3.10',  # MAS uses modern typing syntax.
     include_package_data=True,  # Includes files described by MANIFEST.in
 )
