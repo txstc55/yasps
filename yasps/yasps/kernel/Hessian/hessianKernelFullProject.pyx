@@ -4,8 +4,9 @@ from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 class hessianKernelFullProject:
-  def __init__(self, att: attribute, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int, hessian_row_size: int):
+  def __init__(self, att: attribute, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int, hessian_row_size: int, grouped_add: bool = False):
     self.__att = att
+    atomic_add = "atomic_add_grouped" if grouped_add else "atomicAdd"
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
@@ -78,9 +79,9 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
   #if {int(not gradient_only)} // did we compute the hessian
-      atomic_add_grouped(&gradient[segment_placement + j], hg_mat[PACKED_HESSIAN_SIZE + gradient_offset + j]);
+      {atomic_add}(&gradient[segment_placement + j], hg_mat[PACKED_HESSIAN_SIZE + gradient_offset + j]);
 #else
-      atomic_add_grouped(&gradient[segment_placement + j], hg_mat[gradient_offset + j]);
+      {atomic_add}(&gradient[segment_placement + j], hg_mat[gradient_offset + j]);
   #endif
     }}
     gradient_offset += segment_size;
@@ -171,14 +172,14 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             for (unsigned int k = 0; k < segment_size_i; k++){{
               for (unsigned int l = 0; l < segment_size_j; l++){{
                 // this is a block in the upper triangle
-                atomic_add_grouped(&hessian_blocks[placement_index + k * segment_size_j + l], compressed_hessian(permutation_i + k, permutation_j + l));
+                {atomic_add}(&hessian_blocks[placement_index + k * segment_size_j + l], compressed_hessian(permutation_i + k, permutation_j + l));
               }}
             }}
           }}else{{
             for (unsigned int k = 0; k < segment_size_j; k++){{
               for (unsigned int l = 0; l < segment_size_i; l++){{
                 // put the transpose block in
-                atomic_add_grouped(&hessian_blocks[placement_index + k * segment_size_i + l], compressed_hessian(permutation_i + l, permutation_j + k));
+                {atomic_add}(&hessian_blocks[placement_index + k * segment_size_i + l], compressed_hessian(permutation_i + l, permutation_j + k));
               }}
             }}
           }}
@@ -187,7 +188,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             // get the placement
             unsigned int segment_index = segment_indices[instance * {max_num_indices} + i] - 2;
             for (unsigned int k = 0; k < segment_size_i; k++){{
-              atomic_add_grouped(&diagonal[segment_index + k], compressed_hessian(permutation_i + k, permutation_j + k));
+              {atomic_add}(&diagonal[segment_index + k], compressed_hessian(permutation_i + k, permutation_j + k));
             }}
             // now we do the block diagonal placement
             // we first need to determine where to put it in the global diagonal blocks array
@@ -206,7 +207,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             // now we put the diagonal block
             for (unsigned int k = 0; k < segment_size_i; k++){{
               for (unsigned int l = 0; l < segment_size_i; l++){{
-              atomic_add_grouped(&diagonal_blocks[diagonal_block_placement + k * segment_size_i + l], compressed_hessian(permutation_i + k, permutation_j + l));
+              {atomic_add}(&diagonal_blocks[diagonal_block_placement + k * segment_size_i + l], compressed_hessian(permutation_i + k, permutation_j + l));
               }}
             }}
           }}

@@ -25,7 +25,7 @@ class hessianAndGradientKernel:
   att_name_to_kernel: dict[str, hessianAndGradientKernel] = {}  # maps attribute names to their hessian and gradient kernel instances, this way we can just return the previous existing kernel
 
 
-  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, local_hessian_nonzero_upper_positions: List[int] = [], dynamic_term = False):
+  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, local_hessian_nonzero_upper_positions: List[int] = [], dynamic_term = False, grouped_add: bool = False):
     self.__kernelString: str = ""
     self.__headerFileString: str = ""
     self.__kernel = None # the kernel for computhing the gradient and hessians
@@ -49,6 +49,7 @@ class hessianAndGradientKernel:
         )
     self.__additional_compile_flags = []  # --ptxas-options=-v,-warn-spills,-warn-lmem-usage  use this for memory checking
     self.__dynamic_terms = dynamic_term
+    self.__grouped_add = grouped_add
     self.__context = context()
     # self.__generateKernel(att)
 
@@ -87,7 +88,7 @@ class hessianAndGradientKernel:
 
     # if we need to separate the jacobian and hessian, the first thing we need to do is reconstruct the jacobian and hessian symbolically
     # which we will use to figure out how to compute the final hessian block by performing J_i^T H_ij J_j for each block
-    separate_jacobian_kernel: hessianKernelSeparateJacobian = hessianKernelSeparateJacobian(self.__att, self.__gradient_only)
+    separate_jacobian_kernel: hessianKernelSeparateJacobian = hessianKernelSeparateJacobian(self.__att, self.__gradient_only, self.__grouped_add)
     if self.__clear_separation:
       separate_jacobian_kernel.create_multiplied_blocks(
         global_jacobian_block_nonzero_attributes,
@@ -106,7 +107,7 @@ class hessianAndGradientKernel:
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
     wrt_names = "_".join([att.fullName for att in wrt])
     size_names = "_".join([str(size) for size in unique_gradient_sizes])
-    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullNameWithHash}_wrt_{wrt_names}_with_sizes_{size_names}"
+    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullNameWithHash}_wrt_{wrt_names}_with_sizes_{size_names}_grouped_add_{int(self.__grouped_add)}"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}" + ("" if self.__project_entire_hessian else "_no_proj")
     # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
@@ -164,9 +165,9 @@ extern "C"{{
         if True: # always regenerate the kernel because header has been replaced
           with open(cu_file, 'w') as f:
             if self.__project_entire_hessian:
-              kernel_source = hessianKernelFullProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt), self.__hessian_row_size).kernelString
+              kernel_source = hessianKernelFullProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt), self.__hessian_row_size, self.__grouped_add).kernelString
             elif not self.__clear_separation:
-              kernel_source = hessianKernelNoProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt), self.__hessian_row_size).kernelString
+              kernel_source = hessianKernelNoProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt), self.__hessian_row_size, self.__grouped_add).kernelString
             else:
               kernel_source = separate_jacobian_kernel.generateKernelString(unique_gradient_size, max_num_indices, attributeName, len(wrt))
             f.write(kernel_source)

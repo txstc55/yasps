@@ -152,16 +152,18 @@ class scene:
   def energies(self) -> Dict[int, attribute]:
     return self.__energies
 
-  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False) -> None:
+  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False) -> None:
     # projection_method = 0 means no projection, 1 means project eigen value to absolute, 2 means project eigen value to max(e, 0)
     # save_intermediate = True means save intermediate results for gradient and hessian computation
     # gradient only means in the CG system we will not have the hessian
     if e.name == "":
       raise ValueError("scene.addEnergy: energy attribute must have a name.")
+    if not isinstance(grouped_add, bool):
+      raise TypeError("scene.addEnergy: grouped_add must be bool.")
     # we add the names of the targes to the pre_targets_full_names set
     for t in targets:
       self.__seen_pre_targets_full_names.add(t.fullName)
-    self.__minimizer.addEnergy(e, targets = targets, projection_method = projection_method, save_intermediate = save_intermediate, gradient_only = gradient_only, dynamic_instances = dynamic_instances, separate_hessian_jacobian = separate_hessian_jacobian)
+    self.__minimizer.addEnergy(e, targets = targets, projection_method = projection_method, save_intermediate = save_intermediate, gradient_only = gradient_only, dynamic_instances = dynamic_instances, separate_hessian_jacobian = separate_hessian_jacobian, grouped_add = grouped_add)
 
 
   def minimizeEnergy(self, tolerance = 1e-3, maxIterations = 20000):
