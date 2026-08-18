@@ -86,4 +86,18 @@ examples/affine_hand_collision/*
 examples/pendulum_midpoint
 
 StiffGIPC/
-mas/
+/mas/
+/mas-jacobi/
+
+# MAS CUDA templates are source files for the integrated YASPS solver.
+!/yasps/yasps/solver/mas/cuda/
+!/yasps/yasps/solver/mas/cuda/*.cu
+
+# MAS development tests, benchmarks, and generated statistics
+/benchmarks/
+/tests/solver/test_solver_mas.py
+/examples/dropping_in_container_2_affine_3_soft/benchmark.py
+/examples/dropping_in_container_2_affine_3_soft/RESULTS*.md
+/examples/dropping_in_container_2_affine_3_soft/results*/
+/examples/dropping_in_container_2_affine_3_soft/snapshot_corpus*/
+/examples/dropping_in_container_2_affine_3_soft/tight_snapshot_corpus/
