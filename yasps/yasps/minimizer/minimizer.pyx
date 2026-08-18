@@ -86,7 +86,7 @@ class minimizer:
     self.__gradient_object: Optional[gradient] = None
     self.__seen_pre_targets_full_names: Set[str] = set()
 
-    self.__solver: solver = solver()
+    self.__solver: solver = solver(solver="mas")
     self.__initial_guess: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.float64)
     self.__solutionSegments: List[gpuarray.GPUArray] = []
 
@@ -95,6 +95,32 @@ class minimizer:
   @property
   def solutionSegments(self) -> List[gpuarray.GPUArray]:
     return self.__solutionSegments
+
+  @property
+  def linearSolver(self):
+    return self.__solver
+
+  @linearSolver.setter
+  def linearSolver(self, value) -> None:
+    required = ("computeSolution", "reset", "solution")
+    missing = [name for name in required if not hasattr(value, name)]
+    if missing:
+      raise TypeError(
+        "minimizer.linearSolver requires a YASPS solver-compatible object; "
+        "missing: " + ", ".join(missing)
+      )
+    self.__solver.reset()
+    self.__solver = value
+    self.__initial_guess = gpuarray.empty(0, dtype=np.float64)
+    self.__solutionSegments = []
+
+  @property
+  def solverName(self) -> str:
+    return getattr(self.__solver, "solverName", type(self.__solver).__name__)
+
+  def setSolver(self, solver_name="mas", **options):
+    self.linearSolver = solver(solver=solver_name, **options)
+    return self.__solver
 
   @property
   def gradient(self) -> gpuarray.GPUArray:

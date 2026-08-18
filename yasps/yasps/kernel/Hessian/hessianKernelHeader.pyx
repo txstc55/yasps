@@ -53,6 +53,26 @@ __device__ __forceinline__ void atomic_add_grouped(double *address, double value
   atomicAdd(address, value);
 }
 
+// Row-major packed storage for the upper triangle, including the diagonal.
+// Reflect lower-triangular reads so callers can treat the packed data as a
+// dense symmetric matrix without materializing its lower half.
+template <unsigned int N>
+__device__ __forceinline__ unsigned int symmetric_upper_index(
+    unsigned int row, unsigned int column) {
+  if (row > column) {
+    const unsigned int temporary = row;
+    row = column;
+    column = temporary;
+  }
+  return row * N - row * (row + 1) / 2 + column;
+}
+
+template <unsigned int N>
+__device__ __forceinline__ double symmetric_upper_get(
+    const double *packed, unsigned int row, unsigned int column) {
+  return packed[symmetric_upper_index<N>(row, column)];
+}
+
 // Fast FP64 LDLT test for a local Hessian that is already positive
 // semidefinite. It avoids the eigendecomposition without modifying A.
 template <unsigned int N>
