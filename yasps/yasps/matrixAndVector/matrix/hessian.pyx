@@ -62,6 +62,7 @@ class hessian(matrix):
     self.__projection_methods: List[int] = []
     self.__separate_hessian_jacobian: List[bool] = []
     self.__grouped_add: List[bool] = []
+    self.__lto: List[bool] = []
     self.__intermediate_compute_pairs: List[Dict[str, Tuple[attribute, attribute]]] = []
     self.__merged_hessian_and_gradient_attributes: List[Optional[attribute]] = []
     self.__hessian_and_gradient_kernels: List[Optional[hessianAndGradientKernel]] = []
@@ -83,6 +84,7 @@ class hessian(matrix):
     self.__projection_methods_dynamic: List[int] = []
     self.__separate_hessian_jacobian_dynamic: List[bool] = []
     self.__grouped_add_dynamic: List[bool] = []
+    self.__lto_dynamic: List[bool] = []
     self.__intermediate_compute_pairs_dynamic: List[Dict[str, Tuple[attribute, attribute]]] = []
     self.__merged_hessian_and_gradient_attributes_dynamic: List[Optional[attribute]] = []
     self.__hessian_and_gradient_kernels_dynamic: List[Optional[hessianAndGradientKernel]] = []
@@ -323,6 +325,18 @@ class hessian(matrix):
     self.__grouped_add = value
 
   @property
+  def lto(self) -> List[bool]:
+    return self.__lto
+
+  @lto.setter
+  def lto(self, value: List[bool]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.lto: value must be a list.")
+    if any(not isinstance(item, bool) for item in value):
+      raise TypeError("hessian.lto: all items must be bool.")
+    self.__lto = value
+
+  @property
   def intermediate_compute_pairs(self) -> List[Dict[str, Tuple[attribute, attribute]]]:
     return self.__intermediate_compute_pairs
 
@@ -528,6 +542,18 @@ class hessian(matrix):
     self.__grouped_add_dynamic = value
 
   @property
+  def lto_dynamic(self) -> List[bool]:
+    return self.__lto_dynamic
+
+  @lto_dynamic.setter
+  def lto_dynamic(self, value: List[bool]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.lto_dynamic: value must be a list.")
+    if any(not isinstance(item, bool) for item in value):
+      raise TypeError("hessian.lto_dynamic: all items must be bool.")
+    self.__lto_dynamic = value
+
+  @property
   def intermediate_compute_pairs_dynamic(self) -> List[Dict[str, Tuple[attribute, attribute]]]:
     return self.__intermediate_compute_pairs_dynamic
 
@@ -716,6 +742,7 @@ class hessian(matrix):
     result.projection_methods = self.__projection_methods + other.projection_methods
     result.separate_hessian_jacobian = self.__separate_hessian_jacobian + other.separate_hessian_jacobian
     result.grouped_add = self.__grouped_add + other.grouped_add
+    result.lto = self.__lto + other.lto
     result.intermediate_compute_pairs = self.__intermediate_compute_pairs + other.intermediate_compute_pairs
     result.merged_hessian_and_gradient_attributes = self.__merged_hessian_and_gradient_attributes + other.merged_hessian_and_gradient_attributes
     result.hessian_and_gradient_kernels = self.__hessian_and_gradient_kernels + other.hessian_and_gradient_kernels
@@ -735,6 +762,7 @@ class hessian(matrix):
     result.projection_methods_dynamic = self.__projection_methods_dynamic + other.projection_methods_dynamic
     result.separate_hessian_jacobian_dynamic = self.__separate_hessian_jacobian_dynamic + other.separate_hessian_jacobian_dynamic
     result.grouped_add_dynamic = self.__grouped_add_dynamic + other.grouped_add_dynamic
+    result.lto_dynamic = self.__lto_dynamic + other.lto_dynamic
     result.intermediate_compute_pairs_dynamic = self.__intermediate_compute_pairs_dynamic + other.intermediate_compute_pairs_dynamic
     result.merged_hessian_and_gradient_attributes_dynamic = self.__merged_hessian_and_gradient_attributes_dynamic + other.merged_hessian_and_gradient_attributes_dynamic
     result.hessian_and_gradient_kernels_dynamic = self.__hessian_and_gradient_kernels_dynamic + other.hessian_and_gradient_kernels_dynamic
@@ -971,6 +999,7 @@ class hessian(matrix):
       projection_methods = self.__projection_methods
       separate_hessian_jacobian = self.__separate_hessian_jacobian
       grouped_add = self.__grouped_add
+      lto = self.__lto
       merged_attributes = self.__merged_hessian_and_gradient_attributes
       kernels = self.__hessian_and_gradient_kernels
       sources = self.__sources
@@ -989,6 +1018,7 @@ class hessian(matrix):
       projection_methods = self.__projection_methods_dynamic
       separate_hessian_jacobian = self.__separate_hessian_jacobian_dynamic
       grouped_add = self.__grouped_add_dynamic
+      lto = self.__lto_dynamic
       merged_attributes = self.__merged_hessian_and_gradient_attributes_dynamic
       kernels = self.__hessian_and_gradient_kernels_dynamic
       sources = self.__sources_dynamic
@@ -1004,6 +1034,7 @@ class hessian(matrix):
       or index >= len(global_hessians)
       or index >= len(gradient_only)
       or index >= len(grouped_add)
+      or index >= len(lto)
     ):
       raise ValueError("hessian.__ensureTermKernel: symbolic term metadata is incomplete.")
 
@@ -1066,7 +1097,8 @@ class hessian(matrix):
         inner_hessian_rows,
         local_hessian_nonzero_upper_positions,
         dynamic_term = dynamic_term,
-        grouped_add = grouped_add[index]
+        grouped_add = grouped_add[index],
+        lto = lto[index]
       )
       kernels[index].generateKernel(
         indices_kernels[index].outputUniqueGradientSizesCPU.tolist(),

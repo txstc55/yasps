@@ -29,7 +29,8 @@ class energyRequest:
     gradient_only = False,
     dynamic_instances = False,
     separate_hessian_jacobian = False,
-    grouped_add = False
+    grouped_add = False,
+    lto = False
   ):
     self.__energy: attribute = energy
     self.__targets: List[attribute] = list(targets)
@@ -39,6 +40,7 @@ class energyRequest:
     self.__dynamic_instances: bool = dynamic_instances
     self.__separate_hessian_jacobian: bool = separate_hessian_jacobian
     self.__grouped_add: bool = grouped_add
+    self.__lto: bool = lto
 
   @property
   def energy(self) -> attribute:
@@ -71,6 +73,10 @@ class energyRequest:
   @property
   def grouped_add(self) -> bool:
     return self.__grouped_add
+
+  @property
+  def lto(self) -> bool:
+    return self.__lto
 
   @property
   def hash(self) -> int:
@@ -176,13 +182,15 @@ class minimizer:
     for item in energies:
       self.addEnergy(item)
 
-  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False) -> None:
+  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False, lto = False) -> None:
     if e.name == "":
       raise ValueError("minimizer.addEnergy: energy attribute must have a name.")
     if gradient_only:
       raise NotImplementedError("minimizer.addEnergy: gradient_only is not supported in the Hessian-based minimizer yet.")
     if not isinstance(grouped_add, bool):
       raise TypeError("minimizer.addEnergy: grouped_add must be bool.")
+    if not isinstance(lto, bool):
+      raise TypeError("minimizer.addEnergy: lto must be bool.")
 
     for t in targets:
       self.__seen_pre_targets_full_names.add(t.fullName)
@@ -195,7 +203,8 @@ class minimizer:
       gradient_only=gradient_only,
       dynamic_instances=dynamic_instances,
       separate_hessian_jacobian=separate_hessian_jacobian,
-      grouped_add=grouped_add
+      grouped_add=grouped_add,
+      lto=lto
     )
     existing_hashes = [item.hash for item in self.__energy_requests + self.__energy_requests_dynamic]
     if new_request.hash in existing_hashes:
@@ -249,6 +258,7 @@ class minimizer:
           save_intermediate=request.save_intermediate,
           separate_hessian_jacobian=request.separate_hessian_jacobian,
           grouped_add=request.grouped_add,
+          lto=request.lto,
           dynamic_instances=False
         )
       )
@@ -264,6 +274,7 @@ class minimizer:
           save_intermediate=request.save_intermediate,
           separate_hessian_jacobian=request.separate_hessian_jacobian,
           grouped_add=request.grouped_add,
+          lto=request.lto,
           dynamic_instances=True
         )
       )

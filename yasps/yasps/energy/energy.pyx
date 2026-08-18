@@ -17,11 +17,13 @@ if TYPE_CHECKING:
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 
 class energy:
-  def __init__(self, energy: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, separate_hessian_jacobian = False, dynamic_instances = False, grouped_add = False):
+  def __init__(self, energy: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, separate_hessian_jacobian = False, dynamic_instances = False, grouped_add = False, lto = False):
     if energy.size != 1:
       raise ValueError("energy.__init__: energy must be size 1.")
     if not isinstance(grouped_add, bool):
       raise TypeError("energy.__init__: grouped_add must be bool.")
+    if not isinstance(lto, bool):
+      raise TypeError("energy.__init__: lto must be bool.")
     self.__energy: attribute = energy
     self.__paths: List[List[attribute]] = [] # how to get to the roots
     # self.__roots: List[attribute] = []
@@ -55,6 +57,7 @@ class energy:
     self.__separate_hessian_jacobian = separate_hessian_jacobian
     self.__dynamic_instances = dynamic_instances
     self.__grouped_add = grouped_add
+    self.__lto = lto
 
   @property
   def indices(self) -> np.ndarray:
@@ -1209,7 +1212,7 @@ class energy:
       codegen: codeGenerator = codeGenerator(self.__merged_hessian_and_gradient_attribute)
       codegen.generateCode() # this will give us the local kernel strings
       # now add the global kernel
-      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__project_entire_hessian, self.__projection_method, self.__gradient_only, (self.__separate_hessian_jacobian and not self.__project_entire_hessian), self.__global_jacobian.rows if self.__global_jacobian is not None else 0, self.__global_jacobian.cols if self.__global_jacobian is not None else 0, self.__global_inner_hessian.rows if self.__global_inner_hessian is not None else 0, grouped_add=self.__grouped_add)
+      self.__hessianAndGradientKernel = hessianAndGradientKernel(self.__merged_hessian_and_gradient_attribute, self.__project_entire_hessian, self.__projection_method, self.__gradient_only, (self.__separate_hessian_jacobian and not self.__project_entire_hessian), self.__global_jacobian.rows if self.__global_jacobian is not None else 0, self.__global_jacobian.cols if self.__global_jacobian is not None else 0, self.__global_inner_hessian.rows if self.__global_inner_hessian is not None else 0, grouped_add=self.__grouped_add, lto=self.__lto)
     assert self.__hessianAndGradientKernel is not None
     assert self.__indices_kernel is not None
     self.__hessianAndGradientKernel.generateKernel(self.__indices_kernel.outputUniqueGradientSizesCPU.tolist(), self.__wrt)

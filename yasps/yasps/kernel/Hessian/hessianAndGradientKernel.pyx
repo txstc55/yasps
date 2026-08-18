@@ -25,7 +25,7 @@ class hessianAndGradientKernel:
   att_name_to_kernel: dict[str, hessianAndGradientKernel] = {}  # maps attribute names to their hessian and gradient kernel instances, this way we can just return the previous existing kernel
 
 
-  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, local_hessian_nonzero_upper_positions: List[int] = [], dynamic_term = False, grouped_add: bool = False):
+  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, local_hessian_nonzero_upper_positions: List[int] = [], dynamic_term = False, grouped_add: bool = False, lto: bool = False):
     self.__kernelString: str = ""
     self.__headerFileString: str = ""
     self.__kernel = None # the kernel for computhing the gradient and hessians
@@ -50,6 +50,7 @@ class hessianAndGradientKernel:
     self.__additional_compile_flags = []  # --ptxas-options=-v,-warn-spills,-warn-lmem-usage  use this for memory checking
     self.__dynamic_terms = dynamic_term
     self.__grouped_add = grouped_add
+    self.__lto = lto
     self.__context = context()
     # self.__generateKernel(att)
 
@@ -107,9 +108,10 @@ class hessianAndGradientKernel:
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
     wrt_names = "_".join([att.fullName for att in wrt])
     size_names = "_".join([str(size) for size in unique_gradient_sizes])
-    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullNameWithHash}_wrt_{wrt_names}_with_sizes_{size_names}_grouped_add_{int(self.__grouped_add)}"
+    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullNameWithHash}_wrt_{wrt_names}_with_sizes_{size_names}_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
-    file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}" + ("" if self.__project_entire_hessian else "_no_proj")
+    kernel_mode_suffix = f"_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}"
+    file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}{kernel_mode_suffix}" + ("" if self.__project_entire_hessian else "_no_proj")
     # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
     # print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
@@ -121,10 +123,11 @@ class hessianAndGradientKernel:
       compile_jobs = []
       obj_files = []
       seen_obj_files = set([])
+      lto_flags = ["-dlto"] if self.__lto else []
       for item in (sortedDependency + [self.__att.deviceKernel]):
         # we check if the .o file exists
-        cu_file = f".yasps_tmp/{item.attributeName}.cu"
-        obj_file = f".yasps_tmp/{item.attributeName}.o"
+        cu_file = f".yasps_tmp/{item.attributeName}_lto_{int(self.__lto)}.cu"
+        obj_file = f".yasps_tmp/{item.attributeName}_lto_{int(self.__lto)}.o"
         if not obj_file in seen_obj_files:
           obj_files.append(obj_file)
         if (not os.path.exists(obj_file)) and (not obj_file in seen_obj_files):
@@ -142,7 +145,7 @@ extern "C"{{
             "-c", cu_file, "-o", obj_file,
             "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
             "--relocatable-device-code=true",
-          ] + self.__additional_compile_flags
+          ] + lto_flags + self.__additional_compile_flags
           print("Command is")
           print(" ".join(compile_cmd))
           job = subprocess.Popen(compile_cmd)
@@ -178,7 +181,7 @@ extern "C"{{
             "-c", cu_file, "-o", obj_file,
             "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
             "--relocatable-device-code=true",
-          ] + self.__additional_compile_flags
+          ] + lto_flags + self.__additional_compile_flags
           print("Command is")
           print(" ".join(compile_cmd))
           job = subprocess.Popen(compile_cmd)
@@ -201,7 +204,7 @@ extern "C"{{
         "-c", kernel_cu_file, "-o", kernel_obj_file,
         "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "--disable-warnings",
         "--relocatable-device-code=true",
-      ] + self.__additional_compile_flags
+      ] + lto_flags + self.__additional_compile_flags
       print("Kernel compile command: ")
       print(" ".join(kernel_compile_cmd))
       job = subprocess.Popen(kernel_compile_cmd)
@@ -219,7 +222,7 @@ extern "C"{{
         "-O3",
         *(obj_files + [kernel_obj_file]), "-o", device_link_obj,
         "--relocatable-device-code=true",
-      ] + self.__additional_compile_flags
+      ] + lto_flags + self.__additional_compile_flags
       print("Device link command: ")
       print(" ".join(dlink_cmd))
       subprocess.run(dlink_cmd, check=True)

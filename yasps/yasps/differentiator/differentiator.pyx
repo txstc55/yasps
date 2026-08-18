@@ -315,7 +315,7 @@ class differentiator:
       result.second_order_jacobians = [self.__gradient]
     return result
 
-  def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, grouped_add = False):
+  def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, grouped_add = False, lto = False):
     if not isinstance(source, list):
       source = [source]
     if len(source) == 0:
@@ -323,9 +323,11 @@ class differentiator:
     if self.__sameTargets(target1, target2):
       if not isinstance(grouped_add, bool):
         raise TypeError("differentiator.diff2: grouped_add must be bool.")
+      if not isinstance(lto, bool):
+        raise TypeError("differentiator.diff2: lto must be bool.")
       if len(source) == 1:
-        return self.__diff2_hessian_single(source[0], target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances, grouped_add=grouped_add)
-      return self.__diff2_hessian_all(source, target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances, grouped_add=grouped_add)
+        return self.__diff2_hessian_single(source[0], target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances, grouped_add=grouped_add, lto=lto)
+      return self.__diff2_hessian_all(source, target1, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances, grouped_add=grouped_add, lto=lto)
 
     if len(source) == 1:
       return self.__diff2_jacobian_single(source[0], target1, target2, dynamic_instances)
@@ -483,10 +485,10 @@ class differentiator:
       result.second_order_jacobians = [rectangular_jacobian]
     return result
 
-  def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, gradient_only = False, grouped_add = False):
+  def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, gradient_only = False, grouped_add = False, lto = False):
     total_hessian: Optional[hessian] = None
     for item in source:
-      current_hessian = self.__diff2_hessian_single(item, global_targets, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances, gradient_only, grouped_add)
+      current_hessian = self.__diff2_hessian_single(item, global_targets, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances, gradient_only, grouped_add, lto)
       if total_hessian is None:
         total_hessian = current_hessian
       else:
@@ -498,7 +500,7 @@ class differentiator:
   ## Hessian differentiation, each differentiation
   ## will return us a Hessian matrix object
   #########################################################
-  def __diff2_hessian_single(self, source: attribute, global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, gradient_only = False, grouped_add = False) -> hessian:
+  def __diff2_hessian_single(self, source: attribute, global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, gradient_only = False, grouped_add = False, lto = False) -> hessian:
     if source.size != 1:
       raise ValueError("differentiator.__diff2_hessian_single: source must be a scalar attribute.")
 
@@ -553,6 +555,7 @@ class differentiator:
       hessian_local.projection_methods = [projection_method]
       hessian_local.separate_hessian_jacobian = [separate_hessian_jacobian]
       hessian_local.grouped_add = [grouped_add]
+      hessian_local.lto = [lto]
       hessian_local.intermediate_compute_pairs = [dict(self.__intermediate_compute_pairs)]
       hessian_local.merged_hessian_and_gradient_attributes = [None]
       hessian_local.hessian_and_gradient_kernels = [None]
@@ -574,6 +577,7 @@ class differentiator:
       hessian_local.projection_methods_dynamic = [projection_method]
       hessian_local.separate_hessian_jacobian_dynamic = [separate_hessian_jacobian]
       hessian_local.grouped_add_dynamic = [grouped_add]
+      hessian_local.lto_dynamic = [lto]
       hessian_local.intermediate_compute_pairs_dynamic = [dict(self.__intermediate_compute_pairs)]
       hessian_local.merged_hessian_and_gradient_attributes_dynamic = [None]
       hessian_local.hessian_and_gradient_kernels_dynamic = [None]
