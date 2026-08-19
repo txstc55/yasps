@@ -393,7 +393,6 @@ class gradientIndicesKernel:
     self.__outputNumUniqueGradientSizesCPU = None
     self.__outputCompressedCoordinateCountsOuter: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
     self.__numTotalCoordinatesCPU = None
-    self.__coordinateMetadataReady = False
     ####################################################
     # Here are information needed for coordinate generation
     # we will have 1 array of uint32 which stores the uncompressed coordinates
@@ -446,17 +445,14 @@ class gradientIndicesKernel:
 
   @property
   def outputUniqueGradientSizes(self):
-    self.__ensureCoordinateMetadata()
     return self.__outputUniqueGradientSizes
 
   @property
   def outputGroupedIndicesInner(self):
-    self.__ensureCoordinateMetadata()
     return self.__outputGroupedIndicesInner
 
   @property
   def outputGroupedIndicesOuter(self):
-    self.__ensureCoordinateMetadata()
     return self.__outputGroupedIndicesOuter
 
   @property
@@ -467,7 +463,6 @@ class gradientIndicesKernel:
   def numUniqueGradientSizesCPU(self):
     if self.__numInstances == 0:
       return 0
-    self.__ensureCoordinateMetadata()
     if self.__outputNumUniqueGradientSizesCPU is None:
       self.__outputNumUniqueGradientSizesCPU = int(self.__outputNumUniqueGradientSizes.get()[0])
     return self.__outputNumUniqueGradientSizesCPU
@@ -489,7 +484,6 @@ class gradientIndicesKernel:
     self.__outputUniqueGradientSizesCPU = None
     self.__outputNumUniqueGradientSizesCPU = None
     self.__numTotalCoordinatesCPU = None
-    self.__coordinateMetadataReady = False
 
   @property
   def outputPermutations(self):
@@ -497,7 +491,6 @@ class gradientIndicesKernel:
 
   @property
   def outputCompressedCoordinateCountsOuter(self):
-    self.__ensureCoordinateMetadata()
     return self.__outputCompressedCoordinateCountsOuter
 
   @property
@@ -1012,9 +1005,7 @@ extern "C" int get_indices(
       raise RuntimeError(f"gradientIndiciesKernel.__computeIndices: Error in computing indices: {error_code}")
 
   @timed("gradientIndicesKernel.__compressIndicesLocal")
-  def __compressIndicesLocal(self, compute_coordinate_metadata=None):
-    if compute_coordinate_metadata is None:
-      compute_coordinate_metadata = self.__generate_coordinates
+  def __compressIndicesLocal(self):
     assert self.__compression_kernel is not None
     error_code = self.__compression_kernel(
       self.__to_void_p(self.__outputIndices),
@@ -1028,23 +1019,15 @@ extern "C" int get_indices(
       self.__to_void_p(self.__outputNumUniqueGradientSizes),
       self.__numInstances,
       self.maxNumIndicesNeeded,
-      int(compute_coordinate_metadata))
+      int(self.__generate_coordinates))
     if error_code != 0:
       raise RuntimeError(f"gradientIndiciesKernel.__compressIndicesLocal: Error in compressing indices: {error_code}")
-    self.__coordinateMetadataReady = bool(compute_coordinate_metadata)
-
-  def __ensureCoordinateMetadata(self):
-    if self.__numInstances == 0 or self.__coordinateMetadataReady:
-      return
-    self.__context.useDefaultContext()
-    self.__compressIndicesLocal(True)
 
 
   @property
   def numTotalCoordinates(self) -> int:
     if self.__numInstances == 0:
       return 0
-    self.__ensureCoordinateMetadata()
     if self.__numTotalCoordinatesCPU is None:
       result = np.zeros(1, dtype=np.uint32)
       assert self.__outputCompressedCoordinateCountsOuter is not None
