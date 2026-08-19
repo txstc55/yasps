@@ -39,7 +39,11 @@ compression_kernel_string = '''
 #include <thrust/copy.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
+#include <thrust/transform_scan.h>
+#include <thrust/reduce.h>
 #include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/functional.h>
 #include <cuda_runtime.h>
 #include <vector>
 // for checking cuda error
@@ -136,7 +140,8 @@ int compress_indices(
   unsigned int* d_offsets,                 // offsets for compressed indices
   unsigned short int* d_num_unique,              // number of unique sizes
   unsigned int num_instances,
-  unsigned int num_indices_for_each_instance
+  unsigned int num_indices_for_each_instance,
+  unsigned int compute_coordinate_metadata
 ) {
   // Compute permutation and total sizes
   computePermutation<<<(num_instances + 256 - 1) / 256, 256>>>(
@@ -148,6 +153,14 @@ int compress_indices(
     num_instances,
     num_indices_for_each_instance
   );
+  if (!compute_coordinate_metadata) {
+    cudaError_t err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+      fprintf(stderr, "CUDA Error (synchronize): %s\\n", cudaGetErrorString(err));
+      return -1;
+    }
+    return 0;
+  }
   // Wrap existing memory (no extra allocation)
   auto total_sizes_begin = thrust::device_pointer_cast(d_total_gradient_sizes);
   auto total_sizes_end   = total_sizes_begin + num_instances;
@@ -161,51 +174,36 @@ int compress_indices(
     total_sizes_begin, total_sizes_end, grouped_indices_begin
   );
 
-  // Compute flags marking unique starts (no extra alloc for sorted_values)
-  thrust::device_vector<unsigned int> flags(num_instances);
-  flags[0] = 1;
-  thrust::transform(
-    total_sizes_begin + 1, total_sizes_end,
-    total_sizes_begin,
-    flags.begin() + 1,
-    thrust::not_equal_to<unsigned int>()
+  // Reduce the sorted sizes directly into the compact size list and group
+  // counts. This avoids an N-element flag allocation and the count/copy_if
+  // passes that used to consume it.
+  auto unique_sizes_begin = thrust::device_pointer_cast(d_unique_sizes);
+  auto group_counts_begin = thrust::device_pointer_cast(d_offsets + 1);
+  auto reduced_end = thrust::reduce_by_key(
+    total_sizes_begin, total_sizes_end,
+    thrust::make_constant_iterator<unsigned int>(1),
+    unique_sizes_begin,
+    group_counts_begin
   );
-  // Get the unique count directly
-  unsigned short int unique_count = thrust::count(flags.begin(), flags.end(), 1u);
+  unsigned short int unique_count = static_cast<unsigned short int>(
+    reduced_end.first - unique_sizes_begin
+  );
+  cudaMemset(d_offsets, 0, sizeof(unsigned int));
+  thrust::inclusive_scan(
+    group_counts_begin,
+    group_counts_begin + unique_count,
+    group_counts_begin
+  );
   cudaMemcpy(d_num_unique, &unique_count, sizeof(unsigned short int), cudaMemcpyHostToDevice);
 
-  // Compute offsets directly into provided memory (no extra alloc)
-  thrust::copy_if(
-    thrust::make_counting_iterator(0),
-    thrust::make_counting_iterator((int)num_instances),
-    flags.begin(),
-    thrust::device_pointer_cast(d_offsets),
-    thrust::identity<unsigned int>()
-  );
-  // Set the last offset to num_instances explicitly
-  cudaMemcpy(d_offsets + unique_count, &num_instances, sizeof(unsigned int), cudaMemcpyHostToDevice);
-  // Copy unique sizes directly into provided memory
-  thrust::copy_if(
-    total_sizes_begin, total_sizes_end,
-    flags.begin(),
-    thrust::device_pointer_cast(d_unique_sizes),
-    thrust::identity<unsigned int>()
-  );
-  CUDA_CHECK_ERROR(cudaDeviceSynchronize());
   // now we count for the energy, the number of coordinates we need to allocate
   thrust::device_ptr<unsigned int> count_ptr(d_compressed_coordinate_counts_ounter);
-  thrust::transform(
-    count_ptr + 1,                 // input start
-    count_ptr + 1 + num_instances, // input end
-    count_ptr + 1,                 // output start
-    triangular_transform()         // transformation
-  );
-  // Compute prefix sum (exclusive) on transformed values, store back
-  // this way, we know where the coordinate starts and ends
-  thrust::inclusive_scan(
-    count_ptr + 1,                 // input start
-    count_ptr + 1 + num_instances, // input end
-    count_ptr + 1                  // output: starts at index 0
+  thrust::transform_inclusive_scan(
+    count_ptr + 1,
+    count_ptr + 1 + num_instances,
+    count_ptr + 1,
+    triangular_transform(),
+    thrust::plus<unsigned int>()
   );
   cudaError_t err = cudaDeviceSynchronize();
   if (err != cudaSuccess) {
@@ -345,7 +343,8 @@ class gradientIndicesKernel:
     # print("Checking unioned child to its children")
     # for key in self.__unioned_child_to_its_children:
     #   print(f"Unioned child: {key.fullName}, children: {[x.fullName for x in self.__unioned_child_to_its_children[key]]}")
-    self.__wrt_start_indices: List[int] = wrt_start_indices
+    self.__wrt_start_indices = None
+    self.__wrt_start_indices_gpu: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32)
     self.__energy: attribute = energy
     self.__used_join_attributes: List[attribute] = [] # all the join attributes, we will use its connectivities for indexing
     self.__used_join_attributes_hashes: Set[int] = set() # we will use this to quickly check if an attribute is already included
@@ -393,6 +392,7 @@ class gradientIndicesKernel:
     self.__outputNumUniqueGradientSizes: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint16) # this will record the number of unique sizes of the gradients after compression
     self.__outputNumUniqueGradientSizesCPU = None
     self.__outputCompressedCoordinateCountsOuter: gpuarray.GPUArray = gpuarray.empty(0, dtype=np.uint32) # for recording how many indices are in the compressed gradient
+    self.__numTotalCoordinatesCPU = None
     ####################################################
     # Here are information needed for coordinate generation
     # we will have 1 array of uint32 which stores the uncompressed coordinates
@@ -457,25 +457,33 @@ class gradientIndicesKernel:
 
   @property
   def numUniqueGradientSizes(self):
-    if self.__numInstances == 0:
-      return 0
-    return self.__outputNumUniqueGradientSizes.get()[0]
+    return self.numUniqueGradientSizesCPU
 
   @property
   def numUniqueGradientSizesCPU(self):
     if self.__numInstances == 0:
       return 0
-    # if self.__outputNumUniqueGradientSizesCPU is None:
-    self.__outputNumUniqueGradientSizesCPU = self.__outputNumUniqueGradientSizes.get()[0]
+    if self.__outputNumUniqueGradientSizesCPU is None:
+      self.__outputNumUniqueGradientSizesCPU = int(self.__outputNumUniqueGradientSizes.get()[0])
     return self.__outputNumUniqueGradientSizesCPU
 
   @property
   def outputUniqueGradientSizesCPU(self):
     if self.__numInstances == 0:
       return np.array([], dtype=np.uint16)
-    # if self.__outputUniqueGradientSizesCPU is None:
-    self.__outputUniqueGradientSizesCPU = np.array(self.__outputUniqueGradientSizes.get(), dtype=np.uint16).flatten()[:self.numUniqueGradientSizesCPU]
+    if self.__outputUniqueGradientSizesCPU is None:
+      num_unique_sizes = self.numUniqueGradientSizesCPU
+      self.__outputUniqueGradientSizesCPU = np.asarray(
+        self.__outputUniqueGradientSizes[:num_unique_sizes].get(),
+        dtype=np.uint16
+      ).reshape(-1)
+      self.__outputUniqueGradientSizesCPU.setflags(write=False)
     return self.__outputUniqueGradientSizesCPU
+
+  def __invalidateCPUMetadata(self):
+    self.__outputUniqueGradientSizesCPU = None
+    self.__outputNumUniqueGradientSizesCPU = None
+    self.__numTotalCoordinatesCPU = None
 
   @property
   def outputPermutations(self):
@@ -492,7 +500,7 @@ class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__getCompressionKernel")
   def __getCompressionKernel(self):
     if self.__compression_kernel is None:
-      file_name = ".yasps_constant/compression_kernel" + ("" if not self.__no_local_permutation else "_no_perm")
+      file_name = ".yasps_constant/compression_kernel_reduce_v1" + ("" if not self.__no_local_permutation else "_no_perm")
       # check if the file exists
       if not os.path.exists(f'{file_name}.so'):
         # generate the kernel
@@ -502,11 +510,11 @@ class gradientIndicesKernel:
         os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -lcudart -lcuda" + ("  -DNO_LOCAL_PERMUTATION" if self.__no_local_permutation else ""))
         self.__compression_kernel = ctypes.CDLL(f"{file_name}.so").compress_indices # get the compiled kernel
         self.__compression_kernel.restype = ctypes.c_int # set the return type to None
-        self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2
+        self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 3
       else:
         self.__compression_kernel = ctypes.CDLL(f"{file_name}.so").compress_indices # get the compiled kernel
         self.__compression_kernel.restype = ctypes.c_int # set the return type to None
-        self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2
+        self.__compression_kernel.argtypes = [ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 3
 
   @timed("gradientIndicesKernel.__getCoordinateKernel")
   def __getCoordinateKernel(self):
@@ -943,34 +951,40 @@ extern "C" int get_indices(
 
   @timed("gradientIndicesKernel.__reallocate")
   def __reallocate(self):
+    self.__invalidateCPUMetadata()
     newNumInstances: int = self.__energy.correspondance.numInstances
     if newNumInstances > self.__maxInstances:
       # resize the gpu arrays
       self.__outputIndices = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
       self.__outputIndexSizes = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint16)
       self.__outputPermutations = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.int16)
-      self.__outputGradientSizes = gpuarray.zeros(newNumInstances, dtype=np.uint16)
-      self.__outputGroupedIndicesInner = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
-      self.__outputCompressedCoordinateCountsOuter = gpuarray.zeros(newNumInstances + 1, dtype=np.uint32)
+      self.__outputGradientSizes = gpuarray.empty(newNumInstances, dtype=np.uint16)
+      self.__outputGroupedIndicesInner = gpuarray.empty(newNumInstances, dtype=np.uint32)
+      self.__outputCompressedCoordinateCountsOuter = gpuarray.empty(newNumInstances + 1, dtype=np.uint32)
       self.__maxInstances = newNumInstances # update the maximum size
     self.__numInstances = newNumInstances # update the number of instances
     if newNumInstances == 0:
       self.__numInstances = 0
       return
     # we clear the output arrays
-    self.__outputIndices.fill(0)
-    self.__outputIndexSizes.fill(0)
-    self.__outputPermutations.fill(0)
-    self.__outputGradientSizes.fill(0)
-    self.__outputGroupedIndicesInner.fill(0)
-    self.__outputUniqueGradientSizes.fill(0)
-    self.__outputGroupedIndicesOuter.fill(0)
-    self.__outputCompressedCoordinateCountsOuter.fill(0)
+    active_index_count = self.maxNumIndicesNeeded * newNumInstances
+    self.__outputIndices[:active_index_count].fill(0)
+    self.__outputIndexSizes[:active_index_count].fill(0)
+    self.__outputPermutations[:active_index_count].fill(0)
+    cuda.memset_d32(self.__outputCompressedCoordinateCountsOuter.gpudata, 0, 1)
 
   @timed("gradientIndicesKernel.__computeIndices")
   def __computeIndices(self, wrt_start_indices: List[int]):
-    # first let's convert wrt_start_indices to a pycuda array
-    wrt_start_indices_gpu = gpuarray.to_gpu(np.array(wrt_start_indices, dtype=np.uint32)) # this has to be non empty
+    wrt_start_indices_key = tuple(int(x) for x in wrt_start_indices)
+    if len(wrt_start_indices_key) == 0:
+      raise ValueError("gradientIndicesKernel.__computeIndices: wrt_start_indices must not be empty.")
+    if wrt_start_indices_key != self.__wrt_start_indices:
+      wrt_start_indices_cpu = np.asarray(wrt_start_indices_key, dtype=np.uint32)
+      if self.__wrt_start_indices_gpu.size == wrt_start_indices_cpu.size:
+        self.__wrt_start_indices_gpu.set(wrt_start_indices_cpu)
+      else:
+        self.__wrt_start_indices_gpu = gpuarray.to_gpu(wrt_start_indices_cpu)
+      self.__wrt_start_indices = wrt_start_indices_key
     # then we get all the gpu arrays for the connectivity
     connectivity_list_gpu = [self.__to_void_p(x.through.value) for x in self.__used_join_attributes]
     self.__union_counts = [x.children_primitive_counts_gpu for x in self.__used_primitive_unions]
@@ -981,7 +995,7 @@ extern "C" int get_indices(
     error_code = self.__indices_kernel(
       *connectivity_list_gpu,
       *union_count_list_gpu,
-      self.__to_void_p(wrt_start_indices_gpu),
+      self.__to_void_p(self.__wrt_start_indices_gpu),
       self.__to_void_p(self.__outputIndices),
       self.__to_void_p(self.__outputIndexSizes),
       self.__numInstances
@@ -1004,7 +1018,8 @@ extern "C" int get_indices(
       self.__to_void_p(self.__outputGroupedIndicesOuter),
       self.__to_void_p(self.__outputNumUniqueGradientSizes),
       self.__numInstances,
-      self.maxNumIndicesNeeded)
+      self.maxNumIndicesNeeded,
+      int(self.__generate_coordinates))
     if error_code != 0:
       raise RuntimeError(f"gradientIndiciesKernel.__compressIndicesLocal: Error in compressing indices: {error_code}")
 
@@ -1013,11 +1028,12 @@ extern "C" int get_indices(
   def numTotalCoordinates(self) -> int:
     if self.__numInstances == 0:
       return 0
-    result = np.zeros(1, dtype=np.uint32)
-    assert self.__outputCompressedCoordinateCountsOuter is not None
-    cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
-    # return int(self.__outputCompressedCoordinateCountsOuter[self.__numInstances])
-    return int(result[0])
+    if self.__numTotalCoordinatesCPU is None:
+      result = np.zeros(1, dtype=np.uint32)
+      assert self.__outputCompressedCoordinateCountsOuter is not None
+      cuda.memcpy_dtoh(result, int(self.__outputCompressedCoordinateCountsOuter.gpudata) + self.__numInstances * np.dtype(np.uint32).itemsize)
+      self.__numTotalCoordinatesCPU = int(result[0])
+    return self.__numTotalCoordinatesCPU
 
   @timed("gradientIndicesKernel.allocateSpaceForCoordinates")
   def __allocateSpaceForCoordinates(self):
@@ -1025,16 +1041,8 @@ extern "C" int get_indices(
     spaceNeeded = self.numTotalCoordinates * 2
     # now determine if it is larger than what we currently have
     if spaceNeeded > self.__outputCoordinates.size:
-      # here we will allocate more space than needed to avoid frequent reallocations
-      self.__outputCoordinates = gpuarray.zeros(int(spaceNeeded * 1), dtype=np.uint32)
-      self.__outputBlockDimensions = gpuarray.zeros(int(spaceNeeded * 1), dtype=np.uint16)
-    # fill in 0
-    # PyCUDA cannot launch its fill kernel for a zero-length GPUArray.  A
-    # gradient-only derivative can legitimately have no matrix coordinates,
-    # so leave the two already-empty buffers untouched in that case.
-    if self.__outputCoordinates.size != 0:
-      self.__outputCoordinates.fill(0)
-      self.__outputBlockDimensions.fill(0)
+      self.__outputCoordinates = gpuarray.empty(spaceNeeded, dtype=np.uint32)
+      self.__outputBlockDimensions = gpuarray.empty(spaceNeeded, dtype=np.uint16)
 
   @timed("gradientIndicesKernel.generateCoordinates")
   def __generateCoordinates(self):

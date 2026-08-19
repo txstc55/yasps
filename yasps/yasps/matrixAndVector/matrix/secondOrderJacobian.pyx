@@ -366,19 +366,10 @@ class secondOrderJacobian(matrix):
         dtype=np.float64
       )
 
-    num_unique_dimensions = self.__compression_kernel.numUniqueDimensions
-    self.blocks_start_indices = (
-      self.__compression_kernel.uniqueDimensionsOuterIndices.get().tolist()[
-        :num_unique_dimensions + 1
-      ]
-    )
+    self.blocks_start_indices = self.__compression_kernel.uniqueDimensionsOuterIndicesCPU.tolist()
     self.block_positions = self.__compression_kernel.uniqueCoordinates
-    self.block_counts = self.__compression_kernel.uniqueDimensionsBlockCounts.get().tolist()[:num_unique_dimensions]
-    self.block_dimensions = (
-      self.__compression_kernel.uniqueDimensions.get().tolist()[
-        :num_unique_dimensions * 2
-      ]
-    )
+    self.block_counts = self.__compression_kernel.uniqueDimensionsBlockCountsCPU.tolist()
+    self.block_dimensions = self.__compression_kernel.uniqueDimensionsCPU.tolist()
 
   @timed("secondOrderJacobian.getSparseIndicesDynamic")
   def getSparseIndicesDynamic(self):
@@ -409,22 +400,12 @@ class secondOrderJacobian(matrix):
         dtype=np.float64
       )
 
-    num_unique_dimensions = (
-      self.__compression_kernel_dynamic.numUniqueDimensions
-    )
-    self.blocks_start_indices_dynamic = (
-      self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get(
-      ).tolist()[:num_unique_dimensions + 1]
-    )
+    self.blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndicesCPU.tolist()
     self.block_positions_dynamic = (
       self.__compression_kernel_dynamic.uniqueCoordinates
     )
-    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get().tolist()[:num_unique_dimensions]
-    self.block_dimensions_dynamic = (
-      self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[
-        :num_unique_dimensions * 2
-      ]
-    )
+    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCountsCPU.tolist()
+    self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsCPU.tolist()
 
   @timed("secondOrderJacobian.getSparseIndicesDynamicAgain")
   def getSparseIndicesDynamicAgain(self):
@@ -456,22 +437,12 @@ class secondOrderJacobian(matrix):
         dtype=np.float64
       )
 
-    num_unique_dimensions = (
-      self.__compression_kernel_dynamic.numUniqueDimensions
-    )
-    self.blocks_start_indices_dynamic = (
-      self.__compression_kernel_dynamic.uniqueDimensionsOuterIndices.get(
-      ).tolist()[:num_unique_dimensions + 1]
-    )
+    self.blocks_start_indices_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsOuterIndicesCPU.tolist()
     self.block_positions_dynamic = (
       self.__compression_kernel_dynamic.uniqueCoordinates
     )
-    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCounts.get().tolist()[:num_unique_dimensions]
-    self.block_dimensions_dynamic = (
-      self.__compression_kernel_dynamic.uniqueDimensions.get().tolist()[
-        :num_unique_dimensions * 2
-      ]
-    )
+    self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCountsCPU.tolist()
+    self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsCPU.tolist()
 
   def __ensureTermKernel(self, index: int, dynamic_term: bool) -> None:
     if dynamic_term:

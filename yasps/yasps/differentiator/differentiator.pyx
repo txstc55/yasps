@@ -135,7 +135,8 @@ class differentiator:
 
   def __turnOffGenerateCode(self, derivative_attribute: attribute) -> attribute:
     """Inline a derivative attribute into its consuming kernel."""
-    derivative_attribute.generate_code = False
+    '''Need to come back to this later'''
+    # derivative_attribute.generate_code = False
     return derivative_attribute
 
   def __combinedGradientName(
