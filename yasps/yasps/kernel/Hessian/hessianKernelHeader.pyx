@@ -73,46 +73,68 @@ __device__ __forceinline__ double symmetric_upper_get(
   return packed[symmetric_upper_index<N>(row, column)];
 }
 
-// Fast FP64 LDLT test for a local Hessian that is already positive
-// semidefinite. It avoids the eigendecomposition without modifying A.
+// Fast FP64 LDLT-equivalent PSD test using an in-place packed Schur
+// complement. It preserves A and uses half the explicit scratch of the
+// dense lower-plus-diagonal implementation.
 template <unsigned int N>
-__device__ __forceinline__ bool is_positive_semidefinite(const double *A) {
-  double lower[N * N] = {};
-  double diagonal[N] = {};
+__device__ __forceinline__ bool is_positive_semidefinite(
+    const double *__restrict__ A) {
+  static_assert(N > 0);
+
+  constexpr unsigned int PACKED_SIZE = N * (N + 1) / 2;
+  double schur[PACKED_SIZE];
   double scale = 1.0;
-  for (unsigned int i = 0; i < N; ++i) {
-    const double magnitude = A[i * N + i] < 0.0 ? -A[i * N + i] : A[i * N + i];
-    scale = scale > magnitude ? scale : magnitude;
-    lower[i * N + i] = 1.0;
-  }
-  const double tolerance = scale * 1.0e-10;
-  for (unsigned int column = 0; column < N; ++column) {
-    double pivot = A[column * N + column];
-    for (unsigned int k = 0; k < column; ++k) {
-      const double value = lower[column * N + k];
-      pivot -= value * value * diagonal[k];
+
+#pragma unroll 1
+  for (unsigned int row = 0; row < N; ++row) {
+    const unsigned int row_base = row * (row + 1) / 2;
+#pragma unroll 4
+    for (unsigned int column = 0; column <= row; ++column) {
+      schur[row_base + column] = A[row * N + column];
     }
+    scale = fmax(scale, fabs(schur[row_base + row]));
+  }
+
+  const double tolerance = scale * 1.0e-10;
+
+#pragma unroll 1
+  for (unsigned int column = 0; column < N; ++column) {
+    const unsigned int column_base = column * (column + 1) / 2;
+    const double pivot = schur[column_base + column];
+
     if (pivot < -tolerance) return false;
-    const double pivot_magnitude = pivot < 0.0 ? -pivot : pivot;
-    if (pivot_magnitude <= tolerance) {
-      diagonal[column] = 0.0;
+
+    // A zero diagonal in a PSD Schur complement requires the corresponding
+    // remaining column to be zero as well.
+    if (fabs(pivot) <= tolerance) {
+#pragma unroll 4
       for (unsigned int row = column + 1; row < N; ++row) {
-        double residual = A[row * N + column];
-        for (unsigned int k = 0; k < column; ++k) {
-          residual -= lower[row * N + k] * lower[column * N + k] * diagonal[k];
-        }
-        const double residual_magnitude = residual < 0.0 ? -residual : residual;
-        if (residual_magnitude > tolerance) return false;
+        const unsigned int row_base = row * (row + 1) / 2;
+        if (fabs(schur[row_base + column]) > tolerance) return false;
       }
       continue;
     }
-    diagonal[column] = pivot;
+
+    // One correctly-rounded reciprocal per column instead of one division
+    // for every remaining row.
+    const double inverse_pivot = __drcp_rn(pivot);
+
+#pragma unroll 1
     for (unsigned int row = column + 1; row < N; ++row) {
-      double value = A[row * N + column];
-      for (unsigned int k = 0; k < column; ++k) {
-        value -= lower[row * N + k] * lower[column * N + k] * diagonal[k];
+      const unsigned int row_base = row * (row + 1) / 2;
+      const double factor = schur[row_base + column] * inverse_pivot;
+
+#pragma unroll 4
+      for (unsigned int trailing_column = column + 1;
+           trailing_column <= row;
+           ++trailing_column) {
+        const unsigned int trailing_base =
+            trailing_column * (trailing_column + 1) / 2;
+        schur[row_base + trailing_column] = __fma_rn(
+            -factor,
+            schur[trailing_base + column],
+            schur[row_base + trailing_column]);
       }
-      lower[row * N + column] = value / pivot;
     }
   }
   return true;
