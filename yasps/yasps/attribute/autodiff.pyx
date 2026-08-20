@@ -91,11 +91,16 @@ class autodiff:
     dB = self.__diff(current.children[1], wrt)
     return dA.sub_explicit(dB)
 
-  # MARK, THIS IS NOT CORRECT.
   def __diff_abs(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     dA = self.__diff(current.children[0], wrt)
-    # return dA.abs()
-    return ya.attribute.to_array([dA[i].abs() for i in range(dA.size)], rows = dA.rows, cols = dA.cols)
+    A = current.children[0]
+    result = [None] * current.size * wrt.size
+    for i in range(current.size):
+      nonnegative = A[i] >= 0.0
+      for j in range(wrt.size):
+        derivative = dA[i * wrt.size + j]
+        result[i * wrt.size + j] = ya.attribute.select(nonnegative, derivative, -derivative)
+    return ya.attribute.to_array(result, rows = current.size, cols = wrt.size)
 
   def __diff_mul(self, current: ya.attribute, wrt: ya.attribute) -> ya.attribute:
     # we explicitly do the multiplication

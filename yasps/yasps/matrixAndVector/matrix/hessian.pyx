@@ -971,7 +971,11 @@ class hessian(matrix):
     # The symbolic Hessian name contains its full generation configuration.
     # Carry that identity into the merged compute attribute as well so two
     # Hessian modes for the same source and targets cannot collide here.
-    derivative_name = global_gradient.name if global_hessian is None else global_hessian.name
+    # Direct per-primitive energies can produce an unnamed inline Hessian
+    # expression even though their registered gradient is fully named. Falling
+    # back to that gradient identity prevents unrelated energies on the same
+    # primitive from all reusing the ambiguous "hessian_and_gradient_" kernel.
+    derivative_name = global_gradient.name if global_hessian is None or global_hessian.name == "" else global_hessian.name
     if gradient_only:
       merged_attribute_name = f'hessian_and_gradient_gradient_only_{derivative_name}'
     else:
