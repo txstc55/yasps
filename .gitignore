@@ -78,6 +78,7 @@ examples/dropping/*
 
 examples/cage/_skipped.face
 examples/cubify/*
+!examples/cubify/cubify.py
 examples/re_area/*
 examples/two_coins/*
 examples/swing/*
@@ -101,3 +102,4 @@ StiffGIPC/
 /examples/dropping_in_container_2_affine_3_soft/results*/
 /examples/dropping_in_container_2_affine_3_soft/snapshot_corpus*/
 /examples/dropping_in_container_2_affine_3_soft/tight_snapshot_corpus/
+/examples/double_clamp_edge_weight_optimization/
