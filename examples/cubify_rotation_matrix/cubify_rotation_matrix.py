@@ -92,8 +92,6 @@ bunny = model.addMesh("bunny")
 vertex_primitive = bunny.addPrimitive("vertices", numInstances=num_vertices)
 position = vertex_primitive.addAttribute("position", rows=3, cols=1)
 position.updateValue(rest_vertices)
-position_constant = vertex_primitive.addConstant("position_constant", rows=3, cols=1)
-position_constant.updateValue(rest_vertices)
 rest_position = vertex_primitive.addConstant("rest_position", rows=3, cols=1)
 rest_position.updateValue(rest_vertices)
 normal = vertex_primitive.addConstant("normal", rows=3, cols=1)
@@ -109,18 +107,14 @@ velocity = vertex_primitive.addConstant("velocity", rows=3, cols=1)
 velocity.updateValue([0.0] * (3 * num_vertices))
 rotation = vertex_primitive.addAttribute("rotation", rows=3, cols=3)
 rotation.updateValue([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] * num_vertices)
-rotation_constant = vertex_primitive.addConstant("rotation_constant", rows=3, cols=3)
-rotation_constant.updateValue(rotation.value, deepCopy=True)
 
 edge_primitive = bunny.addPrimitive("edges", numInstances=num_edges)
 edge_to_vertex = edge_primitive.addConnectivity("edge_to_vertex", vertex_primitive, edges.flatten(), 2)
 edge_weight = edge_primitive.addConstant("cotangent_weight", rows=1, cols=1)
 edge_weight.updateValue(cotangent_weights)
 edge_positions = edge_primitive.addAttribute("positions", through=edge_to_vertex, source=position)
-edge_positions_constant = edge_primitive.addAttribute("positions_constant", through=edge_to_vertex, source=position_constant)
 edge_rest_positions = edge_primitive.addAttribute("rest_positions", through=edge_to_vertex, source=rest_position)
 edge_rotations = edge_primitive.addAttribute("rotations", through=edge_to_vertex, source=rotation)
-edge_rotations_constant = edge_primitive.addAttribute("rotations_constant", through=edge_to_vertex, source=rotation_constant)
 
 
 ##################################################################
@@ -129,10 +123,11 @@ edge_rotations_constant = edge_primitive.addAttribute("rotations_constant", thro
 cubic_energy = vertex_primitive.addAttribute("cubic_energy", computed_attribute=vertex_cubic_energy(area, rotation, normal, cubic_weight))
 orthogonality_energy = vertex_primitive.addAttribute("orthogonality_energy", computed_attribute=vertex_orthogonality_energy(area, rotation, orthogonality_weight))
 determinant_energy = vertex_primitive.addAttribute("determinant_energy", computed_attribute=vertex_determinant_energy(area, rotation, determinant_weight))
-local_arap_energy = edge_primitive.addAttribute("local_arap_energy", computed_attribute=edge_arap_energy(edge_weight, edge_positions_constant, edge_rotations, edge_rest_positions, arap_weight))
+local_arap_energy = edge_primitive.addAttribute("local_arap_energy", computed_attribute=edge_arap_energy(edge_weight, edge_positions, edge_rotations, edge_rest_positions, arap_weight))
 local_minimizer = minimizer()
 local_minimizer.addEnergy(cubic_energy, projection_method=2)
-local_minimizer.addEnergy(local_arap_energy, projection_method=2)
+# Position stays live in the ARAP value but is excluded from the projected local Hessian.
+local_minimizer.addEnergy(local_arap_energy, targets=[rotation], projection_method=2)
 local_minimizer.addEnergy(orthogonality_energy, projection_method=1)
 local_minimizer.addEnergy(determinant_energy, projection_method=1)
 local_minimizer.addWrt([rotation])
@@ -142,11 +137,12 @@ local_minimizer.generateHessianAndGradient()
 ##################################################################
 ## Construct the global implicit-Euler position minimization
 ##################################################################
-global_arap_energy = edge_primitive.addAttribute("dynamic_global_arap_energy", computed_attribute=edge_arap_energy(edge_weight, edge_positions, edge_rotations_constant, edge_rest_positions, arap_weight) * (args.time_step * args.time_step))
+global_arap_energy = edge_primitive.addAttribute("dynamic_global_arap_energy", computed_attribute=edge_arap_energy(edge_weight, edge_positions, edge_rotations, edge_rest_positions, arap_weight) * (args.time_step * args.time_step))
 regularization_energy = vertex_primitive.addAttribute("dynamic_regularization_energy", computed_attribute=vertex_regularization_energy(position, rest_position, area, regularization_weight) * (args.time_step * args.time_step))
 inertia_energy = vertex_primitive.addAttribute("inertia_energy", computed_attribute=vertex_inertia_energy(last_position, velocity, time_step, position, mass, GRAVITY))
 global_minimizer = minimizer()
-global_minimizer.addEnergy(global_arap_energy, projection_method=1)
+# Rotation stays live in the ARAP value but is excluded from the projected local Hessian.
+global_minimizer.addEnergy(global_arap_energy, targets=[position], projection_method=1)
 global_minimizer.addEnergy(regularization_energy, projection_method=1)
 global_minimizer.addEnergy(inertia_energy, projection_method=0)
 global_minimizer.addWrt([position])
@@ -205,7 +201,6 @@ for outer_iteration in range(1, args.num_frames + 1):
 
   for position_newton_iteration in range(args.max_position_newton_iterations):
     position_newton_iterations = position_newton_iteration + 1
-    position_constant.updateValue(position.value, deepCopy=True)
     rotation_converged = False
     for _ in range(args.max_rotation_newton_iterations):
       rotation_newton_iterations += 1
@@ -243,8 +238,7 @@ for outer_iteration in range(1, args.num_frames + 1):
     if not rotation_converged:
       print(f"Warning: frame {outer_iteration} position iteration {position_newton_iteration} reached the {args.max_rotation_newton_iterations}-iteration matrix Newton cap with |solution|_inf={local_maximum_solution:.8e}.")
 
-    # Freeze the optimized matrices and compute one global position Newton step.
-    rotation_constant.updateValue(rotation.value, deepCopy=True)
+    # Compute one global position Newton step with rotation excluded locally.
     global_energy_before = global_minimizer.computeTotalEnergy()
     global_hessian = global_minimizer.computeNumericValue()
     global_error_code = global_minimizer.linearSolver.computeSolution(global_hessian, global_hessian.gradient, None, tolerance=SOLVER_TOLERANCE, maxIterations=MAX_CG_ITERATIONS, zero_initial_guess=True)

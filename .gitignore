@@ -103,3 +103,4 @@ StiffGIPC/
 /examples/dropping_in_container_2_affine_3_soft/snapshot_corpus*/
 /examples/dropping_in_container_2_affine_3_soft/tight_snapshot_corpus/
 /examples/double_clamp_edge_weight_optimization/
+/examples/double_clamp_tet_edge_weight_optimization/
