@@ -515,7 +515,7 @@ class differentiator:
     indices_kernel = gradientIndicesKernel(
       paths.path_dict,
       paths.unioned_child_to_its_children,
-      paths.wrt,
+      global_targets,
       wrt_start_indices,
       source,
       separate_hessian_jacobian
