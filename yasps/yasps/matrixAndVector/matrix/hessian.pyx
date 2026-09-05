@@ -12,7 +12,6 @@ import numpy as np
 import pycuda.autoinit
 import pycuda.gpuarray as gpuarray
 from yasps.helper import timed
-from yasps.placementReorderKernel import placementReorderKernel
 
 
 class hessian(matrix):
@@ -73,7 +72,7 @@ class hessian(matrix):
     self.__global_jacobian_block_nonzero_local_positions: List[List[int]] = []
     self.__global_jacobian_children_sizes: List[List[int]] = []
     self.__global_jacobian_children_spans: List[List[int]] = []
-    self.__placement_reorder_kernels: List[placementReorderKernel] = []
+    self.__global_jacobian_block_layouts: List[dict] = []
 
     self.__global_gradients_dynamic: List[attribute] = []
     self.__global_hessians_dynamic: List[Optional[attribute]] = []
@@ -95,7 +94,7 @@ class hessian(matrix):
     self.__global_jacobian_block_nonzero_local_positions_dynamic: List[List[int]] = []
     self.__global_jacobian_children_sizes_dynamic: List[List[int]] = []
     self.__global_jacobian_children_spans_dynamic: List[List[int]] = []
-    self.__placement_reorder_kernels_dynamic: List[placementReorderKernel] = []
+    self.__global_jacobian_block_layouts_dynamic: List[dict] = []
 
     self.__indices_kernels: List[gradientIndicesKernel] = []
     self.__indices_kernels_dynamic: List[gradientIndicesKernel] = []
@@ -699,28 +698,28 @@ class hessian(matrix):
     self.__block_indices_gpu_dynamic = value
 
   @property
-  def placement_reorder_kernels(self) -> List[placementReorderKernel]:
-    return self.__placement_reorder_kernels
+  def global_jacobian_block_layouts(self) -> List[dict]:
+    return self.__global_jacobian_block_layouts
 
-  @placement_reorder_kernels.setter
-  def placement_reorder_kernels(self, value: List[placementReorderKernel]) -> None:
+  @global_jacobian_block_layouts.setter
+  def global_jacobian_block_layouts(self, value: List[dict]) -> None:
     if not isinstance(value, list):
-      raise TypeError("hessian.placement_reorder_kernels: value must be a list.")
-    if any(not isinstance(item, placementReorderKernel) for item in value):
-      raise TypeError("hessian.placement_reorder_kernels: all items must be placementReorderKernel.")
-    self.__placement_reorder_kernels = value
+      raise TypeError("hessian.global_jacobian_block_layouts: value must be a list.")
+    if any(not isinstance(item, dict) for item in value):
+      raise TypeError("hessian.global_jacobian_block_layouts: all items must be dicts.")
+    self.__global_jacobian_block_layouts = value
 
   @property
-  def placement_reorder_kernels_dynamic(self) -> List[placementReorderKernel]:
-    return self.__placement_reorder_kernels_dynamic
+  def global_jacobian_block_layouts_dynamic(self) -> List[dict]:
+    return self.__global_jacobian_block_layouts_dynamic
 
-  @placement_reorder_kernels_dynamic.setter
-  def placement_reorder_kernels_dynamic(self, value: List[placementReorderKernel]) -> None:
+  @global_jacobian_block_layouts_dynamic.setter
+  def global_jacobian_block_layouts_dynamic(self, value: List[dict]) -> None:
     if not isinstance(value, list):
-      raise TypeError("hessian.placement_reorder_kernels_dynamic: value must be a list.")
-    if any(not isinstance(item, placementReorderKernel) for item in value):
-      raise TypeError("hessian.placement_reorder_kernels_dynamic: all items must be placementReorderKernel.")
-    self.__placement_reorder_kernels_dynamic = value
+      raise TypeError("hessian.global_jacobian_block_layouts_dynamic: value must be a list.")
+    if any(not isinstance(item, dict) for item in value):
+      raise TypeError("hessian.global_jacobian_block_layouts_dynamic: all items must be dicts.")
+    self.__global_jacobian_block_layouts_dynamic = value
 
   def __add__(self, other: hessian):
     if not isinstance(other, hessian):
@@ -751,7 +750,7 @@ class hessian(matrix):
     result.global_jacobian_block_nonzero_local_positions = self.__global_jacobian_block_nonzero_local_positions + other.global_jacobian_block_nonzero_local_positions
     result.global_jacobian_children_sizes = self.__global_jacobian_children_sizes + other.global_jacobian_children_sizes
     result.global_jacobian_children_spans = self.__global_jacobian_children_spans + other.global_jacobian_children_spans
-    result.placement_reorder_kernels = self.__placement_reorder_kernels + other.placement_reorder_kernels
+    result.global_jacobian_block_layouts = self.__global_jacobian_block_layouts + other.global_jacobian_block_layouts
 
     result.global_gradients_dynamic = self.__global_gradients_dynamic + other.global_gradients_dynamic
     result.global_hessians_dynamic = self.__global_hessians_dynamic + other.global_hessians_dynamic
@@ -771,7 +770,7 @@ class hessian(matrix):
     result.global_jacobian_block_nonzero_local_positions_dynamic = self.__global_jacobian_block_nonzero_local_positions_dynamic + other.global_jacobian_block_nonzero_local_positions_dynamic
     result.global_jacobian_children_sizes_dynamic = self.__global_jacobian_children_sizes_dynamic + other.global_jacobian_children_sizes_dynamic
     result.global_jacobian_children_spans_dynamic = self.__global_jacobian_children_spans_dynamic + other.global_jacobian_children_spans_dynamic
-    result.placement_reorder_kernels_dynamic = self.__placement_reorder_kernels_dynamic + other.placement_reorder_kernels_dynamic
+    result.global_jacobian_block_layouts_dynamic = self.__global_jacobian_block_layouts_dynamic + other.global_jacobian_block_layouts_dynamic
 
     result.indices_kernels = self.__indices_kernels + other.indices_kernels
     result.indices_kernels_dynamic = self.__indices_kernels_dynamic + other.indices_kernels_dynamic
@@ -796,21 +795,7 @@ class hessian(matrix):
     self.__compression_kernel.compressCoordinatesAndDimensions()
     self.__block_indices_gpu = self.__compression_kernel.lookupArrays
 
-    print("placement reorder kernels size:", len(self.__placement_reorder_kernels))
-    print("separate hessian jacobian size:", len(self.__separate_hessian_jacobian))
-    print("project entire hessian size:", len(self.__project_entire_hessian))
-    for i in range(len(self.__placement_reorder_kernels)):
-      if self.__separate_hessian_jacobian[i] and not self.__project_entire_hessian[i]:
-        # we will need to initialize the placement reorder kernel and do the computation
-        self.__placement_reorder_kernels[i].generateKernel(
-          self.__global_jacobian_children_spans[i],
-          self.__indices_kernels[i].maxNumIndicesNeeded,
-          self.__sources[i]
-        )
-        self.__placement_reorder_kernels[i].reorderPlacementIndices(
-          self.__indices_kernels[i],
-          self.__block_indices_gpu[i],
-        )
+    # Separated kernels map their permuted entries to these original lookups.
 
     total_block_size = self.__compression_kernel.totalBlockSize
     if self.blocks_flattened.size < total_block_size:
@@ -846,21 +831,6 @@ class hessian(matrix):
         tmp_count += 1
       else:
         self.__block_indices_gpu_dynamic.append(gpuarray.empty(0, dtype=np.uint32))
-
-    for i in range(len(self.__placement_reorder_kernels_dynamic)):
-      if self.__separate_hessian_jacobian_dynamic[i] and not self.__project_entire_hessian_dynamic[i]:
-        # we will need to initialize the placement reorder kernel and do the computation
-        self.__placement_reorder_kernels_dynamic[i].generateKernel(
-          self.__global_jacobian_children_spans_dynamic[i],
-          self.__indices_kernels_dynamic[i].maxNumIndicesNeeded,
-          self.__sources_dynamic[i]
-        )
-        # reorder the indices if needed
-        if (self.__indices_kernels_dynamic[i].numTotalCoordinates > 0):
-          self.__placement_reorder_kernels_dynamic[i].reorderPlacementIndices(
-            self.__indices_kernels_dynamic[i],
-            self.__block_indices_gpu_dynamic[i],
-          )
 
     total_block_size = self.__compression_kernel_dynamic.totalBlockSize
     if self.blocks_flattened_dynamic.size < total_block_size:
@@ -898,15 +868,6 @@ class hessian(matrix):
         tmp_count += 1
       else:
         self.__block_indices_gpu_dynamic.append(gpuarray.empty(0, dtype=np.uint32))
-
-    for i in range(len(self.__placement_reorder_kernels_dynamic)):
-      # reorder the indices if needed
-      if self.__separate_hessian_jacobian_dynamic[i] and not self.__project_entire_hessian_dynamic[i]:
-        if (self.__indices_kernels_dynamic[i].numTotalCoordinates > 0):
-          self.__placement_reorder_kernels_dynamic[i].reorderPlacementIndices(
-            self.__indices_kernels_dynamic[i],
-            self.__block_indices_gpu_dynamic[i],
-          )
 
     total_block_size = self.__compression_kernel_dynamic.totalBlockSize
     if self.blocks_flattened_dynamic.size < total_block_size:
@@ -1009,6 +970,7 @@ class hessian(matrix):
       global_jacobian_block_nonzero_local_positions = self.__global_jacobian_block_nonzero_local_positions
       global_jacobian_children_sizes = self.__global_jacobian_children_sizes
       global_jacobian_children_spans = self.__global_jacobian_children_spans
+      global_jacobian_block_layouts = self.__global_jacobian_block_layouts
     else:
       global_gradients = self.__global_gradients_dynamic
       global_hessians = self.__global_hessians_dynamic
@@ -1028,6 +990,7 @@ class hessian(matrix):
       global_jacobian_block_nonzero_local_positions = self.__global_jacobian_block_nonzero_local_positions_dynamic
       global_jacobian_children_sizes = self.__global_jacobian_children_sizes_dynamic
       global_jacobian_children_spans = self.__global_jacobian_children_spans_dynamic
+      global_jacobian_block_layouts = self.__global_jacobian_block_layouts_dynamic
 
 
     if (
@@ -1109,7 +1072,8 @@ class hessian(matrix):
         global_jacobian_block_nonzero_attributes[index],
         global_jacobian_block_nonzero_local_positions[index],
         global_jacobian_children_sizes[index],
-        global_jacobian_children_spans[index]
+        global_jacobian_children_spans[index],
+        global_jacobian_block_layouts[index]
       )
 
   def __setupCompute(self) -> None:
@@ -1164,7 +1128,12 @@ class hessian(matrix):
         indices_kernel.outputUniqueGradientSizesCPU.tolist(),
         indices_kernel.maxChildGradientSize,
         self.__wrt,
-        indices_kernel.maxNumIndicesNeeded
+        indices_kernel.maxNumIndicesNeeded,
+        self.__global_jacobian_block_nonzero_attributes_dynamic[index],
+        self.__global_jacobian_block_nonzero_local_positions_dynamic[index],
+        self.__global_jacobian_children_sizes_dynamic[index],
+        self.__global_jacobian_children_spans_dynamic[index],
+        self.__global_jacobian_block_layouts_dynamic[index]
       )
 
     counts_gpu = [x.children_primitive_counts_gpu for x in merged_attribute.deviceKernel.kernelPrimitiveUnions]
@@ -1210,7 +1179,7 @@ class hessian(matrix):
       self.__computeOneTerm(
         index,
         indices_kernel,
-        self.__placement_reorder_kernels[index].reordered_lookups if (self.__separate_hessian_jacobian[index] and not self.__project_entire_hessian[index]) else self.__block_indices_gpu[index],
+        self.__block_indices_gpu[index],
         self.blocks_flattened,
         self.__merged_hessian_and_gradient_attributes,
         self.__hessian_and_gradient_kernels,
@@ -1226,7 +1195,7 @@ class hessian(matrix):
       self.__computeOneTerm(
         index,
         indices_kernel,
-        self.__placement_reorder_kernels_dynamic[index].reordered_lookups if (self.__separate_hessian_jacobian_dynamic[index] and not self.__project_entire_hessian_dynamic[index]) else self.__block_indices_gpu_dynamic[index],
+        self.__block_indices_gpu_dynamic[index],
         self.blocks_flattened_dynamic,
         self.__merged_hessian_and_gradient_attributes_dynamic,
         self.__hessian_and_gradient_kernels_dynamic,

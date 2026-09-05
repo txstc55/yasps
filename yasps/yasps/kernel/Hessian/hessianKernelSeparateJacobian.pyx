@@ -1,419 +1,236 @@
+# cython: language_level=3
 from yasps.attribute import attribute
-from typing import List
-from yasps.scene import scene
-from yasps.codeGenerator import codeGenerator
-from yasps.deviceKernel import deviceKernel
-from yasps.connectivity import connectivity
-from yasps.primitiveUnion import primitiveUnion
+from yasps.jacobianBlockLayout import generate_jacobian_block_layout
+
 
 class hessianKernelSeparateJacobian:
-  def __init__(
-    self,
-    att: attribute,
-    gradient_only: bool = False, # whether we only want to compute the gradient, if true, we will skip the hessian computation and only compute the gradient, this is useful for the cases where we only need the gradient, and it can save us a lot of computation
-    grouped_add: bool = False,
-  ):
-    self.__stored_multiplied_blocks: List[attribute] = []
-    self.__dependents: List[deviceKernel] = []
-    self.__kernelString: str = ""
-    self.__gradient_size: str = ""
+  def __init__(self, att: attribute, gradient_only: bool = False, grouped_add: bool = False):
     self.__att = att
-    self.__merged_hessian_jacobian_nonzeros = 0
-    self.__local_hessian_nonzero_count = 0
-    self.__global_jacobian_children_sizes: List[int] = []
-    self.__global_jacobian_children_spans: List[int] = []
     self.__gradient_only = gradient_only
     self.__atomic_add = "atomic_add_grouped" if grouped_add else "atomicAdd"
+    self.__kernelString = ""
+    self.__layout = None
+    self.__block_patterns = []
+    self.__local_hessian_nonzero_count = 0
+    self.__merged_hessian_jacobian_nonzeros = 0
 
-  def create_multiplied_blocks(
-    self,
-    global_jacobian_block_nonzero_attributes: List[attribute],
-    global_jacobian_block_nonzero_local_positions: List[int],
-    global_jacobian_children_sizes: List[int],
-    global_jacobian_children_spans: List[int],
-    local_hessian_nonzero_upper_positions: List[int]
-  ):
-    self.__global_jacobian_children_sizes = list(global_jacobian_children_sizes)
-    self.__global_jacobian_children_spans = list(global_jacobian_children_spans)
-    # if we need to separate the jacobian and hessian, the first thing we need to do is reconstruct the jacobian and hessian symbolically
-    # which we will use to figure out how to compute the final hessian block by performing J_i^T H_ij J_j for each block
-    if len(local_hessian_nonzero_upper_positions) % 2 != 0:
-      raise ValueError("hessianKernelSeparateJacobian: local Hessian positions must contain row/column pairs.")
-    local_hessian_nonzero_count = len(local_hessian_nonzero_upper_positions) // 2
-    self.__local_hessian_nonzero_count = local_hessian_nonzero_count
-    self.__merged_hessian_jacobian_nonzeros = local_hessian_nonzero_count + len(global_jacobian_block_nonzero_attributes)
+  def create_multiplied_blocks(self, global_jacobian_block_nonzero_attributes, global_jacobian_block_nonzero_local_positions, global_jacobian_children_sizes, global_jacobian_children_spans, local_hessian_nonzero_upper_positions, global_jacobian_block_layout=None):
+    # The permutations change multiplication order, not packed H/J value order.
+    if len(local_hessian_nonzero_upper_positions) % 2:
+      raise ValueError("Separate Hessian: expected row/column pairs for the inner Hessian.")
+    if len(global_jacobian_block_nonzero_local_positions) != 2 * len(global_jacobian_block_nonzero_attributes):
+      raise ValueError("Separate Hessian: Jacobian positions and values have different lengths.")
+    self.__local_hessian_nonzero_count = len(local_hessian_nonzero_upper_positions) // 2
+    self.__merged_hessian_jacobian_nonzeros = self.__local_hessian_nonzero_count + len(global_jacobian_block_nonzero_attributes)
+    self.__block_patterns = []
     if self.__gradient_only:
       return
-    base_scene_name = f"{self.__att.fullName}_tmp_variables_scene"
-    tmp_scene = None
-    candidate = base_scene_name
-    counter = 1
-    while True:
-      try:
-        tmp_scene = scene(candidate)
-        break
-      except ValueError:
-        candidate = f"{base_scene_name}_trial_{counter}"
-        counter += 1
+    if global_jacobian_block_layout is None:
+      global_jacobian_block_layout = generate_jacobian_block_layout(sum(global_jacobian_children_sizes), sum(global_jacobian_children_spans), global_jacobian_block_nonzero_local_positions)
+    self.__layout = global_jacobian_block_layout
+    hessian_positions = {}
+    for index in range(self.__local_hessian_nonzero_count):
+      row, col = local_hessian_nonzero_upper_positions[2 * index:2 * index + 2]
+      if not 0 <= row <= col < self.__layout["rows"] or (row, col) in hessian_positions:
+        raise ValueError(f"Separate Hessian: invalid or repeated upper position ({row}, {col}).")
+      hessian_positions[row, col] = index
+      hessian_positions[col, row] = index
+    jacobian_positions = {}
+    for index in range(len(global_jacobian_block_nonzero_attributes)):
+      row, col = global_jacobian_block_nonzero_local_positions[2 * index:2 * index + 2]
+      jacobian_positions[row, col] = index
 
-    # ok now we create the attributes with the sparsity pattern
-    children_sizes = global_jacobian_children_sizes
-    children_spans = global_jacobian_children_spans
-    local_hessian_rows = sum(children_sizes)
-    jacobian_cols = sum(children_spans)
-    # we don't actually care about the actual attributes
-    # we just want to make replacement attributes so we can do the multiplications
-    local_hessian_replaced_att = tmp_scene.addAttribute("local_hessian_nonzeros", rows = 1, cols = local_hessian_nonzero_count)
-    global_jacobian_replaced_att = tmp_scene.addAttribute("global_jacobian_nonzeros", rows = 1, cols = len(global_jacobian_block_nonzero_attributes))
+    # Generate J_i^T H_ij J_j from structural nonzeros. Reuse each left
+    # contraction across an output row, without materializing dense J or H.
+    for i, block_i in enumerate(self.__layout["blocks"]):
+      for j in range(i, len(self.__layout["blocks"])):
+        block_j = self.__layout["blocks"][j]
+        lines = []
+        for local_col_i, col_i in enumerate(block_i["cols"]):
+          lines.append("  {")
+          active_rows = []
+          for local_row_j, row_j in enumerate(block_j["rows"]):
+            products = []
+            for row_i in block_i["rows"]:
+              h = hessian_positions.get((row_i, row_j))
+              left = jacobian_positions.get((row_i, col_i))
+              if h is not None and left is not None:
+                products.append(f"h[{h}] * jac[{left}]")
+            if products:
+              lines.append(f"    const double t{local_row_j} = {' + '.join(products)};")
+              active_rows.append((local_row_j, row_j))
+          for local_col_j, col_j in enumerate(block_j["cols"]):
+            products = []
+            for local_row_j, row_j in active_rows:
+              right = jacobian_positions.get((row_j, col_j))
+              if right is not None:
+                products.append(f"t{local_row_j} * jac[{right}]")
+            expression = " + ".join(products) if products else "0.0"
+            lines.append(f"    result[{local_col_i * len(block_j['cols']) + local_col_j}] = {expression};")
+          lines.append("  }")
+        self.__block_patterns.append((i, j, "\n".join(lines)))
 
-    # Reconstruct an unnamed symmetric symbolic matrix. Keeping this ARRAY
-    # unnamed lets each generated multiplication helper consume the packed
-    # values without materializing another standalone attribute kernel.
-    local_hessian_array = [0.0 for _ in range(local_hessian_rows * local_hessian_rows)]
-    for packed_index in range(local_hessian_nonzero_count):
-      row = local_hessian_nonzero_upper_positions[packed_index * 2]
-      col = local_hessian_nonzero_upper_positions[packed_index * 2 + 1]
-      if row > col or col >= local_hessian_rows:
-        raise ValueError(
-          f"hessianKernelSeparateJacobian: invalid upper-triangular local Hessian position ({row}, {col})."
-        )
-      local_hessian_array[row * local_hessian_rows + col] = local_hessian_replaced_att[packed_index]
-      if row != col:
-        local_hessian_array[col * local_hessian_rows + row] = local_hessian_replaced_att[packed_index]
-    local_hessian = attribute.to_array(
-      local_hessian_array,
-      rows = local_hessian_rows,
-      cols = local_hessian_rows
-    )
-
-
-    # ok we have created the local hessian, we now need to create the global jacobians
-    global_jacobian_array = [0.0 for _ in range(local_hessian_rows * jacobian_cols)] # initialize the array
-    for i in range(len(global_jacobian_block_nonzero_attributes)):
-      local_position_row = global_jacobian_block_nonzero_local_positions[i * 2]
-      local_position_col = global_jacobian_block_nonzero_local_positions[i * 2 + 1]
-      global_jacobian_array[local_position_row * jacobian_cols + local_position_col] = global_jacobian_replaced_att[i]
-    global_jacobian = attribute.to_array(global_jacobian_array, rows = local_hessian_rows, cols = jacobian_cols)
-
-    # now the both have been created, we will need to do the block multiplications ourselves
-    for i in range(len(children_sizes)):
-      # first we get the diagonal block from the jacobian matrix
-      # which is J_i
-      J_i_block_rows = children_sizes[i]
-      J_i_block_cols = children_spans[i]
-      ji_block = self.__getSubBlock(global_jacobian, row_offset = sum(children_sizes[:i]), col_offset = sum(children_spans[:i]), block_rows = J_i_block_rows, block_cols = J_i_block_cols)
-      ji_block = ji_block.transpose()
-
-      for j in range(i, len(children_sizes)):
-        # we need to get the H_ij block from the local hessian
-        # as well as the J_j block from the jacobian matrix
-        J_j_block_rows = children_sizes[j]
-        J_j_block_cols = children_spans[j]
-        jj_block = self.__getSubBlock(global_jacobian, row_offset = sum(children_sizes[:j]), col_offset = sum(children_spans[:j]), block_rows = J_j_block_rows, block_cols = J_j_block_cols)
-
-        hij_block = self.__getSubBlock(local_hessian, row_offset = sum(children_sizes[:i]), col_offset = sum(children_sizes[:j]), block_rows = J_i_block_rows, block_cols = J_j_block_rows)
-        multiplied_block = ji_block.mul_explicit(hij_block).mul_explicit(jj_block)
-        multiplied_block = tmp_scene.addAttribute(f"multiplied_block_{i}_{j}", computed_attribute = multiplied_block)
-        self.__stored_multiplied_blocks.append(multiplied_block)
-
-    for item in self.__stored_multiplied_blocks:
-      codegen: codeGenerator = codeGenerator(item)
-      codegen.generateCode()
-      device_kernel_string = item.deviceKernel.kernelString
-      # now we do a bit of pruning and a bit of magic
-      split_lines = device_kernel_string.splitlines()
-      do_skip_lines = False
-      corrected_lines = []
-      for i in range(len(split_lines)):
-        line = split_lines[i]
-        if not do_skip_lines:
-          # we hit the declaration
-          if line.strip().startswith(f"__device__ void "):
-            corrected_lines.append(f"__device__ void {item.fullName}_device_function(")
-            corrected_lines.append(f" double* {local_hessian_replaced_att.fullName}_data,")
-            corrected_lines.append(f" double* {global_jacobian_replaced_att.fullName}_data,")
-            corrected_lines.append(" double* result\n){")
-            do_skip_lines = True
-            # let's also modify the kernel header here
-            item.deviceKernel.kernelHeader = f"__device__ void {item.fullName}_device_function(double* {local_hessian_replaced_att.fullName}_data, double* {global_jacobian_replaced_att.fullName}_data, double* result)"
-          # we hit a device function, which should be removed
-          elif line.strip().startswith(f"{local_hessian_replaced_att.fullName}_device_function") or line.strip().startswith(f"{global_jacobian_replaced_att.fullName}_device_function"):
-            do_skip_lines = True
-            # we also need to remove the last line
-            variable_declaration = corrected_lines.pop()
-            intermediate_name = variable_declaration.strip().split()[-1].rstrip(";")
-            computed_attribute = None
-            if line.strip().startswith(f"{local_hessian_replaced_att.fullName}_device_function"):
-              computed_attribute = local_hessian_replaced_att
-            elif line.strip().startswith(f"{global_jacobian_replaced_att.fullName}_device_function"):
-              computed_attribute = global_jacobian_replaced_att
-            else:
-              raise ValueError(f"hessianKernelSeparateJacobian: unexpected line when parsing device kernel string: {line.strip()}")
-
-            # now recreate the variable
-            redone_line = "  "
-            if computed_attribute.size == 1:
-              redone_line += f"double {intermediate_name} = {computed_attribute.fullName}_data[0];"
-            elif computed_attribute.rows == 1 or computed_attribute.cols == 1:
-              redone_line += f"Eigen::Map<Eigen::Matrix<double, {computed_attribute.rows}, {computed_attribute.cols}>> {intermediate_name}({computed_attribute.fullName}_data);"
-            else:
-              redone_line += f"Eigen::Map<Eigen::Matrix<double, {computed_attribute.rows}, {computed_attribute.cols}, Eigen::RowMajor>> {intermediate_name}({computed_attribute.fullName}_data);"
-            corrected_lines.append(redone_line)
-          else:
-            corrected_lines.append(line)
-        else:
-          if (line.strip().startswith(");") or line.strip().startswith("){")) and do_skip_lines:
-            do_skip_lines = False
-      item.deviceKernel.kernelString = "\n".join(corrected_lines) # recreate the device kernel string with the corrected lines
-      self.__dependents.append(item.deviceKernel) # add the device kernel
-
-
-  def generateKernelString(
-    self,
-    unique_gradient_size: int,
-    max_num_indices: int,
-    attributeName: str,
-    num_attributes: int,
-  ):
-    sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
-    sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
-    sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
-    global_jacobian_children_spans_outer = [0]
-    hessian_rows = sum(self.__global_jacobian_children_sizes)
-    for i in range(len(self.__global_jacobian_children_spans)):
-      global_jacobian_children_spans_outer.append(global_jacobian_children_spans_outer[-1] + self.__global_jacobian_children_spans[i])
-    self.__kernelString = f'''
-#include "allHeaders.cuh"
-extern "C"{{
-__device__ __constant__ unsigned short int jacobian_block_spans_outer[{len(global_jacobian_children_spans_outer)}] = {{{', '.join(str(span) for span in global_jacobian_children_spans_outer)}}}; // this is the size of each jacobian block, this will also tell us how to segment the hessian blocks
-
-__global__ void compute_hessian_and_gradient_global_function_final_gradient_size_{unique_gradient_size}(
-  {"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}
-  {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}
-  {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
-  {"".join([f"const unsigned int* {x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
-  const unsigned int* segment_indices,            // where to place the gradient for each segment of the local gradient / hessian we generated
-  const unsigned short int* segment_sizes,        // how large is each segment of the gradient before compression
-  const short int* local_permutations,            // how do i locally compress the hessian and gradient
-  const unsigned int* lookups,                    // how to place the current block inside the hessian
-  const unsigned int* coordinatesOuter,           // this will tell us for each instance, the starting and ending index in the lookup table for putting the hessian blocks into the global hessian data array
-  const unsigned int* groupedIndicesInner, // we need to know which instance will correspond to the current size
-  const unsigned int* groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
-  const unsigned int nth_gradient_size,    // this indicates which position we are in the outer array
+  def generateKernelString(self, unique_gradient_size: int, max_num_indices: int, attributeName: str, num_attributes: int):
+    data = self.__att.deviceKernel.kernelDatas
+    connectivity = self.__att.deviceKernel.kernelConnectivity
+    unions = self.__att.deviceKernel.kernelPrimitiveUnions
+    suffix = str(unique_gradient_size)
+    declarations = "".join(f"const double* {x.code_generation_data_name}, " for x in data)
+    declarations += "".join(f"const unsigned int* {x.code_generation_index_name}, " for x in connectivity)
+    declarations += "".join(f"const unsigned int* {x.code_generation_csr_name}, " for x in connectivity if x.dimension == 0)
+    declarations += "".join(f"const unsigned int* {x.code_generation_counts_name}, " for x in unions)
+    arguments = "".join(f"{x.code_generation_data_name}, " for x in data)
+    arguments += "".join(f"{x.code_generation_index_name}, " for x in connectivity)
+    arguments += "".join(f"{x.code_generation_csr_name}, " for x in connectivity if x.dimension == 0)
+    arguments += "".join(f"{x.code_generation_counts_name}, " for x in unions)
+    source = ['#include "allHeaders.cuh"', 'extern "C" {']
+    if not self.__gradient_only:
+      for i, j, pattern in self.__block_patterns:
+        source.append(f"static __device__ void multiply_sparse_block_{i}_{j}_{suffix}(const double* h, const double* jac, double* result) {{\n{pattern}\n}}")
+      permutation = self.__layout["column_permutation"]
+      # Symbolic column IDs; joins/unions resolve global DOFs at runtime.
+      source.append(f"static __device__ __constant__ unsigned int jacobian_columns_{suffix}[{max(1, len(permutation))}] = {{{', '.join(map(str, permutation)) or '0'}}};")
+      source.append(self.__scatterFunction(suffix, num_attributes))
+    gradient_start = 0 if self.__gradient_only else self.__merged_hessian_jacobian_nonzeros
+    source.append(f'''
+__global__ void compute_hessian_and_gradient_global_function_final_gradient_size_{suffix}(
+  {declarations}
+  const unsigned int* segment_indices,
+  const unsigned short int* segment_sizes,
+  const short int* local_permutations,
+  const unsigned int* lookups,
+  const unsigned int* coordinatesOuter,
+  const unsigned int* groupedIndicesInner,
+  const unsigned int* groupedIndicesOuter,
+  const unsigned int nth_gradient_size,
   const unsigned int projection_method,
-  double* gradient,   // the gradient output
-  double* hessian_blocks, // the blocks that will constitute the hessian
-  double* diagonal,    // the diagonal, we will use it for preconditioning
-  double* diagonal_blocks, // store the diagonal blocks, use it for block preconditioning
-  const unsigned int* diagonal_blocks_start, // for each attribute, where does the diagonal block start
-  const unsigned int* gradient_segments_start // for each attribute, where does the gradient start
-){{
-  constexpr unsigned int N = {max(self.__global_jacobian_children_spans)}; // this is the size that we care about, this is the maximum of jacobian children's span, which means the largest column size for each block in the jacobian matrix. We will use this size for our allocation
-  // get the start and end position of the current gradient size
+  double* gradient,
+  double* hessian_blocks,
+  double* diagonal,
+  double* diagonal_blocks,
+  const unsigned int* diagonal_blocks_start,
+  const unsigned int* gradient_segments_start
+) {{
   const unsigned int start = groupedIndicesOuter[nth_gradient_size];
   const unsigned int end = groupedIndicesOuter[nth_gradient_size + 1];
-  // first we get the index
-  unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (index >= end - start){{
-    return;
-  }}
-  index = start + index; // add to begin
-  const unsigned int instance = groupedIndicesInner[index]; // this will tell us which instance of the hessian we are computing
-// determine if we are computing both the hessian and gradient
-  double hg_mat[{self.__att.size}]; // packed [upper local Hessian nonzeros, sparse Jacobian nonzeros, gradient]
-
-
-  // now we call the device function
-  {attributeName}_device_function(
-    {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
-    {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
-    {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
-    {"".join([f"{x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
-    instance,
-    hg_mat
-  );
-  // ok we now first put the gradient into the correct place
+  const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= end - start) return;
+  const unsigned int instance = groupedIndicesInner[start + index];
+  double hg_mat[{self.__att.size}];
+  {attributeName}_device_function({arguments}instance, hg_mat);
+  const unsigned int* indices = segment_indices + instance * {max_num_indices};
+  const unsigned short int* sizes = segment_sizes + instance * {max_num_indices};
+  const short int* permutations = local_permutations + instance * {max_num_indices};
   unsigned int gradient_offset = 0;
-  for (unsigned int i = 0; i < {max_num_indices}; i++){{
-    // we will first get the segment size
-    unsigned short int segment_size = segment_sizes[instance * {max_num_indices} + i];
-    // and the position for this segment
-    unsigned int segment_placement = segment_indices[instance * {max_num_indices} + i];
-    if (segment_placement == 0){{
-      gradient_offset += segment_size;
-      continue; // we encountered space reserved for union, skip
-    }}else if (segment_placement == 1){{
-      // this is a special case where we want the variable to be in the matrix, but not in the final hessian
-      // we keep it because it's necessary for the hessian projection
-      gradient_offset += segment_size; // skip this segment
-      continue; // skip
+  for (unsigned int i = 0; i < {max_num_indices}; ++i) {{
+    if (indices[i] >= 2) {{
+      for (unsigned int k = 0; k < sizes[i]; ++k) {{
+        {self.__atomic_add}(&gradient[indices[i] - 2 + k], hg_mat[{gradient_start} + gradient_offset + k]);
+      }}
     }}
-    segment_placement -= 2; // make it 0 indexed
-    // now we access the gradient and put it into the correct place
-    for (unsigned int j = 0; j < segment_size; j++){{
-  #if {int(not self.__gradient_only)} // did we compute the hessian
-      {self.__atomic_add}(&gradient[segment_placement + j], hg_mat[gradient_offset + {self.__merged_hessian_jacobian_nonzeros} + j]);
-  #else
-      {self.__atomic_add}(&gradient[segment_placement + j], hg_mat[gradient_offset + j]);
-  #endif
-    }}
-    gradient_offset += segment_size;
+    gradient_offset += sizes[i];
   }}
-  // Now check if we are also computing the Hessian
-
-
-#if {int(not self.__gradient_only)}
-  // first we allocate an array, this array tells us for the segmenets, which larger blocks they are in
-  unsigned short int segment_in_large_block_outer[{len(global_jacobian_children_spans_outer)}] = {{0}};
-  const unsigned int coordinate_start = coordinatesOuter[instance];
-  unsigned short int segment_length = 0;
-  unsigned short int current_large_block_index = 0;
-  for (unsigned int i = 0; i < {max_num_indices}; i++){{
-    unsigned short int segment_size = segment_sizes[instance * {max_num_indices} + i];
-    segment_length += segment_size;
-    if (segment_length == jacobian_block_spans_outer[current_large_block_index + 1]){{
-      segment_in_large_block_outer[current_large_block_index + 1] = i + 1; // record the ending of a large segment
-      current_large_block_index++;
+''')
+    if not self.__gradient_only and self.__block_patterns:
+      jacobian_cols = self.__layout["cols"]
+      max_block_entries = max(len(self.__layout['blocks'][i]['cols']) * len(self.__layout['blocks'][j]['cols']) for i, j, _ in self.__block_patterns)
+      source.append(f'''
+  // Invert segmentation once, retaining union padding in the original axes.
+  unsigned short int column_segment[{max(1, jacobian_cols)}];
+  unsigned int segment_outer[{max_num_indices + 1}];
+  unsigned int valid_rank[{max_num_indices}]; // basically this tells us for each segment, which valid coordinates shall we look at. For example, if we have A, SKIP, B, C, then because we save only the valid ones when having the coordinates etc, so we know that B is the 1st valid one (0 indexed).
+  unsigned int valid_count = 0;
+  segment_outer[0] = 0;
+  for (unsigned int i = 0; i < {max_num_indices}; ++i) {{
+    segment_outer[i + 1] = segment_outer[i] + sizes[i];
+    valid_rank[i] = valid_count;
+    if (permutations[i] > 0 && indices[i] >= 2) ++valid_count; // if this is an actual value that we need to place back into the Hessian, then increment the valid rank
+    for (unsigned int k = segment_outer[i]; k < segment_outer[i + 1]; ++k) {{
+      column_segment[k] = i; // this records for each original column, which segment it belongs to, so that we can look up the segment for each original column when scattering back into the Hessian
     }}
   }}
-  // now we have an outer index array, which tells us that for each large segment, what are the small segments inside it
-  // now we will compute the large blocks one by one
-  // first we allocate a data array
-  double multiplied_block[N * N]; // generated helper overwrites the complete block
-  unsigned short int row_offset = 0;
-  unsigned short int col_offset = 0;
-  unsigned short int valid_block_counts = 0; // this will count how many valid blocks we have encountered, which will be used for the lookup table to place the block in the correct position in the global hessian
-'''
-    block_count = 0
-    num_hessian_children = 0 if self.__gradient_only else len(self.__global_jacobian_children_sizes)
-    for i in range(num_hessian_children):
-      for j in range(i, len(self.__global_jacobian_children_sizes)):
-        multiplied_block = self.__stored_multiplied_blocks[block_count]
-        self.__kernelString += f'''
-  {multiplied_block.fullName}_device_function(hg_mat, hg_mat + {self.__local_hessian_nonzero_count}, multiplied_block);
-  row_offset = 0;
-  col_offset = 0;
-  // The generated symbolic path materializes child block ({i}, {j}) before scattering it.
-'''
-
-        self.__kernelString += f'''
-  // process this large block now
-  for (unsigned short int local_i = segment_in_large_block_outer[{i}]; local_i < segment_in_large_block_outer[{i + 1}]; local_i++){{
-    short int segment_permutation_i = local_permutations[instance * {max_num_indices} + local_i];
-    unsigned short int row_size = segment_sizes[instance * {max_num_indices} + local_i];
-    if (segment_permutation_i <= 0){{
-      row_offset += row_size;
-      continue;
+  const unsigned int* instance_lookups = lookups + coordinatesOuter[instance];
+  double multiplied_block[{max_block_entries}];
+''')
+      spans_outer = [0]
+      for block in self.__layout["blocks"]:
+        spans_outer.append(spans_outer[-1] + len(block["cols"]))
+      for i, j, _ in self.__block_patterns:
+        rows = len(self.__layout["blocks"][i]["cols"])
+        cols = len(self.__layout["blocks"][j]["cols"])
+        source.append(f'''
+  multiply_sparse_block_{i}_{j}_{suffix}(hg_mat, hg_mat + {self.__local_hessian_nonzero_count}, multiplied_block);
+  for (unsigned int a = 0; a < {rows}; ++a) {{
+    for (unsigned int b = {'a' if i == j else '0'}; b < {cols}; ++b) {{
+      const unsigned int original_a = jacobian_columns_{suffix}[{spans_outer[i]} + a]; // this is the row in the original Hessian
+      const unsigned int original_b = jacobian_columns_{suffix}[{spans_outer[j]} + b]; // this is the col in the original Hessian
+      scatter_sparse_hessian_{suffix}(multiplied_block[a * {cols} + b], original_a, original_b, column_segment, segment_outer, valid_rank, valid_count, indices, sizes, permutations, instance_lookups, hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
     }}
-    unsigned int segment_placement_i = segment_indices[instance * {max_num_indices} + local_i];
-    col_offset = 0; // reset the col offset for each new row segment
-    for (unsigned short int local_j = segment_in_large_block_outer[{j}]; local_j < segment_in_large_block_outer[{j + 1}]; local_j++){{
-      short int segment_permutation_j = local_permutations[instance * {max_num_indices} + local_j];
-      unsigned short int col_size = segment_sizes[instance * {max_num_indices} + local_j];
-      if (segment_permutation_j <= 0 || local_j < local_i){{
-        // either this is a segment we don't need to place, or we are in the local triangle
-        col_offset += col_size;
-        continue;
-      }}
-
-      unsigned int segment_placement_j = segment_indices[instance * {max_num_indices} + local_j];
-      const unsigned int placement = lookups[coordinate_start + valid_block_counts];
-'''
-        self.__kernelString += f'''
-      // now we know the position to place the block, we will finally place it
-      if (segment_placement_i <= segment_placement_j){{
-        // correct placement, no transpose
-        for (unsigned short int k = 0; k < row_size; k++){{
-          for (unsigned short int l = 0; l < col_size; l++){{
-            {self.__atomic_add}(&hessian_blocks[placement + k * col_size + l], multiplied_block[(row_offset + k) * {multiplied_block.cols} + col_offset + l]);
-          }}
-        }}
-      }}else{{
-        // we need to do transpose
-        for (unsigned short int k = 0; k < col_size; k++){{
-          for (unsigned short int l = 0; l < row_size; l++){{
-            {self.__atomic_add}(&hessian_blocks[placement + k * row_size + l], multiplied_block[(row_offset + l) * {multiplied_block.cols} + col_offset + k]);
-          }}
-        }}
-      }}
-      if (segment_placement_i == segment_placement_j && segment_permutation_i != segment_permutation_j){{
-        // we are hitting a diagonal block, but in the uncompressed Hessian, they are on off diagonals
-        // so we also add the transpose
-        for (unsigned short int k = 0; k < col_size; k++){{
-          for (unsigned short int l = 0; l < row_size; l++){{
-            {self.__atomic_add}(&hessian_blocks[placement + k * row_size + l], multiplied_block[(row_offset + l) * {multiplied_block.cols} + col_offset + k]);
-          }}
-        }}
-      }}
-      if (segment_placement_i == segment_placement_j){{
-        const unsigned int segment_index = segment_placement_i - 2;
-        // now we do the block diagonal placement
-        // we first need to determine where to put it in the global diagonal blocks array
-        unsigned int which_attribute = 0;
-        for (unsigned int k = 0; k < {num_attributes}; k++){{
-          if (segment_index < gradient_segments_start[k + 1]){{
-            break;
-          }}
-          which_attribute += 1;
-        }}
-        // now determine which instance in that attribute
-        const unsigned int diagonal_block_start = diagonal_blocks_start[which_attribute];
-        const unsigned int diff = segment_index - gradient_segments_start[which_attribute];
-        const unsigned int which_instance = diff / (row_size);
-        const unsigned int diagonal_block_placement = diagonal_block_start + which_instance * row_size * row_size;
-        // now we place the diagonal block
-        for (unsigned short int k = 0; k < row_size; k++){{
-          for (unsigned short int l = 0; l < row_size; l++){{
-            {self.__atomic_add}(
-              &diagonal_blocks[diagonal_block_placement + k * row_size + l],
-              multiplied_block[(row_offset + k) * {multiplied_block.cols} + col_offset + l]
-            );
-          }}
-        }}
-        if (segment_permutation_i != segment_permutation_j){{
-          // we are on the diagonal, but they are permuted differently, which means in the uncompressed hessian, they are on the off diagonal, so we also need to place the transpose
-          for (unsigned short int k = 0; k < row_size; k++){{
-            for (unsigned short int l = 0; l < row_size; l++){{
-              {self.__atomic_add}(
-                &diagonal_blocks[diagonal_block_placement + k * row_size + l],
-                multiplied_block[(row_offset + l) * {multiplied_block.cols} + col_offset + k]
-              );
-            }}
-          }}
-        }}
-      }}
-'''
-        self.__kernelString += f'''
-      col_offset += col_size; // increment the col offset
-      valid_block_counts++; // we have placed a valid block, increment the count
-    }}
-    row_offset += row_size; // increment the row offset
   }}
-'''
-        block_count += 1
-    self.__kernelString += f'''
-#endif // end for gradient only check
-}}
-}}
-'''
+''')
+    source.append("}\n}\n")
+    self.__kernelString = "\n".join(source)
     return self.__kernelString
 
-
-  def __getSubBlock(self, mat, row_offset, col_offset, block_rows, block_cols) -> attribute:
-    block = [0.0 for _ in range(block_rows * block_cols)]
-    for i in range(block_rows):
-      for j in range(block_cols):
-        block[i * block_cols + j] = mat[row_offset + i, col_offset + j]
-    return attribute.to_array(block, rows = block_rows, cols = block_cols)
+  def __scatterFunction(self, suffix, num_attributes):
+    # Component pairs supply one scalar triangle. Global storage contains
+    # complete blocks: mirror off-diagonal scalars landing in a diagonal block,
+    # including different local vertex occurrences mapping to the same vertex.
+    return f'''
+static __device__ __forceinline__ void scatter_sparse_hessian_{suffix}(
+  double value, // the value
+  unsigned int original_a, // the original row index in the Hessian
+  unsigned int original_b, // the original column index in the Hessian
+  const unsigned short int* column_segment, // the mapping from original column index to segment index
+  const unsigned int* segment_outer, // the outer array for each segment, recording the starting index of each segment in the original column indices
+  const unsigned int* valid_rank, unsigned int valid_count, // stores for each segment, basically if it is avalid
+  const unsigned int* indices, const unsigned short int* sizes,
+  const short int* permutations, const unsigned int* lookups,
+  double* hessian_blocks, double* diagonal_blocks,
+  const unsigned int* diagonal_blocks_start, const unsigned int* gradient_segments_start
+) {{
+  const unsigned int segment_a = column_segment[original_a]; // which segment (in row space)
+  const unsigned int segment_b = column_segment[original_b]; // which segment (in column space)
+  if (permutations[segment_a] <= 0 || permutations[segment_b] <= 0 || indices[segment_a] < 2 || indices[segment_b] < 2) return; // check if we want to place it back at all
+  const unsigned int rank_a = valid_rank[segment_a];
+  const unsigned int rank_b = valid_rank[segment_b];
+  const unsigned int first = min(rank_a, rank_b);
+  const unsigned int last = max(rank_a, rank_b);
+  // Coordinate generation enumerates original valid segment pairs in this
+  // upper-triangular order, independently of the Jacobian permutation.
+  const unsigned int lookup_index = first * valid_count - first * (first + 1) / 2 + last;
+  const unsigned int placement = lookups[lookup_index];
+  const unsigned int offset_a = original_a - segment_outer[segment_a];
+  const unsigned int offset_b = original_b - segment_outer[segment_b];
+  const unsigned int start_a = indices[segment_a];
+  const unsigned int start_b = indices[segment_b];
+  if (start_a <= start_b) {{
+    {self.__atomic_add}(&hessian_blocks[placement + offset_a * sizes[segment_b] + offset_b], value);
+  }} else {{
+    {self.__atomic_add}(&hessian_blocks[placement + offset_b * sizes[segment_a] + offset_a], value);
+  }}
+  if (start_a == start_b) {{
+    const unsigned int size = sizes[segment_a];
+    if (original_a != original_b) {{
+      {self.__atomic_add}(&hessian_blocks[placement + offset_b * size + offset_a], value);
+    }}
+    const unsigned int segment_start = start_a - 2;
+    unsigned int which_attribute = 0;
+    while (which_attribute + 1 < {num_attributes} && segment_start >= gradient_segments_start[which_attribute + 1]) ++which_attribute;
+    const unsigned int local_instance = (segment_start - gradient_segments_start[which_attribute]) / size;
+    const unsigned int diagonal_start = diagonal_blocks_start[which_attribute] + local_instance * size * size;
+    {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_a * size + offset_b], value);
+    if (original_a != original_b) {{
+      {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_b * size + offset_a], value);
+    }}
+  }}
+}}
+'''
 
   @property
-  def stored_multiplied_blocks(self) -> List[attribute]:
-    return self.__stored_multiplied_blocks
+  def dependents(self):
+    return []
 
   @property
-  def dependents(self) -> List[deviceKernel]:
-    return self.__dependents
-
-  @property
-  def kernelString(self) -> str:
+  def kernelString(self):
     return self.__kernelString

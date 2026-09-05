@@ -72,6 +72,7 @@ class hessianAndGradientKernel:
     global_jacobian_block_nonzero_local_positions: List[int] = [],
     global_jacobian_children_sizes: List[int] = [],
     global_jacobian_children_spans: List[int] = [],
+    global_jacobian_block_layout = None,
   ) -> None:
     # check if our unique gradient sizes contains the input gradient sizes
     # print("unique gradient sizes are", unique_gradient_sizes)
@@ -96,7 +97,8 @@ class hessianAndGradientKernel:
         global_jacobian_block_nonzero_local_positions,
         global_jacobian_children_sizes,
         global_jacobian_children_spans,
-        self.__local_hessian_nonzero_upper_positions
+        self.__local_hessian_nonzero_upper_positions,
+        global_jacobian_block_layout
       )
 
 
@@ -108,7 +110,7 @@ class hessianAndGradientKernel:
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
     wrt_names = "_".join([att.fullName for att in wrt])
     size_names = "_".join([str(size) for size in unique_gradient_sizes])
-    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullNameWithHash}_wrt_{wrt_names}_with_sizes_{size_names}_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}"
+    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullNameWithHash}_wrt_{wrt_names}_with_sizes_{size_names}_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}_sparsity_blocks_v1_{global_jacobian_block_layout}"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     kernel_mode_suffix = f"_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}"
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}{kernel_mode_suffix}" + ("" if self.__project_entire_hessian else "_no_proj")

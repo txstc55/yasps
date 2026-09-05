@@ -11,7 +11,7 @@ from yasps.secondOrderJacobian import secondOrderJacobian
 from yasps.path import path
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.secondOrderJacobianIndicesKernel import secondOrderJacobianIndicesKernel
-from yasps.placementReorderKernel import placementReorderKernel
+from yasps.jacobianBlockLayout import generate_jacobian_block_layout
 
 class differentiator:
   def __init__(self):
@@ -38,6 +38,7 @@ class differentiator:
     self.__global_jacobian_block_nonzero_local_positions: List[int] = []
     self.__global_jacobian_children_sizes: List[int] = []
     self.__global_jacobian_children_spans: List[int] = []
+    self.__global_jacobian_block_layout: dict = {}
     # self.__local_hessian_reordered_array: List[attribute] = []
 
   def __resetDiffState(
@@ -91,6 +92,7 @@ class differentiator:
     self.__global_jacobian_block_nonzero_local_positions = []
     self.__global_jacobian_children_sizes = []
     self.__global_jacobian_children_spans = []
+    self.__global_jacobian_block_layout = {}
     # self.__local_hessian_reordered_array = []
 
   def __sameTargets(self, target1: List[attribute], target2: List[attribute]) -> bool:
@@ -543,6 +545,7 @@ class differentiator:
     global_jacobian_block_nonzero_local_positions = [list(self.__global_jacobian_block_nonzero_local_positions)]
     global_jacobian_children_sizes = [list(self.__global_jacobian_children_sizes)]
     global_jacobian_children_spans = [list(self.__global_jacobian_children_spans)]
+    global_jacobian_block_layouts = [self.__global_jacobian_block_layout]
     # local_hessian_reordered_array = [list(self.__local_hessian_reordered_array)]
 
     if not dynamic_instances:
@@ -565,7 +568,7 @@ class differentiator:
       hessian_local.global_jacobian_block_nonzero_local_positions = global_jacobian_block_nonzero_local_positions
       hessian_local.global_jacobian_children_sizes = global_jacobian_children_sizes
       hessian_local.global_jacobian_children_spans = global_jacobian_children_spans
-      hessian_local.placement_reorder_kernels = [placementReorderKernel()]
+      hessian_local.global_jacobian_block_layouts = global_jacobian_block_layouts
       # hessian_local.local_hessian_reordered_array = local_hessian_reordered_array
     else:
       hessian_local.indices_kernels_dynamic = [indices_kernel]
@@ -587,7 +590,7 @@ class differentiator:
       hessian_local.global_jacobian_block_nonzero_local_positions_dynamic = global_jacobian_block_nonzero_local_positions
       hessian_local.global_jacobian_children_sizes_dynamic = global_jacobian_children_sizes
       hessian_local.global_jacobian_children_spans_dynamic = global_jacobian_children_spans
-      hessian_local.placement_reorder_kernels_dynamic = [placementReorderKernel()]
+      hessian_local.global_jacobian_block_layouts_dynamic = global_jacobian_block_layouts
       # hessian_local.local_hessian_reordered_array_dynamic = local_hessian_reordered_array
     return hessian_local
 
@@ -771,24 +774,12 @@ class differentiator:
 
     second_part_hessian_array = [0.0 for _ in range(global_jacobian.cols * global_jacobian.cols)]
     block_offset = 0
-    block_sizes = [] # record the span of jacobian (the column)
-    children_sizes = []
     for child in children:
       child_global_hessian = self.__generateHessianThroughRecursion(child, wrt)
       child_size = child.size
       hessian_size = child_global_hessian.size // child_size
       assert hessian_size * child_size == child_global_hessian.size, f"differentiator.__generateGlobalHessianForEnergy: hessian size {hessian_size} * child size {child_size} is not equal to child global hessian size {child_global_hessian.size}"
       hessian_rows = int(math.sqrt(hessian_size))
-      if child.operator == JOIN:
-        block_sizes += [hessian_rows] * child.through.dimension  # this tells us in the final Hessian (local), what span does this child cover
-        children_sizes += [child.size // child.through.dimension] * child.through.dimension # this tells us in the final Hessian (global), what span does this child cover
-      elif (
-        child.operator == UNION
-        or child.operator == DATA
-        or child.operator == CONSTANT
-      ):
-        block_sizes.append(hessian_rows)
-        children_sizes.append(child.size)
       assert hessian_rows * hessian_rows == hessian_size, f"differentiator.__generateGlobalHessianForEnergy: hessian rows {hessian_rows} is not equal to hessian size {hessian_size}"
       hessian_cols = hessian_rows
       for i in range(hessian_rows):
@@ -813,66 +804,24 @@ class differentiator:
     children_global_jacobian = current.correspondance[children_jacobian_name]
     self.__global_jacobian = children_global_jacobian
 
-    # ok regardless of if we want to separate jacobian and hessian or not
-    # let's just compute the following
-    # because the jacobian matrix is blocked sparse
-    # and even the blocks are sparse
-    # what we will do is extract each block, then for each block we extract the non-zero entries
-    assert sum(children_sizes) == children_global_jacobian.rows, f"differentiator.__generateGlobalHessianForEnergy: sum of children sizes {sum(children_sizes)} is not equal to children global jacobian rows {children_global_jacobian.rows}"
-    assert sum(block_sizes) == children_global_jacobian.cols, f"differentiator.__generateGlobalHessianForEnergy: sum of block sizes {sum(block_sizes)} is not equal to children global jacobian cols {children_global_jacobian.cols}"
-    row_offset = 0 # the offset of rows in the jacobian matrix
-    col_offset = 0 # the offset of columns in the jacobian matrix
+    # Inspect every symbolic entry. JOIN/UNION boundaries do not determine the
+    # finest blocks: sparsity can split a child or connect arbitrary row/col IDs.
     nonzero_attributes_array = []
     nonzero_local_positions = []
-    # print("Children sizes: ", children_sizes)
-    # print("Block sizes: ", block_sizes)
-    # print("Jacobian Size: ", (children_global_jacobian.rows, children_global_jacobian.cols))
-    for i in range(len(children_sizes)):
-      nonzero_counts = 0
-      child_size = children_sizes[i]
-      child_span = block_sizes[i]
-      for i in range(child_size):
-        for j in range(child_span):
-          if children_global_jacobian[(row_offset + i), (col_offset + j)].isZero == 0:
-            nonzero_counts += 1 # iszero == 0 means it's not zero, it's fucked up, i know
-            nonzero_local_positions.append(row_offset + i)
-            nonzero_local_positions.append(col_offset + j)
-            nonzero_attributes_array.append(children_global_jacobian[(row_offset + i), (col_offset + j)])
-      # the jacobian matrix is always block diagonal, so once we are done with one child, we can skip to the next diagonal block
-      row_offset += child_size
-      col_offset += child_span
-    # print(f"Nonzero element count: {len(nonzero_attributes_array)} / {children_global_jacobian.size}")
-    # print(f"True nonzero count: {sum(children_global_jacobian[i].isZero == 0 for i in range(children_global_jacobian.size))}")
+    for row in range(children_global_jacobian.rows):
+      for col in range(children_global_jacobian.cols):
+        item = children_global_jacobian[row, col]
+        if item.isZero == 0:
+          nonzero_local_positions.extend([row, col])
+          nonzero_attributes_array.append(item)
 
-    # # if we need to separate the jacobian and hessian
-    # # we will need to do some kind of reordering
-    # # this is because the jacobian is blocked diagonal
-    # # so we want to process the matrices by order
-    # local_hessian_reordered_array = []
-    # row_offset = 0
-    # for i in range(len(children_sizes)):
-    #   child_size_i = children_sizes[i]
-    #   col_offset = 0
-    #   for j in range(i, len(children_sizes)):
-    #     child_size_j = children_sizes[j]
-    #     for m in range(child_size_i):
-    #       for n in range(child_size_j):
-    #         local_hessian_reordered_array.append(local_hessian[row_offset + m, col_offset + n])
-    #     col_offset += child_size_j
-    #   row_offset += child_size_i
+    layout = generate_jacobian_block_layout(children_global_jacobian.rows, children_global_jacobian.cols, nonzero_local_positions)
 
     self.__global_jacobian_block_nonzero_attributes = nonzero_attributes_array
     self.__global_jacobian_block_nonzero_local_positions = nonzero_local_positions
-    self.__global_jacobian_children_sizes = children_sizes
-    self.__global_jacobian_children_spans = block_sizes
-    # self.__local_hessian_reordered_array = local_hessian_reordered_array
-
-
-
-
-
-
-
+    self.__global_jacobian_children_sizes = layout["sizes"]
+    self.__global_jacobian_children_spans = layout["spans"]
+    self.__global_jacobian_block_layout = layout
     final_hessian = children_global_jacobian.transpose().mul_explicit(local_hessian.mul_explicit(children_global_jacobian)).add_explicit(second_part_hessian)
     self.__turnOffGenerateCode(
       current.correspondance.addAttribute(global_hessian_name, computed_attribute=final_hessian)
@@ -1438,7 +1387,17 @@ class differentiator:
       # so let's just determine the projection cases here
       if self.__projection_method >= 0 and self.__hessian.operator != SPD:
         self.__hessian = self.__hessian.spd(self.__projection_method)
-        self.__project_entire_hessian = False
+      # With direct DATA children, the neighbor derivative already is the
+      # complete Hessian. Represent that cached result as I^T H I so separated
+      # assembly has the same complete metadata as a JOIN/UNION derivative.
+      self.__global_inner_hessian = self.__hessian
+      self.__global_jacobian = attribute.identity(self.__hessian.rows)
+      self.__global_jacobian_block_nonzero_attributes = [self.__global_jacobian[i, i] for i in range(self.__hessian.rows)]
+      self.__global_jacobian_block_nonzero_local_positions = [coordinate for i in range(self.__hessian.rows) for coordinate in (i, i)]
+      self.__global_jacobian_block_layout = generate_jacobian_block_layout(self.__hessian.rows, self.__hessian.rows, self.__global_jacobian_block_nonzero_local_positions)
+      self.__global_jacobian_children_sizes = self.__global_jacobian_block_layout["sizes"]
+      self.__global_jacobian_children_spans = self.__global_jacobian_block_layout["spans"]
+      self.__project_entire_hessian = False
       return
     self.__hessian = self.__generateHessianThroughRecursion(self.__source, wrt)
 
