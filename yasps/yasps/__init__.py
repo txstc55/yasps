@@ -10,6 +10,7 @@ from .deviceKernel import deviceKernel
 from .codeGenerator import codeGenerator
 from .globalKernel import globalKernel
 from .gradientIndicesKernel import gradientIndicesKernel
+from .jacobianBlockLayout import generate_jacobian_block_layout
 from .secondOrderJacobianIndicesKernel import secondOrderJacobianIndicesKernel
 from .secondOrderJacobianKernel import secondOrderJacobianKernel
 from .secondOrderJacobianKernelNoProject import secondOrderJacobianKernelNoProject

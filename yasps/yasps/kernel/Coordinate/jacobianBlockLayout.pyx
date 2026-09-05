@@ -1,3 +1,4 @@
+# cython: language_level=3
 """Find exact block structure from a symbolic Jacobian's nonzero positions."""
 
 from operator import index
