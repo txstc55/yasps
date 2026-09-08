@@ -40,11 +40,24 @@ class hessianKernelSeparateJacobian:
       row, col = global_jacobian_block_nonzero_local_positions[2 * index:2 * index + 2]
       jacobian_positions[row, col] = index
 
+    # Emit a component-block pair only if the symbolic sparsity contains at
+    # least one term J[row_i, col_i] * H[row_i, row_j] * J[row_j, col_j].
+    # With no such term, the whole output block is identically zero, so neither
+    # its multiplication function nor its scatter loop is generated. Runtime
+    # numeric zeros are not used here because those values can change later.
+    jacobian_rows_by_block = [
+      [row for row in block["rows"] if any((row, col) in jacobian_positions for col in block["cols"])]
+      for block in self.__layout["blocks"]
+    ]
+
     # Generate J_i^T H_ij J_j from structural nonzeros. Reuse each left
     # contraction across an output row, without materializing dense J or H.
     for i, block_i in enumerate(self.__layout["blocks"]):
       for j in range(i, len(self.__layout["blocks"])):
         block_j = self.__layout["blocks"][j]
+        has_structural_product = any((row_i, row_j) in hessian_positions for row_i in jacobian_rows_by_block[i] for row_j in jacobian_rows_by_block[j])
+        if not has_structural_product:
+          continue
         lines = []
         for local_col_i, col_i in enumerate(block_i["cols"]):
           lines.append("  {")
@@ -84,7 +97,7 @@ class hessianKernelSeparateJacobian:
     arguments += "".join(f"{x.code_generation_csr_name}, " for x in connectivity if x.dimension == 0)
     arguments += "".join(f"{x.code_generation_counts_name}, " for x in unions)
     source = ['#include "allHeaders.cuh"', 'extern "C" {']
-    if not self.__gradient_only:
+    if not self.__gradient_only and self.__block_patterns:
       for i, j, pattern in self.__block_patterns:
         source.append(f"static __device__ void multiply_sparse_block_{i}_{j}_{suffix}(const double* h, const double* jac, double* result) {{\n{pattern}\n}}")
       permutation = self.__layout["column_permutation"]
