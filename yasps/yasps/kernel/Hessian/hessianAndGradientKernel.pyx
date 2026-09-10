@@ -88,29 +88,18 @@ class hessianAndGradientKernel:
       print("Unique gradient sizes after is", self.__unique_gradient_sizes)
 
 
-    # if we need to separate the jacobian and hessian, the first thing we need to do is reconstruct the jacobian and hessian symbolically
-    # which we will use to figure out how to compute the final hessian block by performing J_i^T H_ij J_j for each block
-    separate_jacobian_kernel: hessianKernelSeparateJacobian = hessianKernelSeparateJacobian(self.__att, self.__gradient_only, self.__grouped_add)
-    if self.__clear_separation:
-      separate_jacobian_kernel.create_multiplied_blocks(
-        global_jacobian_block_nonzero_attributes,
-        global_jacobian_block_nonzero_local_positions,
-        global_jacobian_children_sizes,
-        global_jacobian_children_spans,
-        self.__local_hessian_nonzero_upper_positions,
-        global_jacobian_block_layout
-      )
+
 
 
 
     ## first we get all the header functions
-    sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents + separate_jacobian_kernel.dependents
+    sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
     wrt_names = "_".join([att.fullName for att in wrt])
     size_names = "_".join([str(size) for size in unique_gradient_sizes])
-    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullNameWithHash}_wrt_{wrt_names}_with_sizes_{size_names}_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}_sparsity_blocks_v1_{global_jacobian_block_layout}"
+    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullNameWithHash}_wrt_{wrt_names}_with_sizes_{size_names}_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}_layout_{global_jacobian_block_layout}"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     kernel_mode_suffix = f"_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}"
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}{kernel_mode_suffix}" + ("" if self.__project_entire_hessian else "_no_proj")
@@ -174,6 +163,17 @@ extern "C"{{
             elif not self.__clear_separation:
               kernel_source = hessianKernelNoProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt), self.__hessian_row_size, self.__grouped_add).kernelString
             else:
+              # if we need to separate the jacobian and hessian, the first thing we need to do is reconstruct the jacobian and hessian symbolically
+              # which we will use to figure out how to compute the final hessian block by performing J_i^T H_ij J_j for each block
+              separate_jacobian_kernel: hessianKernelSeparateJacobian = hessianKernelSeparateJacobian(self.__att, self.__gradient_only, self.__grouped_add)
+              separate_jacobian_kernel.create_multiplied_blocks(
+                global_jacobian_block_nonzero_attributes,
+                global_jacobian_block_nonzero_local_positions,
+                global_jacobian_children_sizes,
+                global_jacobian_children_spans,
+                self.__local_hessian_nonzero_upper_positions,
+                global_jacobian_block_layout
+              )
               kernel_source = separate_jacobian_kernel.generateKernelString(unique_gradient_size, max_num_indices, attributeName, len(wrt))
             f.write(kernel_source)
             f.close()

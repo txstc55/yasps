@@ -2,6 +2,7 @@
 """Find exact block structure from a symbolic Jacobian's nonzero positions."""
 
 from operator import index
+import numpy as np
 
 
 def generate_jacobian_block_layout(rows, cols, nonzero_positions):
@@ -99,3 +100,60 @@ def generate_jacobian_block_layout(rows, cols, nonzero_positions):
     "zero_rows": zero_rows,  # Structurally zero original rows, appended to the row permutation.
     "zero_columns": zero_columns,  # Structurally zero original columns, appended to the column permutation.
   }
+
+
+def pack_jacobian_block_nonzeros(layout, nonzero_positions):
+  """Permute a numbered Jacobian, then read each diagonal block row by row.
+
+  Label structural nonzeros with their original storage indices 0, 1, ...;
+  use -1 for structural zeros. Apply the existing layout's row and column
+  permutations without changing these labels, then extract each block.
+  This is CPU code-generation metadata, not a runtime numeric Jacobian.
+
+  Return only the mappings used by the HJ producer and multiplication code:
+  - nonzero_permutation: packed value index -> original stored value index.
+  - block_offsets: each block's start in the packed J values (excluding H).
+  - block_local_positions: (local row, column) -> value index within a block.
+  Original axes and dimensions remain in layout; counts follow from the maps.
+  """
+  rows = index(layout["rows"])
+  cols = index(layout["cols"])
+  if rows < 0 or cols < 0:
+    raise ValueError("Jacobian dimensions must be nonnegative.")
+  positions = np.asarray([index(value) for value in nonzero_positions], dtype=np.int64)
+  if len(positions) % 2:
+    raise ValueError("Nonzero positions must contain row/column pairs.")
+  positions = positions.reshape(-1, 2)
+  if np.any(positions < 0) or np.any(positions >= (rows, cols)):
+    raise ValueError("Nonzero position is outside the Jacobian dimensions.")
+
+  # Zero is a valid nonzero ID, so empty entries must use -1.
+  numbered_jacobian = np.full((rows, cols), -1, dtype=np.int64)
+  numbered_jacobian[positions[:, 0], positions[:, 1]] = np.arange(len(positions))
+  if np.count_nonzero(numbered_jacobian >= 0) != len(positions):
+    raise ValueError("Duplicate Jacobian nonzero position.")
+  row_order = [index(row) for row in layout["row_permutation"]]
+  col_order = [index(col) for col in layout["column_permutation"]]
+  if sorted(row_order) != list(range(rows)) or sorted(col_order) != list(range(cols)):
+    raise ValueError("Jacobian layout must provide complete row and column permutations.")
+  numbered_jacobian = numbered_jacobian[np.ix_(row_order, col_order)] # perform the permutation
+
+  nonzero_permutation = []
+  block_offsets = []
+  block_local_positions = []
+  row_start = col_start = 0
+  for block in layout["blocks"]:
+    row_end = row_start + len(block["rows"])
+    col_end = col_start + len(block["cols"])
+    if row_order[row_start:row_end] != block["rows"] or col_order[col_start:col_end] != block["cols"]:
+      raise ValueError("Jacobian block axes do not match the layout permutations.")
+    numbered_block = numbered_jacobian[row_start:row_end, col_start:col_end]
+    local_rows, local_cols = np.nonzero(numbered_block >= 0) # get the row and column of all the nonzero entries, this will be the local coordinate
+    block_offsets.append(len(nonzero_permutation)) # get the offset for the number of nonzero blocks
+    nonzero_permutation.extend(numbered_block[local_rows, local_cols].tolist())
+    block_local_positions.append({(row, col): local_id for local_id, (row, col) in enumerate(zip(local_rows.tolist(), local_cols.tolist()))}) # this stores for each local nonzero coordinate, what is its index in the packed data array, locally
+    row_start, col_start = row_end, col_end
+
+  if len(nonzero_permutation) != len(positions):
+    raise ValueError("Some Jacobian nonzeros are not contained in the diagonal blocks.")
+  return {"nonzero_permutation": nonzero_permutation, "block_offsets": block_offsets, "block_local_positions": block_local_positions}

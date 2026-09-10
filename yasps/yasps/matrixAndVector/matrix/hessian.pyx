@@ -8,6 +8,7 @@ from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 from yasps.attribute import attribute
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.codeGenerator import codeGenerator
+from yasps.jacobianBlockLayout import generate_jacobian_block_layout, pack_jacobian_block_nonzeros
 import numpy as np
 import pycuda.autoinit
 import pycuda.gpuarray as gpuarray
@@ -889,6 +890,8 @@ class hessian(matrix):
     separate_hessian_jacobian: bool,
     source: attribute,
     global_jacobian_block_nonzero_attributes: List[attribute],
+    global_jacobian_block_nonzero_local_positions,
+    global_jacobian_block_layout,
   ) -> attribute:
     merged_hessian_and_gradient = []
     merged_hessian_rows = 0
@@ -908,12 +911,13 @@ class hessian(matrix):
           # only its structurally nonzero upper-triangular entries.
           if global_inner_hessian[i, j].isZero == 0:
             merged_hessian_and_gradient.append(global_inner_hessian[i, j])
-          elif i != j and global_inner_hessian[j, i].isZero == 0:
-            # Symbolic construction should be symmetric, but retain the
-            # reflected entry if simplification only marked one side nonzero.
-            merged_hessian_and_gradient.append(global_inner_hessian[j, i])
-      for item in global_jacobian_block_nonzero_attributes:
-        merged_hessian_and_gradient.append(item)
+      # Match the consumer's component order. H and gradient retain their
+      # original storage order; J blocks are emitted contiguous without a gather.
+      layout = global_jacobian_block_layout
+      if layout is None:
+        layout = generate_jacobian_block_layout(global_jacobian.rows, global_jacobian.cols, global_jacobian_block_nonzero_local_positions)
+      packing = pack_jacobian_block_nonzeros(layout, global_jacobian_block_nonzero_local_positions)
+      merged_hessian_and_gradient.extend(global_jacobian_block_nonzero_attributes[i] for i in packing["nonzero_permutation"])
       for i in range(global_gradient.size):
         merged_hessian_and_gradient.append(global_gradient[i])
       merged_hessian_rows = 1
@@ -941,6 +945,8 @@ class hessian(matrix):
       merged_attribute_name = f'hessian_and_gradient_gradient_only_{derivative_name}'
     else:
       merged_attribute_name = f'hessian_and_gradient_{derivative_name}'
+    if separate_hessian_jacobian and not project_entire_hessian and not gradient_only:
+      merged_attribute_name += '_packed_components'
     if merged_attribute_name in source.correspondance.attributes:
       return source.correspondance[merged_attribute_name]
     return source.correspondance.addAttribute(
@@ -1017,7 +1023,9 @@ class hessian(matrix):
         project_entire_hessian[index],
         separate_hessian_jacobian[index],
         sources[index],
-        global_jacobian_block_nonzero_attributes[index]
+        global_jacobian_block_nonzero_attributes[index],
+        global_jacobian_block_nonzero_local_positions[index],
+        global_jacobian_block_layouts[index]
       )
 
     if kernels[index] is None:
@@ -1040,13 +1048,7 @@ class hessian(matrix):
         inner_hessian_rows = global_inner_hessians[index].rows
         for row in range(global_inner_hessians[index].rows):
           for col in range(row, global_inner_hessians[index].cols):
-            if (
-              global_inner_hessians[index][row, col].isZero == 0
-              or (
-                row != col
-                and global_inner_hessians[index][col, row].isZero == 0
-              )
-            ):
+            if global_inner_hessians[index][row, col].isZero == 0:
               local_hessian_nonzero_upper_positions.extend([row, col])
       elif index < len(global_hessians) and global_hessians[index] is not None:
         inner_hessian_rows = global_hessians[index].rows
