@@ -105,3 +105,6 @@ StiffGIPC/
 /examples/double_clamp_edge_weight_optimization/
 /examples/double_clamp_tet_edge_weight_optimization/
 /muscle-example/*
+
+
+tests/*
