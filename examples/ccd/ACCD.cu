@@ -279,35 +279,400 @@ double3 _ccd_point_line_axis(
         edge, __GEIGEN__::__v_vec_dot(offset, edge) / length2));
 }
 
+// Bounded geometric fallback for linearly moving convex primitives.
+// Helpers use ordinary arithmetic only to choose an axis; every acceptance
+// checks original input coordinates/motions with directed-rounding bounds.
+// A failed proof, exhausted budget, or unrepresentable subdivision returns
+// only the contiguous prefix that has already been proved separated.
+
+struct _CCDIntervalGeometry {
+    double3 p0, p1, p2, p3;
+    double3 d0, d1, d2, d3;
+};
+
+struct _CCDProjectionInterval {
+    double lo, hi;
+};
+
 __device__ __forceinline__
-bool _ccd_prepare_axis(double3& axis, const double3& reference, double& target)
+double3 _ccd_interval_position(const double3& p, const double3& d, double t)
 {
-    double length2 = __GEIGEN__::__squaredNorm3(axis);
-    if (!(length2 > 0.0) || !isfinite(length2) ||
-        !(target >= 0.0) || !isfinite(target))
-        return false;
-    if (__GEIGEN__::__v_vec_dot(axis, reference) < 0.0)
-        axis = __GEIGEN__::__s_vec_multiply3(axis, -1.0);
-    target *= sqrt(length2);
-    return isfinite(target);
+    // This position is only used to choose a witness axis, never in its proof.
+    return make_double3(fma(t, d.x, p.x), fma(t, d.y, p.y), fma(t, d.z, p.z));
 }
 
 __device__ __forceinline__
-bool _ccd_vertex_pair_separated(
-    const double3& axis, const double3& a, const double3& b,
-    const double3& da, const double3& db, double target, double maxTime)
+double3 _ccd_interval_axis(bool pt, int index,
+    const double3& p0, const double3& p1,
+    const double3& p2, const double3& p3)
 {
-    double start = __GEIGEN__::__v_vec_dot(axis, __GEIGEN__::__minus(a, b));
-    double end = start + maxTime * __GEIGEN__::__v_vec_dot(axis, __GEIGEN__::__minus(da, db));
-    // Bound cancellation in the coordinate differences and dot products. An
-    // uncertain certificate falls back to ACCD; it never rejects the pair.
-    double magnitude =
-        fabs(axis.x) * (fabs(a.x) + fabs(b.x) + maxTime * (fabs(da.x) + fabs(db.x))) +
-        fabs(axis.y) * (fabs(a.y) + fabs(b.y) + maxTime * (fabs(da.y) + fabs(db.y))) +
-        fabs(axis.z) * (fabs(a.z) + fabs(b.z) + maxTime * (fabs(da.z) + fabs(db.z)));
-    double margin = 64.0 * DBL_EPSILON * (magnitude + target);
-    return isfinite(start) && isfinite(end) && isfinite(margin) &&
-        __m_min(start, end) > target + margin;
+    if (pt) {
+        switch (index) {
+        case 0: return __GEIGEN__::__v_vec_cross(
+            __GEIGEN__::__minus(p2, p1), __GEIGEN__::__minus(p3, p1));
+        case 1: return _ccd_point_line_axis(p0, p1, p2);
+        case 2: return _ccd_point_line_axis(p0, p2, p3);
+        case 3: return _ccd_point_line_axis(p0, p3, p1);
+        case 4: return __GEIGEN__::__minus(p0, p1);
+        case 5: return __GEIGEN__::__minus(p0, p2);
+        default: return __GEIGEN__::__minus(p0, p3);
+        }
+    }
+    switch (index) {
+    case 0: return __GEIGEN__::__v_vec_cross(
+        __GEIGEN__::__minus(p1, p0), __GEIGEN__::__minus(p3, p2));
+    case 1: return _ccd_point_line_axis(p0, p2, p3);
+    case 2: return _ccd_point_line_axis(p1, p2, p3);
+    case 3: return _ccd_point_line_axis(p2, p0, p1);
+    case 4: return _ccd_point_line_axis(p3, p0, p1);
+    case 5: return __GEIGEN__::__minus(p0, p2);
+    case 6: return __GEIGEN__::__minus(p0, p3);
+    case 7: return __GEIGEN__::__minus(p1, p2);
+    default: return __GEIGEN__::__minus(p1, p3);
+    }
+}
+
+__device__ __forceinline__
+bool _ccd_interval_normalize_axis(double3& axis, double& normUpper)
+{
+    if (!isfinite(axis.x) || !isfinite(axis.y) || !isfinite(axis.z))
+        return false;
+    double scale = fmax(fabs(axis.x), fmax(fabs(axis.y), fabs(axis.z)));
+    if (!(scale > 0.0))
+        return false;
+    axis = make_double3(axis.x / scale, axis.y / scale, axis.z / scale);
+    // Interpret the resulting doubles as the exact chosen axis. Its norm is
+    // rounded upward so multiplying by a target distance cannot understate it.
+    normUpper = __dsqrt_ru(__dadd_ru(__dmul_ru(axis.x, axis.x),
+        __dadd_ru(__dmul_ru(axis.y, axis.y), __dmul_ru(axis.z, axis.z))));
+    return normUpper > 0.0 && isfinite(normUpper);
+}
+
+__device__ __forceinline__
+_CCDProjectionInterval _ccd_interval_coordinate(
+    double a, double b, double da, double db, double t, double n)
+{
+    // t is nonnegative. These intervals enclose (a-b)+t*(da-db) in exact
+    // arithmetic on the ORIGINAL supplied doubles, including subtraction error.
+    double lo = __dadd_rd(__dsub_rd(a, b), __dmul_rd(t, __dsub_rd(da, db)));
+    double hi = __dadd_ru(__dsub_ru(a, b), __dmul_ru(t, __dsub_ru(da, db)));
+    if (n >= 0.0)
+        return {__dmul_rd(n, lo), __dmul_ru(n, hi)};
+    return {__dmul_rd(n, hi), __dmul_ru(n, lo)};
+}
+
+__device__ __forceinline__
+_CCDProjectionInterval _ccd_interval_projection(
+    const double3& axis, const double3& a, const double3& b,
+    const double3& da, const double3& db, double t)
+{
+    _CCDProjectionInterval x = _ccd_interval_coordinate(a.x, b.x, da.x, db.x, t, axis.x);
+    _CCDProjectionInterval y = _ccd_interval_coordinate(a.y, b.y, da.y, db.y, t, axis.y);
+    _CCDProjectionInterval z = _ccd_interval_coordinate(a.z, b.z, da.z, db.z, t, axis.z);
+    return {__dadd_rd(x.lo, __dadd_rd(y.lo, z.lo)),
+            __dadd_ru(x.hi, __dadd_ru(y.hi, z.hi))};
+}
+
+__device__ __forceinline__
+void _ccd_interval_include_projection(_CCDProjectionInterval& range,
+    const _CCDProjectionInterval& item)
+{
+    // A NaN must invalidate the witness, never be hidden by fmin/fmax.
+    if (!isfinite(item.lo) || !isfinite(item.hi)) {
+        range.lo = -INFINITY;
+        range.hi = INFINITY;
+        return;
+    }
+    range.lo = fmin(range.lo, item.lo);
+    range.hi = fmax(range.hi, item.hi);
+}
+
+__device__ __forceinline__
+void _ccd_interval_include_time(_CCDProjectionInterval& range, bool pt,
+    const _CCDIntervalGeometry& g, const double3& axis, double t)
+{
+    if (pt) {
+        _ccd_interval_include_projection(range, _ccd_interval_projection(axis, g.p0, g.p1, g.d0, g.d1, t));
+        _ccd_interval_include_projection(range, _ccd_interval_projection(axis, g.p0, g.p2, g.d0, g.d2, t));
+        _ccd_interval_include_projection(range, _ccd_interval_projection(axis, g.p0, g.p3, g.d0, g.d3, t));
+    } else {
+        _ccd_interval_include_projection(range, _ccd_interval_projection(axis, g.p0, g.p2, g.d0, g.d2, t));
+        _ccd_interval_include_projection(range, _ccd_interval_projection(axis, g.p0, g.p3, g.d0, g.d3, t));
+        _ccd_interval_include_projection(range, _ccd_interval_projection(axis, g.p1, g.p2, g.d1, g.d2, t));
+        _ccd_interval_include_projection(range, _ccd_interval_projection(axis, g.p1, g.p3, g.d1, g.d3, t));
+    }
+}
+
+__device__ __forceinline__
+double _ccd_interval_axis_gap(bool pt, const _CCDIntervalGeometry& g,
+    double3 axis, double startTime, double endTime)
+{
+    double normUpper;
+    if (!_ccd_interval_normalize_axis(axis, normUpper))
+        return 0.0;
+    _CCDProjectionInterval range = {INFINITY, -INFINITY};
+    _ccd_interval_include_time(range, pt, g, axis, startTime);
+    if (endTime != startTime)
+        _ccd_interval_include_time(range, pt, g, axis, endTime);
+    // Either orientation is a valid separating axis. Strictly positive gap
+    // excludes touching endpoints. Linear projection and convexity then cover
+    // every time and every point of both primitives in the complete interval.
+    if (range.lo > 0.0)
+        return __ddiv_rd(range.lo, normUpper);
+    if (range.hi < 0.0)
+        return __ddiv_rd(-range.hi, normUpper);
+    return 0.0;
+}
+
+// A time-varying primitive normal avoids subdividing a grazing rotating face
+// into hundreds of fixed-axis intervals. Bernstein coefficient hulls enclose
+// the cubic signed volume and quadratic normal over the entire time interval.
+// All operands come from original input positions and directions.
+struct _CCDIntervalVector {
+    _CCDProjectionInterval x, y, z;
+};
+
+__device__ __forceinline__
+bool _ccd_poly_valid(const _CCDProjectionInterval& a)
+{
+    return isfinite(a.lo) && isfinite(a.hi) && a.lo <= a.hi;
+}
+
+__device__ __forceinline__
+_CCDProjectionInterval _ccd_poly_invalid()
+{
+    return {-INFINITY, INFINITY};
+}
+
+__device__ __forceinline__
+_CCDProjectionInterval _ccd_poly_add(
+    const _CCDProjectionInterval& a, const _CCDProjectionInterval& b)
+{
+    if (!_ccd_poly_valid(a) || !_ccd_poly_valid(b))
+        return _ccd_poly_invalid();
+    return {__dadd_rd(a.lo, b.lo), __dadd_ru(a.hi, b.hi)};
+}
+
+__device__ __forceinline__
+_CCDProjectionInterval _ccd_poly_sub(
+    const _CCDProjectionInterval& a, const _CCDProjectionInterval& b)
+{
+    if (!_ccd_poly_valid(a) || !_ccd_poly_valid(b))
+        return _ccd_poly_invalid();
+    return {__dsub_rd(a.lo, b.hi), __dsub_ru(a.hi, b.lo)};
+}
+
+__device__ __forceinline__
+_CCDProjectionInterval _ccd_poly_mul(
+    const _CCDProjectionInterval& a, const _CCDProjectionInterval& b)
+{
+    if (!_ccd_poly_valid(a) || !_ccd_poly_valid(b))
+        return _ccd_poly_invalid();
+    double lo = fmin(fmin(__dmul_rd(a.lo, b.lo), __dmul_rd(a.lo, b.hi)),
+                     fmin(__dmul_rd(a.hi, b.lo), __dmul_rd(a.hi, b.hi)));
+    double hi = fmax(fmax(__dmul_ru(a.lo, b.lo), __dmul_ru(a.lo, b.hi)),
+                     fmax(__dmul_ru(a.hi, b.lo), __dmul_ru(a.hi, b.hi)));
+    return {lo, hi};
+}
+
+__device__ __forceinline__
+_CCDProjectionInterval _ccd_poly_div_positive(
+    const _CCDProjectionInterval& a, double divisor)
+{
+    if (!_ccd_poly_valid(a))
+        return _ccd_poly_invalid();
+    return {__ddiv_rd(a.lo, divisor), __ddiv_ru(a.hi, divisor)};
+}
+
+__device__ __forceinline__
+_CCDIntervalVector _ccd_poly_difference_at_time(
+    const double3& a, const double3& b,
+    const double3& da, const double3& db, double t)
+{
+    return {_ccd_interval_coordinate(a.x, b.x, da.x, db.x, t, 1.0),
+            _ccd_interval_coordinate(a.y, b.y, da.y, db.y, t, 1.0),
+            _ccd_interval_coordinate(a.z, b.z, da.z, db.z, t, 1.0)};
+}
+
+__device__ __forceinline__
+_CCDIntervalVector _ccd_poly_cross(
+    const _CCDIntervalVector& a, const _CCDIntervalVector& b)
+{
+    return {_ccd_poly_sub(_ccd_poly_mul(a.y, b.z), _ccd_poly_mul(a.z, b.y)),
+            _ccd_poly_sub(_ccd_poly_mul(a.z, b.x), _ccd_poly_mul(a.x, b.z)),
+            _ccd_poly_sub(_ccd_poly_mul(a.x, b.y), _ccd_poly_mul(a.y, b.x))};
+}
+
+__device__ __forceinline__
+_CCDIntervalVector _ccd_poly_half_sum(
+    const _CCDIntervalVector& a, const _CCDIntervalVector& b)
+{
+    return {_ccd_poly_div_positive(_ccd_poly_add(a.x, b.x), 2.0),
+            _ccd_poly_div_positive(_ccd_poly_add(a.y, b.y), 2.0),
+            _ccd_poly_div_positive(_ccd_poly_add(a.z, b.z), 2.0)};
+}
+
+__device__ __forceinline__
+_CCDProjectionInterval _ccd_poly_dot(
+    const _CCDIntervalVector& a, const _CCDIntervalVector& b)
+{
+    return _ccd_poly_add(_ccd_poly_mul(a.x, b.x),
+        _ccd_poly_add(_ccd_poly_mul(a.y, b.y), _ccd_poly_mul(a.z, b.z)));
+}
+
+__device__ __forceinline__
+double _ccd_poly_vector_norm_upper(const _CCDIntervalVector& a)
+{
+    if (!_ccd_poly_valid(a.x) || !_ccd_poly_valid(a.y) || !_ccd_poly_valid(a.z))
+        return INFINITY;
+    double x = fmax(fabs(a.x.lo), fabs(a.x.hi));
+    double y = fmax(fabs(a.y.lo), fabs(a.y.hi));
+    double z = fmax(fabs(a.z.lo), fabs(a.z.hi));
+    return __dsqrt_ru(__dadd_ru(__dmul_ru(x, x),
+        __dadd_ru(__dmul_ru(y, y), __dmul_ru(z, z))));
+}
+
+__device__ __noinline__
+double _ccd_interval_moving_normal_gap(bool pt, const _CCDIntervalGeometry& g,
+    double startTime, double endTime)
+{
+    if (!(startTime >= 0.0) || !(endTime >= startTime) || !isfinite(endTime))
+        return 0.0;
+    _CCDIntervalVector u0, u1, v0, v1, w0, w1;
+    if (pt) {
+        u0 = _ccd_poly_difference_at_time(g.p2, g.p1, g.d2, g.d1, startTime);
+        u1 = _ccd_poly_difference_at_time(g.p2, g.p1, g.d2, g.d1, endTime);
+        v0 = _ccd_poly_difference_at_time(g.p3, g.p1, g.d3, g.d1, startTime);
+        v1 = _ccd_poly_difference_at_time(g.p3, g.p1, g.d3, g.d1, endTime);
+        w0 = _ccd_poly_difference_at_time(g.p0, g.p1, g.d0, g.d1, startTime);
+        w1 = _ccd_poly_difference_at_time(g.p0, g.p1, g.d0, g.d1, endTime);
+    } else {
+        u0 = _ccd_poly_difference_at_time(g.p1, g.p0, g.d1, g.d0, startTime);
+        u1 = _ccd_poly_difference_at_time(g.p1, g.p0, g.d1, g.d0, endTime);
+        v0 = _ccd_poly_difference_at_time(g.p3, g.p2, g.d3, g.d2, startTime);
+        v1 = _ccd_poly_difference_at_time(g.p3, g.p2, g.d3, g.d2, endTime);
+        w0 = _ccd_poly_difference_at_time(g.p2, g.p0, g.d2, g.d0, startTime);
+        w1 = _ccd_poly_difference_at_time(g.p2, g.p0, g.d2, g.d0, endTime);
+    }
+    _CCDIntervalVector q0 = _ccd_poly_cross(u0, v0);
+    _CCDIntervalVector q1 = _ccd_poly_half_sum(
+        _ccd_poly_cross(u0, v1), _ccd_poly_cross(u1, v0));
+    _CCDIntervalVector q2 = _ccd_poly_cross(u1, v1);
+    _CCDProjectionInterval c0 = _ccd_poly_dot(w0, q0);
+    _CCDProjectionInterval c1a = _ccd_poly_dot(w0, q1);
+    _CCDProjectionInterval c1 = _ccd_poly_div_positive(_ccd_poly_add(
+        _ccd_poly_add(c1a, c1a), _ccd_poly_dot(w1, q0)), 3.0);
+    _CCDProjectionInterval c2a = _ccd_poly_dot(w1, q1);
+    _CCDProjectionInterval c2 = _ccd_poly_div_positive(_ccd_poly_add(
+        _ccd_poly_add(c2a, c2a), _ccd_poly_dot(w0, q2)), 3.0);
+    _CCDProjectionInterval c3 = _ccd_poly_dot(w1, q2);
+    if (!_ccd_poly_valid(c0) || !_ccd_poly_valid(c1) ||
+        !_ccd_poly_valid(c2) || !_ccd_poly_valid(c3))
+        return 0.0;
+    double minVolume = fmin(fmin(c0.lo, c1.lo), fmin(c2.lo, c3.lo));
+    double maxVolume = fmax(fmax(c0.hi, c1.hi), fmax(c2.hi, c3.hi));
+    double volumeLower = minVolume > 0.0 ? minVolume :
+        (maxVolume < 0.0 ? -maxVolume : 0.0);
+    if (!(volumeLower > 0.0))
+        return 0.0;
+    // The quadratic Bernstein basis is nonnegative and sums to one, so
+    // convexity of the norm bounds every normal by the largest control norm.
+    double normUpper = fmax(_ccd_poly_vector_norm_upper(q0),
+        fmax(_ccd_poly_vector_norm_upper(q1), _ccd_poly_vector_norm_upper(q2)));
+    if (!(normUpper > 0.0) || !isfinite(normUpper))
+        return 0.0;
+    return __ddiv_rd(volumeLower, normUpper);
+}
+
+__device__ __forceinline__
+bool _ccd_interval_moving_normal(bool pt, const _CCDIntervalGeometry& g,
+    double target, double startTime, double endTime)
+{
+    return target >= 0.0 && isfinite(target) &&
+        _ccd_interval_moving_normal_gap(pt, g, startTime, endTime) > target;
+}
+
+__device__ __forceinline__
+bool _ccd_interval_certified_geometry(bool pt, const _CCDIntervalGeometry& g,
+    double target, double startTime, double endTime)
+{
+    if (!(target >= 0.0) || !isfinite(target) || !(startTime >= 0.0) ||
+        !(endTime >= startTime) || !isfinite(endTime))
+        return false;
+    double mid = startTime + (endTime - startTime) * 0.5;
+    double3 p0 = _ccd_interval_position(g.p0, g.d0, mid);
+    double3 p1 = _ccd_interval_position(g.p1, g.d1, mid);
+    double3 p2 = _ccd_interval_position(g.p2, g.d2, mid);
+    double3 p3 = _ccd_interval_position(g.p3, g.d3, mid);
+    int axes = pt ? 7 : 9;
+    for (int i = 0; i < axes; ++i) {
+        if (_ccd_interval_axis_gap(pt, g,
+                _ccd_interval_axis(pt, i, p0, p1, p2, p3), startTime, endTime) > target)
+            return true;
+    }
+    return false;
+}
+
+// Public helper for validating a fast ACCD proposal: target=0, startTime=0,
+// endTime=proposal. A false result means unresolved, not necessarily collision.
+__device__ __forceinline__
+bool _ccd_interval_certified(bool pt,
+    const double3& p0, const double3& p1, const double3& p2, const double3& p3,
+    const double3& d0, const double3& d1, const double3& d2, const double3& d3,
+    double target, double startTime, double endTime)
+{
+    _CCDIntervalGeometry g = {p0, p1, p2, p3, d0, d1, d2, d3};
+    return _ccd_interval_certified_geometry(pt, g, target, startTime, endTime);
+}
+
+// At most 128 interval tests, each trying a moving-normal certificate and
+// at most 7 PT or 9 EE fixed axes. The greedy
+// left-to-right walk keeps O(1) state; it never allocates a subdivision stack.
+// Keeping the fallback out of line limits register growth in the common path.
+__device__ __noinline__
+double _ccd_interval_step(bool pt,
+    const double3& p0, const double3& p1, const double3& p2, const double3& p3,
+    const double3& d0, const double3& d1, const double3& d2, const double3& d3,
+    double eta, double thickness, double maxTime)
+{
+    if (!(eta >= 0.0 && eta < 1.0) || !(thickness >= 0.0) ||
+        !isfinite(thickness) || !(maxTime > 0.0) || !isfinite(maxTime))
+        return 0.0;
+    _CCDIntervalGeometry g = {p0, p1, p2, p3, d0, d1, d2, d3};
+    double initialGap = 0.0;
+    int axes = pt ? 7 : 9;
+    for (int i = 0; i < axes; ++i)
+        initialGap = fmax(initialGap, _ccd_interval_axis_gap(pt, g,
+            _ccd_interval_axis(pt, i, p0, p1, p2, p3), 0.0, 0.0));
+    if (!(initialGap > thickness))
+        return 0.0;
+    // This separation lower bound is independent of the legacy distance
+    // classifier, including its nearly-parallel edge overestimation. Retain
+    // a positive fraction of the proven initial clearance when eta>0.
+    double clearance = __dsub_rd(initialGap, thickness);
+    double target = __dadd_ru(thickness, __dmul_ru(eta, clearance));
+    if (!isfinite(target))
+        return 0.0;
+    double prefix = 0.0;
+    double width = maxTime;
+    constexpr int maxIntervalTests = 128;
+    for (int test = 0; test < maxIntervalTests; ++test) {
+        double end = fmin(maxTime, prefix + width);
+        if (!(end > prefix))
+            break;
+        if (_ccd_interval_moving_normal(pt, g, target, prefix, end) ||
+            _ccd_interval_certified_geometry(pt, g, target, prefix, end)) {
+            prefix = end;
+            if (prefix >= maxTime)
+                return maxTime;
+            width = fmin(width + width, maxTime - prefix);
+        } else {
+            width *= 0.5;
+            if (!(prefix + width > prefix))
+                break;
+        }
+    }
+    return prefix;
 }
 
 // A fixed axis separates two moving convex primitives for the whole interval
@@ -335,11 +700,8 @@ bool _ccd_point_triangle_separated(
         break;
     default: return false;
     }
-    if (!_ccd_prepare_axis(axis, __GEIGEN__::__minus(p, t0), target))
-        return false;
-    return _ccd_vertex_pair_separated(axis, p, t0, dp, dt0, target, maxTime) &&
-        _ccd_vertex_pair_separated(axis, p, t1, dp, dt1, target, maxTime) &&
-        _ccd_vertex_pair_separated(axis, p, t2, dp, dt2, target, maxTime);
+    _CCDIntervalGeometry g = {p, t0, t1, t2, dp, dt0, dt1, dt2};
+    return _ccd_interval_axis_gap(true, g, axis, 0.0, maxTime) > target;
 }
 
 __device__ __forceinline__
@@ -364,16 +726,12 @@ bool _ccd_edge_edge_separated(
         break;
     default: return false;
     }
-    if (!_ccd_prepare_axis(axis, __GEIGEN__::__minus(a0, b0), target))
-        return false;
-    return _ccd_vertex_pair_separated(axis, a0, b0, da0, db0, target, maxTime) &&
-        _ccd_vertex_pair_separated(axis, a0, b1, da0, db1, target, maxTime) &&
-        _ccd_vertex_pair_separated(axis, a1, b0, da1, db0, target, maxTime) &&
-        _ccd_vertex_pair_separated(axis, a1, b1, da1, db1, target, maxTime);
+    _CCDIntervalGeometry g = {a0, a1, b0, b1, da0, da1, db0, db1};
+    return _ccd_interval_axis_gap(false, g, axis, 0.0, maxTime) > target;
 }
 
 __device__
-double edge_edge_ccd_limited(
+double edge_edge_ccd_fast(
     const double3& _ea0,
     const double3& _ea1,
     const double3& _eb0,
@@ -382,7 +740,7 @@ double edge_edge_ccd_limited(
     const double3& _dea1,
     const double3& _deb0,
     const double3& _deb1,
-    double eta, double thickness, double maxTime, int maxIterations)
+    double eta, double thickness, double maxTime, int maxIterations, bool& certified)
 {
     double3 ea0 = _ea0, ea1 = _ea1, eb0 = _eb0, eb1 = _eb1, dea0 = _dea0, dea1 = _dea1, deb0 = _deb0, deb1 = _deb1;
     double3 temp0 = __GEIGEN__::__add(dea0, dea1);
@@ -429,8 +787,10 @@ double edge_edge_ccd_limited(
     double dist_cur = sqrt(dist2_cur);
     double gap = eta * dFunc / (dist_cur + thickness);
     if (dist_cur > thickness && _ccd_edge_edge_separated(
-            ea0, ea1, eb0, eb1, _dea0, _dea1, _deb0, _deb1, thickness + gap, 1.0))
+            ea0, ea1, eb0, eb1, _dea0, _dea1, _deb0, _deb1, thickness + gap, maxTime)) {
+        certified = true;
         return maxTime;
+    }
     double toc = 0.0;
     int count = 0;
     while (true) {
@@ -463,7 +823,7 @@ double edge_edge_ccd_limited(
 }
 
 __device__
-double point_triangle_ccd_limited(
+double point_triangle_ccd_fast(
     const double3& _p,
     const double3& _t0,
     const double3& _t1,
@@ -472,7 +832,7 @@ double point_triangle_ccd_limited(
     const double3& _dt0,
     const double3& _dt1,
     const double3& _dt2,
-    double eta, double thickness, double maxTime, int maxIterations)
+    double eta, double thickness, double maxTime, int maxIterations, bool& certified)
 {
     double3 p = _p, t0 = _t0, t1 = _t1, t2 = _t2, dp = _dp, dt0 = _dt0, dt1 = _dt1, dt2 = _dt2;
 
@@ -501,8 +861,10 @@ double point_triangle_ccd_limited(
     double dist_cur = sqrt(dist2_cur);
     double gap = eta * (dist2_cur - thickness * thickness) / (dist_cur + thickness);
     if (dist_cur > thickness && _ccd_point_triangle_separated(
-            p, t0, t1, t2, _dp, _dt0, _dt1, _dt2, thickness + gap, 1.0))
+            p, t0, t1, t2, _dp, _dt0, _dt1, _dt2, thickness + gap, maxTime)) {
+        certified = true;
         return maxTime;
+    }
     double toc = 0.0;
     int count = 0;
     while (true) {
@@ -537,6 +899,49 @@ double point_triangle_ccd_limited(
     return toc;
 }
 
+
+// Fast advancement proposes a step. A directed-rounding geometric witness
+// verifies every accepted positive proposal. Unresolved first-pass proposals
+// retain the negative marker; refinement uses bounded geometric subdivision.
+__device__
+double edge_edge_ccd_limited(
+    const double3& p0, const double3& p1, const double3& p2, const double3& p3,
+    const double3& d0, const double3& d1, const double3& d2, const double3& d3,
+    double eta, double thickness, double maxTime, int maxIterations)
+{
+    bool certified = false;
+    double proposal = edge_edge_ccd_fast(p0, p1, p2, p3, d0, d1, d2, d3,
+        eta, thickness, maxTime, maxIterations > 0 ? maxIterations : 8, certified);
+    if (proposal == 0.0)
+        return 0.0;
+    if (proposal > 0.0 && (certified || _ccd_interval_certified(false,
+            p0, p1, p2, p3, d0, d1, d2, d3, thickness, 0.0, proposal)))
+        return proposal;
+    if (maxIterations > 0)
+        return -1.0;
+    return _ccd_interval_step(false, p0, p1, p2, p3, d0, d1, d2, d3,
+        eta, thickness, maxTime);
+}
+
+__device__
+double point_triangle_ccd_limited(
+    const double3& p0, const double3& p1, const double3& p2, const double3& p3,
+    const double3& d0, const double3& d1, const double3& d2, const double3& d3,
+    double eta, double thickness, double maxTime, int maxIterations)
+{
+    bool certified = false;
+    double proposal = point_triangle_ccd_fast(p0, p1, p2, p3, d0, d1, d2, d3,
+        eta, thickness, maxTime, maxIterations > 0 ? maxIterations : 8, certified);
+    if (proposal == 0.0)
+        return 0.0;
+    if (proposal > 0.0 && (certified || _ccd_interval_certified(true,
+            p0, p1, p2, p3, d0, d1, d2, d3, thickness, 0.0, proposal)))
+        return proposal;
+    if (maxIterations > 0)
+        return -1.0;
+    return _ccd_interval_step(true, p0, p1, p2, p3, d0, d1, d2, d3,
+        eta, thickness, maxTime);
+}
 
 // Preserve the device API for callers needing an individual full-interval CCD.
 __device__ double edge_edge_ccd(
@@ -783,6 +1188,15 @@ double doCCDVF(const double3& _p,
     return ret;
 }
 
+// A pair certified through the requested horizon cannot constrain the minimum.
+// Encode it as 1 so a full sweep preserves its exact caller-supplied bound.
+__device__ __forceinline__
+double _ccd_step_reciprocal(double step, double maxTime)
+{
+    return step >= maxTime ? 1.0 : __ddiv_ru(1.0, step);
+}
+
+// Round reciprocals upward so the host inverse cannot exceed a certified step.
 // Magnitude is the largest reciprocal of a completed step (at least 1).
 // The sign carries "some pair unfinished" through BOTH reduction levels.
 struct StepBoundMax {
@@ -814,17 +1228,17 @@ void _reduct_min_selfTimeStep_to_double(const double3* vertexes, const int4* _cc
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.z], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0, maxTime, maxIterations);
 
-            temp = 1.0 / temp1;
+            temp = _ccd_step_reciprocal(temp1, maxTime);
         }
         else {
-            temp = 1.0 / edge_edge_ccd_limited(vertexes[MMCVIDI.x],
+            temp = _ccd_step_reciprocal(edge_edge_ccd_limited(vertexes[MMCVIDI.x],
                 vertexes[MMCVIDI.y],
                 vertexes[MMCVIDI.z],
                 vertexes[MMCVIDI.w],
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.x], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.y], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.z], -1),
-                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0, maxTime, maxIterations);
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0, maxTime, maxIterations), maxTime);
         }
     }
 
@@ -868,20 +1282,20 @@ void _reduct_min_selfTimeStepCompact_to_double(
                 __GEIGEN__::__s_vec_multiply3(moveDir[face.y], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[face.z], -1), CCDDistRatio, 0, maxTime, maxIterations);
 
-            temp = 1.0 / temp1;
+            temp = _ccd_step_reciprocal(temp1, maxTime);
         }
         else {
             uint2 edge0 = edges[candidate.x];
             uint2 edge1 = edges[candidate.y];
 
-            temp = 1.0 / edge_edge_ccd_limited(vertexes[edge0.x],
+            temp = _ccd_step_reciprocal(edge_edge_ccd_limited(vertexes[edge0.x],
                 vertexes[edge0.y],
                 vertexes[edge1.x],
                 vertexes[edge1.y],
                 __GEIGEN__::__s_vec_multiply3(moveDir[edge0.x], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[edge0.y], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[edge1.x], -1),
-                __GEIGEN__::__s_vec_multiply3(moveDir[edge1.y], -1), CCDDistRatio, 0, maxTime, maxIterations);
+                __GEIGEN__::__s_vec_multiply3(moveDir[edge1.y], -1), CCDDistRatio, 0, maxTime, maxIterations), maxTime);
         }
     }
 
@@ -914,9 +1328,9 @@ void _reduct_max_double(double* _double1Dim, int number) {
 
 // Most candidates finish within eight iterations. Complete those first so a
 // few grazing pairs cannot hold up every GPU block while searching to t=1.
-// If any are unfinished, F is an upper bound on the scene's minimum step from
-// completed pairs. Recheck all pairs only through F, with no iteration cap.
-// The second pass checks the original gap condition BEFORE accepting time >= F.
+// If any are unfinished, F is a provisional bound from completed pairs.
+// Recheck through F with eight fast iterations and at most 128 geometric
+// interval tests. A work limit returns only a certified prefix, never F by default.
 double self_largestFeasibleStepSize(
   double slackness,
   const double3* _vertexes,
@@ -935,7 +1349,7 @@ double self_largestFeasibleStepSize(
             _reduct_max_double<<<1, default_threads>>>(mqueue, blockNum);
         double result;
         cudaMemcpy(&result, mqueue, sizeof(double), cudaMemcpyDeviceToHost);
-        horizon = 1.0 / fabs(result);
+        horizon = __m_min(horizon, 1.0 / fabs(result));
         if (result >= 0.0 || horizon == 0.0)
             return horizon;
     }
@@ -951,9 +1365,25 @@ double self_largestFeasibleStepSizeCompact(
   const double3* _moveDir,
   double* mqueue,
   int numbers) {
-    if (numbers < 1) return 1.0;
+    return self_largestFeasibleStepSizeCompactWithBound(slackness, _vertexes,
+        _ccd_candidatePairs, _faces, _edges, _moveDir, mqueue, numbers, 1.0);
+}
+
+double self_largestFeasibleStepSizeCompactWithBound(
+  double slackness,
+  const double3* _vertexes,
+  const int2* _ccd_candidatePairs,
+  const uint3* _faces,
+  const uint2* _edges,
+  const double3* _moveDir,
+  double* mqueue,
+  int numbers,
+  double maxTime) {
+    if (!(maxTime > 0.0) || !isfinite(maxTime)) return 0.0;
+    maxTime = __m_min(maxTime, 1.0);
+    if (numbers < 1) return maxTime;
     const int blockNum = 1 + (numbers - 1) / default_threads;
-    double horizon = 1.0;
+    double horizon = maxTime;
     for (int pass = 0; pass < 2; ++pass) {
         _reduct_min_selfTimeStepCompact_to_double<<<blockNum, default_threads>>>(
             _vertexes, _ccd_candidatePairs, _faces, _edges, _moveDir, mqueue,
@@ -962,7 +1392,7 @@ double self_largestFeasibleStepSizeCompact(
             _reduct_max_double<<<1, default_threads>>>(mqueue, blockNum);
         double result;
         cudaMemcpy(&result, mqueue, sizeof(double), cudaMemcpyDeviceToHost);
-        horizon = 1.0 / fabs(result);
+        horizon = __m_min(horizon, 1.0 / fabs(result));
         if (result >= 0.0 || horizon == 0.0)
             return horizon;
     }
