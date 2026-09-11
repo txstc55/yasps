@@ -9,6 +9,7 @@
 #include "ACCD.cuh"
 #include "gpu_eigen_libs.cuh"
 #include <cub/block/block_reduce.cuh>
+#include <cfloat>
 #include <cmath>
 #include <stdio.h>
 const static int default_threads = 256;
@@ -265,8 +266,114 @@ double point_triangle_distance_unclassified(
     }
 }
 
+__device__ __forceinline__
+double3 _ccd_point_line_axis(
+    const double3& point, const double3& a, const double3& b)
+{
+    double3 edge = __GEIGEN__::__minus(b, a);
+    double3 offset = __GEIGEN__::__minus(point, a);
+    double length2 = __GEIGEN__::__squaredNorm3(edge);
+    if (!(length2 > 0.0) || !isfinite(length2))
+        return make_double3(0.0, 0.0, 0.0);
+    return __GEIGEN__::__minus(offset, __GEIGEN__::__s_vec_multiply3(
+        edge, __GEIGEN__::__v_vec_dot(offset, edge) / length2));
+}
+
+__device__ __forceinline__
+bool _ccd_prepare_axis(double3& axis, const double3& reference, double& target)
+{
+    double length2 = __GEIGEN__::__squaredNorm3(axis);
+    if (!(length2 > 0.0) || !isfinite(length2) ||
+        !(target >= 0.0) || !isfinite(target))
+        return false;
+    if (__GEIGEN__::__v_vec_dot(axis, reference) < 0.0)
+        axis = __GEIGEN__::__s_vec_multiply3(axis, -1.0);
+    target *= sqrt(length2);
+    return isfinite(target);
+}
+
+__device__ __forceinline__
+bool _ccd_vertex_pair_separated(
+    const double3& axis, const double3& a, const double3& b,
+    const double3& da, const double3& db, double target, double maxTime)
+{
+    double start = __GEIGEN__::__v_vec_dot(axis, __GEIGEN__::__minus(a, b));
+    double end = start + maxTime * __GEIGEN__::__v_vec_dot(axis, __GEIGEN__::__minus(da, db));
+    // Bound cancellation in the coordinate differences and dot products. An
+    // uncertain certificate falls back to ACCD; it never rejects the pair.
+    double magnitude =
+        fabs(axis.x) * (fabs(a.x) + fabs(b.x) + maxTime * (fabs(da.x) + fabs(db.x))) +
+        fabs(axis.y) * (fabs(a.y) + fabs(b.y) + maxTime * (fabs(da.y) + fabs(db.y))) +
+        fabs(axis.z) * (fabs(a.z) + fabs(b.z) + maxTime * (fabs(da.z) + fabs(db.z)));
+    double margin = 64.0 * DBL_EPSILON * (magnitude + target);
+    return isfinite(start) && isfinite(end) && isfinite(margin) &&
+        __m_min(start, end) > target + margin;
+}
+
+// A fixed axis separates two moving convex primitives for the whole interval
+// if every vertex-pair projection exceeds the target at both endpoints:
+// the projections are linear in time, and convex combinations preserve the
+// bound. Keep ACCD's initial target gap, rather than testing only for contact,
+// so near misses that approach closer than that gap still run through ACCD.
+__device__ __forceinline__
+bool _ccd_point_triangle_separated(
+    const double3& p, const double3& t0, const double3& t1, const double3& t2,
+    const double3& dp, const double3& dt0, const double3& dt1, const double3& dt2,
+    double target, double maxTime)
+{
+    double3 axis;
+    switch (_dType_point_triangle(p, t0, t1, t2)) {
+    case 0: axis = __GEIGEN__::__minus(p, t0); break;
+    case 1: axis = __GEIGEN__::__minus(p, t1); break;
+    case 2: axis = __GEIGEN__::__minus(p, t2); break;
+    case 3: axis = _ccd_point_line_axis(p, t0, t1); break;
+    case 4: axis = _ccd_point_line_axis(p, t1, t2); break;
+    case 5: axis = _ccd_point_line_axis(p, t2, t0); break;
+    case 6:
+        axis = __GEIGEN__::__v_vec_cross(
+            __GEIGEN__::__minus(t1, t0), __GEIGEN__::__minus(t2, t0));
+        break;
+    default: return false;
+    }
+    if (!_ccd_prepare_axis(axis, __GEIGEN__::__minus(p, t0), target))
+        return false;
+    return _ccd_vertex_pair_separated(axis, p, t0, dp, dt0, target, maxTime) &&
+        _ccd_vertex_pair_separated(axis, p, t1, dp, dt1, target, maxTime) &&
+        _ccd_vertex_pair_separated(axis, p, t2, dp, dt2, target, maxTime);
+}
+
+__device__ __forceinline__
+bool _ccd_edge_edge_separated(
+    const double3& a0, const double3& a1, const double3& b0, const double3& b1,
+    const double3& da0, const double3& da1, const double3& db0, const double3& db1,
+    double target, double maxTime)
+{
+    double3 axis;
+    switch (_dType_edge_edge(a0, a1, b0, b1)) {
+    case 0: axis = __GEIGEN__::__minus(a0, b0); break;
+    case 1: axis = __GEIGEN__::__minus(a0, b1); break;
+    case 2: axis = _ccd_point_line_axis(a0, b0, b1); break;
+    case 3: axis = __GEIGEN__::__minus(a1, b0); break;
+    case 4: axis = __GEIGEN__::__minus(a1, b1); break;
+    case 5: axis = _ccd_point_line_axis(a1, b0, b1); break;
+    case 6: axis = _ccd_point_line_axis(b0, a0, a1); break;
+    case 7: axis = _ccd_point_line_axis(b1, a0, a1); break;
+    case 8:
+        axis = __GEIGEN__::__v_vec_cross(
+            __GEIGEN__::__minus(a1, a0), __GEIGEN__::__minus(b1, b0));
+        break;
+    default: return false;
+    }
+    if (!_ccd_prepare_axis(axis, __GEIGEN__::__minus(a0, b0), target))
+        return false;
+    return _ccd_vertex_pair_separated(axis, a0, b0, da0, db0, target, maxTime) &&
+        _ccd_vertex_pair_separated(axis, a0, b1, da0, db1, target, maxTime) &&
+        _ccd_vertex_pair_separated(axis, a1, b0, da1, db0, target, maxTime) &&
+        _ccd_vertex_pair_separated(axis, a1, b1, da1, db1, target, maxTime);
+}
+
 __device__
-double edge_edge_ccd(
+double edge_edge_ccd_limited(
     const double3& _ea0,
     const double3& _ea1,
     const double3& _eb0,
@@ -275,7 +382,7 @@ double edge_edge_ccd(
     const double3& _dea1,
     const double3& _deb0,
     const double3& _deb1,
-    double eta, double thickness)
+    double eta, double thickness, double maxTime, int maxIterations)
 {
     double3 ea0 = _ea0, ea1 = _ea1, eb0 = _eb0, eb1 = _eb1, dea0 = _dea0, dea1 = _dea1, deb0 = _deb0, deb1 = _deb1;
     double3 temp0 = __GEIGEN__::__add(dea0, dea1);
@@ -289,57 +396,74 @@ double edge_edge_ccd(
 
     double max_disp_mag = sqrt(__m_max(__GEIGEN__::__squaredNorm3(dea0), __GEIGEN__::__squaredNorm3(dea1))) + sqrt(__m_max(__GEIGEN__::__squaredNorm3(deb0), __GEIGEN__::__squaredNorm3(deb1)));
     if (max_disp_mag == 0)
-        return 1.0;
+        return maxTime;
+    if (!(eta >= 0.0 && eta < 1.0) || !isfinite(max_disp_mag))
+        return 0.0;
+
+    // The legacy distance classifier downgrades coplanar interior edge pairs
+    // to point-edge cases. Detect an initial crossing before that downgrade.
+    double3 initial_u = __GEIGEN__::__minus(ea1, ea0);
+    double3 initial_v = __GEIGEN__::__minus(eb1, eb0);
+    double3 initial_w = __GEIGEN__::__minus(ea0, eb0);
+    double3 initial_n = __GEIGEN__::__v_vec_cross(initial_u, initial_v);
+    double initial_n2 = __GEIGEN__::__squaredNorm3(initial_n);
+    if (initial_n2 > 0.0 && isfinite(initial_n2) &&
+        __GEIGEN__::__v_vec_dot(initial_w, initial_n) == 0.0) {
+        double initial_s = __GEIGEN__::__v_vec_dot(
+            __GEIGEN__::__v_vec_cross(initial_v, initial_w), initial_n) / initial_n2;
+        double initial_t = __GEIGEN__::__v_vec_dot(
+            __GEIGEN__::__v_vec_cross(initial_u, initial_w), initial_n) / initial_n2;
+        if (initial_s >= 0.0 && initial_s <= 1.0 &&
+            initial_t >= 0.0 && initial_t <= 1.0)
+            return 0.0;
+    }
 
     double dist2_cur = edge_edge_distance_unclassified(ea0, ea1, eb0, eb1);
+    // Initial contact and invalid/degenerate distances cannot certify a
+    // positive step. In particular, do not substitute endpoint distances for
+    // an edge-edge contact: those can be positive while the segments touch.
+    if (!isfinite(dist2_cur) || !(dist2_cur > thickness * thickness))
+        return 0.0;
 
     double dFunc = dist2_cur - thickness * thickness;
-    if (dFunc <= 0) {
-        double dists0 = __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(ea0, eb0));
-        double dists1 = __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(ea0, eb1));
-        double dists2 = __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(ea1, eb0));
-        double dists3 = __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(ea1, eb1));
-
-        dist2_cur = __m_min(__m_min(dists0, dists1), __m_min(dists2, dists3));
-        dFunc = dist2_cur - thickness * thickness;
-    }
     double dist_cur = sqrt(dist2_cur);
     double gap = eta * dFunc / (dist_cur + thickness);
+    if (dist_cur > thickness && _ccd_edge_edge_separated(
+            ea0, ea1, eb0, eb1, _dea0, _dea1, _deb0, _deb1, thickness + gap, 1.0))
+        return maxTime;
     double toc = 0.0;
     int count = 0;
     while (true) {
-        count++;
-        // if (count > 50000) return toc;
+        // A negative result is an internal first-pass marker, never a step.
+        if (maxIterations > 0 && count >= maxIterations)
+            return -1.0;
+        ++count;
         double toc_lower_bound = (1 - eta) * dFunc / ((dist_cur + thickness) * max_disp_mag);
+        if (!isfinite(toc_lower_bound) || !(toc_lower_bound > 0.0) ||
+            !(toc + toc_lower_bound > toc))
+            return toc;
         ea0 = __GEIGEN__::__add(ea0, __GEIGEN__::__s_vec_multiply3(dea0, toc_lower_bound));
         ea1 = __GEIGEN__::__add(ea1, __GEIGEN__::__s_vec_multiply3(dea1, toc_lower_bound));
         eb0 = __GEIGEN__::__add(eb0, __GEIGEN__::__s_vec_multiply3(deb0, toc_lower_bound));
         eb1 = __GEIGEN__::__add(eb1, __GEIGEN__::__s_vec_multiply3(deb1, toc_lower_bound));
 
         dist2_cur = edge_edge_distance_unclassified(ea0, ea1, eb0, eb1);
+        if (!isfinite(dist2_cur) || !(dist2_cur > thickness * thickness))
+            return toc;
         dFunc = dist2_cur - thickness * thickness;
-        if (dFunc <= 0) {
-            double dists0 = __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(ea0, eb0));
-            double dists1 = __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(ea0, eb1));
-            double dists2 = __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(ea1, eb0));
-            double dists3 = __GEIGEN__::__squaredNorm3(__GEIGEN__::__minus(ea1, eb1));
-
-            dist2_cur = __m_min(__m_min(dists0, dists1), __m_min(dists2, dists3));
-            dFunc = dist2_cur - thickness * thickness;
-        }
         dist_cur = sqrt(dist2_cur);
         if (toc && (dFunc / (dist_cur + thickness) < gap)) {
             break;
         }
         toc += toc_lower_bound;
-        if (toc > 1.0)
-            return 1.0;
+        if (toc >= maxTime)
+            return maxTime;
     }
     return toc;
 }
 
 __device__
-double point_triangle_ccd(
+double point_triangle_ccd_limited(
     const double3& _p,
     const double3& _t0,
     const double3& _t1,
@@ -348,7 +472,7 @@ double point_triangle_ccd(
     const double3& _dt0,
     const double3& _dt1,
     const double3& _dt2,
-    double eta, double thickness)
+    double eta, double thickness, double maxTime, int maxIterations)
 {
     double3 p = _p, t0 = _t0, t1 = _t1, t2 = _t2, dp = _dp, dt0 = _dt0, dt1 = _dt1, dt2 = _dt2;
 
@@ -367,20 +491,30 @@ double point_triangle_ccd(
 
     double max_disp_mag = __GEIGEN__::__norm(dp) + sqrt(__m_max(disp_mag2_vec0, __m_max(disp_mag2_vec1, disp_mag2_vec2)));
     if (max_disp_mag == 0)
-        return 1.0;
+        return maxTime;
+    if (!(eta >= 0.0 && eta < 1.0) || !isfinite(max_disp_mag))
+        return 0.0;
 
     double dist2_cur = point_triangle_distance_unclassified(p, t0, t1, t2);
+    if (!isfinite(dist2_cur) || !(dist2_cur > thickness * thickness))
+        return 0.0;
     double dist_cur = sqrt(dist2_cur);
     double gap = eta * (dist2_cur - thickness * thickness) / (dist_cur + thickness);
+    if (dist_cur > thickness && _ccd_point_triangle_separated(
+            p, t0, t1, t2, _dp, _dt0, _dt1, _dt2, thickness + gap, 1.0))
+        return maxTime;
     double toc = 0.0;
     int count = 0;
     while (true) {
-        count++;
-        // if (count > 50000) return toc;
-        //if (count > 5000)
-        //    printf("pt  %f  %f  %f\n%f  %f  %f\n%f  %f  %f\n%f  %f  %f\n\n %f  %f  %f\n%f  %f  %f\n%f  %f  %f\n%f  %f  %f\n\n\n", _dp.x, _dp.y, _dp.z, _dt0.x, _dt0.y, _dt0.z,
-        //        _dt1.x, _dt1.y, _dt1.z, _dt2.x, _dt2.y, _dt2.z, _p.x, _p.y, _p.z, _t0.x, _t0.y, _t0.z, _t1.x, _t1.y, _t1.z, _t2.x, _t2.y, _t2.z);
+        // A negative result is an internal first-pass marker, never a step.
+        if (maxIterations > 0 && count >= maxIterations)
+            return -1.0;
+        ++count;
         double toc_lower_bound = (1 - eta) * (dist2_cur - thickness * thickness) / ((dist_cur + thickness) * max_disp_mag);
+        // Stop at the last certified time if arithmetic cannot advance it.
+        if (!isfinite(toc_lower_bound) || !(toc_lower_bound > 0.0) ||
+            !(toc + toc_lower_bound > toc))
+            return toc;
 
         p = __GEIGEN__::__add(p, __GEIGEN__::__s_vec_multiply3(dp, toc_lower_bound));
         t0 = __GEIGEN__::__add(t0, __GEIGEN__::__s_vec_multiply3(dt0, toc_lower_bound));
@@ -388,19 +522,40 @@ double point_triangle_ccd(
         t2 = __GEIGEN__::__add(t2, __GEIGEN__::__s_vec_multiply3(dt2, toc_lower_bound));
 
         dist2_cur = point_triangle_distance_unclassified(p, t0, t1, t2);
+        if (!isfinite(dist2_cur) || !(dist2_cur > thickness * thickness))
+            return toc;
         dist_cur = sqrt(dist2_cur);
         if (toc && ((dist2_cur - thickness * thickness) / (dist_cur + thickness) < gap)) {
             break;
         }
 
         toc += toc_lower_bound;
-        if (toc > 1.0) {
-            return 1.0;
+        if (toc >= maxTime) {
+            return maxTime;
         }
     }
     return toc;
 }
 
+
+// Preserve the device API for callers needing an individual full-interval CCD.
+__device__ double edge_edge_ccd(
+    const double3& a0, const double3& a1, const double3& b0, const double3& b1,
+    const double3& da0, const double3& da1, const double3& db0, const double3& db1,
+    double eta, double thickness)
+{
+    return edge_edge_ccd_limited(a0, a1, b0, b1, da0, da1, db0, db1,
+                                 eta, thickness, 1.0, 0);
+}
+
+__device__ double point_triangle_ccd(
+    const double3& p, const double3& a, const double3& b, const double3& c,
+    const double3& dp, const double3& da, const double3& db, const double3& dc,
+    double eta, double thickness)
+{
+    return point_triangle_ccd_limited(p, a, b, c, dp, da, db, dc,
+                                      eta, thickness, 1.0, 0);
+}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -628,8 +783,17 @@ double doCCDVF(const double3& _p,
     return ret;
 }
 
+// Magnitude is the largest reciprocal of a completed step (at least 1).
+// The sign carries "some pair unfinished" through BOTH reduction levels.
+struct StepBoundMax {
+    __device__ double operator()(double a, double b) const {
+        const double magnitude = __m_max(fabs(a), fabs(b));
+        return (a < 0.0 || b < 0.0) ? -magnitude : magnitude;
+    }
+};
+
 __global__
-void _reduct_min_selfTimeStep_to_double(const double3* vertexes, const int4* _ccd_collitionPairs, const double3* moveDir, double* minStepSizes, double slackness, int number) {
+void _reduct_min_selfTimeStep_to_double(const double3* vertexes, const int4* _ccd_collitionPairs, const double3* moveDir, double* minStepSizes, double slackness, int number, double maxTime, int maxIterations) {
     int idof = blockIdx.x * blockDim.x;
     int idx = threadIdx.x + idof;
 
@@ -641,32 +805,32 @@ void _reduct_min_selfTimeStep_to_double(const double3* vertexes, const int4* _cc
         if (MMCVIDI.x < 0) {
             MMCVIDI.x = -MMCVIDI.x - 1;
 
-            double temp1 = point_triangle_ccd(vertexes[MMCVIDI.x],
+            double temp1 = point_triangle_ccd_limited(vertexes[MMCVIDI.x],
                 vertexes[MMCVIDI.y],
                 vertexes[MMCVIDI.z],
                 vertexes[MMCVIDI.w],
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.x], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.y], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.z], -1),
-                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0);
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0, maxTime, maxIterations);
 
             temp = 1.0 / temp1;
         }
         else {
-            temp = 1.0 / edge_edge_ccd(vertexes[MMCVIDI.x],
+            temp = 1.0 / edge_edge_ccd_limited(vertexes[MMCVIDI.x],
                 vertexes[MMCVIDI.y],
                 vertexes[MMCVIDI.z],
                 vertexes[MMCVIDI.w],
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.x], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.y], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.z], -1),
-                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0);
+                __GEIGEN__::__s_vec_multiply3(moveDir[MMCVIDI.w], -1), CCDDistRatio, 0, maxTime, maxIterations);
         }
     }
 
     using BlockReduce = cub::BlockReduce<double, default_threads>;
     __shared__ typename BlockReduce::TempStorage temp_storage;
-    double blockMax = BlockReduce(temp_storage).Reduce(temp, cub::Max());
+    double blockMax = BlockReduce(temp_storage).Reduce(temp, StepBoundMax());
 
     if (threadIdx.x == 0) {
         minStepSizes[blockIdx.x] = blockMax;
@@ -682,7 +846,7 @@ void _reduct_min_selfTimeStepCompact_to_double(
     const double3* moveDir,
     double* minStepSizes,
     double slackness,
-    int number) {
+    int number, double maxTime, int maxIterations) {
     int idof = blockIdx.x * blockDim.x;
     int idx = threadIdx.x + idof;
 
@@ -695,14 +859,14 @@ void _reduct_min_selfTimeStepCompact_to_double(
             int point = -candidate.x - 1;
             uint3 face = faces[candidate.y];
 
-            double temp1 = point_triangle_ccd(vertexes[point],
+            double temp1 = point_triangle_ccd_limited(vertexes[point],
                 vertexes[face.x],
                 vertexes[face.y],
                 vertexes[face.z],
                 __GEIGEN__::__s_vec_multiply3(moveDir[point], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[face.x], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[face.y], -1),
-                __GEIGEN__::__s_vec_multiply3(moveDir[face.z], -1), CCDDistRatio, 0);
+                __GEIGEN__::__s_vec_multiply3(moveDir[face.z], -1), CCDDistRatio, 0, maxTime, maxIterations);
 
             temp = 1.0 / temp1;
         }
@@ -710,20 +874,20 @@ void _reduct_min_selfTimeStepCompact_to_double(
             uint2 edge0 = edges[candidate.x];
             uint2 edge1 = edges[candidate.y];
 
-            temp = 1.0 / edge_edge_ccd(vertexes[edge0.x],
+            temp = 1.0 / edge_edge_ccd_limited(vertexes[edge0.x],
                 vertexes[edge0.y],
                 vertexes[edge1.x],
                 vertexes[edge1.y],
                 __GEIGEN__::__s_vec_multiply3(moveDir[edge0.x], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[edge0.y], -1),
                 __GEIGEN__::__s_vec_multiply3(moveDir[edge1.x], -1),
-                __GEIGEN__::__s_vec_multiply3(moveDir[edge1.y], -1), CCDDistRatio, 0);
+                __GEIGEN__::__s_vec_multiply3(moveDir[edge1.y], -1), CCDDistRatio, 0, maxTime, maxIterations);
         }
     }
 
     using BlockReduce = cub::BlockReduce<double, default_threads>;
     __shared__ typename BlockReduce::TempStorage temp_storage;
-    double blockMax = BlockReduce(temp_storage).Reduce(temp, cub::Max());
+    double blockMax = BlockReduce(temp_storage).Reduce(temp, StepBoundMax());
 
     if (threadIdx.x == 0) {
         minStepSizes[blockIdx.x] = blockMax;
@@ -735,12 +899,12 @@ __global__
 void _reduct_max_double(double* _double1Dim, int number) {
     double temp = 0.0;
     for (int idx = threadIdx.x; idx < number; idx += blockDim.x) {
-        temp = __m_max(temp, _double1Dim[idx]);
+        temp = StepBoundMax()(temp, _double1Dim[idx]);
     }
 
     using BlockReduce = cub::BlockReduce<double, default_threads>;
     __shared__ typename BlockReduce::TempStorage temp_storage;
-    double blockMax = BlockReduce(temp_storage).Reduce(temp, cub::Max());
+    double blockMax = BlockReduce(temp_storage).Reduce(temp, StepBoundMax());
 
     if (threadIdx.x == 0) {
         _double1Dim[0] = blockMax;
@@ -748,6 +912,11 @@ void _reduct_max_double(double* _double1Dim, int number) {
 }
 
 
+// Most candidates finish within eight iterations. Complete those first so a
+// few grazing pairs cannot hold up every GPU block while searching to t=1.
+// If any are unfinished, F is an upper bound on the scene's minimum step from
+// completed pairs. Recheck all pairs only through F, with no iteration cap.
+// The second pass checks the original gap condition BEFORE accepting time >= F.
 double self_largestFeasibleStepSize(
   double slackness,
   const double3* _vertexes,
@@ -755,20 +924,22 @@ double self_largestFeasibleStepSize(
   const double3* _moveDir,
   double* mqueue,
   int numbers) {
-    if (numbers < 1) return 1;
-    const unsigned int threadNum = default_threads;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-
-    _reduct_min_selfTimeStep_to_double <<<blockNum, threadNum >>> (
-      _vertexes, _ccd_collisonPairs, _moveDir, mqueue, slackness, numbers);
-
-    if (blockNum > 1) {
-      _reduct_max_double <<<1, threadNum >>> (mqueue, blockNum);
+    if (numbers < 1) return 1.0;
+    const int blockNum = 1 + (numbers - 1) / default_threads;
+    double horizon = 1.0;
+    for (int pass = 0; pass < 2; ++pass) {
+        _reduct_min_selfTimeStep_to_double<<<blockNum, default_threads>>>(
+            _vertexes, _ccd_collisonPairs, _moveDir, mqueue, slackness,
+            numbers, horizon, pass == 0 ? 8 : 0);
+        if (blockNum > 1)
+            _reduct_max_double<<<1, default_threads>>>(mqueue, blockNum);
+        double result;
+        cudaMemcpy(&result, mqueue, sizeof(double), cudaMemcpyDeviceToHost);
+        horizon = 1.0 / fabs(result);
+        if (result >= 0.0 || horizon == 0.0)
+            return horizon;
     }
-
-    double minValue;
-    cudaMemcpy(&minValue, mqueue, sizeof(double), cudaMemcpyDeviceToHost);
-    return 1.0 / minValue;
+    return horizon;
 }
 
 double self_largestFeasibleStepSizeCompact(
@@ -780,26 +951,21 @@ double self_largestFeasibleStepSizeCompact(
   const double3* _moveDir,
   double* mqueue,
   int numbers) {
-    if (numbers < 1) return 1;
-    const unsigned int threadNum = default_threads;
-    int blockNum = (numbers + threadNum - 1) / threadNum;
-
-    _reduct_min_selfTimeStepCompact_to_double <<<blockNum, threadNum >>> (
-      _vertexes,
-      _ccd_candidatePairs,
-      _faces,
-      _edges,
-      _moveDir,
-      mqueue,
-      slackness,
-      numbers);
-
-    if (blockNum > 1) {
-      _reduct_max_double <<<1, threadNum >>> (mqueue, blockNum);
+    if (numbers < 1) return 1.0;
+    const int blockNum = 1 + (numbers - 1) / default_threads;
+    double horizon = 1.0;
+    for (int pass = 0; pass < 2; ++pass) {
+        _reduct_min_selfTimeStepCompact_to_double<<<blockNum, default_threads>>>(
+            _vertexes, _ccd_candidatePairs, _faces, _edges, _moveDir, mqueue,
+            slackness, numbers, horizon, pass == 0 ? 8 : 0);
+        if (blockNum > 1)
+            _reduct_max_double<<<1, default_threads>>>(mqueue, blockNum);
+        double result;
+        cudaMemcpy(&result, mqueue, sizeof(double), cudaMemcpyDeviceToHost);
+        horizon = 1.0 / fabs(result);
+        if (result >= 0.0 || horizon == 0.0)
+            return horizon;
     }
-
-    double minValue;
-    cudaMemcpy(&minValue, mqueue, sizeof(double), cudaMemcpyDeviceToHost);
-    return 1.0 / minValue;
+    return horizon;
 }
 }

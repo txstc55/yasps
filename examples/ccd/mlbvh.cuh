@@ -53,6 +53,10 @@ class lbvh
     Node*     _nodes         = nullptr;
     uint64_t* _MChash        = nullptr;
     uint64_t* _MChash_sorted = nullptr;
+    uint32_t* _primitiveIndices        = nullptr;
+    uint32_t* _primitiveIndices_sorted = nullptr;
+    // Nonzero only when every primitive in the subtree belongs to that mesh.
+    uint32_t* _nodeMeshIndices = nullptr;
     uint32_t* _flags         = nullptr;
     int32_t*  _escape        = nullptr;
 

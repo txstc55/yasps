@@ -111,6 +111,11 @@ class CCD:
 
   ``mesh_indices == 0`` enables self-collision. A shared nonzero mesh ID
   suppresses pairs whose primitive vertices all belong to that same mesh.
+  Face and edge BVHs group these primitives by mesh before spatial sorting,
+  with a spatial tree over the groups. Queries skip their entire own-mesh
+  subtree before AABB tests.
+  Scattered points can be supplied only as ``surface_vertices`` queries;
+  they need no particle faces or edges to collide with other meshes' faces.
   Distances and ``dhat`` are squared, matching the original wrapper.
   """
 
