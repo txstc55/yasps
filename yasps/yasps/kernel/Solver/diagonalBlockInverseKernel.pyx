@@ -107,6 +107,10 @@ __device__ void invert_by_evd(const double *A, double* output) {
       for attribute_size in self.__unique_attribute_sizes:
         inverse_kernel_string += f"""
 __device__ void invert_diagonal_block_{attribute_size}_device(const double* input_block, double* output_block) {{
+  if ({attribute_size} == 1) {{
+    output_block[0] = (input_block == 0) ? 1.0 : (1.0 / input_block);
+    return;
+  }}
   if ({attribute_size} <= 4) {{
     spd_projection_small<{attribute_size}>(input_block, output_block);
     return;
