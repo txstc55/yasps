@@ -8,7 +8,7 @@ from time import perf_counter
 import numpy as np
 
 from .hierarchy import Hierarchy, build_hierarchy
-from .block_graph import BlockGraph
+from .block_graph import BlockSparsity
 from .cuda_runtime import DeviceMASRuntime, is_pycuda_array
 from .local_inverse import make_inverse_backend
 from .matrix_view import BlockSparseMatrixView, to_host
@@ -264,11 +264,10 @@ class MASSolver:
   def hierarchy_build_count(self) -> int:
     return self._hierarchy_build_count
 
-  def build_hierarchy(self, matrix_view: BlockSparseMatrixView) -> Hierarchy:
-    if not isinstance(matrix_view, BlockSparseMatrixView):
-      raise TypeError("matrix_view must be a BlockSparseMatrixView")
+  def build_hierarchy(self, matrix_view: BlockSparseMatrixView | BlockSparsity) -> Hierarchy:
+    if not isinstance(matrix_view, (BlockSparseMatrixView, BlockSparsity)):
+      raise TypeError("matrix_view must be a BlockSparseMatrixView or BlockSparsity")
     dimensions = to_host(matrix_view.variable_dimensions, np.int64).reshape(-1)
-    graph = BlockGraph.from_static_view(matrix_view)
     maximum_dimension = int(dimensions.max(initial=1))
     # The default describes the requested MAS policy, not a matrix layout.
     # A singleton variable can exceed that policy, so only raise capacity
@@ -291,9 +290,29 @@ class MASSolver:
       domain_dof_schedule=self.domain_dof_schedule,
       target_node_schedule=self.target_node_schedule,
     )
+    self.invalidate_numeric_state()
     self._hierarchy = hierarchy
     self._hierarchy_build_count += 1
     return hierarchy
+
+  def rebuild_hierarchy_from_blocks(self, block_positions, block_dimensions, num_blocks) -> Hierarchy:
+    """Explicitly replace topology; supplied blocks never enter the operator.
+
+    Arrays are flat scalar-coordinate and per-block dimension pairs. The
+    next solve constructs fresh numerical banks/maps from its actual matrix.
+    """
+    topology = BlockSparsity(block_positions, block_dimensions, num_blocks)
+    return self.build_hierarchy(topology)
+
+  def invalidate_numeric_state(self) -> None:
+    """Release hierarchy/operator-dependent state without dropping topology."""
+    self._numeric = None
+    self._preconditioner = None
+    self._solution = None
+    self._cuda_runtime = None
+    self._numeric_rebuild_age = 0
+    self._preconditioner_dynamic_block_count = 0
+    self._preconditioner_dynamic_edge_active = False
 
   def _level_weights_for_hierarchy(
     self, hierarchy: Hierarchy,
@@ -318,21 +337,20 @@ class MASSolver:
 
   def reset(self) -> None:
     self._hierarchy = None
-    self._numeric = None
-    self._preconditioner = None
-    self._cuda_runtime = None
-    self._solution = None
+    self.invalidate_numeric_state()
     self._hierarchy_build_count = 0
     self._cuda_runtime_build_count = 0
-    self._numeric_rebuild_age = 0
-    self._preconditioner_dynamic_block_count = 0
-    self._preconditioner_dynamic_edge_active = False
     self._statistics = SolverStatistics(solve_mode=self.solve_mode)
 
   def _ensure_hierarchy(self, view: BlockSparseMatrixView) -> Hierarchy:
-    signature = view.structure_signature()
-    if self._hierarchy is None or self._hierarchy.static_signature != signature:
+    if self._hierarchy is None:
       return self.build_hierarchy(view)
+    # The partition graph can intentionally differ from the true operator.
+    # Only the global DOF layout must match; topology changes are explicit.
+    fine = self._hierarchy.levels[0]
+    if (not np.array_equal(fine.node_dimensions, to_host(view.variable_dimensions).reshape(-1))
+        or not np.array_equal(fine.node_scalar_offsets, to_host(view.variable_scalar_offsets).reshape(-1))):
+      raise ValueError("matrix variable layout changed; explicitly rebuild the MAS hierarchy")
     return self._hierarchy
 
   def _run_reduced_then_fine(
@@ -491,6 +509,7 @@ class MASSolver:
     reused_runtime = (
       self._cuda_runtime is not None
       and self._cuda_runtime.hierarchy is hierarchy
+      and self._cuda_runtime.view is matrix_view
       and self._cuda_runtime.inverse_algorithm == algorithm
       and self._cuda_runtime.threads_per_block == self.cuda_threads_per_block
       and self._cuda_runtime.fixed_inverse_bucket_size

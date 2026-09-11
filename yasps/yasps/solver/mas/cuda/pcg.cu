@@ -287,7 +287,7 @@ extern "C" __global__ void yasps_mas_finish_iteration_partials(
 
 extern "C" __global__ void yasps_mas_update_direction(
     const double* preconditioned, double* direction, double* state,
-    double* next_product, float* next_packed_residual,
+    double* next_product, double* next_packed_residual,
     std::uint32_t count, std::uint32_t packed_count) {
   // No thread reads curvature during this kernel, so thread zero can prepare
   // the accumulator for the next iteration without a separate fill launch.
@@ -296,8 +296,11 @@ extern "C" __global__ void yasps_mas_update_direction(
   const std::uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index < count) next_product[index] = 0.0;
   const std::uint32_t coarse_count = packed_count - count;
-  if (index < coarse_count)
-    next_packed_residual[count + index] = 0.0f;
+  // Isolated nodes can survive several levels, making the sum of coarse
+  // DOFs larger than the fine vector covered by this kernel's launch.
+  for (std::uint32_t coarse = index; coarse < coarse_count;
+       coarse += blockDim.x * gridDim.x)
+    next_packed_residual[count + coarse] = 0.0;
   if (state[PCG_STATUS] == PCG_NON_SPD) return;
   const double beta = state[PCG_BETA];
   if (index < count)

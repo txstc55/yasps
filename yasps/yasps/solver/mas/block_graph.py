@@ -3,10 +3,72 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from operator import index
 
 import numpy as np
 
-from .matrix_view import BlockSparseMatrixView
+from .matrix_view import BlockSparseMatrixView, to_host
+
+
+class BlockSparsity:
+  """Coordinates and per-block dimensions, with no numerical value storage.
+
+  Both arrays contain exactly ``2 * num_blocks`` integers. Coordinates are
+  global scalar starts, not variable IDs. Every variable must occur in at
+  least one block (including isolated variables via their diagonal blocks),
+  so its dimension and the complete contiguous DOF layout can be inferred.
+  Duplicate/reversed coordinates are allowed; graph construction merges them.
+  """
+
+  def __init__(self, block_positions, block_dimensions, num_blocks):
+    if isinstance(num_blocks, (bool, np.bool_)):
+      raise TypeError("num_blocks must be an integer")
+    num_blocks = index(num_blocks)
+    if num_blocks < 0:
+      raise ValueError("num_blocks must be non-negative")
+    arrays = []
+    for name, source in (("block_positions", block_positions), ("block_dimensions", block_dimensions)):
+      values = to_host(source)
+      if values.ndim != 1 or values.size != 2 * num_blocks:
+        raise ValueError(f"{name} must be a flat array of length 2 * num_blocks")
+      if values.dtype.kind not in "iu":
+        raise TypeError(f"{name} must contain integers")
+      if values.size and (np.any(values < 0) or np.any(values > np.iinfo(np.int64).max)):
+        raise ValueError(f"{name} contains an out-of-range index")
+      arrays.append(values.astype(np.int64, copy=True))
+    positions, sizes = arrays
+    if np.any(sizes <= 0):
+      raise ValueError("block dimensions must be positive")
+    offsets, nodes = np.unique(positions, return_inverse=True)
+    dimensions = np.zeros(offsets.size, dtype=np.int64)
+    np.maximum.at(dimensions, nodes, sizes)
+    if np.any(dimensions[nodes] != sizes):
+      raise ValueError("inconsistent dimensions for the same variable offset")
+    total_dofs = sum(map(int, dimensions))
+    if total_dofs > np.iinfo(np.int64).max:
+      raise ValueError("total variable dimensions exceed the supported index range")
+    expected = np.zeros(offsets.size, dtype=np.int64)
+    if offsets.size > 1:
+      expected[1:] = np.cumsum(dimensions[:-1])
+    if not np.array_equal(offsets, expected):
+      raise ValueError("block coordinates must cover a contiguous variable layout")
+    self.rows = self.cols = total_dofs
+    self.variable_scalar_offsets = offsets
+    self.variable_dimensions = dimensions
+    self.variable_type_ids = None
+    self.node_count = offsets.size
+    self._block_nodes = nodes.reshape(-1, 2)
+
+  def iter_block_coordinates(self, part="static"):
+    if part not in ("static", "dynamic"):
+      raise ValueError("unknown block part")
+    if part == "static":
+      yield from self._block_nodes
+
+  def structure_signature(self):
+    # Retained only as hierarchy metadata; rebuilds are explicit, not keyed
+    # to this graph or to the numerical Hessian's static coordinates.
+    return (self.rows, self.variable_dimensions.tobytes())
 
 
 @dataclass(frozen=True)

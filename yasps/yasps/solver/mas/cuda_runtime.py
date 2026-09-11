@@ -3,8 +3,9 @@
 The hierarchy and every scalar/domain map are static.  Per solve, current
 static values and arbitrary dynamic collision blocks are walked through those
 maps once, accumulated directly into a fixed local-matrix arena, inverted once,
-and reused for all PCG iterations.  This mirrors StiffGIPC's useful numerical
-lifecycle while retaining YASPS's heterogeneous block dimensions.
+and reused for all PCG iterations. Local inverse storage, restriction,
+application and collection stay in FP64: ill-conditioned SPD domains can
+lose positive definiteness through FP32 rounding and cancellation.
 """
 
 from __future__ import annotations
@@ -943,11 +944,11 @@ class DeviceMASRuntime:
       )
       source = source.replace(
         "// YASPS_MAS_GENERATED_LEVEL_WEIGHTS",
-        ", ".join(f"{float(weight)!r}f" for weight in level_weights),
+        ", ".join(f"{float(weight)!r}" for weight in level_weights),
       )
       source = source.replace(
         "YASPS_MAS_GENERATED_DUPLICATE_LEVEL_WEIGHT",
-        f"{float(duplicate_level_weight)!r}f",
+        f"{float(duplicate_level_weight)!r}",
       )
       source = source.replace(
         "// YASPS_MAS_GENERATED_RESTRICT_DIMENSION_CASES",
@@ -1063,7 +1064,7 @@ class DeviceMASRuntime:
         ),
       )
       compiled_weights = ", ".join(
-        f"{float(weight)!r}f" for weight in level_weights
+        f"{float(weight)!r}" for weight in level_weights
       )
       source = source.replace(
         "// YASPS_MAS_COARSE_LEVEL_WEIGHTS",
@@ -1817,12 +1818,13 @@ class DeviceMASRuntime:
 
 
     self.matrices = self._empty(self.matrix_storage_size, np.float64)
-    # Inversion arithmetic is FP64 in shared memory for either algorithm;
-    # only the reusable GIPC-style bank is materialized, in FP32.
+    # Keep both inversion and its stored result/application in FP64. Historical
+    # "mixed" entrypoint/attribute names remain for internal compatibility;
+    # they no longer imply float storage. Optional mixed SpMV is independent.
     self.inverses = self._empty(1, np.float64)
-    self.mixed_inverses = self._empty(self.matrix_storage_size, np.float32)
-    self.packed_residual = self._empty(self.packed_vector_size, np.float32)
-    self.packed_correction = self._empty(self.packed_vector_size, np.float32)
+    self.mixed_inverses = self._empty(self.matrix_storage_size, np.float64)
+    self.packed_residual = self._empty(self.packed_vector_size, np.float64)
+    self.packed_correction = self._empty(self.packed_vector_size, np.float64)
     self._preconditioned_output = self._empty(self.fine_dofs, np.float64)
     self._matvec_output = self._empty(self.fine_dofs, np.float64)
     self._pcg_solution = self._empty(self.fine_dofs, np.float64)
@@ -1849,7 +1851,7 @@ class DeviceMASRuntime:
       * self.dynamic_edge_padded_size * self.dynamic_edge_padded_size
     )
     self.dynamic_edge_matrices = self._empty(edge_storage, np.float64)
-    self.dynamic_edge_inverses = self._empty(edge_storage, np.float32)
+    self.dynamic_edge_inverses = self._empty(edge_storage, np.float64)
     self.dynamic_edge_status = self._zeros(
       self.dynamic_edge_capacity, np.int32
     )
@@ -1958,7 +1960,7 @@ class DeviceMASRuntime:
       * self.dynamic_edge_padded_size
     )
     self.dynamic_edge_matrices = self._empty(storage, np.float64)
-    self.dynamic_edge_inverses = self._empty(storage, np.float32)
+    self.dynamic_edge_inverses = self._empty(storage, np.float64)
     self.dynamic_edge_status = self._zeros(capacity, np.int32)
     self.dynamic_group_active_sizes = self._zeros(capacity, np.uint32)
     self.dynamic_group_scalar_indices = self._empty(
@@ -3144,8 +3146,8 @@ class DeviceMASRuntime:
       packed_correction = self.packed_correction
       final = self._preconditioned_output
     else:
-      packed_residual = self._empty(self.packed_vector_size, np.float32)
-      packed_correction = self._empty(self.packed_vector_size, np.float32)
+      packed_residual = self._empty(self.packed_vector_size, np.float64)
+      packed_correction = self._empty(self.packed_vector_size, np.float64)
       final = self._empty(self.fine_dofs, np.float64)
     large_problem = self.fine_dofs >= 200_000
     restriction_threads = 256
@@ -3217,7 +3219,7 @@ class DeviceMASRuntime:
         self.matrix_offsets, self.vector_offsets, self.sizes,
         self.padded_sizes, np.uint32(self.domain_count),
         block=(128, 1, 1), grid=(self.domain_count, 1, 1),
-        shared=self.maximum_padded_size * np.dtype(np.float32).itemsize,
+        shared=self.maximum_padded_size * np.dtype(np.float64).itemsize,
         stream=stream,
       )
     elif not self.fused_fine_domain_apply:
@@ -3234,7 +3236,7 @@ class DeviceMASRuntime:
         self.level0_packed_to_fine, self.matrix_offsets,
         self.vector_offsets, self.sizes, self.padded_sizes,
         np.uint32(self.fine_domain_count),
-        np.float32(self.active_fine_level_weight),
+        np.float64(self.active_fine_level_weight),
         block=(128, 1, 1),
         grid=((self.fine_domain_count + 3) // 4, 1, 1), stream=stream,
       )
@@ -3256,7 +3258,7 @@ class DeviceMASRuntime:
           self.fine_node_scalar_offsets, self.fine_dimensions,
           self.fine_node_level_active,
           np.uint32(self.fine_node_count),
-          np.float32(self.active_fine_level_weight),
+          np.float64(self.active_fine_level_weight),
           block=(512, 1, 1),
           grid=((self.fine_node_count + 511) // 512, 1, 1),
           stream=stream,
@@ -3279,7 +3281,7 @@ class DeviceMASRuntime:
           self.fine_node_scalar_offsets, self.fine_dimensions,
           self.fine_node_level_active,
           np.uint32(self.fine_node_count),
-          np.float32(self.active_fine_level_weight),
+          np.float64(self.active_fine_level_weight),
           block=(512, 1, 1),
           grid=((self.fine_node_count + 511) // 512, 1, 1),
           stream=stream,
@@ -3673,6 +3675,10 @@ class DeviceMASRuntime:
     residual_norm = float(np.sqrt(max(initial_state[4], 0.0)))
     rz = float(initial_state[1])
     reference_rz = float(initial_state[12])
+    # A zero residual is already solved. Do not mistake its r^T M r=0 for
+    # an invalid preconditioner when the initial guess already solves A x=b.
+    if initial_state[4] == 0.0 and rz == 0.0:
+      return PCGResult(x, 0, 0.0, 0.0, True, initial_seconds)
     if (np.isfinite(rz) and rz >= 0.0 and
         np.isfinite(reference_rz) and reference_rz > 0.0 and
         rz <= tolerance * reference_rz):
@@ -3716,6 +3722,8 @@ class DeviceMASRuntime:
       breakdown = None
       if status < 0.0 or not np.isfinite(status_value):
         breakdown = "matrix or preconditioner is not positive definite"
+        # A failure stores curvature or r^T z, not a squared residual norm.
+        residual_norm = float(np.sqrt(self._dot(residual, residual)))
       return PCGResult(
         x, max_iterations, residual_norm, residual_norm / denominator,
         False, initial_seconds + perf_counter() - iteration_started,
@@ -3733,7 +3741,9 @@ class DeviceMASRuntime:
     )
     completed = int(completed_raw)
     residual_norm = float(np.sqrt(max(status_value, 0.0)))
-    if status < 0.0:
+    if status < 0.0 or not np.isfinite(status_value):
+      # Do not turn a negative breakdown diagnostic into a fake zero residual.
+      residual_norm = float(np.sqrt(self._dot(residual, residual)))
       return PCGResult(
         x, max(completed - 1, 0), residual_norm,
         residual_norm / denominator, False,

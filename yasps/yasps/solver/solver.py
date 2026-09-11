@@ -64,5 +64,11 @@ class solver:
   def reset(self):
     self.__implementation.reset()
 
+  def rebuildHierarchy(self, block_positions, block_dimensions, num_blocks):
+    """Explicit MAS graph rebuild from two GPU arrays and a block count."""
+    if self.__solver_name != "mas":
+      raise ValueError("rebuildHierarchy is only available for the MAS solver")
+    return self.__implementation.rebuildHierarchy(block_positions, block_dimensions, num_blocks)
+
   def computeSolution(self, *args, **kwargs):
     return self.__implementation.computeSolution(*args, **kwargs)

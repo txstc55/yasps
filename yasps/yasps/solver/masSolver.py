@@ -13,7 +13,10 @@ from .yaspsMatrixView import YASPSMatrixView
 class masSolver:
   """Solve a YASPS matrix or Hessian with MAS-preconditioned CG.
 
-  The static block graph builds the METIS hierarchy once. Current static
+  The static block graph builds the METIS hierarchy once unless explicitly
+  supplied via rebuildHierarchy. No static-sparsity comparison rebuilds it.
+  Call rebuildHierarchy (or reset) when the desired partition changes. Static
+  operator coordinates must remain fixed between these calls. Current static
   values and all dynamic blocks are assembled on every solve, so changing
   collision connectivity is reflected without rerunning static partitioning.
   """
@@ -53,6 +56,24 @@ class masSolver:
     self.__active_matrix = None
     self.__statistics = {}
 
+  def rebuildHierarchy(self, block_positions, block_dimensions, num_blocks):
+    """Build a partition from two GPU arrays, each of length 2*num_blocks.
+
+    Positions contain global scalar (row, column) starts; dimensions contain
+    one (rows, columns) pair per block, not one pair per compressed category.
+    Include every variable, including isolated diagonal blocks. Only these
+    coordinates are read; no dummy Hessian values are allocated or assembled.
+    METIS still runs on the CPU after downloading the graph metadata.
+    """
+    if not is_pycuda_array(block_positions) or not is_pycuda_array(block_dimensions):
+      raise TypeError("rebuildHierarchy requires two GPU arrays")
+    hierarchy = self.__solver.rebuild_hierarchy_from_blocks(block_positions, block_dimensions, num_blocks)
+    # The next real matrix must build a fresh view and numerical scatter maps.
+    self.__view = None
+    self.__active_matrix = None
+    self.__statistics = {}
+    return hierarchy
+
   def __updateView(self, active_matrix):
     if self.__view is None:
       self.__view = YASPSMatrixView(active_matrix)
@@ -60,8 +81,9 @@ class masSolver:
       self.__view.update_numeric(active_matrix)
     else:
       candidate = YASPSMatrixView(active_matrix)
-      if candidate.structure_signature() != self.__view.structure_signature():
-        self.__solver.reset()
+      # A different numerical matrix needs fresh scatter descriptors, but it
+      # must not replace an explicitly supplied partition graph.
+      self.__solver.invalidate_numeric_state()
       self.__view = candidate
     self.__active_matrix = active_matrix
     return self.__view

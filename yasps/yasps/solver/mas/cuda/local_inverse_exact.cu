@@ -10,7 +10,7 @@
 // identity complement, so an underfilled domain performs only its active
 // pivot sweeps. Multiple small domains share one CUDA block.
 extern "C" __global__ void yasps_mas_inverse_gj_exact_strided(
-    const double* input, float* output, const int* sizes, int* status,
+    const double* input, double* output, const int* sizes, int* status,
     int matrix_count, double pivot_tolerance, int* any_failure) {
   constexpr int N = YASPS_MAS_ACTIVE_SIZE;
   constexpr int P = YASPS_MAS_STORAGE_STRIDE;
@@ -40,10 +40,11 @@ extern "C" __global__ void yasps_mas_inverse_gj_exact_strided(
       smallest_pivot = fmin(smallest_pivot, magnitude);
       largest_pivot = fmax(largest_pivot, magnitude);
     }
-    if (active) {
-      column[lane] = matrix[lane * N + pivot];
-      matrix[lane * N + pivot] = lane == pivot ? 1.0 : 0.0;
-    }
+    if (active) column[lane] = matrix[lane * N + pivot];
+    // Underfilled groups can cross warp boundaries. Finish all original
+    // pivot/column reads before any lane overwrites that shared column.
+    __syncthreads();
+    if (active) matrix[lane * N + pivot] = lane == pivot ? 1.0 : 0.0;
     __syncthreads();
     if (active) matrix[pivot * N + lane] /= diagonal;
     __syncthreads();
@@ -58,21 +59,22 @@ extern "C" __global__ void yasps_mas_inverse_gj_exact_strided(
   }
 
   if (active) {
-    float* destination = output
+    double* destination = output
         + static_cast<unsigned long long>(matrix_id) * P * P;
     // The bank may be conservatively overallocated. Initialize its inactive
     // complement without making it participate in the O(N^3) inverse.
     for (int entry = lane; entry < P * P; entry += N) {
       const int row = entry / P;
       const int col = entry - row * P;
-      destination[entry] = (row == col && row >= N) ? 1.0f : 0.0f;
+      if (row >= N || col >= N)
+        destination[entry] = row == col ? 1.0 : 0.0;
     }
     bool finite = true;
     for (int row = 0; row < N; ++row) {
       const double value = 0.5 * (
           matrix[row * N + lane] + matrix[lane * N + row]);
       finite = finite && isfinite(value);
-      destination[row * P + lane] = static_cast<float>(value);
+      destination[row * P + lane] = value;
     }
     if (!finite) {
       atomicExch(status + matrix_id, 2);
@@ -93,7 +95,7 @@ extern "C" __global__ void yasps_mas_inverse_gj_exact_strided(
 // are compile-time constants while P remains the conservative storage stride,
 // so an underfilled bank factors only its populated principal matrix.
 extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
-    const double* input, float* output, const int* sizes, int* status,
+    const double* input, double* output, const int* sizes, int* status,
     int matrix_count, double pivot_tolerance, int* any_failure) {
   constexpr int N = YASPS_MAS_ACTIVE_SIZE;
   constexpr int P = YASPS_MAS_STORAGE_STRIDE;
@@ -103,7 +105,7 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
   extern __shared__ double lower[];
   const double* source = input
       + static_cast<unsigned long long>(matrix_id) * P * P;
-  float* destination = output
+  double* destination = output
       + static_cast<unsigned long long>(matrix_id) * P * P;
   if (tid == 0) status[matrix_id] = 0;
   for (int entry = tid; entry < N * N; entry += blockDim.x) {
@@ -158,18 +160,18 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
       column[row] = value / lower[row * N + row];
     }
     for (int row = 0; row < N; ++row)
-      destination[row * P + tid] = static_cast<float>(column[row]);
+      destination[row * P + tid] = column[row];
   }
   __syncthreads();
   for (int entry = tid; entry < P * P; entry += blockDim.x) {
     const int row = entry / P;
     const int col = entry - row * P;
     if (row >= N || col >= N)
-      destination[entry] = row == col ? 1.0f : 0.0f;
+      destination[entry] = row == col ? 1.0 : 0.0;
   }
   for (int row = tid; row < N; row += blockDim.x) {
     for (int col = row + 1; col < N; ++col) {
-      const float value = 0.5f * (
+      const double value = 0.5 * (
           destination[row * P + col] + destination[col * P + row]);
       destination[row * P + col] = value;
       destination[col * P + row] = value;

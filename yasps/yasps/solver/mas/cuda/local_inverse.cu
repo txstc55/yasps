@@ -50,11 +50,10 @@ extern "C" __global__ void yasps_mas_inverse_gauss_jordan(
     destination[entry] = inverse[entry];
 }
 
-// Mixed-storage variant: all elimination remains FP64, but the reusable
-// preconditioner bank is written directly as FP32.  This removes the full-size
-// temporary inverse arena and the separate post-inversion cast kernel.
+// Legacy _mixed entrypoint retained for kernel lookup compatibility. Both
+// elimination and the reusable preconditioner bank now remain FP64.
 extern "C" __global__ void yasps_mas_inverse_gauss_jordan_mixed(
-    const double* input, float* output, const int* sizes, int* status,
+    const double* input, double* output, const int* sizes, int* status,
     int n, double pivot_tolerance, int* any_failure) {
   extern __shared__ double shared[];
   double* a = shared;
@@ -64,7 +63,7 @@ extern "C" __global__ void yasps_mas_inverse_gauss_jordan_mixed(
   const int tid = threadIdx.x;
   const int total = n * n;
   const double* source = input + matrix_id * total;
-  float* destination = output + matrix_id * total;
+  double* destination = output + matrix_id * total;
   (void)sizes;
   if (tid == 0) status[matrix_id] = 0;
   for (int entry = tid; entry < total; entry += blockDim.x) {
@@ -98,14 +97,14 @@ extern "C" __global__ void yasps_mas_inverse_gauss_jordan_mixed(
     __syncthreads();
   }
   for (int entry = tid; entry < total; entry += blockDim.x)
-    destination[entry] = static_cast<float>(inverse[entry]);
+    destination[entry] = inverse[entry];
 }
 
 // Transform A into A^-1 in place so a generated instantiation can choose as
 // many independent banks per CUDA block as its runtime dimension permits.
 template <int N, int GROUPS>
 __device__ __forceinline__ void yasps_mas_inverse_gj_packed_body(
-    const double* input, float* output, int* status, int matrix_count,
+    const double* input, double* output, int* status, int matrix_count,
     double pivot_tolerance, int* any_failure, double* shared) {
   const int group = threadIdx.x / N;
   const int lane = threadIdx.x - group * N;
@@ -124,20 +123,19 @@ __device__ __forceinline__ void yasps_mas_inverse_gj_packed_body(
   __syncthreads();
 
   for (int pivot = 0; pivot < N; ++pivot) {
-    // The caller's CG contract guarantees SPD banks. Avoid a status broadcast
-    // at every pivot.  Lane zero still tracks the Schur-pivot spread: once it
-    // exceeds what FP32 inverse storage can safely represent, a second kernel
-    // replaces only that bank with the more stable Cholesky result.
+    // Track Schur-pivot spread for the Cholesky fallback. Do not replace
+    // singular pivots: failed banks must be reported to the caller.
     const double diagonal = active ? matrix[pivot * N + pivot] : 1.0;
     if (active && lane == 0) {
       const double magnitude = fabs(diagonal);
       smallest_pivot = fmin(smallest_pivot, magnitude);
       largest_pivot = fmax(largest_pivot, magnitude);
     }
-    if (active) {
-      column[lane] = matrix[lane * N + pivot];
-      matrix[lane * N + pivot] = lane == pivot ? 1.0 : 0.0;
-    }
+    if (active) column[lane] = matrix[lane * N + pivot];
+    // Every lane must read the original pivot before its owner replaces it.
+    // A packed group can span two warps, so warp lockstep is insufficient.
+    __syncthreads();
+    if (active) matrix[lane * N + pivot] = lane == pivot ? 1.0 : 0.0;
     __syncthreads();
     if (active) matrix[pivot * N + lane] /= diagonal;
     __syncthreads();
@@ -150,13 +148,13 @@ __device__ __forceinline__ void yasps_mas_inverse_gj_packed_body(
     __syncthreads();
   }
   if (active) {
-    float* destination = output + matrix_id * N * N;
+    double* destination = output + matrix_id * N * N;
     bool finite = true;
     for (int row = 0; row < N; ++row) {
       const double value = 0.5 * (
           matrix[row * N + lane] + matrix[lane * N + row]);
       finite = finite && isfinite(value);
-      destination[row * N + lane] = static_cast<float>(value);
+      destination[row * N + lane] = value;
     }
     if (!finite) {
       atomicExch(status + matrix_id, 2);
@@ -175,7 +173,7 @@ __device__ __forceinline__ void yasps_mas_inverse_gj_packed_body(
 #if defined(YASPS_MAS_INVERSE_SIZE) && defined(YASPS_MAS_INVERSE_GROUPS)
 
 extern "C" __global__ void yasps_mas_inverse_gj_packed_specialized(
-    const double* input, float* output, const int* sizes, int* status,
+    const double* input, double* output, const int* sizes, int* status,
     int matrix_count, double pivot_tolerance, int* any_failure) {
   extern __shared__ double shared[];
   (void)sizes;
@@ -241,12 +239,10 @@ extern "C" __global__ void yasps_mas_inverse_spd(
     destination[entry] = inverse[entry];
 }
 
-// The solver applies local inverses in mixed precision, following GIPC's
-// storage pattern. Keep factorization and triangular solves in FP64, then
-// write the final bank directly as FP32 so numeric updates do not materialize
-// and reread a throwaway FP64 inverse array.
+// Keep factorization, triangular solves, and the reusable inverse bank in
+// FP64. The legacy _mixed entrypoint name is retained for kernel lookup.
 extern "C" __global__ void yasps_mas_inverse_spd_mixed(
-    const double* input, float* output, const int* sizes, int* status,
+    const double* input, double* output, const int* sizes, int* status,
     int n, double pivot_tolerance, int* any_failure) {
   extern __shared__ double shared[];
   double* lower = shared;
@@ -255,7 +251,7 @@ extern "C" __global__ void yasps_mas_inverse_spd_mixed(
   const int tid = threadIdx.x;
   const int total = n * n;
   const double* source = input + matrix_id * total;
-  float* destination = output + matrix_id * total;
+  double* destination = output + matrix_id * total;
   if (tid == 0) status[matrix_id] = 0;
   for (int entry = tid; entry < total; entry += blockDim.x) {
     lower[entry] = source[entry];
@@ -299,7 +295,7 @@ extern "C" __global__ void yasps_mas_inverse_spd_mixed(
   }
   __syncthreads();
   for (int entry = tid; entry < total; entry += blockDim.x)
-    destination[entry] = static_cast<float>(inverse[entry]);
+    destination[entry] = inverse[entry];
 }
 
 // Fixed-size specialization used by the immutable inverse buckets.  Keeping
@@ -309,13 +305,13 @@ extern "C" __global__ void yasps_mas_inverse_spd_mixed(
 // threads for runtime-sized domains that fit within one warp.
 template <int N>
 __device__ __forceinline__ void yasps_mas_inverse_spd_mixed_fixed_body(
-    const double* input, float* output, int* status,
+    const double* input, double* output, int* status,
     double pivot_tolerance, int* any_failure, double* lower) {
   const int matrix_id = blockIdx.x;
   const int tid = threadIdx.x;
   constexpr int total = N * N;
   const double* source = input + matrix_id * total;
-  float* destination = output + matrix_id * total;
+  double* destination = output + matrix_id * total;
   if (tid == 0) status[matrix_id] = 0;
   for (int entry = tid; entry < total; entry += blockDim.x)
     lower[entry] = source[entry];
@@ -359,14 +355,14 @@ __device__ __forceinline__ void yasps_mas_inverse_spd_mixed_fixed_body(
       column[row] = value / lower[row * N + row];
     }
     for (int row = 0; row < N; ++row)
-      destination[row * N + tid] = static_cast<float>(column[row]);
+      destination[row * N + tid] = column[row];
   }
 }
 
 #if defined(YASPS_MAS_INVERSE_SIZE)
 
 extern "C" __global__ void yasps_mas_inverse_spd_mixed_fixed_specialized(
-    const double* input, float* output, const int* sizes, int* status,
+    const double* input, double* output, const int* sizes, int* status,
     int runtime_n, double pivot_tolerance, int* any_failure) {
   extern __shared__ double lower[];
   (void)sizes;
@@ -378,14 +374,14 @@ extern "C" __global__ void yasps_mas_inverse_spd_mixed_fixed_specialized(
 #endif
 
 // Hybrid inverse fallback. Packed Gauss-Jordan is substantially faster for
-// normal banks, but an ill-conditioned SPD bank can lose definiteness when its
-// explicit inverse is rounded to FP32. Status==2 marks just those banks. Pack
+// normal banks, but ill-conditioned SPD banks benefit from a Cholesky retry
+// even with an FP64 explicit inverse. Status==2 marks just those banks. Pack
 // the same number of banks per block as the fast path, then let a completely
 // unmarked block exit after one vote. This avoids launching one empty block for
 // every Schwarz domain on the overwhelmingly common path.
 template <int N, int GROUPS>
 __device__ __forceinline__ void yasps_mas_inverse_spd_packed_fallback_body(
-    const double* input, float* output, int* status, int matrix_count,
+    const double* input, double* output, int* status, int matrix_count,
     double pivot_tolerance, int* any_failure, double* shared) {
   const int group = threadIdx.x / N;
   const int lane = threadIdx.x - group * N;
@@ -445,15 +441,15 @@ __device__ __forceinline__ void yasps_mas_inverse_spd_packed_fallback_body(
         value -= lower[s * N + row] * column[s];
       column[row] = value / lower[row * N + row];
     }
-    float* destination = output + matrix_id * N * N;
+    double* destination = output + matrix_id * N * N;
     for (int row = 0; row < N; ++row)
-      destination[row * N + lane] = static_cast<float>(column[row]);
+      destination[row * N + lane] = column[row];
   }
   __syncthreads();
   if (marked && status[matrix_id] == 0) {
-    float* destination = output + matrix_id * N * N;
+    double* destination = output + matrix_id * N * N;
     for (int col = lane + 1; col < N; ++col) {
-      const float value = 0.5f * (
+      const double value = 0.5 * (
           destination[lane * N + col] + destination[col * N + lane]);
       destination[lane * N + col] = value;
       destination[col * N + lane] = value;
@@ -464,7 +460,7 @@ __device__ __forceinline__ void yasps_mas_inverse_spd_packed_fallback_body(
 #if defined(YASPS_MAS_INVERSE_SIZE) && defined(YASPS_MAS_INVERSE_GROUPS)
 
 extern "C" __global__ void yasps_mas_inverse_spd_mixed_fallback_specialized(
-    const double* input, float* output, const int* sizes, int* status,
+    const double* input, double* output, const int* sizes, int* status,
     int matrix_count, double pivot_tolerance, int* any_failure) {
   extern __shared__ double shared[];
   (void)sizes;
@@ -476,12 +472,11 @@ extern "C" __global__ void yasps_mas_inverse_spd_mixed_fallback_specialized(
 
 #endif
 
-// Ragged version of the mixed SPD inverse. One launch covers all hierarchy
-// domains, including heterogeneous padded sizes. Matrix offsets are static,
-// while factorization and inverse construction remain FP64 and only the final
-// bank is stored as FP32.
+// Ragged FP64 SPD inverse. One launch covers all hierarchy domains,
+// including heterogeneous padded sizes. Matrix offsets are static; both
+// factorization and the final inverse bank remain FP64.
 extern "C" __global__ void yasps_mas_inverse_spd_mixed_ragged(
-    const double* input, float* output,
+    const double* input, double* output,
     const unsigned long long* matrix_offsets,
     const unsigned int* sizes, const unsigned int* padded_sizes,
     int* status, unsigned int domain_count,
@@ -496,7 +491,7 @@ extern "C" __global__ void yasps_mas_inverse_spd_mixed_ragged(
   const int total = n * n;
   const unsigned long long matrix_offset = matrix_offsets[matrix_id];
   const double* source = input + matrix_offset;
-  float* destination = output + matrix_offset;
+  double* destination = output + matrix_offset;
   if (tid == 0) status[matrix_id] = 0;
   for (int entry = tid; entry < total; entry += blockDim.x) {
     lower[entry] = source[entry];
@@ -541,5 +536,5 @@ extern "C" __global__ void yasps_mas_inverse_spd_mixed_ragged(
   }
   __syncthreads();
   for (int entry = tid; entry < total; entry += blockDim.x)
-    destination[entry] = static_cast<float>(inverse[entry]);
+    destination[entry] = inverse[entry];
 }
