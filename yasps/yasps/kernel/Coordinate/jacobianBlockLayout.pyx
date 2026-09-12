@@ -157,3 +157,45 @@ def pack_jacobian_block_nonzeros(layout, nonzero_positions):
   if len(nonzero_permutation) != len(positions):
     raise ValueError("Some Jacobian nonzeros are not contained in the diagonal blocks.")
   return {"nonzero_permutation": nonzero_permutation, "block_offsets": block_offsets, "block_local_positions": block_local_positions}
+
+
+def generate_inner_hessian_block_layout(rows, cols):
+  """Tile an MxN Jacobian into full-height strips of at most M columns.
+
+  Unlike a diagonal component layout, every strip uses the same inner-Hessian
+  rows. A final short strip has implicit zero padding to M columns; padding
+  never receives an original scalar index or a global scatter coordinate.
+  """
+  rows, cols = index(rows), index(cols)
+  if rows <= 0 or cols < 0 or max(rows, cols) > 65535:
+    raise ValueError("Inner Hessian tiles require positive M and uint16 local axes.")
+  blocks = [{"rows": list(range(rows)), "cols": list(range(first, min(first + rows, cols)))} for first in range(0, cols, rows)]
+  return {"rows": rows, "cols": cols, "blocks": blocks,
+    "sizes": [rows for block in blocks], "spans": [len(block["cols"]) for block in blocks],
+    "row_permutation": list(range(rows)), "column_permutation": list(range(cols)),
+    "inverse_row_permutation": list(range(rows)), "inverse_column_permutation": list(range(cols)),
+    "zero_rows": [], "zero_columns": []}
+
+
+def pack_inner_hessian_block_nonzeros(layout, nonzero_positions):
+  """Store each full-height strip's nonzeros contiguously, in row-major order."""
+  rows, cols = layout["rows"], layout["cols"]
+  positions = [index(value) for value in nonzero_positions]
+  if len(positions) % 2:
+    raise ValueError("Nonzero positions must contain row/column pairs.")
+  blocks = [{} for _ in layout["blocks"]]
+  for value_id in range(len(positions) // 2):
+    row, col = positions[2 * value_id:2 * value_id + 2]
+    if not 0 <= row < rows or not 0 <= col < cols:
+      raise ValueError("Nonzero position is outside the Jacobian dimensions.")
+    block, local_col = divmod(col, rows)
+    if (row, local_col) in blocks[block]:
+      raise ValueError("Duplicate Jacobian nonzero position.")
+    blocks[block][row, local_col] = value_id
+  permutation, offsets, local_positions = [], [], []
+  for block in blocks:
+    coordinates = sorted(block)
+    offsets.append(len(permutation))
+    permutation.extend(block[coordinate] for coordinate in coordinates)
+    local_positions.append({coordinate: i for i, coordinate in enumerate(coordinates)})
+  return {"nonzero_permutation": permutation, "block_offsets": offsets, "block_local_positions": local_positions}

@@ -1,12 +1,14 @@
 # cython: language_level=3
 from yasps.attribute import attribute
 from yasps.jacobianBlockLayout import generate_jacobian_block_layout, pack_jacobian_block_nonzeros
+from yasps.jacobianBlockLayout import generate_inner_hessian_block_layout, pack_inner_hessian_block_nonzeros
 
 
 class hessianKernelSeparateJacobian:
-  def __init__(self, att: attribute, gradient_only: bool = False, grouped_add: bool = False):
+  def __init__(self, att: attribute, gradient_only: bool = False, grouped_add: bool = False, auto_partition: bool = True):
     self.__att = att
     self.__gradient_only = gradient_only
+    self.__auto_partition = auto_partition
     self.__atomic_add = "atomic_add_grouped" if grouped_add else "atomicAdd"
     self.__kernelString = ""
     self.__layout = None
@@ -16,6 +18,8 @@ class hessianKernelSeparateJacobian:
     self.__packed_jacobian = None
     self.__local_hessian_nonzero_count = 0
     self.__merged_hessian_jacobian_nonzeros = 0
+    self.__left_patterns = []
+    self.__inner_products = []
 
   def create_multiplied_blocks(self,
     global_jacobian_block_nonzero_attributes,
@@ -39,9 +43,12 @@ class hessianKernelSeparateJacobian:
       return
     if global_jacobian_block_layout is None:
       global_jacobian_block_layout = generate_jacobian_block_layout(sum(global_jacobian_children_sizes), sum(global_jacobian_children_spans), global_jacobian_block_nonzero_local_positions)
-    self.__layout = global_jacobian_block_layout
-    # generate the layout here, because the local jacobian should already be in the order of the blocks
-    self.__packed_jacobian = pack_jacobian_block_nonzeros(self.__layout, global_jacobian_block_nonzero_local_positions)
+    if self.__auto_partition:
+      self.__layout = global_jacobian_block_layout
+      self.__packed_jacobian = pack_jacobian_block_nonzeros(self.__layout, global_jacobian_block_nonzero_local_positions)
+    else:
+      self.__layout = generate_inner_hessian_block_layout(global_jacobian_block_layout["rows"], global_jacobian_block_layout["cols"])
+      self.__packed_jacobian = pack_inner_hessian_block_nonzeros(self.__layout, global_jacobian_block_nonzero_local_positions)
 
     # first we construct the hessian nonzero positions
     hessian_positions = {}
@@ -51,6 +58,9 @@ class hessianKernelSeparateJacobian:
         raise ValueError(f"Separate Hessian: invalid or repeated upper position ({row}, {col}).")
       hessian_positions[row, col] = index
       hessian_positions[col, row] = index
+    if not self.__auto_partition:
+      self.__createInnerBlocks(hessian_positions)
+      return
     patterns = {}
     blocks = self.__layout["blocks"]
     for i, block_i in enumerate(blocks):
@@ -117,6 +127,147 @@ class hessianKernelSeparateJacobian:
         self.__block_patterns.append((i, j, pattern_id))
         self.__hessian_operands.append(h_values if mapped_h else h_start)
 
+  def __createInnerBlocks(self, hessian_positions):
+    # All tiles share H's original row axes. Pattern IDs depend on local
+    # structural positions, never on offsets into the packed numeric J array.
+    size = self.__layout["rows"]
+    self.__left_patterns = []
+    self.__inner_products = []
+    left_ids = {}
+    for block_id, block in enumerate(self.__layout["blocks"]):
+      jacobian = self.__packed_jacobian["block_local_positions"][block_id]
+      if not jacobian:
+        continue
+      width = len(block["cols"])
+      key = (width, tuple(jacobian))
+      if key in left_ids:
+        self.__left_patterns[left_ids[key]]["blocks"].append(block_id)
+        continue
+      lines, support = [], set()
+      for a in range(width):
+        for s in range(size):
+          products = []
+          for r in range(size):
+            h = hessian_positions.get((r, s))
+            j = jacobian.get((r, a))
+            if h is not None and j is not None:
+              products.append(f"left_jac[{j}] * h[{h}]")
+          if products:
+            support.add((a, s))
+            lines.append(f"  result[{a * size + s}] = {' + '.join(products)};")
+      left_ids[key] = len(self.__left_patterns)
+      self.__left_patterns.append({"source": "\n".join(lines), "support": support, "width": width, "jacobian": jacobian, "blocks": [block_id]})
+
+    patterns = {}
+    for left_id, left in enumerate(self.__left_patterns):
+      for right_id, right in enumerate(self.__left_patterns):
+        pairs = [(i, j) for i in left["blocks"] for j in right["blocks"] if i <= j]
+        if not pairs:
+          continue
+        key = (left["width"], right["width"], tuple(sorted(left["support"])), tuple(right["jacobian"]))
+        if key not in patterns:
+          lines, positions = [], []
+          for a in range(left["width"]):
+            for b in range(right["width"]):
+              products = []
+              for s in range(size):
+                j = right["jacobian"].get((s, b))
+                if (a, s) in left["support"] and j is not None:
+                  products.append(f"partial[{a * size + s}] * right_jac[{j}]")
+              if products:
+                positions.append((a, b))
+                lines.append(f"  result[{a * size + b}] = {' + '.join(products)};")
+          # A structurally zero tile pair needs neither multiplication nor scatter.
+          patterns[key] = len(self.__patterns) if positions else None
+          if positions:
+            self.__patterns.append({"source": "\n".join(lines), "mapped_h": False, "positions": positions, "dense": len(positions) == left["width"] * right["width"]})
+        pattern_id = patterns[key]
+        if pattern_id is not None:
+          self.__inner_products.append((left_id, right_id, pattern_id))
+          self.__block_patterns.extend((i, j, pattern_id) for i, j in pairs)
+
+  def __innerFunctionSource(self, suffix, constant_bytes):
+    source = []
+    for i, pattern in enumerate(self.__left_patterns):
+      source.append(f"static __device__ __noinline__ void multiply_left_pattern_{i}_{suffix}(const double* left_jac, const double* h, double* __restrict__ result) {{\n{pattern['source']}\n}}")
+    for i, pattern in enumerate(self.__patterns):
+      source.append(f"static __device__ __noinline__ void multiply_right_pattern_{i}_{suffix}(const double* partial, const double* right_jac, double* __restrict__ result) {{\n{pattern['source']}\n}}")
+    tables = [("tile_nonzero_offsets", self.__packed_jacobian["block_offsets"])]
+    tables += [(f"tile_group_{i}", pattern["blocks"]) for i, pattern in enumerate(self.__left_patterns)]
+    tables += [(f"product_coordinates_{i}", [axis for position in pattern["positions"] for axis in position]) for i, pattern in enumerate(self.__patterns) if not pattern["dense"]]
+    for name, values in tables:
+      if max(values, default=0) > 65535:
+        raise ValueError("Inner Hessian tiles exceed uint16 local offset capacity.")
+      table_bytes = max(1, len(values)) * 2
+      storage = "__constant__" if constant_bytes + table_bytes <= 65536 else "const"
+      if storage == "__constant__":
+        constant_bytes += table_bytes
+      source.append(f"static __device__ {storage} unsigned short int {name}_{suffix}[{max(1, len(values))}] = {{{', '.join(map(str, values)) or '0'}}};")
+    return source
+
+  def __innerCallerSource(self, suffix, max_num_indices):
+    size = self.__layout["rows"]
+    source = [f'''
+  double left_product[{size * size}];
+  unsigned char active_tiles[{len(self.__layout["blocks"])}] = {{}};
+  // Only tiles containing a coordinate accepted by scatter can contribute.
+  // Union padding and excluded targets need no multiplication or scatter.
+  #pragma unroll 1
+  for (unsigned int segment = 0; segment < {max_num_indices}; ++segment) {{
+    if (permutations[segment] <= 0 || indices[segment] < 2 || sizes[segment] == 0) continue;
+    const unsigned int first = segment_outer[segment] / {size};
+    const unsigned int last = (segment_outer[segment + 1] - 1) / {size};
+    #pragma unroll 1
+    for (unsigned int tile = first; tile <= last; ++tile) active_tiles[tile] = 1;
+  }}
+''']
+    for left_id, left in enumerate(self.__left_patterns):
+      products = [(right_id, pattern_id) for current, right_id, pattern_id in self.__inner_products if current == left_id]
+      if not products:
+        continue
+      source.append(f'''
+  #pragma unroll 1
+  for (unsigned short int left_id = 0; left_id < {len(left['blocks'])}; ++left_id) {{
+    const unsigned short int i = tile_group_{left_id}_{suffix}[left_id];
+    if (!active_tiles[i]) continue;
+    multiply_left_pattern_{left_id}_{suffix}(hg_mat + {self.__local_hessian_nonzero_count} + tile_nonzero_offsets_{suffix}[i], hg_mat, left_product);
+''')
+      for right_id, pattern_id in products:
+        right = self.__left_patterns[right_id]
+        source.append(f'''
+    #pragma unroll 1
+    for (unsigned short int right_id = 0; right_id < {len(right['blocks'])}; ++right_id) {{
+      const unsigned short int j = tile_group_{right_id}_{suffix}[right_id];
+      if (j < i || !active_tiles[j]) continue;
+      multiply_right_pattern_{pattern_id}_{suffix}(left_product, hg_mat + {self.__local_hessian_nonzero_count} + tile_nonzero_offsets_{suffix}[j], multiplied_block);
+''')
+        pattern = self.__patterns[pattern_id]
+        if pattern["dense"]:
+          source.append(f'''
+      #pragma unroll 1
+      for (unsigned short int a = 0; a < {left['width']}; ++a) {{
+        #pragma unroll 1
+        for (unsigned short int b = (i == j ? a : 0); b < {right['width']}; ++b) {{
+          scatter_sparse_hessian_{suffix}(multiplied_block[a * {size} + b], i * {size} + a, j * {size} + b, column_segment, segment_outer, valid_rank, valid_count, indices, sizes, permutations, instance_lookups, hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
+        }}
+      }}
+''')
+        else:
+          # Sparse inner energies (for example one-axis walls) must not
+          # compute or atomically scatter the other structural-zero scalars.
+          source.append(f'''
+      #pragma unroll 1
+      for (unsigned int entry = 0; entry < {len(pattern['positions'])}; ++entry) {{
+        const unsigned short int a = product_coordinates_{pattern_id}_{suffix}[2 * entry];
+        const unsigned short int b = product_coordinates_{pattern_id}_{suffix}[2 * entry + 1];
+        if (i == j && b < a) continue;
+        scatter_sparse_hessian_{suffix}(multiplied_block[a * {size} + b], i * {size} + a, j * {size} + b, column_segment, segment_outer, valid_rank, valid_count, indices, sizes, permutations, instance_lookups, hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
+      }}
+''')
+        source.append("    }")
+      source.append("  }")
+    return "\n".join(source)
+
   def generateKernelString(self, unique_gradient_size: int, max_num_indices: int, attributeName: str, num_attributes: int):
     data = self.__att.deviceKernel.kernelDatas
     connectivity = self.__att.deviceKernel.kernelConnectivity
@@ -140,7 +291,9 @@ class hessianKernelSeparateJacobian:
       constant_bytes = column_bytes if column_storage == "__constant__" else 0
       # Only result is restrict-qualified: it always points to the separate
       # multiplied_block buffer, never the H/J operands within hg_mat.
-      for pattern_id, pattern in enumerate(self.__patterns):
+      if not self.__auto_partition:
+        source.extend(self.__innerFunctionSource(suffix, constant_bytes))
+      for pattern_id, pattern in enumerate(self.__patterns if self.__auto_partition else []):
         h_map_argument = ", const unsigned short int* h_indices" if pattern["mapped_h"] else ""
         source.append(f"static __device__ void multiply_sparse_pattern_{pattern_id}_{suffix}(const double* left_jac, const double* h, const double* right_jac{h_map_argument}, double* __restrict__ result) {{\n{pattern['source']}\n}}")
       for pair, (i, j, pattern_id) in enumerate(self.__block_patterns):
@@ -203,7 +356,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 ''')
     if not self.__gradient_only and self.__block_patterns:
       jacobian_cols = self.__layout["cols"]
-      max_block_entries = max(len(self.__layout['blocks'][i]['cols']) * len(self.__layout['blocks'][j]['cols']) for i, j, _ in self.__block_patterns)
+      max_block_entries = max(len(self.__layout['blocks'][i]['cols']) * len(self.__layout['blocks'][j]['cols']) for i, j, _ in self.__block_patterns) if self.__auto_partition else self.__layout["rows"] ** 2
       source.append(f'''
   // Invert segmentation once, retaining union padding in the original axes.
   unsigned short int column_segment[{max(1, jacobian_cols)}];
@@ -222,6 +375,11 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int* instance_lookups = lookups + coordinatesOuter[instance];
   double multiplied_block[{max_block_entries}];
 ''')
+      if not self.__auto_partition:
+        source.append(self.__innerCallerSource(suffix, max_num_indices))
+        source.append("}\n}\n")
+        self.__kernelString = "\n".join(source)
+        return self.__kernelString
       spans_outer = [0]
       for block in self.__layout["blocks"]:
         spans_outer.append(spans_outer[-1] + len(block["cols"]))
@@ -314,6 +472,9 @@ static __device__ __forceinline__ void scatter_sparse_hessian_{suffix}(
       "block_pairs": len(self.__block_patterns),
       "multiplication_patterns": len(self.__patterns),
       "mapped_hessian_pairs": sum(isinstance(values, list) for values in self.__hessian_operands),
+      "auto_partition": self.__auto_partition,
+      "left_patterns": len(self.__left_patterns),
+      "temporary_entries": (2 * self.__layout["rows"] ** 2 if not self.__auto_partition else max((len(self.__layout["blocks"][i]["cols"]) * len(self.__layout["blocks"][j]["cols"]) for i, j, _ in self.__block_patterns), default=0)),
     }
 
   @property

@@ -25,7 +25,7 @@ class hessianAndGradientKernel:
   att_name_to_kernel: dict[str, hessianAndGradientKernel] = {}  # maps attribute names to their hessian and gradient kernel instances, this way we can just return the previous existing kernel
 
 
-  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, local_hessian_nonzero_upper_positions: List[int] = [], dynamic_term = False, grouped_add: bool = False, lto: bool = False):
+  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, local_hessian_nonzero_upper_positions: List[int] = [], dynamic_term = False, grouped_add: bool = False, lto: bool = False, auto_partition: bool = True):
     self.__kernelString: str = ""
     self.__headerFileString: str = ""
     self.__kernel = None # the kernel for computhing the gradient and hessians
@@ -51,6 +51,7 @@ class hessianAndGradientKernel:
     self.__dynamic_terms = dynamic_term
     self.__grouped_add = grouped_add
     self.__lto = lto
+    self.__auto_partition = auto_partition
     self.__context = context()
     # self.__generateKernel(att)
 
@@ -100,6 +101,8 @@ class hessianAndGradientKernel:
     wrt_names = "_".join([att.fullName for att in wrt])
     size_names = "_".join([str(size) for size in unique_gradient_sizes])
     full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullNameWithHash}_wrt_{wrt_names}_with_sizes_{size_names}_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}_layout_{global_jacobian_block_layout}"
+    if self.__clear_separation and not self.__auto_partition:
+      full_file_name += "_inner_hessian_blocks"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     kernel_mode_suffix = f"_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}"
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}{kernel_mode_suffix}" + ("" if self.__project_entire_hessian else "_no_proj")
@@ -165,7 +168,7 @@ extern "C"{{
             else:
               # if we need to separate the jacobian and hessian, the first thing we need to do is reconstruct the jacobian and hessian symbolically
               # which we will use to figure out how to compute the final hessian block by performing J_i^T H_ij J_j for each block
-              separate_jacobian_kernel: hessianKernelSeparateJacobian = hessianKernelSeparateJacobian(self.__att, self.__gradient_only, self.__grouped_add)
+              separate_jacobian_kernel: hessianKernelSeparateJacobian = hessianKernelSeparateJacobian(self.__att, self.__gradient_only, self.__grouped_add, self.__auto_partition)
               separate_jacobian_kernel.create_multiplied_blocks(
                 global_jacobian_block_nonzero_attributes,
                 global_jacobian_block_nonzero_local_positions,
