@@ -1,5 +1,6 @@
 import pycuda.gpuarray as gpuarray
 import os
+import subprocess
 import pycuda.driver as cuda
 from typing import Set, List
 import ctypes
@@ -108,7 +109,7 @@ __device__ void invert_by_evd(const double *A, double* output) {
         inverse_kernel_string += f"""
 __device__ void invert_diagonal_block_{attribute_size}_device(const double* input_block, double* output_block) {{
   if ({attribute_size} == 1) {{
-    output_block[0] = (input_block == 0) ? 1.0 : (1.0 / input_block);
+    output_block[0] = (input_block[0] == 0.0) ? 1.0 : (1.0 / input_block[0]);
     return;
   }}
   if ({attribute_size} <= 4) {{
@@ -183,7 +184,7 @@ void invert_diagonal_blocks(
       f.write(inverse_kernel_string)
       f.close()
       # compile the kernel
-      os.system(f"nvcc -Xcompiler -fPIC -shared -o {file_name}.so {file_name}.cu -O3 -arch=sm_89 -cudart=shared -lcuda -I/usr/include/eigen3 --expt-relaxed-constexpr -std=c++17")
+      subprocess.run(["nvcc", "-Xcompiler", "-fPIC", "-shared", "-o", f"{file_name}.so", f"{file_name}.cu", "-O3", "-arch=sm_89", "-cudart=shared", "-lcuda", "-I/usr/include/eigen3", "--expt-relaxed-constexpr", "-std=c++17"], check=True)
     # ok now we load the kernel
     self.__kernel = ctypes.CDLL(f"{file_name}.so").invert_diagonal_blocks
     self.__kernel.argtypes = [
