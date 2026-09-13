@@ -1830,14 +1830,14 @@ class DeviceMASRuntime:
     self._pcg_solution = self._empty(self.fine_dofs, np.float64)
     self._pcg_residual = self._empty(self.fine_dofs, np.float64)
     self._pcg_direction = self._empty(self.fine_dofs, np.float64)
-    self._pcg_state = self._zeros(13, np.float64)
+    self._pcg_state = self._zeros(15, np.float64)
     self._pcg_curvature = self._pcg_state[2:3]
     self._pcg_next_values = self._pcg_state[3:5]
     self._pcg_relative_tolerance = self._pcg_state[9:10]
     self._pcg_host_status = self.cuda.pagelocked_empty(2, np.float64)
     self._pcg_host_completion = self.cuda.pagelocked_empty(4, np.float64)
-    self._pcg_host_initial = self.cuda.pagelocked_empty(13, np.float64)
-    self._pcg_host_control = self.cuda.pagelocked_empty(13, np.float64)
+    self._pcg_host_initial = self.cuda.pagelocked_empty(15, np.float64)
+    self._pcg_host_control = self.cuda.pagelocked_empty(15, np.float64)
     self._pcg_initial_start_event = self.cuda.Event()
     self._pcg_initial_end_event = self.cuda.Event()
     # status[0] reports block-assembly validation; status[1] folds every
@@ -3557,6 +3557,7 @@ class DeviceMASRuntime:
     initial_guess=None,
     tolerance: float = 1e-3,
     max_iterations: int = 20_000,
+    _restarts_remaining: int = 8,
   ) -> PCGResult:
     if tolerance <= 0 or max_iterations < 0:
       raise ValueError("tolerance must be positive and max_iterations non-negative")
@@ -3741,6 +3742,29 @@ class DeviceMASRuntime:
     )
     completed = int(completed_raw)
     residual_norm = float(np.sqrt(max(status_value, 0.0)))
+    if status == 2.0:
+      # Recompute b-Ax, not just p=M^-1*r using a possibly drifted residual.
+      # The reference norm remains b^T M^-1 b, and the total iteration budget
+      # is shared with the restarted solve. Copy the borrowed solution before
+      # reinitializing the persistent recurrence workspaces.
+      if _restarts_remaining and completed < max_iterations:
+        guess = x.copy()
+        result = self.pcg(
+          rhs, use_mas=use_mas, initial_guess=guess,
+          tolerance=tolerance, max_iterations=max_iterations - completed,
+          _restarts_remaining=_restarts_remaining - 1,
+        )
+        return PCGResult(
+          result.solution, completed + result.iterations,
+          result.final_residual, result.relative_residual, result.converged,
+          initial_seconds + perf_counter() - iteration_started,
+          result.breakdown, result.restarts + 1,
+        )
+      return PCGResult(
+        x, completed, residual_norm, residual_norm / denominator, False,
+        initial_seconds + perf_counter() - iteration_started,
+        "non-positive curvature after residual restarts",
+      )
     if status < 0.0 or not np.isfinite(status_value):
       # Do not turn a negative breakdown diagnostic into a fake zero residual.
       residual_norm = float(np.sqrt(self._dot(residual, residual)))
@@ -3748,7 +3772,9 @@ class DeviceMASRuntime:
         x, max(completed - 1, 0), residual_norm,
         residual_norm / denominator, False,
         initial_seconds + perf_counter() - iteration_started,
-        "matrix or preconditioner is not positive definite",
+        {-2.0: "preconditioned residual diverged",
+         -3.0: "preconditioned residual stagnated (no 1% improvement for 1024 iterations)"}.get(
+           status, "matrix or preconditioner is not positive definite"),
       )
     if status > 0.0:
       return PCGResult(
@@ -3758,6 +3784,7 @@ class DeviceMASRuntime:
     return PCGResult(
       x, completed, residual_norm, residual_norm / denominator, False,
       initial_seconds + perf_counter() - iteration_started,
+      "CG iteration limit reached",
     )
 
   def _pcg_legacy(

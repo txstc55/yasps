@@ -18,6 +18,7 @@ class PCGResult:
   converged: bool
   seconds: float
   breakdown: str | None = None
+  restarts: int = 0
 
 
 def pcg(

@@ -24,9 +24,10 @@ extern "C" __global__ void yasps_mas_inverse_gj_exact_strided(
   double* column = matrix + N * N;
   double smallest_pivot = 1.7976931348623157e+308;
   double largest_pivot = 0.0;
+  double smallest_relative_pivot = 1.0;
+  const double* source = input + static_cast<unsigned long long>(matrix_id) * P * P;
   if (active) {
     if (lane == 0) status[matrix_id] = 0;
-    const double* source = input + static_cast<unsigned long long>(matrix_id) * P * P;
     for (int row = 0; row < N; ++row)
       matrix[row * N + lane] = source[row * P + lane];
   }
@@ -39,6 +40,7 @@ extern "C" __global__ void yasps_mas_inverse_gj_exact_strided(
       const double magnitude = fabs(diagonal);
       smallest_pivot = fmin(smallest_pivot, magnitude);
       largest_pivot = fmax(largest_pivot, magnitude);
+      smallest_relative_pivot = fmin(smallest_relative_pivot, magnitude / fabs(source[pivot * P + pivot]));
     }
     if (active) column[lane] = matrix[lane * N + pivot];
     // Underfilled groups can cross warp boundaries. Finish all original
@@ -83,6 +85,7 @@ extern "C" __global__ void yasps_mas_inverse_gj_exact_strided(
     if (lane == 0 && (
         !isfinite(smallest_pivot) || !isfinite(largest_pivot)
         || smallest_pivot <= pivot_tolerance
+        || smallest_relative_pivot < 1.0e-8
         || smallest_pivot <= largest_pivot * 1.0e-7)) {
       atomicExch(status + matrix_id, 2);
       atomicExch(any_failure, 1);
@@ -107,13 +110,22 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
       + static_cast<unsigned long long>(matrix_id) * P * P;
   double* destination = output
       + static_cast<unsigned long long>(matrix_id) * P * P;
-  if (tid == 0) status[matrix_id] = 0;
+  if (tid == 0) {
+    status[matrix_id] = 0;
+    for (int k = 0; k < N; ++k)
+      if (!isfinite(source[k * P + k]) || source[k * P + k] <= pivot_tolerance) {
+        status[matrix_id] = k + 1;
+        atomicExch(any_failure, 1);
+      }
+  }
   for (int entry = tid; entry < N * N; entry += blockDim.x) {
     const int row = entry / N;
     const int col = entry - row * N;
-    lower[entry] = source[row * P + col];
+    lower[entry] = row == col ? 1.0
+        : source[row * P + col] / (sqrt(source[row * P + row]) * sqrt(source[col * P + col]));
   }
   __syncthreads();
+  if (status[matrix_id]) return;
 
 #pragma unroll 1
   for (int k = 0; k < N; ++k) {
@@ -122,7 +134,8 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
 #pragma unroll 1
       for (int s = 0; s < k; ++s)
         diagonal -= lower[k * N + s] * lower[k * N + s];
-      if (!isfinite(diagonal) || diagonal <= pivot_tolerance) {
+      if (!isfinite(diagonal) || diagonal <= 0.0
+          || diagonal * source[k * P + k] <= pivot_tolerance) {
         status[matrix_id] = k + 1;
         atomicExch(any_failure, 1);
       } else {
@@ -139,6 +152,50 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
       lower[row * N + k] = value / lower[k * N + k];
     }
     __syncthreads();
+  }
+
+  // Test dimensionless pivots of the equilibrated, original SPD bank.
+  // Stabilize only near-dependent rows, not a mere difference in units.
+  __shared__ int stabilize;
+  if (tid == 0) {
+    double minimum_pivot = 1.7976931348623157e+308;
+    for (int k = 0; k < N; ++k) {
+      minimum_pivot = fmin(minimum_pivot, lower[k * N + k] * lower[k * N + k]);
+    }
+    stabilize = minimum_pivot < 1.0e-8;
+  }
+  __syncthreads();
+  if (stabilize) {
+    for (int entry = tid; entry < N * N; entry += blockDim.x) {
+      const int row = entry / N;
+      const int col = entry - row * N;
+      lower[entry] = row == col ? 1.0 + 1.0e-8
+          : source[row * P + col] / (sqrt(source[row * P + row]) * sqrt(source[col * P + col]));
+    }
+    __syncthreads();
+#pragma unroll 1
+    for (int k = 0; k < N; ++k) {
+      if (tid == 0) {
+        double diagonal = lower[k * N + k];
+        for (int s = 0; s < k; ++s)
+          diagonal -= lower[k * N + s] * lower[k * N + s];
+        if (!isfinite(diagonal) || diagonal <= 0.0) {
+          status[matrix_id] = k + 1;
+          atomicExch(any_failure, 1);
+        } else {
+          lower[k * N + k] = sqrt(diagonal);
+        }
+      }
+      __syncthreads();
+      if (status[matrix_id]) return;
+      for (int row = k + 1 + tid; row < N; row += blockDim.x) {
+        double value = lower[row * N + k];
+        for (int s = 0; s < k; ++s)
+          value -= lower[row * N + s] * lower[k * N + s];
+        lower[row * N + k] = value / lower[k * N + k];
+      }
+      __syncthreads();
+    }
   }
 
   if (tid < N) {
@@ -160,7 +217,8 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
       column[row] = value / lower[row * N + row];
     }
     for (int row = 0; row < N; ++row)
-      destination[row * P + tid] = column[row];
+      destination[row * P + tid] = column[row]
+          / (sqrt(source[row * P + row]) * sqrt(source[tid * P + tid]));
   }
   __syncthreads();
   for (int entry = tid; entry < P * P; entry += blockDim.x) {

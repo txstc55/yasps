@@ -16,10 +16,14 @@ enum PCGScalar : std::uint32_t {
   PCG_ITERATION = 10,
   PCG_MAX_ITERATIONS = 11,
   PCG_REFERENCE_RZ = 12,
-  PCG_SCALAR_COUNT = 13
+  PCG_BEST_RZ = 13,
+  PCG_LAST_PROGRESS = 14,
+  PCG_SCALAR_COUNT = 15
 };
 
 constexpr double PCG_NON_SPD = -1.0;
+constexpr double PCG_DIVERGED = -2.0;
+constexpr double PCG_STAGNATED = -3.0;
 constexpr double PCG_CONTINUE = 0.0;
 constexpr double PCG_CONVERGED = 1.0;
 constexpr double PCG_RESTART = 2.0;
@@ -173,6 +177,10 @@ extern "C" __global__ void yasps_mas_prepare_iteration(double* state) {
   if (blockIdx.x || threadIdx.x) return;
   const double curvature = state[PCG_CURVATURE];
   const double rz = state[PCG_RZ];
+  if (state[PCG_ITERATION] == 0.0) {
+    state[PCG_BEST_RZ] = rz;
+    state[PCG_LAST_PROGRESS] = 0.0;
+  }
   // These two reductions execute later in this iteration. Clearing their
   // accumulators here avoids two scalar-only CUDA launches in every graph.
   state[PCG_NEXT_RZ] = 0.0;
@@ -184,8 +192,8 @@ extern "C" __global__ void yasps_mas_prepare_iteration(double* state) {
   } else if (curvature <= 0.0) {
     // Roundoff can destroy conjugacy on very ill-conditioned SPD systems even
     // when both A and the explicitly symmetrized preconditioner remain SPD.
-    // A zero-length step followed by beta=0 restarts from M^-1 r entirely on
-    // device instead of reporting a false non-SPD breakdown.
+    // Request a fresh residual b-Ax and restart; beta=0 with the same drifting
+    // recurrence residual alone can repeat until overflow or the CG cap.
     state[PCG_ALPHA] = 0.0;
     state[PCG_STATUS] = PCG_RESTART;
   } else {
@@ -220,7 +228,7 @@ extern "C" __global__ void yasps_mas_prepare_iteration_partials(
 extern "C" __global__ void yasps_mas_update_solution_residual(
     double* solution, const double* direction, double* residual,
     const double* product, const double* state, std::uint32_t count) {
-  if (state[PCG_STATUS] == PCG_NON_SPD) return;
+  if (state[PCG_STATUS] < 0.0) return;
   const double alpha = state[PCG_ALPHA];
   const std::uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index < count) {
@@ -243,13 +251,37 @@ extern "C" __global__ void yasps_mas_finish_iteration(double* state) {
     state[PCG_STATUS_VALUE] = next_rz;
     return;
   }
+  // PCG residuals need not decrease monotonically. This is deliberately only
+  // a catastrophic-growth check, beyond FP64's useful dynamic accuracy, not
+  // a new convergence criterion or an absolute residual threshold.
+  if (next_rz > 1.0e16 * state[PCG_REFERENCE_RZ]) {
+    state[PCG_BETA] = 0.0;
+    state[PCG_STATUS] = PCG_DIVERGED;
+    state[PCG_STATUS_VALUE] = residual2;
+    return;
+  }
+  // Do not spend the entire 200k budget circling a numerical residual floor.
+  // Ordinary oscillations are allowed: track meaningful improvement of the
+  // best value, not monotonic improvement at each step. This is failure, not
+  // convergence, so callers can choose a different preconditioner.
+  if (next_rz < 0.99 * state[PCG_BEST_RZ]) {
+    state[PCG_BEST_RZ] = next_rz;
+    state[PCG_LAST_PROGRESS] = state[PCG_ITERATION];
+  }
+  if (state[PCG_ITERATION] - state[PCG_LAST_PROGRESS] >= 1024.0
+      && next_rz > state[PCG_RELATIVE_TOLERANCE] * state[PCG_REFERENCE_RZ]) {
+    state[PCG_BETA] = 0.0;
+    state[PCG_STATUS] = PCG_STAGNATED;
+    state[PCG_STATUS_VALUE] = residual2;
+    return;
+  }
   state[PCG_BETA] = restart ? 0.0 : next_rz / rz;
   state[PCG_RZ] = next_rz;
   state[PCG_STATUS_VALUE] = residual2;
   const double denominator = fmax(state[PCG_REFERENCE_RZ], 1.0e-300);
   state[PCG_STATUS] = next_rz
           <= state[PCG_RELATIVE_TOLERANCE] * denominator
-      ? PCG_CONVERGED : PCG_CONTINUE;
+      ? PCG_CONVERGED : (restart ? PCG_RESTART : PCG_CONTINUE);
 }
 
 extern "C" __global__ void yasps_mas_finish_iteration_partials(
@@ -301,7 +333,7 @@ extern "C" __global__ void yasps_mas_update_direction(
   for (std::uint32_t coarse = index; coarse < coarse_count;
        coarse += blockDim.x * gridDim.x)
     next_packed_residual[count + coarse] = 0.0;
-  if (state[PCG_STATUS] == PCG_NON_SPD) return;
+  if (state[PCG_STATUS] < 0.0) return;
   const double beta = state[PCG_BETA];
   if (index < count)
     direction[index] = preconditioned[index] + beta * direction[index];

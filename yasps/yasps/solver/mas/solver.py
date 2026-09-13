@@ -27,6 +27,7 @@ class SolverStatistics:
   final_residual: float = float("inf")
   relative_residual: float = float("inf")
   breakdown: str | None = None
+  residual_restarts: int = 0
   hierarchy_build_count: int = 0
   hierarchy_build_seconds: float = 0.0
   metis_seconds_per_level: list[float] = field(default_factory=list)
@@ -460,6 +461,7 @@ class MASSolver:
       final_residual=result.final_residual,
       relative_residual=result.relative_residual,
       breakdown=result.breakdown,
+      residual_restarts=result.restarts,
       hierarchy_build_count=self._hierarchy_build_count,
       hierarchy_build_seconds=hierarchy.build_seconds,
       metis_seconds_per_level=[level.metis_seconds for level in hierarchy.levels],
@@ -723,6 +725,7 @@ class MASSolver:
       final_residual=result.final_residual,
       relative_residual=result.relative_residual,
       breakdown=result.breakdown,
+      residual_restarts=result.restarts,
       hierarchy_build_count=self._hierarchy_build_count,
       hierarchy_build_seconds=hierarchy.build_seconds,
       metis_seconds_per_level=[level.metis_seconds for level in hierarchy.levels],
