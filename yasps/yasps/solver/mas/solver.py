@@ -569,10 +569,13 @@ class MASSolver:
         active_interval
       )
       rebuild_preconditioner = (
+        runtime._numeric_update_failed or
         dynamic_connectivity_transition or
         dynamic_edge_activation_transition or interval_expired
       )
       numeric_rebuild_reason = (
+        "previous-numeric-failure"
+        if runtime._numeric_update_failed else
         "dynamic-connectivity-transition"
         if dynamic_connectivity_transition else
         "dynamic-edge-activation-transition"

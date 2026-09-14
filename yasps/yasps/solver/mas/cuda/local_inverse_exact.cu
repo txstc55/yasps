@@ -38,7 +38,7 @@ extern "C" __global__ void yasps_mas_inverse_gj_exact_strided(
     const double diagonal = active ? matrix[pivot * N + pivot] : 1.0;
     if (active && lane == 0) {
       const double magnitude = fabs(diagonal);
-      smallest_pivot = fmin(smallest_pivot, magnitude);
+      smallest_pivot = fmin(smallest_pivot, diagonal);
       largest_pivot = fmax(largest_pivot, magnitude);
       smallest_relative_pivot = fmin(smallest_relative_pivot, magnitude / fabs(source[pivot * P + pivot]));
     }
@@ -103,7 +103,10 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
   constexpr int N = YASPS_MAS_ACTIVE_SIZE;
   constexpr int P = YASPS_MAS_STORAGE_STRIDE;
   const int matrix_id = blockIdx.x;
-  if (matrix_id >= matrix_count || status[matrix_id] == 0) return;
+  if (matrix_id >= matrix_count) return;
+  // Snapshot the entry flag in every warp before thread zero clears it.
+  // Otherwise a late warp can return while other warps wait at a barrier.
+  if (__syncthreads_count(status[matrix_id] != 0) == 0) return;
   const int tid = threadIdx.x;
   extern __shared__ double lower[];
   const double* source = input
@@ -134,6 +137,7 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
 #pragma unroll 1
       for (int s = 0; s < k; ++s)
         diagonal -= lower[k * N + s] * lower[k * N + s];
+      // Equilibration only changes units; do not add a diagonal shift.
       if (!isfinite(diagonal) || diagonal <= 0.0
           || diagonal * source[k * P + k] <= pivot_tolerance) {
         status[matrix_id] = k + 1;
@@ -152,50 +156,6 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
       lower[row * N + k] = value / lower[k * N + k];
     }
     __syncthreads();
-  }
-
-  // Test dimensionless pivots of the equilibrated, original SPD bank.
-  // Stabilize only near-dependent rows, not a mere difference in units.
-  __shared__ int stabilize;
-  if (tid == 0) {
-    double minimum_pivot = 1.7976931348623157e+308;
-    for (int k = 0; k < N; ++k) {
-      minimum_pivot = fmin(minimum_pivot, lower[k * N + k] * lower[k * N + k]);
-    }
-    stabilize = minimum_pivot < 1.0e-8;
-  }
-  __syncthreads();
-  if (stabilize) {
-    for (int entry = tid; entry < N * N; entry += blockDim.x) {
-      const int row = entry / N;
-      const int col = entry - row * N;
-      lower[entry] = row == col ? 1.0 + 1.0e-8
-          : source[row * P + col] / (sqrt(source[row * P + row]) * sqrt(source[col * P + col]));
-    }
-    __syncthreads();
-#pragma unroll 1
-    for (int k = 0; k < N; ++k) {
-      if (tid == 0) {
-        double diagonal = lower[k * N + k];
-        for (int s = 0; s < k; ++s)
-          diagonal -= lower[k * N + s] * lower[k * N + s];
-        if (!isfinite(diagonal) || diagonal <= 0.0) {
-          status[matrix_id] = k + 1;
-          atomicExch(any_failure, 1);
-        } else {
-          lower[k * N + k] = sqrt(diagonal);
-        }
-      }
-      __syncthreads();
-      if (status[matrix_id]) return;
-      for (int row = k + 1 + tid; row < N; row += blockDim.x) {
-        double value = lower[row * N + k];
-        for (int s = 0; s < k; ++s)
-          value -= lower[row * N + s] * lower[k * N + s];
-        lower[row * N + k] = value / lower[k * N + k];
-      }
-      __syncthreads();
-    }
   }
 
   if (tid < N) {

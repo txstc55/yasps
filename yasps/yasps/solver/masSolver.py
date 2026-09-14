@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from time import perf_counter
+
 import numpy as np
 import pycuda.gpuarray as gpuarray
 
 from .mas.cuda_runtime import is_pycuda_array
+from .mas.local_inverse import LocalInverseError
 from .mas.solver import MASSolver
 from .yaspsMatrixView import YASPSMatrixView
 
@@ -35,6 +38,8 @@ class masSolver:
 
   @property
   def solution(self):
+    if self.__statistics.get("result") == -8:
+      return self.__empty_solution
     solution = self.__solver.device_solution
     return self.__empty_solution if solution is None else solution
 
@@ -128,13 +133,25 @@ class masSolver:
         )
 
     view = self.__updateView(active_matrix)
-    self.__solver.solve(
-      view,
-      rhs,
-      initial_guess=guess,
-      tolerance=float(tolerance),
-      max_iterations=int(maxIterations),
-    )
+    started = perf_counter()
+    try:
+      self.__solver.solve(
+        view,
+        rhs,
+        initial_guess=guess,
+        tolerance=float(tolerance),
+        max_iterations=int(maxIterations),
+      )
+    except LocalInverseError as error:
+      # No CG iterate exists for this call. Do not expose the previous solve's
+      # solution or statistics; retain the hierarchy for the next rebuild.
+      self.__empty_solution = gpuarray.empty(0, dtype=np.float64)
+      self.__statistics = {
+        "solver": "mas", "result": -8, "converged": False, "iterations": 0,
+        "breakdown": str(error), "solve_seconds": perf_counter() - started,
+        "matrix_size": int(active_matrix.rows), "tolerance": float(tolerance),
+      }
+      return -8
     stats = self.__solver.statistics
     compact = stats.as_dict()
     compact.pop("domain_scalar_sizes", None)

@@ -129,7 +129,7 @@ __device__ __forceinline__ void yasps_mas_inverse_gj_packed_body(
     const double diagonal = active ? matrix[pivot * N + pivot] : 1.0;
     if (active && lane == 0) {
       const double magnitude = fabs(diagonal);
-      smallest_pivot = fmin(smallest_pivot, magnitude);
+      smallest_pivot = fmin(smallest_pivot, diagonal);
       largest_pivot = fmax(largest_pivot, magnitude);
       smallest_relative_pivot = fmin(smallest_relative_pivot, magnitude / fabs(source[pivot * N + pivot]));
     }
@@ -416,6 +416,8 @@ __device__ __forceinline__ void yasps_mas_inverse_spd_packed_fallback_body(
 #pragma unroll 1
       for (int s = 0; s < k; ++s)
         diagonal -= lower[k * N + s] * lower[k * N + s];
+      // Equilibration only changes units. Invert the original bank without
+      // shifting its diagonal, including valid small positive Schur pivots.
       if (!isfinite(diagonal) || diagonal <= 0.0
           || diagonal * input[matrix_id * N * N + k * N + k] <= pivot_tolerance) {
         status[matrix_id] = k + 1;
@@ -433,55 +435,6 @@ __device__ __forceinline__ void yasps_mas_inverse_spd_packed_fallback_body(
       lower[lane * N + k] = value / lower[k * N + k];
     }
     __syncthreads();
-  }
-
-  // Validate the original bank after diagonal equilibration; this avoids
-  // spurious Cholesky failures caused solely by mixed units/diagonal scales.
-  // A small dimensionless Schur pivot identifies nearly dependent rows.
-  // Leave guard digits for subsequent dense-inverse application in FP64.
-  if (marked && lane == 0 && status[matrix_id] == 0) {
-    double minimum_pivot = 1.7976931348623157e+308;
-    for (int k = 0; k < N; ++k) {
-      minimum_pivot = fmin(minimum_pivot, lower[k * N + k] * lower[k * N + k]);
-    }
-    if (minimum_pivot < 1.0e-8)
-      status[matrix_id] = -1;  // Internal request, consumed in this kernel.
-  }
-  __syncthreads();
-  const bool stabilize = marked && status[matrix_id] == -1;
-  if (__syncthreads_count(stabilize)) {
-    if (stabilize) {
-      if (lane == 0) status[matrix_id] = 0;
-      const double* source = input + matrix_id * N * N;
-      for (int row = 0; row < N; ++row)
-        lower[row * N + lane] = row == lane ? 1.0 + 1.0e-8
-            : source[row * N + lane] / (sqrt(source[row * N + row]) * sqrt(source[lane * N + lane]));
-    }
-    __syncthreads();
-    // Invert D^-1/2 A D^-1/2 + 1e-8 I, then undo the scaling.
-    // Only the preconditioner changes: the actual Hessian/SpMV is untouched.
-#pragma unroll 1
-    for (int k = 0; k < N; ++k) {
-      if (stabilize && lane == 0 && status[matrix_id] == 0) {
-        double diagonal = lower[k * N + k];
-        for (int s = 0; s < k; ++s)
-          diagonal -= lower[k * N + s] * lower[k * N + s];
-        if (!isfinite(diagonal) || diagonal <= 0.0) {
-          status[matrix_id] = k + 1;
-          atomicExch(any_failure, 1);
-        } else {
-          lower[k * N + k] = sqrt(diagonal);
-        }
-      }
-      __syncthreads();
-      if (stabilize && status[matrix_id] == 0 && lane > k) {
-        double value = lower[lane * N + k];
-        for (int s = 0; s < k; ++s)
-          value -= lower[lane * N + s] * lower[k * N + s];
-        lower[lane * N + k] = value / lower[k * N + k];
-      }
-      __syncthreads();
-    }
   }
 
   if (marked && status[matrix_id] == 0) {

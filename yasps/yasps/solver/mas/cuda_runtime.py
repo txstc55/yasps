@@ -333,9 +333,6 @@ class DeviceMASRuntime:
         "complete_dynamic_groups": assembly.get_function(
           "yasps_mas_complete_dynamic_group_domains"
         ),
-        "regularize_dynamic_groups": assembly.get_function(
-          "yasps_mas_regularize_dynamic_group_domains"
-        ),
         "mapped_spmv": assembly.get_function("yasps_mas_mapped_block_spmv"),
         "inverse_spd": inverse.get_function("yasps_mas_inverse_spd"),
         "inverse_spd_mixed": inverse.get_function(
@@ -444,9 +441,6 @@ class DeviceMASRuntime:
     ]
     self.complete_dynamic_groups_kernel = cached[
       "complete_dynamic_groups"
-    ]
-    self.regularize_dynamic_groups_kernel = cached[
-      "regularize_dynamic_groups"
     ]
     self.mapped_spmv_kernel = cached["mapped_spmv"]
     self.inverse_kernel = cached[
@@ -1874,6 +1868,7 @@ class DeviceMASRuntime:
     self._inverse_end_event = self.cuda.Event()
     self._numeric_host_status = self.cuda.pagelocked_empty(2, np.int32)
     self._numeric_update_pending = False
+    self._numeric_update_failed = False
 
     self.inverse_buckets: list[InverseBucket] = []
     for padded_size, active_size, matrix_start, domains in inverse_bucket_specs:
@@ -2645,6 +2640,9 @@ class DeviceMASRuntime:
     """Recompute current collision collapse/local inverses without static rebuild."""
     if self._numeric_update_pending:
       self._finalize_numeric_update()
+    # A reported failure is consumed, but its banks must never be reused by
+    # the optional lagged-preconditioner path. Rebuild from the new operator.
+    rebuild_preconditioner = rebuild_preconditioner or self._numeric_update_failed
     update_started = perf_counter()
     if view.layout_signature != self.view.layout_signature:
       raise ValueError("CUDA runtime cannot change the variable layout")
@@ -2891,10 +2889,14 @@ class DeviceMASRuntime:
 
   def _finalize_numeric_update(self, *, synchronize: bool = True) -> None:
     """Validate an enqueued rebuild after an existing stream barrier."""
-    if not self._numeric_update_pending:
+    if not self._numeric_update_pending and not self._numeric_update_failed:
       return
     if synchronize:
       self._pcg_stream.synchronize()
+    # Mark the submission consumed even if validation raises. Otherwise the
+    # next Newton update rethrows this stale error before assembling new H.
+    self._numeric_update_pending = False
+    self._numeric_update_failed = True
     status_values = self._numeric_host_status
     status_code = int(status_values[0])
     if status_code:
@@ -2939,7 +2941,7 @@ class DeviceMASRuntime:
       self.numeric_assembly_seconds
       + self.local_assembly_seconds + self.inverse_seconds
     )
-    self._numeric_update_pending = False
+    self._numeric_update_failed = False
 
   def _launch_mapped_spmv(
     self, vector, output, level_index: int, stream=None,
@@ -3746,7 +3748,8 @@ class DeviceMASRuntime:
       # Recompute b-Ax, not just p=M^-1*r using a possibly drifted residual.
       # The reference norm remains b^T M^-1 b, and the total iteration budget
       # is shared with the restarted solve. Copy the borrowed solution before
-      # reinitializing the persistent recurrence workspaces.
+      # reinitializing the persistent recurrence workspaces. Only curvature
+      # breakdown retries; stagnation returns the current iterate immediately.
       if _restarts_remaining and completed < max_iterations:
         guess = x.copy()
         result = self.pcg(

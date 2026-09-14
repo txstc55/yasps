@@ -74,10 +74,11 @@ class solver:
     """Return 0 on convergence; negative codes indicate failure.
 
     MAS: -4 is a definiteness/curvature breakdown, -5 stagnation, -6 divergence,
-    and -7 residual verification failure or another named breakdown. Iteration
-    limits return -1000-iteration. Counts include MAS residual restarts.
+    -7 residual verification failure or another named breakdown, and -8 local
+    block inversion failure (no solution; details in statistics.breakdown).
+    Iteration limits return -1000-iteration. Counts include MAS residual restarts.
     Jacobi: iterative breakdowns and limits return -1000-iteration; -5 remains
-    its invalid-initial-residual/tolerance code. Setup/CUDA exceptions remain.
+    its invalid-initial-residual/tolerance code. Other setup/CUDA exceptions remain.
     Decode counts only for code <= -1000. Otherwise read statistics.iterations;
     statistics.breakdown records the reason for either solver.
     """

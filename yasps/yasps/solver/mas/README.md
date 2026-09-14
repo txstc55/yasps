@@ -35,18 +35,20 @@ small or zero pivot with one: invalid pivots follow the existing failure and
 Cholesky-fallback paths. The default pivot tolerance is `1e-12`. Any physical
 mass floor belongs in the application, not this solver.
 
-The default Gauss-Jordan/Cholesky path additionally checks precision-risk
-banks. Cholesky validates the original bank after diagonal equilibration,
-`B = D^-1/2 A_local D^-1/2`, where `D = diag(A_local)`. A dimensionless
-Schur pivot below `1e-8` identifies near-dependent rows with too few guard
-digits for reliable dense-inverse application in FP64. Only for these banks,
-invert `B + 1e-8 I` and undo the scaling. This is preconditioner-only
-stabilization, equivalent to using `A_local + 1e-8 D` for that local inverse.
-The roughly square-root-machine-epsilon threshold/shift protects the inverse
-application without changing the scene Hessian, RHS, SpMV, mass, or stopping
-criterion. Validation must pass before stabilization; the original physical
-pivot tolerance still applies, so zero, nonfinite, and nonpositive pivots
-remain errors. Diagonal scale differences alone do not cause stabilization.
+A reported numeric failure consumes that submission and forces a fresh rebuild
+at the next update, even with a lagged-preconditioner interval. This prevents
+one failure from being rethrown before subsequent Hessians can be assembled.
+PCG still rejects invalid banks until a rebuild passes validation.
+
+The default Gauss-Jordan path requests a Cholesky retry for nonfinite output
+or suspicious Schur pivots, including a relative pivot below `1e-8` or a
+pivot spread above `1e7`. These are retry criteria, not diagonal shifts.
+Cholesky factors the original bank after diagonal equilibration,
+`B = D^-1/2 A_local D^-1/2`, where `D = diag(A_local)`, and undoes the scaling
+on its inverse. No fallback adds anything to the diagonal. Small positive
+normalized pivots remain valid if their physical pivots exceed the configured
+tolerance; nonpositive/nonfinite pivots are rejected. Gauss-Jordan tests signed
+pivots, so a negative pivot cannot pass merely because its magnitude is large.
 
 Non-positive CG curvature requests a restart with a freshly computed `b-Ax`,
 not only a direction reset from the old recurrence residual. At most eight
@@ -55,10 +57,17 @@ such restarts share the original iteration budget. Catastrophic growth of
 instead of running until floating-point overflow. Exhausting the iteration
 budget is reported explicitly, not as an unspecified non-SPD error.
 Likewise, 1,024 iterations without a 1% improvement in the best preconditioned
-residual report stagnation. This does not declare convergence or relax the
-tolerance; it lets the caller switch solvers instead of spending the remaining
-budget on an ineffective preconditioner. Oscillations with continuing progress
-remain permitted.
+residual report stagnation immediately, without a restart. The public MAS
+code is `-5`, and the current iterate remains available to the caller. This
+does not declare convergence or relax the tolerance. Oscillations with
+continuing progress remain permitted.
+
+The public YASPS solver returns `-8` if local block inversion fails after its
+fallback. `statistics.breakdown` preserves the failure details, `iterations`
+is zero, and `solution` is empty because no valid iterate exists for that call.
+The hierarchy is retained, and a subsequent solve rebuilds the failed numeric
+state normally. This translates the internal `LocalInverseError`; unrelated
+input-validation and CUDA exceptions still propagate.
 
 CG success uses its existing squared preconditioned residual criterion,
 not a Euclidean relative-residual threshold. The reported relative residual
@@ -72,6 +81,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m unittest discover -s yasps/te
 ```
 
 Tests cover hierarchy replacement/reuse, actual numerical matrices, FP64
-storage/application, strict pivot rejection, cross-warp inverse synchronization
-and clearing coarse workspaces larger than the fine vector. The saved frame-42
+storage/application, strict pivot rejection, cross-warp inverse synchronization,
+numeric failure recovery, and clearing coarse
+workspaces larger than the fine vector. The saved frame-42
 bank regression is optional; synthetic numerical tests do not need scene assets.
