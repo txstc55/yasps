@@ -19,10 +19,15 @@ class solverKernel:
     self.__saved_block_dimensions = set([])
     self.__context = context()
     self.__last_iterations = 0
+    self.__last_breakdown = None
 
   @property
   def iterations(self) -> int:
     return self.__last_iterations
+
+  @property
+  def breakdown(self):
+    return self.__last_breakdown
 
   def __loadKernelLibrary(self, file_hashed_name: str) -> None:
     library = ctypes.CDLL(f"{file_hashed_name}.so")
@@ -669,7 +674,7 @@ int computeSolution(unsigned int maxIteration,
     if (iteration_status[0] == CG_STATUS_NON_SPD) {
       printf("Non SPD matrix detected in %d iterations with residual %lf and alpha %lf\\n",
              iteration, h_delta_new, iteration_status[1]);
-      return -iteration - 4;
+      return -1000 - static_cast<int>(iteration);
     }
     h_delta_new = iteration_status[1];
     if (iteration_status[0] == CG_STATUS_CONVERGED){
@@ -683,7 +688,7 @@ int computeSolution(unsigned int maxIteration,
     return -3;  // Return error to Python
   }
   printf("Did not converge in %d iterations; residual %lf\\n", maxIteration, h_delta_new);
-  return -4;
+  return -1000 - static_cast<int>(maxIteration);
 }
 
 } // close the extern "C"
@@ -792,7 +797,15 @@ int computeSolution(unsigned int maxIteration,
       int(zero_initial_guess),
       self.__to_void_p(cg_scalars)
     )
-    self.__last_iterations = int(result) if result >= 0 else 0
+    # Iterative failures carry their count without colliding with setup errors.
+    self.__last_iterations = -1000 - int(result) if result <= -1000 else max(int(result), 0)
+    self.__last_breakdown = None
+    if result <= -1000:
+      # The return code carries the count, not the reason. Read the native
+      # status only on failure, including breakdown on the final allowed step.
+      self.__last_breakdown = "non-positive curvature or invalid preconditioned residual" if cg_scalars[6:7].get()[0] == -1.0 else "CG iteration limit reached"
+    elif result == -5:
+      self.__last_breakdown = "invalid initial preconditioned residual or tolerance"
     # Record the end event
     end_call.record()
     # Wait for the end event to complete

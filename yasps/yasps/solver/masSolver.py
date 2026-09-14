@@ -138,11 +138,12 @@ class masSolver:
     stats = self.__solver.statistics
     compact = stats.as_dict()
     compact.pop("domain_scalar_sizes", None)
+    result = 0 if stats.converged else -1000 - int(stats.iterations)
     self.__statistics = compact | {
       "solver": "mas",
-      "result": 0 if stats.converged else -4,
+      "result": result,
       "metis_seconds": float(sum(stats.metis_seconds_per_level)),
       "matrix_size": int(active_matrix.rows),
       "tolerance": float(tolerance),
     }
-    return 0 if stats.converged else -4
+    return result

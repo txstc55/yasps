@@ -71,4 +71,11 @@ class solver:
     return self.__implementation.rebuildHierarchy(block_positions, block_dimensions, num_blocks)
 
   def computeSolution(self, *args, **kwargs):
+    """Return 0 on convergence, or -1000-iteration for an iterative failure.
+
+    Decode failure iterations as -1000-code for code <= -1000. The count
+    includes MAS residual restarts. Setup/CUDA errors retain their reserved
+    codes or exceptions. Use statistics for the failure reason; the encoded
+    count alone does not distinguish a breakdown from an iteration limit.
+    """
     return self.__implementation.computeSolution(*args, **kwargs)
