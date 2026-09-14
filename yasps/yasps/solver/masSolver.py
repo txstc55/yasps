@@ -139,6 +139,18 @@ class masSolver:
     compact = stats.as_dict()
     compact.pop("domain_scalar_sizes", None)
     result = 0 if stats.converged else -1000 - int(stats.iterations)
+    if not stats.converged:
+      reason = stats.breakdown or ""
+      # These are public MAS codes, not the CUDA recurrence's status values.
+      # Counts (including residual restarts) remain in statistics.iterations.
+      if reason.startswith("preconditioned residual stagnated"):
+        result = -5
+      elif reason == "preconditioned residual diverged":
+        result = -6
+      elif "not positive definite" in reason or reason.startswith("non-positive curvature"):
+        result = -4
+      elif reason not in ("", "CG iteration limit reached"):
+        result = -7  # Residual verification failure or another named breakdown.
     self.__statistics = compact | {
       "solver": "mas",
       "result": result,

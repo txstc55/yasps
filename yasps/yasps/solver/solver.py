@@ -71,11 +71,14 @@ class solver:
     return self.__implementation.rebuildHierarchy(block_positions, block_dimensions, num_blocks)
 
   def computeSolution(self, *args, **kwargs):
-    """Return 0 on convergence, or -1000-iteration for an iterative failure.
+    """Return 0 on convergence; negative codes indicate failure.
 
-    Decode failure iterations as -1000-code for code <= -1000. The count
-    includes MAS residual restarts. Setup/CUDA errors retain their reserved
-    codes or exceptions. Use statistics for the failure reason; the encoded
-    count alone does not distinguish a breakdown from an iteration limit.
+    MAS: -4 is a definiteness/curvature breakdown, -5 stagnation, -6 divergence,
+    and -7 residual verification failure or another named breakdown. Iteration
+    limits return -1000-iteration. Counts include MAS residual restarts.
+    Jacobi: iterative breakdowns and limits return -1000-iteration; -5 remains
+    its invalid-initial-residual/tolerance code. Setup/CUDA exceptions remain.
+    Decode counts only for code <= -1000. Otherwise read statistics.iterations;
+    statistics.breakdown records the reason for either solver.
     """
     return self.__implementation.computeSolution(*args, **kwargs)
