@@ -716,11 +716,21 @@ class coordinateCompressionKernel:
     self.__uniqueDimensionsBlockCountsCPU = None
     if self.__total_coordinates == 0:
       return # nothing we need to do
+    if not self.__coordinates:
+      raise ValueError("Raw coordinates were released after compression; call updateCoordinates before recompressing.")
     # allocate space if needed
-    if self.__total_coordinates > self.__lookupArray.size:
+    if self.__total_coordinates > self.__uncompressedCoordinatesAndDimensionsTmp.size:
       self.__uncompressedCoordinatesAndDimensionsTmp: gpuarray.GPUArray = gpuarray.empty(self.__total_coordinates, coord_dim_dtype)
       self.__uncompressedCoordinates = gpuarray.empty(self.__total_coordinates * 2, np.uint32)
       self.__uncompressedDimensions = gpuarray.empty(self.__total_coordinates * 2, np.uint16)
+    if self.__total_coordinates > self.__lookupArray.size:
       self.__lookupArray = gpuarray.empty(self.__total_coordinates, np.uint32)
     self.__context.useDefaultContext()
     self.__compressCoordinatesAndDimensions()
+    # Both compression kernels synchronize before returning. Retain only the
+    # unique coordinates, dimensions, and scatter lookup needed for assembly.
+    self.__coordinates = []
+    self.__dimensions = []
+    self.__uncompressedCoordinatesAndDimensionsTmp = gpuarray.empty(0, coord_dim_dtype)
+    self.__uncompressedCoordinates = gpuarray.empty(0, np.uint32)
+    self.__uncompressedDimensions = gpuarray.empty(0, np.uint16)

@@ -178,6 +178,11 @@ class secondOrderJacobianIndicesKernel:
   def outputBlockDimensions(self):
     return self.__dimensions
 
+  def releaseRawCoordinates(self):
+    """Keep row/column indices and counts used by rectangular assembly."""
+    self.__coordinates = gpuarray.empty(0, dtype=np.uint32)
+    self.__dimensions = gpuarray.empty(0, dtype=np.uint16)
+
   @property
   def coordinateCountsOuter(self):
     return self.__coordinate_outer

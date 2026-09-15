@@ -354,6 +354,8 @@ class secondOrderJacobian(matrix):
       self.__column_wrt
     )
     self.__compression_kernel.compressCoordinatesAndDimensions()
+    for item in self.__indices_kernels:
+      item.releaseRawCoordinates()
     self.__block_indices_gpu = self.__alignLookups(
       self.__compression_kernel,
       self.__indices_kernels
@@ -387,6 +389,8 @@ class secondOrderJacobian(matrix):
       self.__column_wrt
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
+    for item in self.__indices_kernels_dynamic:
+      item.releaseRawCoordinates()
 
     self.__block_indices_gpu_dynamic = self.__alignLookups(
       self.__compression_kernel_dynamic,
@@ -424,6 +428,8 @@ class secondOrderJacobian(matrix):
       [x.numTotalCoordinates for x in self.__indices_kernels_dynamic]
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
+    for item in self.__indices_kernels_dynamic:
+      item.releaseRawCoordinates()
 
     self.__block_indices_gpu_dynamic = self.__alignLookups(
       self.__compression_kernel_dynamic,

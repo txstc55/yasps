@@ -443,6 +443,11 @@ class gradientIndicesKernel:
   def outputBlockDimensions(self):
     return self.__outputBlockDimensions
 
+  def releaseRawCoordinates(self):
+    """Assembly uses indices and compressed lookups, not raw coordinates."""
+    self.__outputCoordinates = gpuarray.empty(0, dtype=np.uint32)
+    self.__outputBlockDimensions = gpuarray.empty(0, dtype=np.uint16)
+
   @property
   def outputUniqueGradientSizes(self):
     return self.__outputUniqueGradientSizes

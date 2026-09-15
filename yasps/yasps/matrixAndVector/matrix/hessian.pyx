@@ -822,6 +822,8 @@ class hessian(matrix):
       self.__wrt
     )
     self.__compression_kernel.compressCoordinatesAndDimensions()
+    for item in self.__indices_kernels:
+      item.releaseRawCoordinates()
     self.__block_indices_gpu = self.__compression_kernel.lookupArrays
 
     # Separated kernels map their permuted entries to these original lookups.
@@ -850,6 +852,8 @@ class hessian(matrix):
       self.__wrt
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
+    for item in self.__indices_kernels_dynamic:
+      item.releaseRawCoordinates()
 
     lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
     self.__block_indices_gpu_dynamic = []
@@ -887,6 +891,8 @@ class hessian(matrix):
       [x.numTotalCoordinates for x in self.__indices_kernels_dynamic]
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
+    for item in self.__indices_kernels_dynamic:
+      item.releaseRawCoordinates()
 
     lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
     self.__block_indices_gpu_dynamic = []
