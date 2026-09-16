@@ -96,6 +96,10 @@ class Hierarchy:
 def _domain_layout(domains: list[list[int]], dimensions: np.ndarray) -> tuple[list[np.ndarray], np.ndarray]:
   local_offsets, sizes = [], []
   for domain in domains:
+    if len(domain) == 1:
+      local_offsets.append(np.zeros(1, dtype=np.int64))
+      sizes.append(int(dimensions[domain[0]]))
+      continue
     domain_dims = dimensions[np.asarray(domain, dtype=np.int64)]
     local_offsets.append(prefix_offsets(domain_dims))
     sizes.append(int(domain_dims.sum()))
