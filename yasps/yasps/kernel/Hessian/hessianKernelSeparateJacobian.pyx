@@ -242,15 +242,15 @@ class hessianKernelSeparateJacobian:
       multiply_right_pattern_{pattern_id}_{suffix}(left_product, hg_mat + {self.__local_hessian_nonzero_count} + tile_nonzero_offsets_{suffix}[j], multiplied_block);
 ''')
         pattern = self.__patterns[pattern_id]
-        if pattern["dense"]:
+        if pattern["dense"] and size == 1:
+          # Scalar inner energies have no repeated segment lookup to hoist.
+          # Keep the inline scalar path rather than adding a device call.
           source.append(f'''
-      #pragma unroll 1
-      for (unsigned short int a = 0; a < {left['width']}; ++a) {{
-        #pragma unroll 1
-        for (unsigned short int b = (i == j ? a : 0); b < {right['width']}; ++b) {{
-          scatter_sparse_hessian_{suffix}(multiplied_block[a * {size} + b], i * {size} + a, j * {size} + b, column_segment, segment_outer, valid_rank, valid_count, indices, sizes, permutations, instance_lookups, hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
-        }}
-      }}
+      scatter_sparse_hessian_{suffix}(multiplied_block[0], i, j, column_segment, segment_outer, valid_rank, valid_count, indices, sizes, permutations, instance_lookups, hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
+''')
+        elif pattern["dense"]:
+          source.append(f'''
+      scatter_dense_tile_{suffix}(multiplied_block, i * {size}, j * {size}, {left['width']}, {right['width']}, column_segment, segment_outer, valid_rank, valid_count, indices, sizes, permutations, instance_lookups, hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
 ''')
         else:
           # Sparse inner energies (for example one-axis walls) must not
@@ -314,8 +314,10 @@ class hessianKernelSeparateJacobian:
       # table larger than constant space uses the same read-only fallback.
       source.append(f"static __device__ {column_storage} unsigned short int jacobian_columns_{suffix}[{max(1, len(permutation))}] = {{{', '.join(map(str, permutation)) or '0'}}};")
       source.append(self.__scatterFunction(suffix, num_attributes))
+      if not self.__auto_partition and self.__layout["rows"] > 1:
+        source.append(self.__denseTileScatterFunction(suffix, num_attributes))
     gradient_start = 0 if self.__gradient_only else self.__merged_hessian_jacobian_nonzeros
-    source.append(f'''
+    entry_source = f'''
 __global__ void compute_hessian_and_gradient_global_function_final_gradient_size_{suffix}(
   {declarations}
   const unsigned int* segment_indices,
@@ -353,11 +355,20 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     }}
     gradient_offset += sizes[i];
   }}
-''')
+'''
     if not self.__gradient_only and self.__block_patterns:
       jacobian_cols = self.__layout["cols"]
       max_block_entries = max(len(self.__layout['blocks'][i]['cols']) * len(self.__layout['blocks'][j]['cols']) for i, j, _ in self.__block_patterns) if self.__auto_partition else self.__layout["rows"] ** 2
       source.append(f'''
+// Evaluation and assembly are sequential. Keep assembly scratch in its own
+// call frame so it is not reserved during the nested H/J/gradient evaluation.
+static __device__ __noinline__ void assemble_sparse_hessian_{suffix}(
+  const double* hg_mat, const unsigned int* indices,
+  const unsigned short int* sizes, const short int* permutations,
+  const unsigned int* instance_lookups, double* hessian_blocks,
+  double* diagonal_blocks, const unsigned int* diagonal_blocks_start,
+  const unsigned int* gradient_segments_start
+) {{
   // Invert segmentation once, retaining union padding in the original axes.
   unsigned short int column_segment[{max(1, jacobian_cols)}];
   unsigned short int segment_outer[{max_num_indices + 1}];
@@ -372,26 +383,23 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
       column_segment[k] = i; // this records for each original column, which segment it belongs to, so that we can look up the segment for each original column when scattering back into the Hessian
     }}
   }}
-  const unsigned int* instance_lookups = lookups + coordinatesOuter[instance];
   double multiplied_block[{max_block_entries}];
 ''')
       if not self.__auto_partition:
         source.append(self.__innerCallerSource(suffix, max_num_indices))
-        source.append("}\n}\n")
-        self.__kernelString = "\n".join(source)
-        return self.__kernelString
-      spans_outer = [0]
-      for block in self.__layout["blocks"]:
-        spans_outer.append(spans_outer[-1] + len(block["cols"]))
-      for pair, (i, j, pattern_id) in enumerate(self.__block_patterns):
-        rows = len(self.__layout["blocks"][i]["cols"])
-        cols = len(self.__layout["blocks"][j]["cols"])
-        left_offset = self.__local_hessian_nonzero_count + self.__packed_jacobian["block_offsets"][i]
-        right_offset = self.__local_hessian_nonzero_count + self.__packed_jacobian["block_offsets"][j]
-        mapped_h = self.__patterns[pattern_id]["mapped_h"]
-        h_argument = "hg_mat" if mapped_h else f"hg_mat + {self.__hessian_operands[pair]}"
-        h_map_argument = f", hessian_indices_{i}_{j}_{suffix}" if mapped_h else ""
-        source.append(f'''
+      else:
+        spans_outer = [0]
+        for block in self.__layout["blocks"]:
+          spans_outer.append(spans_outer[-1] + len(block["cols"]))
+        for pair, (i, j, pattern_id) in enumerate(self.__block_patterns):
+          rows = len(self.__layout["blocks"][i]["cols"])
+          cols = len(self.__layout["blocks"][j]["cols"])
+          left_offset = self.__local_hessian_nonzero_count + self.__packed_jacobian["block_offsets"][i]
+          right_offset = self.__local_hessian_nonzero_count + self.__packed_jacobian["block_offsets"][j]
+          mapped_h = self.__patterns[pattern_id]["mapped_h"]
+          h_argument = "hg_mat" if mapped_h else f"hg_mat + {self.__hessian_operands[pair]}"
+          h_map_argument = f", hessian_indices_{i}_{j}_{suffix}" if mapped_h else ""
+          source.append(f'''
   multiply_sparse_pattern_{pattern_id}_{suffix}(hg_mat + {left_offset}, {h_argument}, hg_mat + {right_offset}{h_map_argument}, multiplied_block);
   for (unsigned int a = 0; a < {rows}; ++a) {{
     for (unsigned int b = {'a' if i == j else '0'}; b < {cols}; ++b) {{
@@ -401,9 +409,85 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     }}
   }}
 ''')
-    source.append("}\n}\n")
+      source.append("}")
+      entry_source += f'''
+  assemble_sparse_hessian_{suffix}(hg_mat, indices, sizes, permutations, lookups + coordinatesOuter[instance], hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
+'''
+    source.append(entry_source + "}\n}\n")
     self.__kernelString = "\n".join(source)
     return self.__kernelString
+
+  def __denseTileScatterFunction(self, suffix, num_attributes):
+    # Inner-Hessian tiles have contiguous original axes. Intersect each tile
+    # with the runtime segments, and resolve one destination per segment pair
+    # rather than repeating coordinate and diagonal lookup for every scalar.
+    # Keep this loop out of the outer evaluator/multiply kernel's live state.
+    size = self.__layout["rows"]
+    return f'''
+static __device__ __noinline__ void scatter_dense_tile_{suffix}(
+  const double* values, unsigned int row_begin, unsigned int column_begin,
+  unsigned int rows, unsigned int columns,
+  const unsigned short int* column_segment, const unsigned short int* segment_outer,
+  const unsigned short int* valid_rank, unsigned int valid_count,
+  const unsigned int* indices, const unsigned short int* sizes,
+  const short int* permutations, const unsigned int* lookups,
+  double* hessian_blocks, double* diagonal_blocks,
+  const unsigned int* diagonal_blocks_start, const unsigned int* gradient_segments_start
+) {{
+  const unsigned int row_end = row_begin + rows;
+  const unsigned int column_end = column_begin + columns;
+  const bool diagonal_tile = row_begin == column_begin;
+  #pragma unroll 1
+  for (unsigned int sa = column_segment[row_begin]; sa <= column_segment[row_end - 1]; ++sa) {{
+    if (permutations[sa] <= 0 || indices[sa] < 2 || sizes[sa] == 0) continue;
+    const unsigned int a_begin = max(row_begin, (unsigned int)segment_outer[sa]);
+    const unsigned int a_end = min(row_end, (unsigned int)segment_outer[sa + 1]);
+    const unsigned int start_a = indices[sa];
+    const unsigned int rank_a = valid_rank[sa];
+    const unsigned int size_a = sizes[sa];
+    #pragma unroll 1
+    for (unsigned int sb = column_segment[column_begin]; sb <= column_segment[column_end - 1]; ++sb) {{
+      if (permutations[sb] <= 0 || indices[sb] < 2 || sizes[sb] == 0) continue;
+      const unsigned int b_begin = max(column_begin, (unsigned int)segment_outer[sb]);
+      const unsigned int b_end = min(column_end, (unsigned int)segment_outer[sb + 1]);
+      if (diagonal_tile && b_end <= a_begin) continue;
+      const unsigned int start_b = indices[sb];
+      const unsigned int first = min(rank_a, (unsigned int)valid_rank[sb]);
+      const unsigned int last = max(rank_a, (unsigned int)valid_rank[sb]);
+      const unsigned int placement = lookups[first * valid_count - first * (first + 1) / 2 + last];
+      const unsigned int row_stride = start_a <= start_b ? sizes[sb] : 1;
+      const unsigned int column_stride = start_a <= start_b ? 1 : size_a;
+      const bool same_target = start_a == start_b;
+      unsigned int diagonal_start = 0;
+      if (same_target) {{
+        const unsigned int segment_start = start_a - 2;
+        unsigned int which_attribute = 0;
+        while (which_attribute + 1 < {num_attributes} && segment_start >= gradient_segments_start[which_attribute + 1]) ++which_attribute;
+        const unsigned int local_instance = (segment_start - gradient_segments_start[which_attribute]) / size_a;
+        diagonal_start = diagonal_blocks_start[which_attribute] + local_instance * size_a * size_a;
+      }}
+      #pragma unroll 1
+      for (unsigned int a = a_begin; a < a_end; ++a) {{
+        const unsigned int offset_a = a - segment_outer[sa];
+        #pragma unroll 1
+        for (unsigned int b = diagonal_tile ? max(b_begin, a) : b_begin; b < b_end; ++b) {{
+          const unsigned int offset_b = b - segment_outer[sb];
+          const double value = values[(a - row_begin) * {size} + b - column_begin];
+          {self.__atomic_add}(&hessian_blocks[placement + offset_a * row_stride + offset_b * column_stride], value);
+          if (same_target) {{
+            {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_a * size_a + offset_b], value);
+            // Different local occurrences can resolve to the same vertex.
+            if (a != b) {{
+              {self.__atomic_add}(&hessian_blocks[placement + offset_b * size_a + offset_a], value);
+              {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_b * size_a + offset_a], value);
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+'''
 
   def __scatterFunction(self, suffix, num_attributes):
     # Component pairs supply one scalar triangle. Global storage contains
