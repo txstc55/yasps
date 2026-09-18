@@ -28,6 +28,15 @@ workspaces, graphs and the borrowed solution. The next solve builds numerical
 state from its actual Hessian. Supplying a different numerical matrix refreshes
 its numerical state without silently replacing an explicit hierarchy.
 
+Hierarchy preparation keeps the graph in CSR arrays. Tuple-based graph views
+are available lazily for inspection. The `_hierarchy_native` Cython extension
+performs connectivity grouping, compatible-node merging, and greedy domain
+packing; the normal YASPS build includes this CPU helper. Numerical setup uses
+bulk domain/index arrays, preserving the same domain order, duplicate-space
+weights, and GPU scatter maps. These optimizations apply to connected and
+heterogeneous graphs as well as isolated nodes. They do not change METIS
+settings, rebuild frequency, or the numerical preconditioner.
+
 Local inverse storage and the complete preconditioner application are FP64.
 Historical internal names containing `mixed` are retained for compatibility;
 optional mixed SpMV storage is a separate feature. Inversion never replaces a

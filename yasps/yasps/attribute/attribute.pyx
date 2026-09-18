@@ -738,8 +738,13 @@ class attribute:
     assert self.correspondance.scene is not None
     # let's create a new attribute for spd projection
     attribute_scene = self.correspondance.scene
-    spd_method_attribute = attribute_scene.addConstant(self.fullName + "_spd_method", rows = 1, cols = 1)
-    spd_method_attribute.updateValue([spd_method])
+    spd_attribute_name = self.fullName + "_spd_method"
+    spd_method_attribute: attribute
+    if spd_attribute_name in attribute_scene.attributes:
+      spd_method_attribute = attribute_scene[spd_attribute_name]
+    else:
+      spd_method_attribute = attribute_scene.addConstant(self.fullName + "_spd_method", rows = 1, cols = 1)
+      spd_method_attribute.updateValue([spd_method])
 
     return attribute(children = [self, spd_method_attribute], operator = SPD, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
 

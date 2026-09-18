@@ -22,6 +22,7 @@ from .jit import compile_cuda_library, spmv_warps_for_shape
 from .local_inverse import LocalInverseError, bucket_size
 from .matrix_view import BlockSparseMatrixView, to_host
 from .pcg import PCGResult
+from .partition import domain_arrays, duplicate_domain_nodes
 
 
 _CUDA_KERNEL_CACHE: dict[int, dict[str, object]] = {}
@@ -1179,9 +1180,8 @@ class DeviceMASRuntime:
   def _domain_layout(self, level: HierarchyLevel):
     sizes = level.domain_scalar_sizes.astype(np.uint32, copy=True)
     if self.fixed_inverse_bucket_size is None:
-      padded = np.asarray(
-        [bucket_size(int(size)) for size in sizes], dtype=np.uint32
-      )
+      unique_sizes, inverse = np.unique(sizes, return_inverse=True)
+      padded = np.asarray([bucket_size(int(size)) for size in unique_sizes], dtype=np.uint32)[inverse]
     else:
       if sizes.size and int(sizes.max()) > self.fixed_inverse_bucket_size:
         raise ValueError(
@@ -1193,18 +1193,16 @@ class DeviceMASRuntime:
       )
     node_domains = np.empty(level.number_of_nodes, dtype=np.uint32)
     node_local_offsets = np.empty(level.number_of_nodes, dtype=np.uint32)
-    domain_nodes = np.concatenate(level.domains).astype(np.int64, copy=False)
-    domain_ids = np.repeat(
-      np.arange(len(level.domains), dtype=np.uint32),
-      [len(nodes) for nodes in level.domains],
-    )
-    local_offsets = np.concatenate(level.domain_scalar_offsets).astype(np.uint32, copy=False)
+    domain_nodes, domain_offsets = domain_arrays(level.domains)
+    counts = np.diff(domain_offsets)
+    domain_ids = np.repeat(np.arange(len(level.domains), dtype=np.uint32), counts)
+    prefix = np.r_[0, np.cumsum(level.node_dimensions[domain_nodes])]
+    local_offsets = (prefix[:-1] - np.repeat(prefix[domain_offsets[:-1]], counts)).astype(np.uint32)
     node_domains[domain_nodes] = domain_ids
     node_local_offsets[domain_nodes] = local_offsets
 
     vector_offsets = np.cumsum(np.r_[0, sizes[:-1]], dtype=np.uint64)
     dimensions = level.node_dimensions.astype(np.int64, copy=False)
-    scalar_nodes = np.repeat(np.arange(level.number_of_nodes, dtype=np.int64), dimensions)
     within_node = np.arange(level.number_of_scalar_dofs, dtype=np.uint64) - np.repeat(
       level.node_scalar_offsets.astype(np.uint64, copy=False), dimensions
     )
@@ -1212,7 +1210,7 @@ class DeviceMASRuntime:
       vector_offsets[node_domains.astype(np.int64)] + node_local_offsets
     ).astype(np.uint64, copy=False)
     scalar_to_packed = np.repeat(packed_node_starts, dimensions) + within_node
-    return sizes, padded, node_domains, node_local_offsets, vector_offsets, scalar_to_packed
+    return sizes, padded, node_domains, node_local_offsets, vector_offsets, scalar_to_packed, domain_nodes, domain_offsets
 
   @staticmethod
   def _fine_scalar_to_level(level: HierarchyLevel, fine: HierarchyLevel, node_map):
@@ -1287,6 +1285,7 @@ class DeviceMASRuntime:
     fine_level_active = np.ones(
       (self.level_count, self.fine_node_count), dtype=np.uint8
     )
+    host_layouts = [self._domain_layout(level) for level in self.hierarchy.levels]
     # Runtime aliases change coordinates inside a static bank, but do not
     # make an already duplicated static Schwarz space independent. Keep
     # this topology weight active in collision-aware mode as well; dropping
@@ -1295,37 +1294,10 @@ class DeviceMASRuntime:
     for level_index, transfer in enumerate(
       self.hierarchy.adjacent_maps, start=1
     ):
-      previous = self.hierarchy.levels[level_index - 1]
-      current = self.hierarchy.levels[level_index]
       mapping = np.asarray(
         transfer.fine_node_to_parent, dtype=np.int64
       )
-      children: list[list[int]] = [
-        [] for _ in range(current.number_of_nodes)
-      ]
-      for child, parent in enumerate(mapping):
-        children[int(parent)].append(child)
-      previous_domain = np.empty(
-        previous.number_of_nodes, dtype=np.int64
-      )
-      for domain, nodes in enumerate(previous.domains):
-        previous_domain[np.asarray(nodes, dtype=np.int64)] = domain
-      duplicate_parent = np.zeros(
-        current.number_of_nodes, dtype=bool
-      )
-      for nodes in current.domains:
-        child_nodes = []
-        for parent in nodes:
-          if len(children[parent]) != 1:
-            break
-          child_nodes.append(children[parent][0])
-        else:
-          source_domain = int(previous_domain[child_nodes[0]])
-          if (all(previous_domain[child] == source_domain
-              for child in child_nodes)
-              and set(child_nodes)
-              == set(previous.domains[source_domain])):
-            duplicate_parent[np.asarray(nodes, dtype=np.int64)] = True
+      duplicate_parent = duplicate_domain_nodes(mapping, host_layouts[level_index - 1][2], host_layouts[level_index][6], host_layouts[level_index][7])
       fine_parents = np.asarray(
         self.hierarchy.composed_node_maps[level_index],
         dtype=np.int64,
@@ -1336,7 +1308,6 @@ class DeviceMASRuntime:
     self.fine_node_level_active = self._to_gpu(
       fine_level_active.reshape(-1), np.uint8
     )
-    host_layouts = [self._domain_layout(level) for level in self.hierarchy.levels]
     level_node_bases = np.cumsum(
       np.r_[0, [level.number_of_nodes
            for level in self.hierarchy.levels][:-1]],
@@ -1357,28 +1328,29 @@ class DeviceMASRuntime:
     self.domain_count = int(sizes.size)
     self.fine_domain_count = len(self.hierarchy.levels[0].domains)
 
-    grouped: dict[tuple[int, int], list[int]] = {}
-    for domain, (active_size, padded_size) in enumerate(zip(sizes, padded)):
-      grouped.setdefault(
-        (int(padded_size), int(active_size)), []
-      ).append(domain)
+    # Stable sorting retains the old ascending domain order within buckets.
+    keys = (padded.astype(np.uint64) << np.uint64(32)) | sizes
+    bucket_order = np.argsort(keys, kind="stable")
+    sorted_keys = keys[bucket_order]
+    bucket_offsets = np.r_[0, np.flatnonzero(sorted_keys[1:] != sorted_keys[:-1]) + 1, sizes.size]
     matrix_offsets = np.empty(self.domain_count, dtype=np.uint64)
     inverse_bucket_specs = []
     matrix_cursor = 0
-    for (padded_size, active_size), domains in sorted(grouped.items()):
+    for first, last in zip(bucket_offsets[:-1], bucket_offsets[1:]):
+      if first == last:
+        continue
+      domains = bucket_order[first:last]
+      padded_size, active_size = int(padded[domains[0]]), int(sizes[domains[0]])
       matrix_start = matrix_cursor
-      for batch, domain in enumerate(domains):
-        matrix_offsets[domain] = matrix_start + batch * padded_size * padded_size
+      matrix_offsets[domains] = matrix_start + np.arange(domains.size, dtype=np.uint64) * padded_size * padded_size
       matrix_cursor += len(domains) * padded_size * padded_size
       inverse_bucket_specs.append((
         padded_size, active_size, matrix_start,
-        np.asarray(domains, np.int64),
+        domains,
       ))
     self.matrix_storage_size = int(matrix_cursor)
-    maximum_inverse_shared = max(
-      (2 * int(size) * int(size) + int(size)) * 8
-      for size in padded
-    )
+    maximum_padded_size = int(padded.max(initial=0))
+    maximum_inverse_shared = (2 * maximum_padded_size * maximum_padded_size + maximum_padded_size) * 8
     default_shared = int(self.cuda.Context.get_device().get_attribute(
       self.cuda.device_attribute.MAX_SHARED_MEMORY_PER_BLOCK
     ))
@@ -1424,7 +1396,7 @@ class DeviceMASRuntime:
     node_domain_ordinals_parts = []
     node_type_parts = []
     domain_nodes_parts = []
-    domain_node_offsets = [0]
+    domain_node_offsets = [np.zeros(1, dtype=np.uint64)]
     for level_index, (level, layout, domain_base, vector_base, node_map) in enumerate(zip(
       self.hierarchy.levels,
       host_layouts,
@@ -1432,7 +1404,7 @@ class DeviceMASRuntime:
       level_vector_bases,
       self.hierarchy.composed_node_maps,
     )):
-      _, _, node_domains, node_local, vector_offsets, scalar_to_packed = layout
+      _, _, node_domains, node_local, vector_offsets, scalar_to_packed, domain_nodes_flat, domain_offsets = layout
       node_map = np.asarray(node_map, dtype=np.int64)
       vector_offsets_parts.append(vector_offsets + vector_base)
       fine_to_level = self._fine_scalar_to_level(level, fine, node_map)
@@ -1452,18 +1424,9 @@ class DeviceMASRuntime:
       node_domains_parts.append(node_domains + domain_base)
       node_local_parts.append(node_local)
       ordinals = np.empty(level.number_of_nodes, dtype=np.uint32)
-      for domain_nodes in level.domains:
-        domain_array = np.asarray(domain_nodes, dtype=np.int64)
-        ordinals[domain_array] = np.arange(
-          domain_array.size, dtype=np.uint32
-        )
-        domain_nodes_parts.append(
-          domain_array.astype(np.uint32, copy=False)
-          + np.uint32(level_node_bases[level_index])
-        )
-        domain_node_offsets.append(
-          domain_node_offsets[-1] + int(domain_array.size)
-        )
+      ordinals[domain_nodes_flat] = np.arange(domain_nodes_flat.size) - np.repeat(domain_offsets[:-1], np.diff(domain_offsets))
+      domain_nodes_parts.append(domain_nodes_flat.astype(np.uint32) + np.uint32(level_node_bases[level_index]))
+      domain_node_offsets.append(domain_offsets[1:].astype(np.uint64) + domain_node_offsets[-1][-1])
       node_domain_ordinals_parts.append(ordinals)
       node_type_parts.append(
         np.zeros(level.number_of_nodes, dtype=np.int64)
@@ -1519,7 +1482,7 @@ class DeviceMASRuntime:
     domain_nodes = np.concatenate(domain_nodes_parts).astype(
       np.uint32, copy=False
     )
-    domain_node_offsets = np.asarray(domain_node_offsets, dtype=np.uint64)
+    domain_node_offsets = np.concatenate(domain_node_offsets)
     node_to_next = np.full(
       self.packed_node_count, np.iinfo(np.uint32).max, dtype=np.uint32
     )
@@ -1581,10 +1544,7 @@ class DeviceMASRuntime:
     )
     preconditioner_specialized = self._get_specialized_preconditioner_kernels(
       self.maximum_fine_dimension, self.level_count,
-      tuple(sorted({
-        (int(size), int(pad))
-        for size, pad in zip(sizes, padded)
-      })), self.level_weights,
+      tuple(sorted((active, pad) for pad, active, _, _ in inverse_bucket_specs)), self.level_weights,
       tuple(sorted(map(int, np.unique(dimensions)))),
       self.duplicate_level_weight,
       self.compact_packed_offsets,
@@ -1645,9 +1605,7 @@ class DeviceMASRuntime:
       np.arange(self.domain_count, dtype=np.uint32),
       sizes.astype(np.int64, copy=False),
     )
-    packed_scalar_local_offsets = np.concatenate([
-      np.arange(int(size), dtype=np.uint32) for size in sizes
-    ])
+    packed_scalar_local_offsets = (np.arange(self.packed_vector_size, dtype=np.uint64) - np.repeat(vector_offsets, sizes.astype(np.int64))).astype(np.uint32)
     level0_packed_to_fine = np.empty(self.fine_dofs, dtype=np.uint32)
     level0_packed_to_fine[
       fine_to_packed[:self.fine_dofs].astype(np.int64, copy=False)

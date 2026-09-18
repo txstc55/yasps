@@ -8,6 +8,7 @@ from time import perf_counter
 import numpy as np
 
 from .block_graph import BlockGraph
+from ._hierarchy_native import component_order
 
 
 @dataclass(frozen=True)
@@ -18,32 +19,11 @@ class OrderingResult:
   seconds: float
 
 
-def _component_bfs_groups(graph: BlockGraph, nodes: list[int]) -> list[list[int]]:
-  """Keep connected runs together inside one METIS partition."""
-  allowed = set(nodes)
-  remaining = set(nodes)
-  groups: list[list[int]] = []
-  while remaining:
-    start = min(remaining)
-    queue = [start]
-    remaining.remove(start)
-    cursor = 0
-    while cursor < len(queue):
-      node = queue[cursor]
-      cursor += 1
-      for neighbor in graph.adjacency[node]:
-        if neighbor in allowed and neighbor in remaining:
-          remaining.remove(neighbor)
-          queue.append(neighbor)
-    groups.append(queue)
-  return groups
-
-
 def metis_order(graph: BlockGraph, target_nodes_per_partition: int = 16) -> OrderingResult:
   start = perf_counter()
   if target_nodes_per_partition <= 0:
     raise ValueError("target_nodes_per_partition must be positive")
-  if graph.node_count <= 1 or not graph.edges:
+  if graph.node_count <= 1 or not graph.adjncy.size:
     order = np.arange(graph.node_count, dtype=np.int64)
     return OrderingResult(order, (tuple(map(int, order)),), "trivial", perf_counter() - start)
   try:
@@ -79,28 +59,14 @@ def metis_order(graph: BlockGraph, target_nodes_per_partition: int = 16) -> Orde
     recursive=True,
     **csr,
   )
-  groups: dict[int, list[int]] = {}
-  for node, partition in zip(active, result.vertex_part):
-    groups.setdefault(int(partition), []).append(int(node))
-  groups_in_graph_order = sorted(
-    [
-      component
-      for group in groups.values()
-      for component in _component_bfs_groups(graph, group)
-    ] + [[int(node)] for node in isolated],
-    key=min,
-  )
-  permutation = [
-    node
-    for group in groups_in_graph_order
-    for node in group
-  ]
-  order = np.asarray(permutation, dtype=np.int64)
-  if sorted(order.tolist()) != list(range(graph.node_count)):
+  labels = np.full(graph.node_count, -1, dtype=np.int64)
+  labels[active] = result.vertex_part
+  order, groups = component_order(graph.xadj, graph.adjncy, labels)
+  if not np.array_equal(np.sort(order), np.arange(graph.node_count)):
     raise RuntimeError("METIS returned an invalid permutation")
   return OrderingResult(
     order,
-    tuple(tuple(map(int, group)) for group in groups_in_graph_order),
+    groups,
     "pymetis-recursive-partition",
     perf_counter() - start,
   )

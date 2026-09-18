@@ -2,7 +2,46 @@
 
 from __future__ import annotations
 
+from itertools import chain
 from typing import Sequence
+
+import numpy as np
+
+from ._hierarchy_native import pack as _pack
+
+
+def domain_arrays(domains):
+  """Flatten disjoint domain lists without one NumPy allocation per domain."""
+  counts = np.fromiter(map(len, domains), dtype=np.int64, count=len(domains))
+  offsets = np.r_[0, np.cumsum(counts)]
+  nodes = np.fromiter(chain.from_iterable(domains), dtype=np.int64, count=int(offsets[-1]))
+  return nodes, offsets
+
+
+def duplicate_domain_nodes(mapping, previous_node_domains, current_nodes, current_offsets):
+  """Mark unchanged Schwarz domains, including multi-node domains.
+
+  Every parent must have exactly one child, all children must belong to one
+  previous domain, and their count must equal that whole previous domain.
+  These conditions are equivalent to comparing the explicit child sets.
+  """
+  parent_count = current_nodes.size
+  duplicate = np.zeros(parent_count, dtype=bool)
+  if not parent_count or not mapping.size:
+    return duplicate
+  child_counts = np.bincount(mapping, minlength=parent_count)
+  child = np.zeros(parent_count, dtype=np.int64)
+  child[mapping] = np.arange(mapping.size)
+  source = previous_node_domains[child[current_nodes]]
+  starts = current_offsets[:-1]
+  all_single = np.logical_and.reduceat(child_counts[current_nodes] == 1, starts)
+  first = np.minimum.reduceat(source, starts)
+  last = np.maximum.reduceat(source, starts)
+  previous_counts = np.bincount(previous_node_domains)
+  counts = np.diff(current_offsets)
+  unchanged = all_single & (first == last) & (counts == previous_counts[first])
+  duplicate[current_nodes] = np.repeat(unchanged, counts)
+  return duplicate
 
 
 def pack_domains(order: Sequence[int], node_dimensions: Sequence[int], max_domain_dofs: int) -> list[list[int]]:
@@ -44,30 +83,10 @@ def pack_domain_groups(
   max_domain_dofs: int,
 ) -> list[list[int]]:
   """Pack each METIS connectivity group without crossing group boundaries."""
-  flat = [int(node) for group in groups for node in group]
-  if sorted(flat) != list(range(len(node_dimensions))):
+  flat, offsets = domain_arrays(groups)
+  if not np.array_equal(np.sort(flat), np.arange(len(node_dimensions))):
     raise ValueError("partition groups must contain every node exactly once")
-  domains: list[list[int]] = []
-  for group in groups:
-    # ``pack_domains`` validates full permutations, so use its exact greedy
-    # rule locally while the global validation above owns uniqueness.
-    current: list[int] = []
-    current_dofs = 0
-    for raw_node in group:
-      node = int(raw_node)
-      node_dofs = int(node_dimensions[node])
-      if node_dofs <= 0:
-        raise ValueError("node dimensions must be positive")
-      if current and current_dofs + node_dofs > max_domain_dofs:
-        domains.append(current)
-        current = []
-        current_dofs = 0
-      current.append(node)
-      current_dofs += node_dofs
-      if node_dofs > max_domain_dofs:
-        domains.append(current)
-        current = []
-        current_dofs = 0
-    if current:
-      domains.append(current)
-  return domains
+  dimensions = np.asarray(node_dimensions, dtype=np.int64)
+  if np.any(dimensions <= 0):
+    raise ValueError("node dimensions must be positive")
+  return _pack(flat, offsets, np.ascontiguousarray(dimensions), max_domain_dofs)
