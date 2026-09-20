@@ -11,6 +11,7 @@
 #include "cuda_tools.h"
 #include <cstdint>
 #include <cub/device/device_radix_sort.cuh>
+#include <cub/block/block_reduce.cuh>
 #include <iostream>
 #include <fstream>
 #include <utility>
@@ -299,12 +300,9 @@ AABB::AABB()
 }
 
 __device__
-inline int common_prefix(const uint64_t* keys, uint32_t lhs, uint32_t rhs) noexcept
+inline int common_upper_bits(const unsigned long long int lhs, const unsigned long long int rhs) noexcept
 {
-    const uint64_t different = keys[lhs] ^ keys[rhs];
-    // Mesh + Morton keys can coincide. The sorted position supplies unique
-    // low bits without truncating either the mesh ID or the spatial key.
-    return different ? ::__clzll(different) : 64 + ::__clz(lhs ^ rhs);
+    return ::__clzll(lhs ^ rhs);
 }
 
 
@@ -318,8 +316,9 @@ inline uint2 determine_range(const uint64_t* node_code,
     }
 
     // determine direction of the range
-    const int L_delta = common_prefix(node_code, idx, idx - 1);
-    const int R_delta = common_prefix(node_code, idx, idx + 1);
+    const uint64_t self_code = node_code[idx];
+    const int L_delta = common_upper_bits(self_code, node_code[idx - 1]);
+    const int R_delta = common_upper_bits(self_code, node_code[idx + 1]);
     const int d = (R_delta > L_delta) ? 1 : -1;
 
     // Compute upper bound for the length of the range
@@ -330,7 +329,7 @@ inline uint2 determine_range(const uint64_t* node_code,
     int i_tmp = idx + d * l_max;
     if (0 <= i_tmp && i_tmp < num_leaves)
     {
-        delta = common_prefix(node_code, idx, i_tmp);
+        delta = common_upper_bits(self_code, node_code[i_tmp]);
     }
     while (delta > delta_min)
     {
@@ -339,7 +338,7 @@ inline uint2 determine_range(const uint64_t* node_code,
         delta = -1;
         if (0 <= i_tmp && i_tmp < num_leaves)
         {
-            delta = common_prefix(node_code, idx, i_tmp);
+            delta = common_upper_bits(self_code, node_code[i_tmp]);
         }
     }
 
@@ -352,7 +351,7 @@ inline uint2 determine_range(const uint64_t* node_code,
         delta = -1;
         if (0 <= i_tmp && i_tmp < num_leaves)
         {
-            delta = common_prefix(node_code, idx, i_tmp);
+            delta = common_upper_bits(self_code, node_code[i_tmp]);
         }
         if (delta > delta_min)
         {
@@ -374,7 +373,13 @@ __device__
 inline unsigned int find_split(const uint64_t* node_code, const unsigned int num_leaves,
     const unsigned int first, const unsigned int last) noexcept
 {
-    const int delta_node = common_prefix(node_code, first, last);
+    const uint64_t first_code = node_code[first];
+    const uint64_t last_code = node_code[last];
+    if (first_code == last_code)
+    {
+        return (first + last) >> 1;
+    }
+    const int delta_node = common_upper_bits(first_code, last_code);
 
     // binary search...
     int split = first;
@@ -385,7 +390,7 @@ inline unsigned int find_split(const uint64_t* node_code, const unsigned int num
         const int middle = split + stride;
         if (middle < last)
         {
-            const int delta = common_prefix(node_code, first, middle);
+            const int delta = common_upper_bits(first_code, node_code[middle]);
             if (delta > delta_node)
             {
                 split = middle;
@@ -863,14 +868,7 @@ __device__ inline double normalized_axis(double offset, double extent)
     return extent > 0.0 && isfinite(extent) ? offset / extent : 0.5;
 }
 
-template <class element_type>
-__global__ void calc_morton_keys(uint64_t* keys,
-                                  uint32_t* primitiveIndices,
-                                  const AABB* bvs,
-                                  const element_type* elements,
-                                  const uint32_t* meshIndices,
-                                  uint32_t number,
-                                  int type)
+__global__ void calc_morton_keys(uint64_t* keys, const AABB* bvs, uint32_t number)
 {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx >= number)
@@ -886,28 +884,10 @@ __global__ void calc_morton_keys(uint64_t* keys,
         normalized_axis(center.x - sceneBox.lower.x, extent.x),
         normalized_axis(center.y - sceneBox.lower.y, extent.y),
         normalized_axis(center.z - sceneBox.lower.z, extent.z));
-    uint32_t mesh = 0u;
-    if(meshIndices)
-    {
-        const element_type element = elements[idx];
-        mesh = meshIndices[element.x];
-        if(mesh != meshIndices[element.y]
-           || (type == 0
-               && mesh != meshIndices[reinterpret_cast<const uint32_t*>(&element)[2]]))
-            mesh = 0u;
-    }
-    // Mesh IDs precede spatial bits, so even scattered primitives of the same
-    // mesh form one subtree. Zero also covers mixed-ID primitives, which must
-    // remain eligible for self-collision.
-    keys[idx] = (static_cast<uint64_t>(mesh) << 32) | morton;
-    primitiveIndices[idx] = idx;
+    keys[idx] = (morton << 32) | static_cast<uint64_t>(idx);
 }
 
-__global__ void calc_leaf_nodes(Node* nodes,
-                                 uint32_t* nodeMeshIndices,
-                                 const uint64_t* keys,
-                                 const uint32_t* primitiveIndices,
-                                 uint32_t number)
+__global__ void calc_leaf_nodes(Node* nodes, const uint64_t* keys, uint32_t number)
 {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx >= number)
@@ -925,17 +905,10 @@ __global__ void calc_leaf_nodes(Node* nodes,
     nodes[leaf].left_idx      = INVALID_INDEX;
     nodes[leaf].right_idx     = INVALID_INDEX;
     nodes[leaf].parent_idx    = INVALID_INDEX;
-    nodes[leaf].element_idx   = primitiveIndices[idx];
-    nodeMeshIndices[leaf]     = static_cast<uint32_t>(keys[idx] >> 32);
+    nodes[leaf].element_idx   = static_cast<uint32_t>(keys[idx]);
 }
 
-__global__ void calc_internal_nodes(Node* nodes,
-                                     uint32_t* nodeMeshIndices,
-                                     const uint64_t* keys,
-                                     uint32_t number,
-                                     uint8_t* uniformNodes,
-                                     uint32_t* crossNodes,
-                                     uint32_t* topLevelCounts)
+__global__ void calc_internal_nodes(Node* nodes, const uint64_t* keys, uint32_t number)
 {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx >= number - 1)
@@ -943,24 +916,6 @@ __global__ void calc_internal_nodes(Node* nodes,
 
     const uint2 range = determine_range(keys, number, idx);
     const uint32_t split = find_split(keys, number, range.x, range.y);
-    const uint32_t firstMesh = static_cast<uint32_t>(keys[range.x] >> 32);
-    const uint32_t lastMesh = static_cast<uint32_t>(keys[range.y] >> 32);
-    const bool uniform = firstMesh == lastMesh;
-    nodeMeshIndices[idx] = uniform ? firstMesh : 0u;
-    // Keep homogeneity separate from the filter ID: a pure zero-ID subtree
-    // is one spatial group even though it must allow self-collision.
-    uniformNodes[idx] = static_cast<uint8_t>(uniform);
-    if(idx == 0u)
-    {
-        crossNodes[0] = 0u;
-        topLevelCounts[1] = static_cast<uint32_t>(uniform);
-    }
-    else if(!uniform)
-    {
-        // Reserve coarse node zero for the existing overall BVH root.
-        const uint32_t slot = atomicAdd(topLevelCounts, 1u) + 1u;
-        crossNodes[slot] = idx;
-    }
 
     uint32_t left  = split;
     uint32_t right = split + 1;
@@ -1019,12 +974,25 @@ __global__ void calc_escape_links(const Node* nodes, int32_t* escape, uint32_t n
 }
 
 __global__ void reorder_leaf_boxes(
-    const uint32_t* primitiveIndices, AABB* leafBoxes, const AABB* unsorted, uint32_t number)
+    const uint64_t* keys, AABB* leafBoxes, const AABB* unsorted, uint32_t number)
 {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx >= number)
         return;
-    leafBoxes[idx] = unsorted[primitiveIndices[idx]];
+    leafBoxes[idx] = unsorted[static_cast<uint32_t>(keys[idx])];
+}
+
+__device__ inline bool same_nonzero_mesh(const uint32_t* meshIndices,
+                                         uint32_t a,
+                                         uint32_t b,
+                                         uint32_t c,
+                                         uint32_t d)
+{
+    if(!meshIndices)
+        return false;
+    const uint32_t mesh = meshIndices[a];
+    return mesh != 0u && mesh == meshIndices[b] && mesh == meshIndices[c]
+           && mesh == meshIndices[d];
 }
 
 __device__ inline bool all_fixed(
@@ -1054,7 +1022,6 @@ __global__ void query_face_candidates(const int*      btype,
                                       const uint32_t* surfaceVertices,
                                       const AABB*     bvs,
                                       const Node*     nodes,
-                                      const uint32_t* nodeMeshIndices,
                                       const int32_t*  escape,
                                       int2*           candidates,
                                       uint32_t*       candidateNum,
@@ -1069,9 +1036,6 @@ __global__ void query_face_candidates(const int*      btype,
         return;
 
     const uint32_t point = surfaceVertices[surfaceIdx];
-    const uint32_t queryMesh = meshIndices ? meshIndices[point] : 0u;
-    if(queryMesh != 0u && queryMesh == nodeMeshIndices[0])
-        return;
     const double3 x = vertices[point];
     AABB query;
     query.lower = x;
@@ -1086,20 +1050,13 @@ __global__ void query_face_candidates(const int*      btype,
     int32_t node = 0;
     while(node != -1)
     {
-        // Reject the whole excluded mesh before loading any of its boxes or
-        // primitive vertices. This applies to both proximity and swept queries.
-        if(queryMesh != 0u && queryMesh == nodeMeshIndices[node])
-        {
-            node = escape[node];
-            continue;
-        }
+        const Node current = nodes[node];
         if(!overlap(query, bvs[node], gap))
         {
             node = escape[node];
             continue;
         }
 
-        const Node current = nodes[node];
         if(current.element_idx == INVALID_INDEX)
         {
             node = static_cast<int32_t>(current.left_idx);
@@ -1109,7 +1066,8 @@ __global__ void query_face_candidates(const int*      btype,
         const uint32_t faceId = current.element_idx;
         const uint3 face = faces[faceId];
         if(point != face.x && point != face.y && point != face.z
-           && !all_fixed(btype, point, face.x, face.y, face.z))
+           && !all_fixed(btype, point, face.x, face.y, face.z)
+           && !same_nonzero_mesh(meshIndices, point, face.x, face.y, face.z))
         {
             append_candidate(make_int2(-static_cast<int>(point) - 1,
                                        static_cast<int>(faceId)),
@@ -1122,47 +1080,77 @@ __global__ void query_face_candidates(const int*      btype,
     }
 }
 
+// Higher-ID partners of a trailing single-mesh suffix are all excluded.
+// Find that suffix from original edge IDs, not Morton order or a body ID.
+__global__ void find_edge_query_end(const uint2* edges,
+                                    const uint32_t* meshIndices,
+                                    uint32_t edgeCount,
+                                    uint32_t* queryEnd)
+{
+    const uint2 last = edges[edgeCount - 1u];
+    const uint32_t mesh = meshIndices ? meshIndices[last.x] : 0u;
+    if(mesh == 0u || mesh != meshIndices[last.y])
+    {
+        // The final edge has no higher-ID partner even without mesh filtering.
+        if(threadIdx.x == 0)
+            *queryEnd = edgeCount - 1u;
+        return;
+    }
+
+    uint32_t end = 0u;
+    for(int64_t id = static_cast<int64_t>(edgeCount) - 2 - threadIdx.x;
+        id >= 0; id -= blockDim.x)
+    {
+        const uint2 edge = edges[id];
+        if(meshIndices[edge.x] != mesh || meshIndices[edge.y] != mesh)
+        {
+            end = static_cast<uint32_t>(id) + 1u;
+            break;
+        }
+    }
+    using Reduce = cub::BlockReduce<uint32_t, BVH_THREADS>;
+    __shared__ typename Reduce::TempStorage scratch;
+    const uint32_t result = Reduce(scratch).Reduce(end, cub::Max());
+    if(threadIdx.x == 0)
+        *queryEnd = result;
+}
+
 __global__ void query_edge_candidates(const int*      btype,
+                                      const uint32_t* meshIndices,
                                       const uint2*    edges,
                                       const AABB*     bvs,
                                       const Node*     nodes,
-                                      const uint32_t* nodeMeshIndices,
                                       const int32_t*  escape,
                                       int2*           candidates,
                                       uint32_t*       candidateNum,
                                       uint32_t        candidateCapacity,
                                       uint32_t*       candidateOverflow,
                                       double          dHat,
-                                      uint32_t        edgeCount)
+                                      uint32_t        edgeCount,
+                                      const uint32_t* queryEnd)
 {
     uint32_t leaf = blockIdx.x * blockDim.x + threadIdx.x;
     if(leaf >= edgeCount)
         return;
 
     leaf += edgeCount - 1;
-    const uint32_t queryMesh = nodeMeshIndices[leaf];
-    if(queryMesh != 0u && queryMesh == nodeMeshIndices[0])
+    const uint32_t selfId = nodes[leaf].element_idx;
+    if(selfId >= *queryEnd)
         return;
     const AABB query = bvs[leaf];
-    const uint32_t selfId = nodes[leaf].element_idx;
     const uint2 self = edges[selfId];
     const double gap = sqrt(dHat);
 
     int32_t node = 0;
     while(node != -1)
     {
-        if(queryMesh != 0u && queryMesh == nodeMeshIndices[node])
-        {
-            node = escape[node];
-            continue;
-        }
+        const Node current = nodes[node];
         if(!overlap(query, bvs[node], gap))
         {
             node = escape[node];
             continue;
         }
 
-        const Node current = nodes[node];
         if(current.element_idx == INVALID_INDEX)
         {
             node = static_cast<int32_t>(current.left_idx);
@@ -1173,7 +1161,8 @@ __global__ void query_edge_candidates(const int*      btype,
         const uint2 other = edges[otherId];
         if(otherId > selfId && self.x != other.x && self.x != other.y
            && self.y != other.x && self.y != other.y
-           && !all_fixed(btype, self.x, self.y, other.x, other.y))
+           && !all_fixed(btype, self.x, self.y, other.x, other.y)
+           && !same_nonzero_mesh(meshIndices, self.x, self.y, other.x, other.y))
         {
             append_candidate(make_int2(static_cast<int>(selfId),
                                        static_cast<int>(otherId)),
@@ -1360,182 +1349,28 @@ AABB calculate_scene(AABB* bvs, AABB* temporary, uint32_t number)
     return hostScene;
 }
 
-__global__ void collect_mesh_roots(const Node* nodes,
-                                    const AABB* bvs,
-                                    const uint8_t* uniformNodes,
-                                    uint32_t number,
-                                    uint32_t* rootCount,
-                                    uint64_t* rootKeys,
-                                    uint32_t* rootIndices)
-{
-    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if(idx >= 2u * number - 1u)
-        return;
-
-    if(idx < number - 1u && !uniformNodes[idx])
-        return;
-    const uint32_t parent = nodes[idx].parent_idx;
-    if(parent != INVALID_INDEX && uniformNodes[parent])
-        return;
-
-    const AABB sceneBox = bvs[0];
-    const double3 extent = make_double3(sceneBox.upper.x - sceneBox.lower.x,
-                                        sceneBox.upper.y - sceneBox.lower.y,
-                                        sceneBox.upper.z - sceneBox.lower.z);
-    AABB groupBox = bvs[idx];
-    const double3 center = groupBox.center();
-    const uint64_t morton = morton_code(
-        normalized_axis(center.x - sceneBox.lower.x, extent.x),
-        normalized_axis(center.y - sceneBox.lower.y, extent.y),
-        normalized_axis(center.z - sceneBox.lower.z, extent.z));
-    const uint32_t slot = atomicAdd(rootCount, 1u);
-    rootKeys[slot] = (morton << 32) | static_cast<uint64_t>(idx);
-    rootIndices[slot] = idx;
-}
-
-__global__ void rewire_mesh_top_level(Node* nodes,
-                                       const uint64_t* rootKeys,
-                                       const uint32_t* rootIndices,
-                                       const uint32_t* crossNodes,
-                                       uint32_t groupCount)
-{
-    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if(idx >= groupCount - 1u)
-        return;
-
-    const uint2 range = determine_range(rootKeys, groupCount, idx);
-    const uint32_t split = find_split(rootKeys, groupCount, range.x, range.y);
-    const uint32_t left = range.x == split
-                              ? rootIndices[split]
-                              : crossNodes[split];
-    const uint32_t right = range.y == split + 1u
-                               ? rootIndices[split + 1u]
-                               : crossNodes[split + 1u];
-    const uint32_t node = crossNodes[idx];
-    nodes[node].left_idx = left;
-    nodes[node].right_idx = right;
-    nodes[left].parent_idx = node;
-    nodes[right].parent_idx = node;
-    if(idx == 0u)
-        nodes[node].parent_idx = INVALID_INDEX;
-}
-
-__global__ void refit_mesh_top_level(const Node* nodes,
-                                      AABB* bvs,
-                                      uint32_t* flags,
-                                      const uint32_t* rootIndices,
-                                      uint32_t groupCount)
-{
-    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if(idx >= groupCount)
-        return;
-
-    uint32_t parent = nodes[rootIndices[idx]].parent_idx;
-    while(parent != INVALID_INDEX)
-    {
-        if(atomicCAS(flags + parent, INVALID_INDEX, 0u) == INVALID_INDEX)
-            return;
-        bvs[parent] = merge(bvs[nodes[parent].left_idx], bvs[nodes[parent].right_idx]);
-        __threadfence();
-        parent = nodes[parent].parent_idx;
-    }
-}
-
-void rebuild_spatial_mesh_top_level(lbvh* bvh, uint32_t number)
-{
-    if(number <= 1u)
-        return;
-
-    // The unsorted leaf boxes are no longer needed. Their allocation has
-    // 48*N bytes; counters, coarse node IDs and homogeneity use only 5*N+3.
-    uint32_t* counts = reinterpret_cast<uint32_t*>(bvh->_tempLeafBox);
-    uint32_t* crossNodes = counts + 2;
-    uint8_t* uniformNodes = reinterpret_cast<uint8_t*>(crossNodes + number - 1u);
-    uint32_t hostCounts[2];
-    CUDA_SAFE_CALL(cudaMemcpy(hostCounts,
-                              counts,
-                              sizeof(hostCounts),
-                              cudaMemcpyDeviceToHost));
-    if(hostCounts[1] != 0u)
-        return;
-    const uint32_t groupCount = hostCounts[0] + 2u;
-
-    // Replace only the cross-mesh part of the tree. Sorting the mesh root
-    // boxes spatially avoids forcing queries through arbitrary mesh-ID order.
-    CUDA_SAFE_CALL(cudaMemset(counts, 0, sizeof(uint32_t)));
-    const uint32_t nodeBlocks =
-        (2u * number - 1u + BVH_THREADS - 1u) / BVH_THREADS;
-    collect_mesh_roots<<<nodeBlocks, BVH_THREADS>>>(bvh->_nodes,
-                                                    bvh->_bvs,
-                                                    uniformNodes,
-                                                    number,
-                                                    counts,
-                                                    bvh->_MChash,
-                                                    bvh->_primitiveIndices);
-    bvh->radixSortMorton(groupCount);
-
-    const uint32_t internalBlocks =
-        (groupCount - 1u + BVH_THREADS - 1u) / BVH_THREADS;
-    rewire_mesh_top_level<<<internalBlocks, BVH_THREADS>>>(bvh->_nodes,
-                                                          bvh->_MChash,
-                                                          bvh->_primitiveIndices,
-                                                          crossNodes,
-                                                          groupCount);
-    CUDA_SAFE_CALL(cudaMemset(
-        bvh->_flags, 0xFF, (number - 1u) * sizeof(uint32_t)));
-    const uint32_t groupBlocks = (groupCount + BVH_THREADS - 1u) / BVH_THREADS;
-    refit_mesh_top_level<<<groupBlocks, BVH_THREADS>>>(bvh->_nodes,
-                                                       bvh->_bvs,
-                                                       bvh->_flags,
-                                                       bvh->_primitiveIndices,
-                                                       groupCount);
-}
-
-template <class element_type>
-void build_topology(lbvh* bvh, const element_type* elements, uint32_t number, int type)
+void build_topology(lbvh* bvh, uint32_t number)
 {
     if(number == 0)
         return;
 
     const uint32_t blocks = (number + BVH_THREADS - 1) / BVH_THREADS;
-    calc_morton_keys<<<blocks, BVH_THREADS>>>(bvh->_MChash,
-                                              bvh->_primitiveIndices,
-                                              bvh->_bvs,
-                                              elements,
-                                              bvh->_meshIndices,
-                                              number,
-                                              type);
+    calc_morton_keys<<<blocks, BVH_THREADS>>>(bvh->_MChash, bvh->_bvs, number);
     bvh->radixSortMorton(number);
     reorder_leaf_boxes<<<blocks, BVH_THREADS>>>(
-        bvh->_primitiveIndices, bvh->_bvs + number - 1, bvh->_tempLeafBox, number);
-    calc_leaf_nodes<<<blocks, BVH_THREADS>>>(bvh->_nodes,
-                                             bvh->_nodeMeshIndices,
-                                             bvh->_MChash,
-                                             bvh->_primitiveIndices,
-                                             number);
+        bvh->_MChash, bvh->_bvs + number - 1, bvh->_tempLeafBox, number);
+    calc_leaf_nodes<<<blocks, BVH_THREADS>>>(bvh->_nodes, bvh->_MChash, number);
 
     if(number > 1)
     {
-        uint32_t* topLevelCounts = reinterpret_cast<uint32_t*>(bvh->_tempLeafBox);
-        uint32_t* crossNodes = topLevelCounts + 2;
-        uint8_t* uniformNodes =
-            reinterpret_cast<uint8_t*>(crossNodes + number - 1u);
-        CUDA_SAFE_CALL(cudaMemset(topLevelCounts, 0, sizeof(uint32_t)));
         const uint32_t internalBlocks =
             (number - 1 + BVH_THREADS - 1) / BVH_THREADS;
         calc_internal_nodes<<<internalBlocks, BVH_THREADS>>>(
-            bvh->_nodes,
-            bvh->_nodeMeshIndices,
-            bvh->_MChash,
-            number,
-            uniformNodes,
-            crossNodes,
-            topLevelCounts);
+            bvh->_nodes, bvh->_MChash, number);
         CUDA_SAFE_CALL(cudaMemset(
             bvh->_flags, 0xFF, (number - 1) * sizeof(uint32_t)));
         calc_internal_boxes<<<blocks, BVH_THREADS>>>(
             bvh->_nodes, bvh->_bvs, bvh->_flags, number);
-        rebuild_spatial_mesh_top_level(bvh, number);
     }
 
     const uint32_t nodeCount = 2u * number - 1u;
@@ -1589,7 +1424,6 @@ void launch_face_query(lbvh_f* obj,
                                                    obj->_surfVerts,
                                                    obj->_bvs,
                                                    obj->_nodes,
-                                                   obj->_nodeMeshIndices,
                                                    obj->_escape,
                                                    obj->_candidatePairs,
                                                    obj->_candidateNum,
@@ -1604,19 +1438,24 @@ void launch_edge_query(lbvh_e* obj, double dHat)
 {
     if(!obj || obj->edge_number == 0 || !obj->_candidatePairs || !obj->_candidateNum)
         return;
+    // Build scratch is dead during traversal; retain the complete edge BVH.
+    uint32_t* queryEnd = reinterpret_cast<uint32_t*>(obj->_tempLeafBox);
+    find_edge_query_end<<<1, BVH_THREADS>>>(obj->_edges, obj->_meshIndices,
+                                            obj->edge_number, queryEnd);
     const uint32_t blocks = (obj->edge_number + BVH_THREADS - 1) / BVH_THREADS;
     query_edge_candidates<<<blocks, BVH_THREADS>>>(obj->_btype,
+                                                   obj->_meshIndices,
                                                    obj->_edges,
                                                    obj->_bvs,
                                                    obj->_nodes,
-                                                   obj->_nodeMeshIndices,
                                                    obj->_escape,
                                                    obj->_candidatePairs,
                                                    obj->_candidateNum,
                                                    obj->_maxCandidatePairs,
                                                    obj->_overflowCount,
                                                    dHat,
-                                                   obj->edge_number);
+                                                   obj->edge_number,
+                                                   queryEnd);
 }
 
 double scene_diagonal_squared(const AABB& scene)
@@ -1636,9 +1475,8 @@ void lbvh::radixSortMorton(uint32_t number)
         return;
 
     size_t required = 0;
-    CUDA_SAFE_CALL(cub::DeviceRadixSort::SortPairs(
-        nullptr, required, _MChash, _MChash_sorted,
-        _primitiveIndices, _primitiveIndices_sorted, number));
+    CUDA_SAFE_CALL(cub::DeviceRadixSort::SortKeys(
+        nullptr, required, _MChash, _MChash_sorted, number));
     if(required > _sort_temp_bytes)
     {
         if(_sort_temp_storage)
@@ -1646,11 +1484,9 @@ void lbvh::radixSortMorton(uint32_t number)
         CUDA_SAFE_CALL(cudaMalloc(&_sort_temp_storage, required));
         _sort_temp_bytes = required;
     }
-    CUDA_SAFE_CALL(cub::DeviceRadixSort::SortPairs(
-        _sort_temp_storage, required, _MChash, _MChash_sorted,
-        _primitiveIndices, _primitiveIndices_sorted, number));
+    CUDA_SAFE_CALL(cub::DeviceRadixSort::SortKeys(
+        _sort_temp_storage, required, _MChash, _MChash_sorted, number));
     std::swap(_MChash, _MChash_sorted);
-    std::swap(_primitiveIndices, _primitiveIndices_sorted);
 }
 
 void lbvh::MALLOC_DEVICE_MEM(uint32_t primitiveNumber, uint32_t pointNumber)
@@ -1661,12 +1497,6 @@ void lbvh::MALLOC_DEVICE_MEM(uint32_t primitiveNumber, uint32_t pointNumber)
                                   primitiveNumber * sizeof(uint64_t)));
         CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_MChash_sorted),
                                   primitiveNumber * sizeof(uint64_t)));
-        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_primitiveIndices),
-                                  primitiveNumber * sizeof(uint32_t)));
-        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_primitiveIndices_sorted),
-                                  primitiveNumber * sizeof(uint32_t)));
-        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_nodeMeshIndices),
-                                  (2u * primitiveNumber - 1u) * sizeof(uint32_t)));
         CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_nodes),
                                   (2u * primitiveNumber - 1u) * sizeof(Node)));
         CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&_bvs),
@@ -1692,12 +1522,6 @@ void lbvh::FREE_DEVICE_MEM()
         (void)cudaFree(_MChash);
     if(_MChash_sorted)
         (void)cudaFree(_MChash_sorted);
-    if(_primitiveIndices)
-        (void)cudaFree(_primitiveIndices);
-    if(_primitiveIndices_sorted)
-        (void)cudaFree(_primitiveIndices_sorted);
-    if(_nodeMeshIndices)
-        (void)cudaFree(_nodeMeshIndices);
     if(_nodes)
         (void)cudaFree(_nodes);
     if(_bvs)
@@ -1715,9 +1539,6 @@ void lbvh::FREE_DEVICE_MEM()
 
     _MChash = nullptr;
     _MChash_sorted = nullptr;
-    _primitiveIndices = nullptr;
-    _primitiveIndices_sorted = nullptr;
-    _nodeMeshIndices = nullptr;
     _nodes = nullptr;
     _bvs = nullptr;
     _flags = nullptr;
@@ -1835,7 +1656,7 @@ double lbvh_f::Construct(double3* vertices)
     _calcLeafBvs<<<blocks, BVH_THREADS>>>(
         _vertexes, _faces, _bvs + face_number - 1, face_number, 0);
     scene = calculate_scene(_bvs, _tempLeafBox, face_number);
-    build_topology(this, _faces, face_number, 0);
+    build_topology(this, face_number);
     return 0.0;
 }
 
@@ -1857,7 +1678,7 @@ double lbvh_f::ConstructFullCCD(
                                               face_number,
                                               0);
     scene = calculate_scene(_bvs, _tempLeafBox, face_number);
-    build_topology(this, _faces, face_number, 0);
+    build_topology(this, face_number);
     if(vert_number > 0)
     {
         const uint32_t pointBlocks =
@@ -1884,7 +1705,7 @@ double lbvh_e::Construct(double3* vertices)
     _calcLeafBvs<<<blocks, BVH_THREADS>>>(
         _vertexes, _edges, _bvs + edge_number - 1, edge_number, 1);
     scene = calculate_scene(_bvs, _tempLeafBox, edge_number);
-    build_topology(this, _edges, edge_number, 1);
+    build_topology(this, edge_number);
     return 0.0;
 }
 
@@ -1906,7 +1727,7 @@ double lbvh_e::ConstructFullCCD(
                                               edge_number,
                                               1);
     scene = calculate_scene(_bvs, _tempLeafBox, edge_number);
-    build_topology(this, _edges, edge_number, 1);
+    build_topology(this, edge_number);
     return 0.0;
 }
 

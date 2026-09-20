@@ -111,11 +111,6 @@ class CCD:
 
   ``mesh_indices == 0`` enables self-collision. A shared nonzero mesh ID
   suppresses pairs whose primitive vertices all belong to that same mesh.
-  Face and edge BVHs group these primitives by mesh before spatial sorting,
-  with a spatial tree over the groups. Queries skip their entire own-mesh
-  subtree before AABB tests.
-  Scattered points can be supplied only as ``surface_vertices`` queries;
-  they need no particle faces or edges to collide with other meshes' faces.
   Distances and ``dhat`` are squared, matching the original wrapper.
   """
 
@@ -313,10 +308,10 @@ class CCD:
     self.__lbvh_e_scene_size.restype = ctypes.c_double
 
     try:
-      self.__largest_step_compact = self.__accd.self_largestFeasibleStepSizeCompactWithBound
+      self.__largest_step_compact = self.__accd.self_largestFeasibleStepSizeCompact
     except AttributeError as error:
       raise RuntimeError(
-        "libaccd.so is stale and lacks bounded compact-candidate support"
+        "libaccd.so is stale and lacks compact-candidate support"
       ) from error
     self.__largest_step_compact.argtypes = [
       ctypes.c_double,
@@ -327,7 +322,6 @@ class CCD:
       pointer,
       pointer,
       ctypes.c_int,
-      ctypes.c_double,
     ]
     self.__largest_step_compact.restype = ctypes.c_double
 
@@ -950,7 +944,6 @@ class CCD:
       self.__to_void_p(moving_directions),
       self.__to_void_p(self.__mqueue),
       ctypes.c_int(self.__candidate_count),
-      ctypes.c_double(self.__cached_alpha),
     )
     cuda.Context.synchronize()
     step = min(float(step), self.__cached_alpha)
