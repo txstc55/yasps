@@ -16,9 +16,9 @@ import pycuda.gpuarray as gpuarray
 from pycuda.compiler import SourceModule
 import pyvista as pv
 
-from helpers import GRID_N, GRID, DX, GRID_ORIGIN, load_bunny, place_bunny, vertex_masses, volume_samples, check_aabbs, surface_triangles, surface_edges, container_mesh
+from helpers import GRID_N, GRID, DX, GRID_ORIGIN, load_bunny, vertex_masses, volume_samples, surface_triangles, surface_edges, container_mesh
 from helpers import BOX_LOWER, BOX_UPPER, TRANSFER_OPTIONS
-from helpers import constant, inertia, edge_matrix, snh_density, snh_parameters, determinant_barrier, rotation_penalty, particle_graph, freeze_particle_model, bind_particle_range, FrameHierarchyTopology, assemble_batched, full_energy
+from helpers import constant, inertia, edge_matrix, snh_density, snh_parameters, rotation_penalty, particle_graph, freeze_particle_model, bind_particle_range, FrameHierarchyTopology, assemble_batched, full_energy
 from helpers import contact_barrier, contact_distance_squared, update_contacts, save_video
 from helpers import position_attributes, update_position, create_collision_detector, ccd_sweep_with_growth, liquid_volume_from_deformation, check_initial_bodies
 
@@ -48,9 +48,6 @@ CCD_SLACKNESS = 0.5
 CONTAINER_MESH_ID = 5  # Distinct from both affine bodies (2/3) and MPM (4).
 CHECKPOINT_START_FRAME = 0
 CHECKPOINT_INTERVAL = 5  # Full restart state every five frames; surface/particle exports every frame.
-MINIMUM_DETERMINANT = 1e-6
-DETERMINANT_BARRIER_ACTIVATION = 0.2
-DETERMINANT_BARRIER_STIFFNESS_SCALE = 1.0
 ORTHOGONAL_STIFFNESS = 1e9
 DETERMINANT_STIFFNESS = 1e9
 INITIAL_VELOCITY = np.zeros(3)
@@ -151,9 +148,6 @@ dhat = constant(s, "dhat", [CONTACT_DISTANCE**2])
 liquid_volume_weight = constant(s, "liquid_volume_weight", [LIQUID_VOLUME_WEIGHT])
 liquid_determinant_weight = constant(s, "liquid_determinant_weight", [LIQUID_DETERMINANT_WEIGHT])
 kappa = constant(s, "kappa", [CONTACT_STIFFNESS])
-determinant_activation = constant(s, "determinant_activation", [DETERMINANT_BARRIER_ACTIVATION])
-minimum_determinant = constant(s, "minimum_determinant", [MINIMUM_DETERMINANT])
-determinant_barrier_scale = constant(s, "determinant_barrier_scale", [DETERMINANT_BARRIER_STIFFNESS_SCALE])
 grid = mesh.addPrimitive("grid", numInstances=len(GRID))
 grid_mass = constant(grid, "mass", np.zeros(len(GRID)))
 grid_coordinates, q = position_attributes(grid, GRID, SEPARATE_COORDINATES)
@@ -201,7 +195,6 @@ for a, name in enumerate("xyz"):
   affine_rows.append(affine.addAttribute(f"T_{name}", rows=1, cols=4))
   affine_rows[-1].updateValue(np.array(transforms[:1])[:, a, :].copy().ravel())
 T = affine.addAttribute("T", computed_attribute=attribute.to_array([row[b] for row in affine_rows for b in range(4)], rows=3, cols=4))
-affine_A = affine.addAttribute("A", computed_attribute=attribute.to_array([affine_rows[a][b] for a in range(3) for b in range(3)], rows=3, cols=3))
 affine_volume = constant(affine, "volume", [volumes[0].sum()])
 affine_energy = affine.addAttribute("rotation", computed_attribute=h_attribute * h_attribute * affine_volume * rotation_penalty(T, ORTHOGONAL_STIFFNESS, DETERMINANT_STIFFNESS))
 s.addEnergy(affine_energy, projection_method=1)
@@ -235,15 +228,17 @@ for material_type, body_ids in MPM_BODY_GROUPS:
     samples.append(points)
     particle_volumes.append(pv0)
   count = sum(particle_counts)
-  group = particle_graph(mesh, material_type, grid, grid_coordinates if SEPARATE_COORDINATES else q, grid_reference, count, h_attribute, material_type == "liquid", determinant_activation, minimum_determinant, determinant_barrier_scale, liquid_determinant_weight=liquid_determinant_weight, liquid_volume_weight=liquid_volume_weight)
+  group = particle_graph(mesh, material_type, grid, grid_coordinates if SEPARATE_COORDINATES else q, grid_reference, count, h_attribute, material_type == "liquid", liquid_determinant_weight=liquid_determinant_weight, liquid_volume_weight=liquid_volume_weight)
   group["body_ids"] = body_ids
   group["particle_counts"] = particle_counts
   group["body_offsets"] = np.r_[0, np.cumsum(particle_counts)]
   group["state"] = {"x": gpuarray.to_gpu(np.concatenate(samples).ravel()), "v": gpuarray.to_gpu(np.tile(INITIAL_VELOCITY, count)), "F": gpuarray.to_gpu(np.tile(np.eye(3).ravel(), count)), "C": gpuarray.zeros(count * 9, np.float64)}
   if group["liquid"]:
     group["state"]["J"] = gpuarray.to_gpu(np.ones(count))
-  group["parameters"] = {"volume": gpuarray.to_gpu(np.concatenate(particle_volumes)), "bulk": gpuarray.to_gpu(np.full(count, LIQUID_BULK))}
-  if material_type == "solid":
+  group["parameters"] = {"volume": gpuarray.to_gpu(np.concatenate(particle_volumes))}
+  if material_type == "liquid":
+    group["parameters"]["bulk"] = gpuarray.to_gpu(np.full(count, LIQUID_BULK))
+  else:
     group["parameters"].update(mu=gpuarray.to_gpu(np.full(count, mu_cpu[1])), lam=gpuarray.to_gpu(np.full(count, lam_cpu[1])))
   group["mass"] = gpuarray.to_gpu(np.concatenate([particle_volumes[j] * densities[i] for j, i in enumerate(body_ids)]))
   group["frozen"] = dict(group["parameters"], x=group["state"]["x"], F=group["state"]["F"], indices=gpuarray.zeros(count * 27, np.uint32), weights=gpuarray.zeros(count * 27, np.float64), B=gpuarray.zeros(count * 81, np.float64))
@@ -317,7 +312,6 @@ for group in groups:
   # Material connectivity is frozen per frame; ordinary scene contacts refresh
   # independently at every Newton iterate and every line-search trial.
   group["material_hessian"] = material_hessian
-  group["hessians"] = [material_hessian]
 
 ##################################################################
 ## Numerical buffers, CCD topology, and a fixed comparison camera

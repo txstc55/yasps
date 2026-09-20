@@ -1,6 +1,5 @@
 // Transfers, topology metadata, and safeguards. YASPS differentiates energies.
 #include <cmath>
-#include <assert.h>
 
 #ifndef GRID_N
 #define GRID_N 48
@@ -14,45 +13,6 @@
 #define GRID_ORIGIN_Z (-0.25 - 0.5 * GRID_DX)
 #endif
 constexpr int GRID_COUNT = GRID_N * GRID_N * GRID_N;
-
-// Each compressed wall block belongs to the material's complete 27-node
-// stencil graph. Reuse that storage instead of adding duplicate MAS blocks.
-// Both lists contain unique, lexicographically sorted scalar or 3x3 blocks.
-extern "C" __global__ void add_particle_wall_blocks(const unsigned int* wall_coordinates, const double* wall_values, unsigned int wall_count, const unsigned int* material_coordinates, double* material_values, unsigned int material_count, unsigned int block_size) {
-  unsigned int p = blockIdx.x * blockDim.x + threadIdx.x;
-  if (p >= wall_count) return;
-  unsigned int row = wall_coordinates[2 * p], col = wall_coordinates[2 * p + 1];
-  unsigned int first = 0, last = material_count;
-  while (first < last) {
-    unsigned int middle = first + (last - first) / 2;
-    unsigned int r = material_coordinates[2 * middle], c = material_coordinates[2 * middle + 1];
-    if (r < row || (r == row && c < col)) first = middle + 1;
-    else last = middle;
-  }
-  assert(first < material_count && material_coordinates[2 * first] == row && material_coordinates[2 * first + 1] == col);
-  // Unique source coordinates imply unique destinations: no atomics needed.
-  for (unsigned int k = 0; k < block_size; ++k) material_values[block_size * first + k] += wall_values[block_size * p + k];
-}
-
-// Compact per-wall active particle IDs and their weights on the GPU. IDs are
-// relative to the currently bound batch, matching the one-to-one YASPS JOIN.
-extern "C" __global__ void select_particle_walls(
-    const double* positions, const double* particle_weights,
-    unsigned int* ids, double* weights, unsigned int* counts,
-    unsigned int count, unsigned int capacity, double distance_squared,
-    double xmin, double xmax, double ymin, double zmin, double zmax) {
-  const unsigned int p = blockIdx.x * blockDim.x + threadIdx.x;
-  if (p >= count) return;
-  const double x = positions[3 * p], y = positions[3 * p + 1], z = positions[3 * p + 2];
-  const double gaps[5] = {x - xmin, xmax - x, y - ymin, z - zmin, zmax - z};
-  for (unsigned int wall = 0; wall < 5; ++wall) {
-    if (gaps[wall] * gaps[wall] < distance_squared) {
-      const unsigned int slot = atomicAdd(counts + wall, 1u);
-      ids[wall * capacity + slot] = p;
-      weights[wall * capacity + slot] = particle_weights[p];
-    }
-  }
-}
 
 __device__ double grid_origin(int axis) {
   return axis == 0 ? GRID_ORIGIN_X : (axis == 1 ? GRID_ORIGIN_Y : GRID_ORIGIN_Z);
@@ -145,25 +105,6 @@ extern "C" __global__ void topology_block_dimensions(
     dimensions[2 * (first + i)] = rows;
     dimensions[2 * (first + i) + 1] = cols;
   }
-}
-
-extern "C" __global__ void wall_step_bounds(
-    const double* position, const double* displacement,
-    const unsigned int* vertex_ids, double* bounds,
-    int count, double lower_x, double lower_y, double lower_z,
-    double upper_x, double upper_z, double slackness) {
-  const int query = blockIdx.x * blockDim.x + threadIdx.x;
-  if (query >= count) return;
-  const unsigned int vertex = vertex_ids[query];
-  double crossing = INFINITY;
-  const double x = position[3*vertex], y = position[3*vertex+1], z = position[3*vertex+2];
-  const double dx = displacement[3*vertex], dy = displacement[3*vertex+1], dz = displacement[3*vertex+2];
-  if (dx < 0.0) crossing = fmin(crossing, (x-lower_x)/(-dx));
-  if (dx > 0.0) crossing = fmin(crossing, (upper_x-x)/dx);
-  if (dy < 0.0) crossing = fmin(crossing, (y-lower_y)/(-dy));
-  if (dz < 0.0) crossing = fmin(crossing, (z-lower_z)/(-dz));
-  if (dz > 0.0) crossing = fmin(crossing, (upper_z-z)/dz);
-  bounds[query] = crossing <= 1.0 ? fmax(0.0, slackness*crossing) : 1.0;
 }
 
 extern "C" __global__ void g2p(
