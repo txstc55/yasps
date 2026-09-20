@@ -23,7 +23,6 @@ enum PCGScalar : std::uint32_t {
 
 constexpr double PCG_NON_SPD = -1.0;
 constexpr double PCG_DIVERGED = -2.0;
-constexpr double PCG_STAGNATED = -3.0;
 constexpr double PCG_CONTINUE = 0.0;
 constexpr double PCG_CONVERGED = 1.0;
 constexpr double PCG_RESTART = 2.0;
@@ -257,21 +256,6 @@ extern "C" __global__ void yasps_mas_finish_iteration(double* state) {
   if (next_rz > 1.0e16 * state[PCG_REFERENCE_RZ]) {
     state[PCG_BETA] = 0.0;
     state[PCG_STATUS] = PCG_DIVERGED;
-    state[PCG_STATUS_VALUE] = residual2;
-    return;
-  }
-  // Do not spend the entire 200k budget circling a numerical residual floor.
-  // Ordinary oscillations are allowed: track meaningful improvement of the
-  // best value, not monotonic improvement at each step. This is failure, not
-  // convergence, so callers can choose a different preconditioner.
-  if (next_rz < 0.99 * state[PCG_BEST_RZ]) {
-    state[PCG_BEST_RZ] = next_rz;
-    state[PCG_LAST_PROGRESS] = state[PCG_ITERATION];
-  }
-  if (state[PCG_ITERATION] - state[PCG_LAST_PROGRESS] >= 1024.0
-      && next_rz > state[PCG_RELATIVE_TOLERANCE] * state[PCG_REFERENCE_RZ]) {
-    state[PCG_BETA] = 0.0;
-    state[PCG_STATUS] = PCG_STAGNATED;
     state[PCG_STATUS_VALUE] = residual2;
     return;
   }

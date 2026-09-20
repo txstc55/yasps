@@ -3707,7 +3707,7 @@ class DeviceMASRuntime:
       # The reference norm remains b^T M^-1 b, and the total iteration budget
       # is shared with the restarted solve. Copy the borrowed solution before
       # reinitializing the persistent recurrence workspaces. Only curvature
-      # breakdown retries; stagnation returns the current iterate immediately.
+      # breakdown retries; residual plateaus do not terminate or restart PCG.
       if _restarts_remaining and completed < max_iterations:
         guess = x.copy()
         result = self.pcg(

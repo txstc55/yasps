@@ -108,6 +108,7 @@ class hessian(matrix):
 
     self.__compression_kernel: Optional[coordinateCompressionKernel] = None
     self.__compression_kernel_dynamic: Optional[coordinateCompressionKernel] = None
+    self.__dynamic_coordinate_cache = {}
 
   def __compute_wrt_start_indices(self):
     gradient_sizes = [item.size * item.correspondance.numInstances for item in self.__wrt]
@@ -1199,8 +1200,53 @@ class hessian(matrix):
       self.__gradient_segments_start
     )
 
+  def clearDynamicCoordinateCache(self):
+    """Invalidate cached batches after changing connectivity or target layout."""
+    for item in self.__indices_kernels_dynamic:
+      item.releaseAssemblyIndices()
+    self.__dynamic_coordinate_cache.clear()
+
+  @property
+  def dynamicCoordinateCacheBytes(self):
+    return sum(entry["bytes"] for entry in self.__dynamic_coordinate_cache.values())
+
+  def __saveDynamicCoordinates(self):
+    indices = [item.saveAssemblyIndices() for item in self.__indices_kernels_dynamic]
+    lookups = [value.copy() if value.size else gpuarray.empty(0, np.uint32) for value in self.__block_indices_gpu_dynamic]
+    count = 2 * sum(self.block_counts_dynamic)
+    positions = self.block_positions_dynamic[:count].copy() if count else gpuarray.empty(0, np.uint32)
+    arrays = lookups + [positions] + [value for state in indices for value in state["arrays"].values()]
+    return {"indices": indices, "lookups": lookups, "positions": positions,
+      "counts": list(self.block_counts_dynamic), "dimensions": list(self.block_dimensions_dynamic),
+      "starts": list(self.blocks_start_indices_dynamic), "size": self.__compression_kernel_dynamic.totalBlockSize,
+      "signature": (tuple(self.__wrt_start_indices), tuple(source.correspondance.numInstances for source in self.__sources_dynamic)),
+      "bytes": sum(value.nbytes for value in arrays)}
+
+  @timed("hessian.restoreDynamicCoordinates")
+  def __restoreDynamicCoordinates(self, saved):
+    signature = (tuple(self.__wrt_start_indices), tuple(source.correspondance.numInstances for source in self.__sources_dynamic))
+    if signature != saved["signature"]:
+      raise ValueError("Dynamic coordinate cache layout changed; clear the cache or use a different key.")
+    for item, state in zip(self.__indices_kernels_dynamic, saved["indices"]):
+      item.restoreAssemblyIndices(state)
+    self.__block_indices_gpu_dynamic = saved["lookups"]
+    self.block_positions_dynamic = saved["positions"]
+    self.block_counts_dynamic = list(saved["counts"])
+    self.block_dimensions_dynamic = list(saved["dimensions"])
+    self.blocks_start_indices_dynamic = list(saved["starts"])
+    if self.blocks_flattened_dynamic.size < saved["size"]:
+      self.blocks_flattened_dynamic = gpuarray.empty(saved["size"], np.float64)
+
   @timed("hessian.compute")
-  def compute(self, local_gradient: Optional[gradient] = None):
+  def compute(self, local_gradient: Optional[gradient] = None, coordinate_cache_key=None):
+    """Assemble fresh values, optionally reusing a frozen dynamic topology.
+
+    The caller owns cache invalidation: keys must identify unchanged join/union
+    connectivity and target ordering, not merely equal instance counts. Clear
+    at every connectivity update (e.g. each MPM P2G frame). Do not cache contact
+    or active-wall topologies that change within Newton or line search.
+    Existing calls without a key always regenerate dynamic coordinates.
+    """
     if local_gradient is not None:
       self.gradient = local_gradient
     if self.__gradient is None:
@@ -1208,10 +1254,16 @@ class hessian(matrix):
     else:
       self.__gradient.hessian = self
 
+    cache_enabled = coordinate_cache_key is not None and len(self.__indices_kernels_dynamic) > 0
     if not self.__is_setup:
       self.__setupCompute()
+    elif cache_enabled and coordinate_cache_key in self.__dynamic_coordinate_cache:
+      self.__restoreDynamicCoordinates(self.__dynamic_coordinate_cache[coordinate_cache_key])
     elif len(self.__indices_kernels_dynamic) > 0:
       self.getSparseIndicesDynamicAgain()
+
+    if cache_enabled and coordinate_cache_key not in self.__dynamic_coordinate_cache:
+      self.__dynamic_coordinate_cache[coordinate_cache_key] = self.__saveDynamicCoordinates()
 
     self.__gradient.value.fill(0)
     self.__diagonal.fill(0)

@@ -65,11 +65,8 @@ such restarts share the original iteration budget. Catastrophic growth of
 `r^T M^-1 r` beyond `1e16` times its original RHS reference reports divergence
 instead of running until floating-point overflow. Exhausting the iteration
 budget is reported explicitly, not as an unspecified non-SPD error.
-Likewise, 1,024 iterations without a 1% improvement in the best preconditioned
-residual report stagnation immediately, without a restart. The public MAS
-code is `-5`, and the current iterate remains available to the caller. This
-does not declare convergence or relax the tolerance. Oscillations with
-continuing progress remain permitted.
+Stagnation does not terminate or restart PCG. A residual plateau continues
+until convergence, another numerical failure, or the iteration limit.
 
 The public YASPS solver returns `-8` if local block inversion fails after its
 fallback. `statistics.breakdown` preserves the failure details, `iterations`

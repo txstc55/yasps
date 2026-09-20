@@ -372,6 +372,7 @@ class gradientIndicesKernel:
     self.__kernelString = ""
     self.__numInstances: int = 0 # for checking the number of instances
     self.__maxInstances: int = 0 # for allocating the largest gpu array
+    self.__assembly_working_arrays = None
     # the output data
     ####################################################
     # Here are the uncompressed output indices
@@ -1068,6 +1069,7 @@ extern "C" int get_indices(
 
   @timed("gradientIndicesKernel.computeIndices")
   def computeIndices(self, wrt_start_indices: List[int]):
+    self.releaseAssemblyIndices()
     self.__reallocate()
     if self.__numInstances == 0:
       return
@@ -1077,3 +1079,53 @@ extern "C" int get_indices(
     if self.__generate_coordinates:
       self.__allocateSpaceForCoordinates()
       self.__generateCoordinates()
+
+  def saveAssemblyIndices(self):
+    """Own a compact copy of the indices needed by numerical assembly.
+
+    Raw coordinate occurrences are deliberately not saved: the Hessian owns
+    their compressed coordinates and scatter lookup. This avoids retaining
+    the much larger uncompressed coordinate/dimension arrays for every batch.
+    """
+    n = self.__numInstances
+    unique = self.numUniqueGradientSizesCPU
+    lengths = {
+      "__outputIndices": n * self.maxNumIndicesNeeded,
+      "__outputIndexSizes": n * self.maxNumIndicesNeeded,
+      "__outputPermutations": n * self.maxNumIndicesNeeded,
+      "__outputGradientSizes": n,
+      "__outputGroupedIndicesInner": n,
+      "__outputCompressedCoordinateCountsOuter": n + 1 if n else 0,
+      "__outputUniqueGradientSizes": unique,
+      "__outputGroupedIndicesOuter": unique + 1 if n else 0,
+      "__outputNumUniqueGradientSizes": 1,
+    }
+    arrays = {}
+    for name, size in lengths.items():
+      value = getattr(self, "_gradientIndicesKernel" + name)
+      arrays[name] = value[:size].copy() if size else gpuarray.empty(0, value.dtype)
+    return {"arrays": arrays, "count": n, "unique": unique, "sizes": self.outputUniqueGradientSizesCPU.copy(), "coordinates": self.numTotalCoordinates}
+
+  def restoreAssemblyIndices(self, saved):
+    """Borrow read-only assembly buffers without copies or CUDA launches.
+
+    Raw coordinates are not restored. Before generating new indices, detach
+    these cached buffers so the next batch cannot overwrite a saved batch.
+    """
+    if saved["count"] != self.__energy.correspondance.numInstances:
+      raise ValueError("Cached assembly indices have a different instance count.")
+    if self.__assembly_working_arrays is None:
+      self.__assembly_working_arrays = {name: getattr(self, "_gradientIndicesKernel" + name) for name in saved["arrays"]}
+    for name, value in saved["arrays"].items():
+      setattr(self, "_gradientIndicesKernel" + name, value)
+    self.__numInstances = saved["count"]
+    self.__outputNumUniqueGradientSizesCPU = saved["unique"]
+    self.__outputUniqueGradientSizesCPU = saved["sizes"]
+    self.__numTotalCoordinatesCPU = saved["coordinates"]
+
+  def releaseAssemblyIndices(self):
+    """Return to owned writable buffers before index generation or invalidation."""
+    if self.__assembly_working_arrays is not None:
+      for name, value in self.__assembly_working_arrays.items():
+        setattr(self, "_gradientIndicesKernel" + name, value)
+      self.__assembly_working_arrays = None
