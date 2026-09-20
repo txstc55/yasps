@@ -853,8 +853,7 @@ class hessian(matrix):
       self.__wrt
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
-    for item in self.__indices_kernels_dynamic:
-      item.releaseRawCoordinates()
+    # Dynamic kernels reuse raw capacity on the next topology update.
 
     lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
     self.__block_indices_gpu_dynamic = []
@@ -892,8 +891,7 @@ class hessian(matrix):
       [x.numTotalCoordinates for x in self.__indices_kernels_dynamic]
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
-    for item in self.__indices_kernels_dynamic:
-      item.releaseRawCoordinates()
+    # Dynamic kernels reuse raw capacity on the next topology update.
 
     lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
     self.__block_indices_gpu_dynamic = []
