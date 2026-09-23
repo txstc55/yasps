@@ -826,7 +826,7 @@ int computeSolution(unsigned int maxIteration,
       return -3
       # exit()
     elif result == -5:
-      solution.set(0.5 * gradient)
+      solution[:] = 0.5 * gradient
       return result
     elif result < 0:
       return result

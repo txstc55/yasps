@@ -291,7 +291,13 @@ class MASSolver:
       domain_dof_schedule=self.domain_dof_schedule,
       target_node_schedule=self.target_node_schedule,
     )
-    self.invalidate_numeric_state()
+    # Repartitioning changes domains, not the fine solution's scalar layout.
+    # Keep its allocation alive so borrowed solution slices remain valid.
+    preserve_solution = self._hierarchy is not None and np.array_equal(
+      self._hierarchy.levels[0].node_dimensions,
+      hierarchy.levels[0].node_dimensions,
+    )
+    self.invalidate_numeric_state(preserve_solution=preserve_solution)
     self._hierarchy = hierarchy
     self._hierarchy_build_count += 1
     return hierarchy
@@ -305,11 +311,12 @@ class MASSolver:
     topology = BlockSparsity(block_positions, block_dimensions, num_blocks)
     return self.build_hierarchy(topology)
 
-  def invalidate_numeric_state(self) -> None:
-    """Release hierarchy/operator-dependent state without dropping topology."""
+  def invalidate_numeric_state(self, *, preserve_solution=False) -> None:
+    """Drop numerical state; optionally retain the unchanged fine solution buffer."""
     self._numeric = None
     self._preconditioner = None
-    self._solution = None
+    if not preserve_solution:
+      self._solution = None
     self._cuda_runtime = None
     self._numeric_rebuild_age = 0
     self._preconditioner_dynamic_block_count = 0
@@ -601,6 +608,7 @@ class MASSolver:
       runtime = DeviceMASRuntime(
         matrix_view,
         hierarchy,
+        solution_buffer=self._solution if is_pycuda_array(self._solution) else None,
         inverse_algorithm=algorithm,
         threads_per_block=self.cuda_threads_per_block,
         fixed_inverse_bucket_size=self.cuda_fixed_inverse_bucket_size,

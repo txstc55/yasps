@@ -87,6 +87,7 @@ class DeviceMASRuntime:
     view: BlockSparseMatrixView,
     hierarchy: Hierarchy,
     *,
+    solution_buffer=None,
     inverse_algorithm: str = "spd",
     threads_per_block: int = 96,
     pivot_tolerance: float = 1e-12,
@@ -244,7 +245,7 @@ class DeviceMASRuntime:
     self.mas_applications = 0
     self.device_bytes = 0
     self.static_setup_seconds = 0.0
-    self._build_static_state(view)
+    self._build_static_state(view, solution_buffer)
     # The domain-size buckets are immutable. Capture their specialized
     # inverse launches once so each numerical rebuild issues one graph
     # launch, with no per-solve Python traversal over bucket sizes.  Each
@@ -1222,7 +1223,7 @@ class DeviceMASRuntime:
     starts = level.node_scalar_offsets[np.asarray(node_map, dtype=np.int64)[scalar_nodes]]
     return (starts.astype(np.int64, copy=False) + within_node).astype(np.uint32)
 
-  def _build_static_state(self, view: BlockSparseMatrixView) -> None:
+  def _build_static_state(self, view: BlockSparseMatrixView, solution_buffer=None) -> None:
     started = perf_counter()
     fine = self.hierarchy.levels[0]
     self.fine_node_count = fine.number_of_nodes
@@ -1779,7 +1780,14 @@ class DeviceMASRuntime:
     self.packed_correction = self._empty(self.packed_vector_size, np.float64)
     self._preconditioned_output = self._empty(self.fine_dofs, np.float64)
     self._matvec_output = self._empty(self.fine_dofs, np.float64)
-    self._pcg_solution = self._empty(self.fine_dofs, np.float64)
+    # The fine solution survives repartitioning; all domain-dependent arrays
+    # above are new. PCG still initializes this buffer for every solve.
+    if solution_buffer is not None:
+      if solution_buffer.dtype != np.float64 or solution_buffer.shape != (self.fine_dofs,):
+        raise ValueError("solution buffer must match the fine FP64 vector layout")
+      self._pcg_solution = solution_buffer
+    else:
+      self._pcg_solution = self._empty(self.fine_dofs, np.float64)
     self._pcg_residual = self._empty(self.fine_dofs, np.float64)
     self._pcg_direction = self._empty(self.fine_dofs, np.float64)
     self._pcg_state = self._zeros(15, np.float64)
