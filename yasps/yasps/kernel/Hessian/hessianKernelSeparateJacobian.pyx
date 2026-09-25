@@ -2,6 +2,9 @@
 from yasps.attribute import attribute
 from yasps.jacobianBlockLayout import generate_jacobian_block_layout, pack_jacobian_block_nonzeros
 from yasps.jacobianBlockLayout import generate_inner_hessian_block_layout, pack_inner_hessian_block_nonzeros
+import ctypes
+import numpy as np
+import pycuda.gpuarray as gpuarray
 
 
 class hessianKernelSeparateJacobian:
@@ -20,6 +23,106 @@ class hessianKernelSeparateJacobian:
     self.__merged_hessian_jacobian_nonzeros = 0
     self.__left_patterns = []
     self.__inner_products = []
+    self.__activity_kernel = None
+    self.__block_activity = None
+    self.__activity_state = None
+
+  def bindBlockActivityKernel(self, library):
+    if self.__gradient_only or not self.__block_patterns:
+      return
+    self.__activity_kernel = library.recompute_hessian_block_activity
+    self.__activity_kernel.argtypes = [ctypes.c_void_p] * 4 + [ctypes.c_uint32]
+    self.__activity_kernel.restype = ctypes.c_int
+
+  def invalidateBlockActivity(self):
+    self.__activity_state = None
+
+  def recomputeBlockActivity(self, indices_kernel, force=False):
+    if self.__activity_kernel is None:
+      return
+    count = indices_kernel.numInstances
+    state = (indices_kernel, count)
+    if not force and self.__activity_state == state:
+      return
+    length = count * len(self.__layout["blocks"])
+    if self.__block_activity is None or self.__block_activity.size < length:
+      self.__block_activity = gpuarray.empty(length, np.uint8)
+    if count:
+      inputs = [indices_kernel.outputIndices, indices_kernel.outputSizes, indices_kernel.outputPermutations, self.__block_activity]
+      error = self.__activity_kernel(*[ctypes.c_void_p(int(value.gpudata)) for value in inputs], ctypes.c_uint32(count))
+      if error:
+        raise RuntimeError(f"Separate Hessian: block activity kernel failed with CUDA error {error}.")
+    self.__activity_state = state
+
+  @property
+  def blockActivity(self):
+    return self.__block_activity
+
+  def __activitySource(self, suffix, max_num_indices):
+    # Map ORIGINAL scalar columns to multiplication blocks. Runtime segment
+    # widths include union padding, so a symbolic block need not align with a
+    # single segment. Zero Jacobian columns cannot activate a block.
+    column_blocks = [65535] * self.__layout["cols"]
+    for block_id, block in enumerate(self.__layout["blocks"]):
+      for _, column in self.__packed_jacobian["block_local_positions"][block_id]:
+        column_blocks[block["cols"][column]] = block_id
+    if len(self.__layout["blocks"]) > 65535:
+      raise ValueError("Separate Hessian: block activity exceeds uint16 local index capacity.")
+    # Accumulate flags in a few registers, then write each byte just once.
+    # Directly setting a byte for every valid scalar repeats many global stores.
+    words = (len(self.__layout["blocks"]) + 31) // 32
+    masks = "\n  ".join(f"unsigned int active_{word} = 0;" for word in range(words))
+    mark = "\n        ".join(f"{'if' if word == 0 else 'else if'} (block / 32 == {word}) active_{word} |= 1u << (block % 32);" for word in range(words))
+    reduce_masks = "\n    ".join(f"active_{word} |= __shfl_xor_sync(0xffffffffu, active_{word}, offset);" for word in range(words))
+    stores = "\n  ".join(f"if (lane < {min(32, len(self.__layout['blocks']) - 32 * word)}) activity[(size_t)({32 * word} + lane) * count + instance] = (active_{word} >> lane) & 1u;" for word in range(words))
+    return f'''
+static __device__ const unsigned short int activity_column_blocks_{suffix}[{max(1, len(column_blocks))}] = {{{', '.join(map(str, column_blocks)) or '65535'}}};
+__global__ void recompute_hessian_block_activity_kernel(
+  const unsigned int* segment_indices, const unsigned short int* segment_sizes,
+  const short int* local_permutations, unsigned char* activity, unsigned int count
+) {{
+  // One warp cooperates on an instance's contiguous runtime segments.
+  const unsigned int instance = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+  const unsigned int lane = threadIdx.x & 31;
+  if (instance >= count) return;
+  {masks}
+  unsigned int column = 0;
+  #pragma unroll 1
+  for (unsigned int first = 0; first < {max_num_indices}; first += 32) {{
+    const unsigned int segment = first + lane;
+    const size_t index = (size_t)instance * {max_num_indices} + segment;
+    const unsigned int size = segment < {max_num_indices} ? segment_sizes[index] : 0;
+    unsigned int prefix = size;
+    #pragma unroll
+    for (unsigned int offset = 1; offset < 32; offset *= 2) {{
+      const unsigned int other = __shfl_up_sync(0xffffffffu, prefix, offset);
+      if (lane >= offset) prefix += other;
+    }}
+    const unsigned int end = column + prefix;
+    if (segment < {max_num_indices} && local_permutations[index] > 0 && segment_indices[index] >= 2) {{
+      for (unsigned int c = end - size; c < end; ++c) {{
+        const unsigned short int block = activity_column_blocks_{suffix}[c];
+        {mark}
+      }}
+    }}
+    column += __shfl_sync(0xffffffffu, prefix, 31);
+  }}
+  #pragma unroll
+  for (unsigned int offset = 1; offset < 32; offset *= 2) {{
+    {reduce_masks}
+  }}
+  // Block-major bytes make the later assembly's instance reads coalesced.
+  {stores}
+}}
+int recompute_hessian_block_activity(
+  const unsigned int* indices, const unsigned short int* sizes,
+  const short int* permutations, unsigned char* activity, unsigned int count
+) {{
+  if (count) recompute_hessian_block_activity_kernel<<<(count + 3) / 4, 128>>>(indices, sizes, permutations, activity, count);
+  // The following assembly uses separate streams; complete the prepass first.
+  return (int)cudaDeviceSynchronize();
+}}
+'''
 
   def create_multiplied_blocks(self,
     global_jacobian_block_nonzero_attributes,
@@ -209,17 +312,6 @@ class hessianKernelSeparateJacobian:
     size = self.__layout["rows"]
     source = [f'''
   double left_product[{size * size}];
-  unsigned char active_tiles[{len(self.__layout["blocks"])}] = {{}};
-  // Only tiles containing a coordinate accepted by scatter can contribute.
-  // Union padding and excluded targets need no multiplication or scatter.
-  #pragma unroll 1
-  for (unsigned int segment = 0; segment < {max_num_indices}; ++segment) {{
-    if (permutations[segment] <= 0 || indices[segment] < 2 || sizes[segment] == 0) continue;
-    const unsigned int first = segment_outer[segment] / {size};
-    const unsigned int last = (segment_outer[segment + 1] - 1) / {size};
-    #pragma unroll 1
-    for (unsigned int tile = first; tile <= last; ++tile) active_tiles[tile] = 1;
-  }}
 ''']
     for left_id, left in enumerate(self.__left_patterns):
       products = [(right_id, pattern_id) for current, right_id, pattern_id in self.__inner_products if current == left_id]
@@ -229,7 +321,7 @@ class hessianKernelSeparateJacobian:
   #pragma unroll 1
   for (unsigned short int left_id = 0; left_id < {len(left['blocks'])}; ++left_id) {{
     const unsigned short int i = tile_group_{left_id}_{suffix}[left_id];
-    if (!active_tiles[i]) continue;
+    if (!block_activity[(size_t)i * activity_stride]) continue;
     multiply_left_pattern_{left_id}_{suffix}(hg_mat + {self.__local_hessian_nonzero_count} + tile_nonzero_offsets_{suffix}[i], hg_mat, left_product);
 ''')
       for right_id, pattern_id in products:
@@ -238,7 +330,7 @@ class hessianKernelSeparateJacobian:
     #pragma unroll 1
     for (unsigned short int right_id = 0; right_id < {len(right['blocks'])}; ++right_id) {{
       const unsigned short int j = tile_group_{right_id}_{suffix}[right_id];
-      if (j < i || !active_tiles[j]) continue;
+      if (j < i || !block_activity[(size_t)j * activity_stride]) continue;
       multiply_right_pattern_{pattern_id}_{suffix}(left_product, hg_mat + {self.__local_hessian_nonzero_count} + tile_nonzero_offsets_{suffix}[j], multiplied_block);
 ''')
         pattern = self.__patterns[pattern_id]
@@ -283,6 +375,7 @@ class hessianKernelSeparateJacobian:
     arguments += "".join(f"{x.code_generation_counts_name}, " for x in unions)
     source = ['#include "allHeaders.cuh"', 'extern "C" {']
     if not self.__gradient_only and self.__block_patterns:
+      source.append(self.__activitySource(suffix, max_num_indices))
       if not 1 <= max_num_indices <= 65536:
         raise ValueError("Separate Hessian: local segment indices exceed unsigned short int capacity.")
       permutation = self.__layout["column_permutation"]
@@ -327,6 +420,8 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int* coordinatesOuter,
   const unsigned int* groupedIndicesInner,
   const unsigned int* groupedIndicesOuter,
+  const unsigned char* block_activity,
+  const unsigned int activity_stride,
   const unsigned int nth_gradient_size,
   const unsigned int projection_method,
   double* gradient,
@@ -365,6 +460,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 static __device__ __noinline__ void assemble_sparse_hessian_{suffix}(
   const double* hg_mat, const unsigned int* indices,
   const unsigned short int* sizes, const short int* permutations,
+  const unsigned char* block_activity, const unsigned int activity_stride,
   const unsigned int* instance_lookups, double* hessian_blocks,
   double* diagonal_blocks, const unsigned int* diagonal_blocks_start,
   const unsigned int* gradient_segments_start
@@ -400,6 +496,7 @@ static __device__ __noinline__ void assemble_sparse_hessian_{suffix}(
           h_argument = "hg_mat" if mapped_h else f"hg_mat + {self.__hessian_operands[pair]}"
           h_map_argument = f", hessian_indices_{i}_{j}_{suffix}" if mapped_h else ""
           source.append(f'''
+  if (block_activity[(size_t){i} * activity_stride] && block_activity[(size_t){j} * activity_stride]) {{
   multiply_sparse_pattern_{pattern_id}_{suffix}(hg_mat + {left_offset}, {h_argument}, hg_mat + {right_offset}{h_map_argument}, multiplied_block);
   for (unsigned int a = 0; a < {rows}; ++a) {{
     for (unsigned int b = {'a' if i == j else '0'}; b < {cols}; ++b) {{
@@ -408,10 +505,11 @@ static __device__ __noinline__ void assemble_sparse_hessian_{suffix}(
       scatter_sparse_hessian_{suffix}(multiplied_block[a * {cols} + b], original_a, original_b, column_segment, segment_outer, valid_rank, valid_count, indices, sizes, permutations, instance_lookups, hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
     }}
   }}
+  }}
 ''')
       source.append("}")
       entry_source += f'''
-  assemble_sparse_hessian_{suffix}(hg_mat, indices, sizes, permutations, lookups + coordinatesOuter[instance], hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
+  assemble_sparse_hessian_{suffix}(hg_mat, indices, sizes, permutations, block_activity + instance, activity_stride, lookups + coordinatesOuter[instance], hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
 '''
     source.append(entry_source + "}\n}\n")
     self.__kernelString = "\n".join(source)

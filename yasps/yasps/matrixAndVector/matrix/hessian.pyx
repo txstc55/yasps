@@ -815,6 +815,11 @@ class hessian(matrix):
 
     for item in self.__indices_kernels:
       item.computeIndices(self.__wrt_start_indices)
+    # Explicit static-coordinate rebuilds invalidate the otherwise once-only
+    # padding prepass, even if the instance count and buffers did not change.
+    for kernel in self.__hessian_and_gradient_kernels:
+      if kernel is not None:
+        kernel.invalidateBlockActivity()
 
     self.__compression_kernel = coordinateCompressionKernel(
       [x.outputCoordinates for x in self.__indices_kernels],
@@ -1181,6 +1186,10 @@ class hessian(matrix):
         self.__global_jacobian_block_layouts_dynamic[index]
       )
 
+    # Static topology reuses its flags. Dynamic terms must refresh even when
+    # cached coordinates are restored or the count stays the same: a different
+    # union branch can have different active multiplication blocks.
+    kernel.recomputeBlockActivity(indices_kernel, force=is_dynamic)
     counts_gpu = [x.children_primitive_counts_gpu for x in merged_attribute.deviceKernel.kernelPrimitiveUnions]
     arguments: List[gpuarray.GPUArray] = [x.value for x in merged_attribute.deviceKernel.kernelDatas]
     arguments += [x.value for x in merged_attribute.deviceKernel.kernelConnectivity]

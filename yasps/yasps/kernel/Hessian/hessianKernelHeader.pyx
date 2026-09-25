@@ -4,7 +4,7 @@ from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 from typing import List, Set
 class hessianKernelHeader:
-  def __init__(self, att: attribute, unique_gradient_sizes: Set[int], sortedDependency: List[deviceKernel]):
+  def __init__(self, att: attribute, unique_gradient_sizes: Set[int], sortedDependency: List[deviceKernel], block_activity: bool = False):
     self.__att = att
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
@@ -276,6 +276,7 @@ const unsigned int* lookups,                    // how to place the current bloc
 const unsigned int* coordinatesOuter,           // this will tell us for each instance, the starting and ending index in the lookup table for putting the hessian blocks into the global hessian data array
 const unsigned int* groupedIndicesInner, // we need to know which instance will correspond to the current size
 const unsigned int* groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
+{"const unsigned char* block_activity, const unsigned int activity_stride," if block_activity else ""}
 const unsigned int nth_gradient_size,    // this indicates which position we are in the outer array
 const unsigned int projection_method,
 double* gradient,   // the gradient output
