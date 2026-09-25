@@ -3,7 +3,10 @@ import ctypes
 import hashlib
 from pathlib import Path
 import subprocess
+import threading
+import weakref
 import numpy as np
+import pycuda.driver as cuda
 import pycuda.gpuarray as gpuarray
 from yasps.context import context
 from yasps.helper import timed
@@ -40,6 +43,19 @@ struct Buffer {
     capacity = bytes;
   }
 };
+
+// One workspace is shared by all compressors in the same CUDA context.
+// Only scratch lives here; coordinates and lookups belong to each compressor.
+struct Workspace {
+  Buffer keys, scratch, count, alternate, source_table;
+};
+
+extern "C" void* create_compression_workspace() { return new Workspace(); }
+extern "C" void destroy_compression_workspace(Workspace* workspace) { delete workspace; }
+extern "C" size_t compression_workspace_bytes(const Workspace* workspace) {
+  return workspace->keys.capacity + workspace->scratch.capacity + workspace->count.capacity
+    + workspace->alternate.capacity + workspace->source_table.capacity;
+}
 
 // A logical concatenation: only these small pointer/offset tables are copied.
 // Multiple energy inputs therefore need ONE selection scan per dimension.
@@ -132,16 +148,21 @@ extern "C" const char* coordinate_compression_error() { return last_error.c_str(
 // Selection uses a parallel scan; radix sorting only sees 64-bit (row,col) keys.
 extern "C" int get_unique_grouped_coordinates(const unsigned int* const* coordinates, const unsigned short* const* dimensions,
   const unsigned int* counts, unsigned int num_sources, const unsigned int* candidates, unsigned int num_candidates,
-  Key* keys, unsigned short* unique_dimensions, unsigned int* value_outer, unsigned int* block_counts,
+  Workspace* workspace, unsigned short* unique_dimensions, unsigned int* value_outer, unsigned int* block_counts,
   unsigned int* coordinate_outer, unsigned int& num_unique, unsigned int& num_dimensions, unsigned int& index_bits) {
   try {
-    Buffer scratch, count_buffer, alternate, source_table;
+    auto& scratch = workspace->scratch;
+    auto& count_buffer = workspace->count;
+    auto& alternate = workspace->alternate;
+    auto& source_table = workspace->source_table;
     count_buffer.reserve(sizeof(unsigned int));
     auto selected_count = static_cast<unsigned int*>(count_buffer.data);
     auto indices = thrust::make_counting_iterator<unsigned int>(0);
     std::vector<unsigned int> active, raw_counts;
     size_t raw_offset = 0, expected = 0, largest = 0;
     for (unsigned int source = 0; source < num_sources; ++source) expected += counts[source];
+    workspace->keys.reserve(expected * sizeof(Key));
+    auto keys = static_cast<Key*>(workspace->keys.data);
     Sources sources{coordinates[0], dimensions[0], nullptr, nullptr, nullptr, num_sources};
     if (num_sources > 1) {
       size_t pointer_bytes = num_sources * sizeof(void*);
@@ -234,10 +255,11 @@ extern "C" int get_unique_grouped_coordinates(const unsigned int* const* coordin
 }
 
 extern "C" int finalize_grouped_coordinates(const unsigned int* const* coordinates, const unsigned short* const* dimensions,
-  const unsigned int* counts, unsigned int num_sources, const Key* keys, const unsigned short* unique_dimensions,
+  const unsigned int* counts, unsigned int num_sources, const Workspace* workspace, const unsigned short* unique_dimensions,
   const unsigned int* value_outer, const unsigned int* coordinate_outer, unsigned int num_dimensions,
   unsigned int num_unique, unsigned int index_bits, unsigned int* unique_coordinates, unsigned int* lookup) {
   try {
+    auto keys = static_cast<const Key*>(workspace->keys.data);
     size_t offset = 0;
     for (unsigned int source = 0; source < num_sources; ++source) {
       make_lookup<<<(counts[source] + 255) / 256, 256>>>(coordinates[source], dimensions[source], counts[source], keys,
@@ -255,14 +277,37 @@ extern "C" int finalize_grouped_coordinates(const unsigned int* const* coordinat
 '''
 
 _libraries = {}
+# Compression is synchronous. Hold this lock through lookup generation so a
+# second compressor cannot overwrite shared keys between the two native calls.
+_workspace_lock = threading.RLock()
+_workspaces = {}
+
+
+def _destroy_workspace(library, pointer, owner):
+  changed = cuda.Context.get_current() != owner
+  if changed:
+    owner.push()
+  try:
+    library.destroy_compression_workspace(pointer)
+  finally:
+    if changed:
+      cuda.Context.pop()
+
+
+class _CompressionWorkspace:
+  def __init__(self, library, owner):
+    self.library = library
+    self.pointer = library.create_compression_workspace()
+    self.release = weakref.finalize(self, _destroy_workspace, library, self.pointer, owner)
 
 
 class coordinateCompressionKernel:
   """Dimension-grouped coordinate compression with scalar-offset lookups.
 
   Select directly from producer arrays; radix-sort 64-bit coordinate keys with
-  scratch sized to the largest dimension group. Retain only unique coordinates,
-  dimension metadata and original-occurrence-to-value-offset lookups.
+  scratch sized to the largest dimension group. Scratch capacity is shared
+  across instances in each CUDA context, grows only, and is never an output.
+  Each instance owns its unique coordinates, dimension metadata and lookups.
   """
   def __init__(self, coordinates, dimensions, num_coordinates, wrt, column_wrt=None):
     row_sizes = sorted({x.size for x in wrt})
@@ -391,8 +436,29 @@ class coordinateCompressionKernel:
       library.finalize_grouped_coordinates.argtypes = [pointer] * 3 + [uint] + [pointer] * 4 + [uint] * 3 + [pointer] * 2
       library.finalize_grouped_coordinates.restype = ctypes.c_int
       library.coordinate_compression_error.restype = ctypes.c_char_p
+      library.create_compression_workspace.argtypes = []
+      library.create_compression_workspace.restype = pointer
+      library.destroy_compression_workspace.argtypes = [pointer]
+      library.destroy_compression_workspace.restype = None
+      library.compression_workspace_bytes.argtypes = [pointer]
+      library.compression_workspace_bytes.restype = ctypes.c_size_t
       _libraries[key] = library
     return _libraries[key]
+
+  @classmethod
+  def sharedWorkspaceBytes(cls):
+    """Retained scratch bytes for the current CUDA context, not per instance."""
+    with _workspace_lock:
+      workspace = _workspaces.get(cuda.Context.get_current())
+      return 0 if workspace is None else workspace.library.compression_workspace_bytes(workspace.pointer)
+
+  @classmethod
+  def releaseSharedWorkspace(cls):
+    """Release current-context scratch without invalidating compressed outputs."""
+    with _workspace_lock:
+      workspace = _workspaces.pop(cuda.Context.get_current(), None)
+      if workspace is not None:
+        workspace.release()
 
   @timed('coordinateCompressionKernel.compressCoordinatesAndDimensions')
   def compressCoordinatesAndDimensions(self):
@@ -411,23 +477,26 @@ class coordinateCompressionKernel:
       raise ValueError('Raw coordinates were released after compression; call updateCoordinates before recompressing.')
     if self.__total_coordinates > np.iinfo(np.uint32).max:
       raise ValueError('Coordinate count exceeds uint32 storage')
-    library = self.__loadLibrary()
     coordinates = np.array([int(x.gpudata) for x in self.__coordinates], dtype=np.uintp)
     dimensions = np.array([int(x.gpudata) for x in self.__dimensions], dtype=np.uintp)
     counts = np.array(self.__num_coordinates, dtype=np.uint32)
-    # Do not retain the raw-sized buffer when millions of duplicates collapse.
-    keys = gpuarray.empty(self.__total_coordinates, np.uint64)
-    unique, dimension_count, index_bits = ctypes.c_uint32(), ctypes.c_uint32(), ctypes.c_uint32()
-    status = library.get_unique_grouped_coordinates(coordinates.ctypes.data, dimensions.ctypes.data, counts.ctypes.data, len(counts), self.__candidates.ctypes.data, len(self.__candidates), int(keys.gpudata), int(self.__uniqueDimensions.gpudata), int(self.__uniqueDimensionsOuterIndices.gpudata), int(self.__uniqueDimensionsBlockCounts.gpudata), int(self.__coordinateOuterIndices.gpudata), ctypes.byref(unique), ctypes.byref(dimension_count), ctypes.byref(index_bits))
-    if status:
-      raise RuntimeError('Coordinate compression: ' + library.coordinate_compression_error().decode())
-    self.__num_unique_coords, self.__num_unique_dimensions = unique.value, dimension_count.value
-    if self.__uniqueCoordinates.size < 2 * unique.value:
-      self.__uniqueCoordinates = gpuarray.empty(2 * unique.value, np.uint32)
-    if self.__lookupArray.size < self.__total_coordinates:
-      self.__lookupArray = gpuarray.empty(self.__total_coordinates, np.uint32)
-    status = library.finalize_grouped_coordinates(coordinates.ctypes.data, dimensions.ctypes.data, counts.ctypes.data, len(counts), int(keys.gpudata), int(self.__uniqueDimensions.gpudata), int(self.__uniqueDimensionsOuterIndices.gpudata), int(self.__coordinateOuterIndices.gpudata), dimension_count.value, unique.value, index_bits.value, int(self.__uniqueCoordinates.gpudata), int(self.__lookupArray.gpudata))
-    if status:
-      raise RuntimeError('Coordinate lookup generation: ' + library.coordinate_compression_error().decode())
+    with _workspace_lock:
+      owner = cuda.Context.get_current()
+      if owner not in _workspaces:
+        _workspaces[owner] = _CompressionWorkspace(self.__loadLibrary(), owner)
+      workspace = _workspaces[owner]
+      library = workspace.library
+      unique, dimension_count, index_bits = ctypes.c_uint32(), ctypes.c_uint32(), ctypes.c_uint32()
+      status = library.get_unique_grouped_coordinates(coordinates.ctypes.data, dimensions.ctypes.data, counts.ctypes.data, len(counts), self.__candidates.ctypes.data, len(self.__candidates), workspace.pointer, int(self.__uniqueDimensions.gpudata), int(self.__uniqueDimensionsOuterIndices.gpudata), int(self.__uniqueDimensionsBlockCounts.gpudata), int(self.__coordinateOuterIndices.gpudata), ctypes.byref(unique), ctypes.byref(dimension_count), ctypes.byref(index_bits))
+      if status:
+        raise RuntimeError('Coordinate compression: ' + library.coordinate_compression_error().decode())
+      self.__num_unique_coords, self.__num_unique_dimensions = unique.value, dimension_count.value
+      if self.__uniqueCoordinates.size < 2 * unique.value:
+        self.__uniqueCoordinates = gpuarray.empty(2 * unique.value, np.uint32)
+      if self.__lookupArray.size < self.__total_coordinates:
+        self.__lookupArray = gpuarray.empty(self.__total_coordinates, np.uint32)
+      status = library.finalize_grouped_coordinates(coordinates.ctypes.data, dimensions.ctypes.data, counts.ctypes.data, len(counts), workspace.pointer, int(self.__uniqueDimensions.gpudata), int(self.__uniqueDimensionsOuterIndices.gpudata), int(self.__coordinateOuterIndices.gpudata), dimension_count.value, unique.value, index_bits.value, int(self.__uniqueCoordinates.gpudata), int(self.__lookupArray.gpudata))
+      if status:
+        raise RuntimeError('Coordinate lookup generation: ' + library.coordinate_compression_error().decode())
     self.__coordinates = []
     self.__dimensions = []
