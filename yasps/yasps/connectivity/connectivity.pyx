@@ -96,10 +96,11 @@ class connectivity:
     ## check if we can reserve space by not reallocating
     oldGPUArraySize: int = int(self.__value.size)
     if isinstance(value, gpuarray.GPUArray):
-      if oldGPUArraySize > int(value.size):
+      if oldGPUArraySize >= int(value.size):
         # print("Old value shape", self.__value.shape)
         # print("new value shape", value.shape)
-        self.__value[:value.size] = value
+        if value.size:
+          self.__value[:value.size] = value
       else:
         # print("new shape is", value.shape)
         new_gpu_array = gpuarray.empty_like(value)
