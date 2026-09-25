@@ -64,10 +64,20 @@ struct Sources {
 
 struct CoordinateKey {
   Sources sources;
+  unsigned int index_bits;
   __host__ __device__ Key operator()(unsigned int i) const {
     unsigned int source = sources.locate(i);
     auto c = sources.count == 1 ? sources.direct_coordinates : sources.coordinates[source];
-    return (Key(c[2ull * i]) << 32) | c[2ull * i + 1];
+    return (Key(c[2ull * i]) << index_bits) | c[2ull * i + 1];
+  }
+};
+
+struct CoordinateExtent {
+  Sources sources;
+  __host__ __device__ unsigned int operator()(unsigned int i) const {
+    unsigned int source = sources.locate(i);
+    auto c = sources.count == 1 ? sources.direct_coordinates : sources.coordinates[source];
+    return max(c[2ull * i], c[2ull * i + 1]);
   }
 };
 
@@ -85,7 +95,7 @@ struct MatchesDimension {
 // VALUE offset, not a coordinate ordinal. No original-index sort payload.
 __global__ void make_lookup(const unsigned int* coordinates, const unsigned short* dimensions, unsigned int n,
   const Key* unique_keys, const unsigned short* unique_dimensions, const unsigned int* coordinate_outer,
-  const unsigned int* value_outer, unsigned int num_dimensions, unsigned int* lookup) {
+  const unsigned int* value_outer, unsigned int num_dimensions, unsigned int index_bits, unsigned int* lookup) {
   unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= n) return;
   unsigned int h = dimensions[2ull * i], w = dimensions[2ull * i + 1];
@@ -97,7 +107,7 @@ __global__ void make_lookup(const unsigned int* coordinates, const unsigned shor
     if (key < dimension) lo = mid + 1; else hi = mid;
   }
   unsigned int group = lo, start = coordinate_outer[group];
-  Key key = (Key(coordinates[2ull * i]) << 32) | coordinates[2ull * i + 1];
+  Key key = (Key(coordinates[2ull * i]) << index_bits) | coordinates[2ull * i + 1];
   lo = start;
   hi = coordinate_outer[group + 1];
   while (lo < hi) {
@@ -107,11 +117,11 @@ __global__ void make_lookup(const unsigned int* coordinates, const unsigned shor
   lookup[i] = value_outer[group] + (lo - start) * h * w;
 }
 
-__global__ void unpack_coordinates(const Key* keys, unsigned int* coordinates, unsigned int n) {
+__global__ void unpack_coordinates(const Key* keys, unsigned int* coordinates, unsigned int n, unsigned int index_bits) {
   unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) {
-    coordinates[2ull * i] = unsigned(keys[i] >> 32);
-    coordinates[2ull * i + 1] = unsigned(keys[i]);
+    coordinates[2ull * i] = unsigned(keys[i] >> index_bits);
+    coordinates[2ull * i + 1] = unsigned(keys[i] & ((Key(1) << index_bits) - 1));
   }
 }
 
@@ -123,7 +133,7 @@ extern "C" const char* coordinate_compression_error() { return last_error.c_str(
 extern "C" int get_unique_grouped_coordinates(const unsigned int* const* coordinates, const unsigned short* const* dimensions,
   const unsigned int* counts, unsigned int num_sources, const unsigned int* candidates, unsigned int num_candidates,
   Key* keys, unsigned short* unique_dimensions, unsigned int* value_outer, unsigned int* block_counts,
-  unsigned int* coordinate_outer, unsigned int& num_unique, unsigned int& num_dimensions) {
+  unsigned int* coordinate_outer, unsigned int& num_unique, unsigned int& num_dimensions, unsigned int& index_bits) {
   try {
     Buffer scratch, count_buffer, alternate, source_table;
     count_buffer.reserve(sizeof(unsigned int));
@@ -146,7 +156,18 @@ extern "C" int get_unique_grouped_coordinates(const unsigned int* const* coordin
       check(cudaMemcpy(table + pointer_bytes, dimensions, pointer_bytes, cudaMemcpyHostToDevice));
       check(cudaMemcpy(table + 2 * pointer_bytes, offsets.data(), offsets.size() * sizeof(unsigned int), cudaMemcpyHostToDevice));
     }
-    auto input = thrust::make_transform_iterator(indices, CoordinateKey{sources});
+    // Compact row/column bits without changing their lexicographic order.
+    // Smaller global indices then need fewer radix passes, while uint32
+    // coordinates (including the full 32-bit range) retain the same API.
+    auto extent = thrust::make_transform_iterator(indices, CoordinateExtent{sources});
+    size_t extent_bytes = 0;
+    check(cub::DeviceReduce::Max(nullptr, extent_bytes, extent, selected_count, expected));
+    scratch.reserve(extent_bytes);
+    check(cub::DeviceReduce::Max(scratch.data, extent_bytes, extent, selected_count, expected));
+    unsigned int maximum = 0;
+    check(cudaMemcpy(&maximum, selected_count, sizeof(maximum), cudaMemcpyDeviceToHost));
+    index_bits = 32 - __builtin_clz(maximum | 1u);
+    auto input = thrust::make_transform_iterator(indices, CoordinateKey{sources, index_bits});
     for (unsigned int d = 0; d < num_candidates; ++d) {
       auto flags = thrust::make_transform_iterator(indices, MatchesDimension{sources, candidates[d]});
       size_t bytes = 0;
@@ -173,9 +194,9 @@ extern "C" int get_unique_grouped_coordinates(const unsigned int* const* coordin
       unsigned int count = raw_counts[d];
       cub::DoubleBuffer<Key> buffers(keys + raw_offset, other);
       size_t bytes = 0;
-      check(cub::DeviceRadixSort::SortKeys(nullptr, bytes, buffers, count));
+      check(cub::DeviceRadixSort::SortKeys(nullptr, bytes, buffers, count, 0, 2 * index_bits));
       scratch.reserve(bytes);
-      check(cub::DeviceRadixSort::SortKeys(scratch.data, bytes, buffers, count));
+      check(cub::DeviceRadixSort::SortKeys(scratch.data, bytes, buffers, count, 0, 2 * index_bits));
       // Unique's input/output are distinct. Compacting the current group's
       // prefix cannot overwrite any later group's raw coordinates.
       Key* sorted = buffers.Current();
@@ -215,15 +236,15 @@ extern "C" int get_unique_grouped_coordinates(const unsigned int* const* coordin
 extern "C" int finalize_grouped_coordinates(const unsigned int* const* coordinates, const unsigned short* const* dimensions,
   const unsigned int* counts, unsigned int num_sources, const Key* keys, const unsigned short* unique_dimensions,
   const unsigned int* value_outer, const unsigned int* coordinate_outer, unsigned int num_dimensions,
-  unsigned int num_unique, unsigned int* unique_coordinates, unsigned int* lookup) {
+  unsigned int num_unique, unsigned int index_bits, unsigned int* unique_coordinates, unsigned int* lookup) {
   try {
     size_t offset = 0;
     for (unsigned int source = 0; source < num_sources; ++source) {
       make_lookup<<<(counts[source] + 255) / 256, 256>>>(coordinates[source], dimensions[source], counts[source], keys,
-        unique_dimensions, coordinate_outer, value_outer, num_dimensions, lookup + offset);
+        unique_dimensions, coordinate_outer, value_outer, num_dimensions, index_bits, lookup + offset);
       offset += counts[source];
     }
-    unpack_coordinates<<<(num_unique + 255) / 256, 256>>>(keys, unique_coordinates, num_unique);
+    unpack_coordinates<<<(num_unique + 255) / 256, 256>>>(keys, unique_coordinates, num_unique, index_bits);
     check(cudaDeviceSynchronize());
     return 0;
   } catch (const std::exception& error) {
@@ -365,9 +386,9 @@ class coordinateCompressionKernel:
         subprocess.run(['nvcc', '-Xcompiler', '-fPIC', '-shared', '-O3', '-arch=sm_89', str(path.with_suffix('.cu')), '-o', str(path.with_suffix('.so'))], check=True)
       library = ctypes.CDLL(str(path.with_suffix('.so')))
       pointer, uint = ctypes.c_void_p, ctypes.c_uint32
-      library.get_unique_grouped_coordinates.argtypes = [pointer] * 3 + [uint, pointer, uint] + [pointer] * 5 + [ctypes.POINTER(uint)] * 2
+      library.get_unique_grouped_coordinates.argtypes = [pointer] * 3 + [uint, pointer, uint] + [pointer] * 5 + [ctypes.POINTER(uint)] * 3
       library.get_unique_grouped_coordinates.restype = ctypes.c_int
-      library.finalize_grouped_coordinates.argtypes = [pointer] * 3 + [uint] + [pointer] * 4 + [uint] * 2 + [pointer] * 2
+      library.finalize_grouped_coordinates.argtypes = [pointer] * 3 + [uint] + [pointer] * 4 + [uint] * 3 + [pointer] * 2
       library.finalize_grouped_coordinates.restype = ctypes.c_int
       library.coordinate_compression_error.restype = ctypes.c_char_p
       _libraries[key] = library
@@ -396,8 +417,8 @@ class coordinateCompressionKernel:
     counts = np.array(self.__num_coordinates, dtype=np.uint32)
     # Do not retain the raw-sized buffer when millions of duplicates collapse.
     keys = gpuarray.empty(self.__total_coordinates, np.uint64)
-    unique, dimension_count = ctypes.c_uint32(), ctypes.c_uint32()
-    status = library.get_unique_grouped_coordinates(coordinates.ctypes.data, dimensions.ctypes.data, counts.ctypes.data, len(counts), self.__candidates.ctypes.data, len(self.__candidates), int(keys.gpudata), int(self.__uniqueDimensions.gpudata), int(self.__uniqueDimensionsOuterIndices.gpudata), int(self.__uniqueDimensionsBlockCounts.gpudata), int(self.__coordinateOuterIndices.gpudata), ctypes.byref(unique), ctypes.byref(dimension_count))
+    unique, dimension_count, index_bits = ctypes.c_uint32(), ctypes.c_uint32(), ctypes.c_uint32()
+    status = library.get_unique_grouped_coordinates(coordinates.ctypes.data, dimensions.ctypes.data, counts.ctypes.data, len(counts), self.__candidates.ctypes.data, len(self.__candidates), int(keys.gpudata), int(self.__uniqueDimensions.gpudata), int(self.__uniqueDimensionsOuterIndices.gpudata), int(self.__uniqueDimensionsBlockCounts.gpudata), int(self.__coordinateOuterIndices.gpudata), ctypes.byref(unique), ctypes.byref(dimension_count), ctypes.byref(index_bits))
     if status:
       raise RuntimeError('Coordinate compression: ' + library.coordinate_compression_error().decode())
     self.__num_unique_coords, self.__num_unique_dimensions = unique.value, dimension_count.value
@@ -405,7 +426,7 @@ class coordinateCompressionKernel:
       self.__uniqueCoordinates = gpuarray.empty(2 * unique.value, np.uint32)
     if self.__lookupArray.size < self.__total_coordinates:
       self.__lookupArray = gpuarray.empty(self.__total_coordinates, np.uint32)
-    status = library.finalize_grouped_coordinates(coordinates.ctypes.data, dimensions.ctypes.data, counts.ctypes.data, len(counts), int(keys.gpudata), int(self.__uniqueDimensions.gpudata), int(self.__uniqueDimensionsOuterIndices.gpudata), int(self.__coordinateOuterIndices.gpudata), dimension_count.value, unique.value, int(self.__uniqueCoordinates.gpudata), int(self.__lookupArray.gpudata))
+    status = library.finalize_grouped_coordinates(coordinates.ctypes.data, dimensions.ctypes.data, counts.ctypes.data, len(counts), int(keys.gpudata), int(self.__uniqueDimensions.gpudata), int(self.__uniqueDimensionsOuterIndices.gpudata), int(self.__coordinateOuterIndices.gpudata), dimension_count.value, unique.value, index_bits.value, int(self.__uniqueCoordinates.gpudata), int(self.__lookupArray.gpudata))
     if status:
       raise RuntimeError('Coordinate lookup generation: ' + library.coordinate_compression_error().decode())
     self.__coordinates = []
