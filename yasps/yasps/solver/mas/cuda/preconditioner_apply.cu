@@ -1,4 +1,8 @@
+#include <cmath>
 #include <cstdint>
+
+// Legacy _mixed entrypoint names remain for runtime kernel lookup compatibility;
+// preconditioner inverse banks, work vectors, and arithmetic are all FP64.
 
 static __device__ double yasps_mas_atomic_add(double* address, double value) {
 #if __CUDA_ARCH__ >= 600
@@ -112,9 +116,8 @@ extern "C" __global__ void yasps_mas_collect_all_levels(
   fine[scalar] = value;
 }
 
-// GIPC-style mixed precision: local inverses and multilevel work vectors are
-// FP32, while the Hessian, PCG vectors, reductions, and final correction stay
-// FP64. Inversion itself is still performed in FP64 before this one-time cast.
+// Optional mixed-SpMV conversion. MAS preconditioner banks and work vectors
+// stay FP64; this float destination is only for explicitly mixed SpMV storage.
 extern "C" __global__ void yasps_mas_cast_inverse_to_float(
     const double* source, float* destination, std::uint64_t count) {
   const std::uint64_t index =
@@ -126,7 +129,7 @@ extern "C" __global__ void yasps_mas_cast_inverse_to_float(
 // fine node. Each parent only sums its immediate child blocks, like GIPC's
 // repeated BANKSIZE aggregation, while still supporting irregular domains.
 extern "C" __global__ void yasps_mas_restrict_adjacent_nodes_mixed(
-    float* packed, const std::uint64_t* parent_packed_starts,
+    double* packed, const std::uint64_t* parent_packed_starts,
     const std::uint64_t* child_packed_starts,
     const std::uint64_t* parent_offsets,
     const std::uint32_t* parent_children,
@@ -139,7 +142,7 @@ extern "C" __global__ void yasps_mas_restrict_adjacent_nodes_mixed(
   const std::uint64_t end = parent_offsets[parent + 1];
   const std::uint32_t dimension = parent_dimensions[parent];
   for (std::uint32_t component = 0; component < dimension; ++component) {
-    float sum = 0.0f;
+    double sum = 0.0;
     for (std::uint64_t index = begin; index < end; ++index) {
       const std::uint32_t child = parent_children[index];
       sum += packed[child_packed_starts[child] + component];
@@ -150,10 +153,10 @@ extern "C" __global__ void yasps_mas_restrict_adjacent_nodes_mixed(
 
 // One thread owns one fine variable block. Fine nodes are statically sorted by
 // their complete ancestry so every parent is contiguous. Warp-segmented sums
-// therefore reduce each parent before one FP32 atomic per warp segment, which
+// therefore reduce each parent before one FP64 atomic per warp segment, which
 // is the irregular/heterogeneous equivalent of GIPC BuildMultiLevelR.
 extern "C" __global__ void yasps_mas_restrict_warp_nodes_mixed(
-    const double* fine, float* packed,
+    const double* fine, double* packed,
     const std::uint32_t* restriction_order,
     const std::uint64_t* fine_node_to_packed_starts,
     const std::uint32_t* fine_node_scalar_offsets,
@@ -170,7 +173,7 @@ extern "C" __global__ void yasps_mas_restrict_warp_nodes_mixed(
 
   for (std::uint32_t component = 0; component < maximum_dimension; ++component) {
     const bool valid = component < dimension;
-    const float original = valid ? static_cast<float>(fine[input + component]) : 0.0f;
+    const double original = valid ? static_cast<double>(fine[input + component]) : 0.0;
     if (valid) {
       const std::uint64_t level_zero =
           fine_node_to_packed_starts[fine_node] + component;
@@ -183,10 +186,10 @@ extern "C" __global__ void yasps_mas_restrict_warp_nodes_mixed(
       std::uint64_t key = valid
           ? fine_node_to_packed_starts[level * fine_node_count + fine_node] + component
           : 0xffffffffffffffffull - ordered_node;
-      float value = original;
+      double value = original;
       for (unsigned int offset = 1; offset < 32; offset <<= 1) {
         const std::uint64_t other_key = __shfl_down_sync(active, key, offset);
-        const float other_value = __shfl_down_sync(active, value, offset);
+        const double other_value = __shfl_down_sync(active, value, offset);
         const bool source_active = lane + offset < 32
             && (active & (1u << (lane + offset)));
         if (source_active && other_key == key) value += other_value;
@@ -199,7 +202,7 @@ extern "C" __global__ void yasps_mas_restrict_warp_nodes_mixed(
 }
 
 extern "C" __global__ void yasps_mas_dense_inverse_apply_mixed(
-    const float* inverses, const float* gathered_residuals, float* corrections,
+    const double* inverses, const double* gathered_residuals, double* corrections,
     const std::uint64_t* matrix_offsets, const std::uint64_t* vector_offsets,
     const std::uint32_t* sizes, const std::uint32_t* padded_sizes,
     std::uint32_t domain_count) {
@@ -207,12 +210,12 @@ extern "C" __global__ void yasps_mas_dense_inverse_apply_mixed(
   if (domain >= domain_count) return;
   const std::uint32_t n = sizes[domain];
   const std::uint32_t padded = padded_sizes[domain];
-  const float* inverse = inverses + matrix_offsets[domain];
-  const float* residual = gathered_residuals + vector_offsets[domain];
+  const double* inverse = inverses + matrix_offsets[domain];
+  const double* residual = gathered_residuals + vector_offsets[domain];
   for (std::uint32_t row = threadIdx.x; row < n; row += blockDim.x) {
-    float value = 0.0f;
+    double value = 0.0;
     for (std::uint32_t col = 0; col < n; ++col)
-      value = fmaf(inverse[row * padded + col], residual[col], value);
+      value = fma(inverse[row * padded + col], residual[col], value);
     corrections[vector_offsets[domain] + row] = value;
   }
 }
@@ -223,7 +226,7 @@ extern "C" __global__ void yasps_mas_dense_inverse_apply_mixed(
 // in shared memory. This avoids the stride-P warp loads of scalar-row SpMV and
 // uses all node-pair parallelism available inside a runtime-sized Schwarz bank.
 extern "C" __global__ void yasps_mas_dense_inverse_apply_block_pairs(
-    const float* inverses, const float* gathered_residuals, float* corrections,
+    const double* inverses, const double* gathered_residuals, double* corrections,
     const std::uint64_t* matrix_offsets, const std::uint64_t* vector_offsets,
     const std::uint32_t* sizes, const std::uint32_t* padded_sizes,
     const std::uint64_t* domain_node_offsets,
@@ -239,15 +242,15 @@ extern "C" __global__ void yasps_mas_dense_inverse_apply_block_pairs(
   const std::uint64_t begin = domain_node_offsets[domain];
   const std::uint32_t node_count = static_cast<std::uint32_t>(
       domain_node_offsets[domain + 1] - begin);
-  const float* inverse = inverses + matrix_offsets[domain];
-  extern __shared__ float workspace[];
-  float* residual = workspace;
-  float* result = residual + padded;
+  const double* inverse = inverses + matrix_offsets[domain];
+  extern __shared__ double workspace[];
+  double* residual = workspace;
+  double* result = residual + padded;
   for (std::uint32_t scalar = threadIdx.x; scalar < padded;
        scalar += blockDim.x) {
     residual[scalar] = scalar < n
-        ? gathered_residuals[vector_offset + scalar] : 0.0f;
-    result[scalar] = 0.0f;
+        ? gathered_residuals[vector_offset + scalar] : 0.0;
+    result[scalar] = 0.0;
   }
   __syncthreads();
 
@@ -274,19 +277,19 @@ extern "C" __global__ void yasps_mas_dense_inverse_apply_block_pairs(
         ? node_dimensions[col_node] : 0u;
     for (std::uint32_t row = 0; row < maximum_node_dimension; ++row) {
       const bool component_active = active && row < row_dimension;
-      float value = 0.0f;
+      double value = 0.0;
       if (component_active) {
-        const float* matrix_row = inverse
+        const double* matrix_row = inverse
             + static_cast<std::uint64_t>(row_start + row) * padded + col_start;
         for (std::uint32_t col = 0; col < col_dimension; ++col)
-          value = fmaf(matrix_row[col], residual[col_start + col], value);
+          value = fma(matrix_row[col], residual[col_start + col], value);
       }
       const unsigned int key = component_active
           ? row_start + row : 0xffffffffu - threadIdx.x;
       const unsigned int mask = __activemask();
       for (unsigned int offset = 1; offset < 32; offset <<= 1) {
         const unsigned int other_key = __shfl_down_sync(mask, key, offset);
-        const float other_value = __shfl_down_sync(mask, value, offset);
+        const double other_value = __shfl_down_sync(mask, value, offset);
         if (lane + offset < 32 && other_key == key) value += other_value;
       }
       const unsigned int previous_key = __shfl_up_sync(mask, key, 1);
@@ -305,7 +308,7 @@ extern "C" __global__ void yasps_mas_dense_inverse_apply_block_pairs(
 // owns one output row, so inverse coefficients are fetched contiguously. The
 // residual is staged once per domain and shared by every row warp.
 extern "C" __global__ void yasps_mas_dense_inverse_apply_mixed_cooperative(
-    const float* inverses, const float* gathered_residuals, float* corrections,
+    const double* inverses, const double* gathered_residuals, double* corrections,
     const std::uint64_t* matrix_offsets, const std::uint64_t* vector_offsets,
     const std::uint32_t* sizes, const std::uint32_t* padded_sizes,
     std::uint32_t domain_count) {
@@ -318,15 +321,15 @@ extern "C" __global__ void yasps_mas_dense_inverse_apply_mixed_cooperative(
   const std::uint32_t n = sizes[domain];
   const std::uint32_t padded = padded_sizes[domain];
   const std::uint64_t vector_offset = vector_offsets[domain];
-  const float* inverse = inverses + matrix_offsets[domain];
-  extern __shared__ float residual[];
+  const double* inverse = inverses + matrix_offsets[domain];
+  extern __shared__ double residual[];
   for (std::uint32_t col = threadIdx.x; col < n; col += blockDim.x)
     residual[col] = gathered_residuals[vector_offset + col];
   __syncthreads();
   for (std::uint32_t row = warp; row < n; row += warp_count) {
-    float value = 0.0f;
+    double value = 0.0;
     for (std::uint32_t col = lane; col < n; col += warp_size)
-      value = fmaf(inverse[row * padded + col], residual[col], value);
+      value = fma(inverse[row * padded + col], residual[col], value);
     for (std::uint32_t offset = warp_size / 2; offset; offset >>= 1)
       value += __shfl_down_sync(0xffffffffu, value, offset);
     if (lane == 0) corrections[vector_offset + row] = value;
@@ -336,7 +339,7 @@ extern "C" __global__ void yasps_mas_dense_inverse_apply_mixed_cooperative(
 // One thread owns one fine variable block and gathers its corresponding block
 // correction from every level. No atomics are required on prolongation.
 extern "C" __global__ void yasps_mas_collect_nodes_mixed(
-    const float* packed, double* fine,
+    const double* packed, double* fine,
     const std::uint64_t* fine_node_to_packed_starts,
     const std::uint32_t* fine_node_scalar_offsets,
     const std::uint32_t* fine_node_dimensions,
@@ -346,7 +349,7 @@ extern "C" __global__ void yasps_mas_collect_nodes_mixed(
   const std::uint32_t output = fine_node_scalar_offsets[fine_node];
   const std::uint32_t dimension = fine_node_dimensions[fine_node];
   for (std::uint32_t component = 0; component < dimension; ++component) {
-    float sum = 0.0f;
+    double sum = 0.0;
     for (std::uint32_t level = 0; level < level_count; ++level) {
       const std::uint64_t input =
           fine_node_to_packed_starts[level * fine_node_count + fine_node];
@@ -360,7 +363,7 @@ extern "C" __global__ void yasps_mas_collect_nodes_mixed(
 // collection. Each off-diagonal dynamic block owns one small dense inverse;
 // output atomics are required because contact edges overlap at their nodes.
 extern "C" __global__ void yasps_mas_apply_dynamic_edge_domains(
-    const float* inverses, unsigned int edge_padded_size,
+    const double* inverses, unsigned int edge_padded_size,
     const unsigned int* positions, const unsigned int* counts,
     const unsigned long long* position_offsets, const unsigned int* shapes,
     unsigned int category_count, unsigned int block_count,
@@ -384,33 +387,33 @@ extern "C" __global__ void yasps_mas_apply_dynamic_edge_domains(
   const unsigned int col_node = scalar_boundary_to_node[scalar_col];
   const unsigned int row_degree = edge_node_counts[row_node];
   const unsigned int col_degree = edge_node_counts[col_node];
-  const float row_weight = rsqrtf(static_cast<float>(
+  const double row_weight = rsqrt(static_cast<double>(
       row_degree ? row_degree : 1u));
-  const float col_weight = rsqrtf(static_cast<float>(
+  const double col_weight = rsqrt(static_cast<double>(
       col_degree ? col_degree : 1u));
   const unsigned int n = rows + cols;
-  const float* inverse = inverses
+  const double* inverse = inverses
       + static_cast<unsigned long long>(edge) * edge_padded_size * edge_padded_size;
   for (unsigned int row = threadIdx.x; row < n; row += blockDim.x) {
-    float value = 0.0f;
+    double value = 0.0;
     for (unsigned int col = 0; col < n; ++col) {
       const double source = col < rows
           ? residual[scalar_row + col] * row_weight
           : residual[scalar_col + col - rows] * col_weight;
-      value = fmaf(inverse[row * edge_padded_size + col],
-                   static_cast<float>(source), value);
+      value = fma(inverse[row * edge_padded_size + col],
+                   static_cast<double>(source), value);
     }
     double* output = row < rows
         ? correction + scalar_row + row
         : correction + scalar_col + row - rows;
-    const float output_weight = row < rows ? row_weight : col_weight;
+    const double output_weight = row < rows ? row_weight : col_weight;
     yasps_mas_atomic_add(
         output, static_cast<double>(value * output_weight));
   }
 }
 
 extern "C" __global__ void yasps_mas_apply_dynamic_group_domains(
-    const float* inverses, unsigned int group_stride,
+    const double* inverses, unsigned int group_stride,
     const unsigned int* group_active_sizes,
     const unsigned int* group_scalar_indices,
     const unsigned int* group_scalar_nodes,
@@ -419,21 +422,21 @@ extern "C" __global__ void yasps_mas_apply_dynamic_group_domains(
   const unsigned int group = blockIdx.x;
   if (group >= group_count) return;
   const unsigned int n = group_active_sizes[group];
-  const float* inverse = inverses
+  const double* inverse = inverses
       + static_cast<unsigned long long>(group) * group_stride * group_stride;
   for (unsigned int row = threadIdx.x; row < n; row += blockDim.x) {
-    float value = 0.0f;
+    double value = 0.0;
     for (unsigned int col = 0; col < n; ++col) {
       const unsigned int scalar = group_scalar_indices[group * group_stride + col];
       const unsigned int node = group_scalar_nodes[group * group_stride + col];
-      const float weight = 0.5f * rsqrtf(static_cast<float>(
+      const double weight = 0.5 * rsqrt(static_cast<double>(
           max(1u, group_node_counts[node])));
-      value = fmaf(inverse[row * group_stride + col],
-                   static_cast<float>(residual[scalar]) * weight, value);
+      value = fma(inverse[row * group_stride + col],
+                   static_cast<double>(residual[scalar]) * weight, value);
     }
     const unsigned int scalar = group_scalar_indices[group * group_stride + row];
     const unsigned int node = group_scalar_nodes[group * group_stride + row];
-    const float weight = 0.5f * rsqrtf(static_cast<float>(
+    const double weight = 0.5 * rsqrt(static_cast<double>(
         max(1u, group_node_counts[node])));
     yasps_mas_atomic_add(correction + scalar,
                          static_cast<double>(value * weight));

@@ -8,7 +8,7 @@ from time import perf_counter
 import numpy as np
 
 from .hierarchy import Hierarchy, build_hierarchy
-from .block_graph import BlockGraph
+from .block_graph import BlockSparsity
 from .cuda_runtime import DeviceMASRuntime, is_pycuda_array
 from .local_inverse import make_inverse_backend
 from .matrix_view import BlockSparseMatrixView, to_host
@@ -27,6 +27,7 @@ class SolverStatistics:
   final_residual: float = float("inf")
   relative_residual: float = float("inf")
   breakdown: str | None = None
+  residual_restarts: int = 0
   hierarchy_build_count: int = 0
   hierarchy_build_seconds: float = 0.0
   metis_seconds_per_level: list[float] = field(default_factory=list)
@@ -233,6 +234,7 @@ class MASSolver:
     self._numeric: NumericHierarchy | None = None
     self._preconditioner: MASPreconditioner | None = None
     self._cuda_runtime: DeviceMASRuntime | None = None
+    self._cuda_buffers: dict = {}
     self._solution: np.ndarray | None = None
     self._statistics = SolverStatistics(solve_mode=solve_mode)
     self._hierarchy_build_count = 0
@@ -264,11 +266,10 @@ class MASSolver:
   def hierarchy_build_count(self) -> int:
     return self._hierarchy_build_count
 
-  def build_hierarchy(self, matrix_view: BlockSparseMatrixView) -> Hierarchy:
-    if not isinstance(matrix_view, BlockSparseMatrixView):
-      raise TypeError("matrix_view must be a BlockSparseMatrixView")
+  def build_hierarchy(self, matrix_view: BlockSparseMatrixView | BlockSparsity) -> Hierarchy:
+    if not isinstance(matrix_view, (BlockSparseMatrixView, BlockSparsity)):
+      raise TypeError("matrix_view must be a BlockSparseMatrixView or BlockSparsity")
     dimensions = to_host(matrix_view.variable_dimensions, np.int64).reshape(-1)
-    graph = BlockGraph.from_static_view(matrix_view)
     maximum_dimension = int(dimensions.max(initial=1))
     # The default describes the requested MAS policy, not a matrix layout.
     # A singleton variable can exceed that policy, so only raise capacity
@@ -291,9 +292,38 @@ class MASSolver:
       domain_dof_schedule=self.domain_dof_schedule,
       target_node_schedule=self.target_node_schedule,
     )
+    # Repartitioning changes domains, not the fine solution's scalar layout.
+    # Keep its allocation alive so borrowed solution slices remain valid.
+    preserve_solution = self._hierarchy is not None and np.array_equal(
+      self._hierarchy.levels[0].node_dimensions,
+      hierarchy.levels[0].node_dimensions,
+    )
+    self.invalidate_numeric_state(preserve_solution=preserve_solution)
     self._hierarchy = hierarchy
     self._hierarchy_build_count += 1
     return hierarchy
+
+  def rebuild_hierarchy_from_blocks(self, block_positions, block_dimensions, num_blocks) -> Hierarchy:
+    """Explicitly replace topology; supplied blocks never enter the operator.
+
+    Arrays are flat scalar-coordinate and per-block dimension pairs. The
+    next solve constructs fresh numerical banks/maps from its actual matrix.
+    """
+    topology = BlockSparsity(block_positions, block_dimensions, num_blocks)
+    return self.build_hierarchy(topology)
+
+  def invalidate_numeric_state(self, *, preserve_solution=False) -> None:
+    """Drop numerical state/launches, retaining capacity for the next hierarchy."""
+    if self._cuda_runtime is not None:
+      self._cuda_runtime.close()
+    self._numeric = None
+    self._preconditioner = None
+    if not preserve_solution:
+      self._solution = None
+    self._cuda_runtime = None
+    self._numeric_rebuild_age = 0
+    self._preconditioner_dynamic_block_count = 0
+    self._preconditioner_dynamic_edge_active = False
 
   def _level_weights_for_hierarchy(
     self, hierarchy: Hierarchy,
@@ -318,21 +348,21 @@ class MASSolver:
 
   def reset(self) -> None:
     self._hierarchy = None
-    self._numeric = None
-    self._preconditioner = None
-    self._cuda_runtime = None
-    self._solution = None
+    self.invalidate_numeric_state()
+    self._cuda_buffers.clear()
     self._hierarchy_build_count = 0
     self._cuda_runtime_build_count = 0
-    self._numeric_rebuild_age = 0
-    self._preconditioner_dynamic_block_count = 0
-    self._preconditioner_dynamic_edge_active = False
     self._statistics = SolverStatistics(solve_mode=self.solve_mode)
 
   def _ensure_hierarchy(self, view: BlockSparseMatrixView) -> Hierarchy:
-    signature = view.structure_signature()
-    if self._hierarchy is None or self._hierarchy.static_signature != signature:
+    if self._hierarchy is None:
       return self.build_hierarchy(view)
+    # The partition graph can intentionally differ from the true operator.
+    # Only the global DOF layout must match; topology changes are explicit.
+    fine = self._hierarchy.levels[0]
+    if (not np.array_equal(fine.node_dimensions, to_host(view.variable_dimensions).reshape(-1))
+        or not np.array_equal(fine.node_scalar_offsets, to_host(view.variable_scalar_offsets).reshape(-1))):
+      raise ValueError("matrix variable layout changed; explicitly rebuild the MAS hierarchy")
     return self._hierarchy
 
   def _run_reduced_then_fine(
@@ -442,6 +472,7 @@ class MASSolver:
       final_residual=result.final_residual,
       relative_residual=result.relative_residual,
       breakdown=result.breakdown,
+      residual_restarts=result.restarts,
       hierarchy_build_count=self._hierarchy_build_count,
       hierarchy_build_seconds=hierarchy.build_seconds,
       metis_seconds_per_level=[level.metis_seconds for level in hierarchy.levels],
@@ -491,6 +522,7 @@ class MASSolver:
     reused_runtime = (
       self._cuda_runtime is not None
       and self._cuda_runtime.hierarchy is hierarchy
+      and self._cuda_runtime.view is matrix_view
       and self._cuda_runtime.inverse_algorithm == algorithm
       and self._cuda_runtime.threads_per_block == self.cuda_threads_per_block
       and self._cuda_runtime.fixed_inverse_bucket_size
@@ -548,10 +580,13 @@ class MASSolver:
         active_interval
       )
       rebuild_preconditioner = (
+        runtime._numeric_update_failed or
         dynamic_connectivity_transition or
         dynamic_edge_activation_transition or interval_expired
       )
       numeric_rebuild_reason = (
+        "previous-numeric-failure"
+        if runtime._numeric_update_failed else
         "dynamic-connectivity-transition"
         if dynamic_connectivity_transition else
         "dynamic-edge-activation-transition"
@@ -574,9 +609,12 @@ class MASSolver:
           runtime.dynamic_edge_domains_active
         )
     else:
+      self.invalidate_numeric_state(preserve_solution=True)
       runtime = DeviceMASRuntime(
         matrix_view,
         hierarchy,
+        solution_buffer=self._solution if is_pycuda_array(self._solution) else None,
+        buffers=self._cuda_buffers,
         inverse_algorithm=algorithm,
         threads_per_block=self.cuda_threads_per_block,
         fixed_inverse_bucket_size=self.cuda_fixed_inverse_bucket_size,
@@ -704,6 +742,7 @@ class MASSolver:
       final_residual=result.final_residual,
       relative_residual=result.relative_residual,
       breakdown=result.breakdown,
+      residual_restarts=result.restarts,
       hierarchy_build_count=self._hierarchy_build_count,
       hierarchy_build_seconds=hierarchy.build_seconds,
       metis_seconds_per_level=[level.metis_seconds for level in hierarchy.levels],

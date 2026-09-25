@@ -834,42 +834,6 @@ extern "C" __global__ void yasps_mas_complete_dynamic_group_domains(
   }
 }
 
-extern "C" __global__ void yasps_mas_regularize_dynamic_group_domains(
-    double* matrices, const unsigned int* active_sizes,
-    unsigned int group_stride, unsigned int group_count) {
-  const unsigned int group = blockIdx.x;
-  if (group >= group_count) return;
-  const unsigned int n = active_sizes[group];
-  double* matrix = matrices
-      + static_cast<unsigned long long>(group) * group_stride * group_stride;
-  __shared__ double lower_bounds[64];
-  __shared__ double diagonal_scales[64];
-  __shared__ double diagonal_shift;
-  if (threadIdx.x < n) {
-    const unsigned int row = threadIdx.x;
-    double radius = 0.0;
-    for (unsigned int col = 0; col < n; ++col)
-      if (col != row) radius += fabs(matrix[row * group_stride + col]);
-    const double diagonal = matrix[row * group_stride + row];
-    lower_bounds[row] = diagonal - radius;
-    diagonal_scales[row] = fabs(diagonal);
-  }
-  __syncthreads();
-  if (threadIdx.x == 0) {
-    double minimum = n ? lower_bounds[0] : 1.0;
-    double scale = n ? diagonal_scales[0] : 1.0;
-    for (unsigned int row = 1; row < n; ++row) {
-      minimum = fmin(minimum, lower_bounds[row]);
-      scale = fmax(scale, diagonal_scales[row]);
-    }
-    diagonal_shift = minimum > 0.0
-        ? 0.0 : (-minimum + fmax(1.0, scale) * 1.0e-6);
-  }
-  __syncthreads();
-  for (unsigned int row = threadIdx.x; row < n; row += blockDim.x)
-    matrix[row * group_stride + row] += diagonal_shift;
-}
-
 // Apply an input block category at any hierarchy level without materializing
 // a collapsed sparse matrix. The fine-node-to-level-scalar-start map is static.
 extern "C" __global__ void yasps_mas_mapped_block_spmv(

@@ -1,0 +1,5 @@
+.yasps_tmp/
+.yasps_constant/
+outputs/
+__pycache__/
+!transfers.cu

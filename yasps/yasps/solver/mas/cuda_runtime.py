@@ -3,8 +3,9 @@
 The hierarchy and every scalar/domain map are static.  Per solve, current
 static values and arbitrary dynamic collision blocks are walked through those
 maps once, accumulated directly into a fixed local-matrix arena, inverted once,
-and reused for all PCG iterations.  This mirrors StiffGIPC's useful numerical
-lifecycle while retaining YASPS's heterogeneous block dimensions.
+and reused for all PCG iterations. Local inverse storage, restriction,
+application and collection stay in FP64: ill-conditioned SPD domains can
+lose positive definiteness through FP32 rounding and cancellation.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from .jit import compile_cuda_library, spmv_warps_for_shape
 from .local_inverse import LocalInverseError, bucket_size
 from .matrix_view import BlockSparseMatrixView, to_host
 from .pcg import PCGResult
+from .partition import domain_arrays, duplicate_domain_nodes
 
 
 _CUDA_KERNEL_CACHE: dict[int, dict[str, object]] = {}
@@ -85,6 +87,8 @@ class DeviceMASRuntime:
     view: BlockSparseMatrixView,
     hierarchy: Hierarchy,
     *,
+    solution_buffer=None,
+    buffers=None,
     inverse_algorithm: str = "spd",
     threads_per_block: int = 96,
     pivot_tolerance: float = 1e-12,
@@ -121,6 +125,9 @@ class DeviceMASRuntime:
       raise RuntimeError(f"CUDA initialization failed: {error}") from error
 
     self.cuda, self.gpuarray = cuda, gpuarray
+    # Storage outlives a hierarchy, but its contents and captured launches do not.
+    # The solver owns this dictionary; separate solvers never alias workspaces.
+    self._buffers = {} if buffers is None else buffers
     self.view, self.hierarchy = view, hierarchy
     self.inverse_algorithm = inverse_algorithm
     self.threads_per_block = threads_per_block
@@ -242,7 +249,7 @@ class DeviceMASRuntime:
     self.mas_applications = 0
     self.device_bytes = 0
     self.static_setup_seconds = 0.0
-    self._build_static_state(view)
+    self._build_static_state(view, solution_buffer)
     # The domain-size buckets are immutable. Capture their specialized
     # inverse launches once so each numerical rebuild issues one graph
     # launch, with no per-solve Python traversal over bucket sizes.  Each
@@ -331,9 +338,6 @@ class DeviceMASRuntime:
         ),
         "complete_dynamic_groups": assembly.get_function(
           "yasps_mas_complete_dynamic_group_domains"
-        ),
-        "regularize_dynamic_groups": assembly.get_function(
-          "yasps_mas_regularize_dynamic_group_domains"
         ),
         "mapped_spmv": assembly.get_function("yasps_mas_mapped_block_spmv"),
         "inverse_spd": inverse.get_function("yasps_mas_inverse_spd"),
@@ -443,9 +447,6 @@ class DeviceMASRuntime:
     ]
     self.complete_dynamic_groups_kernel = cached[
       "complete_dynamic_groups"
-    ]
-    self.regularize_dynamic_groups_kernel = cached[
-      "regularize_dynamic_groups"
     ]
     self.mapped_spmv_kernel = cached["mapped_spmv"]
     self.inverse_kernel = cached[
@@ -943,11 +944,11 @@ class DeviceMASRuntime:
       )
       source = source.replace(
         "// YASPS_MAS_GENERATED_LEVEL_WEIGHTS",
-        ", ".join(f"{float(weight)!r}f" for weight in level_weights),
+        ", ".join(f"{float(weight)!r}" for weight in level_weights),
       )
       source = source.replace(
         "YASPS_MAS_GENERATED_DUPLICATE_LEVEL_WEIGHT",
-        f"{float(duplicate_level_weight)!r}f",
+        f"{float(duplicate_level_weight)!r}",
       )
       source = source.replace(
         "// YASPS_MAS_GENERATED_RESTRICT_DIMENSION_CASES",
@@ -1063,7 +1064,7 @@ class DeviceMASRuntime:
         ),
       )
       compiled_weights = ", ".join(
-        f"{float(weight)!r}f" for weight in level_weights
+        f"{float(weight)!r}" for weight in level_weights
       )
       source = source.replace(
         "// YASPS_MAS_COARSE_LEVEL_WEIGHTS",
@@ -1138,15 +1139,46 @@ class DeviceMASRuntime:
     )
     return cached
 
-  def _empty(self, size, dtype):
-    return self.gpuarray.empty(size, dtype=dtype, allocator=self.allocator)
+  def close(self):
+    """Finish work and retire launches before reusing their workspace."""
+    self.cuda.Context.synchronize()
+    for cache in (self._pcg_graphs, self._numeric_rebuild_graphs, self._mixed_spmv_conversion_graphs):
+      for graph in cache.values():
+        graph.close()
+      cache.clear()
+    self._numeric_inverse_graph.close()
 
-  def _zeros(self, size, dtype):
-    return self.gpuarray.zeros(size, dtype=dtype, allocator=self.allocator)
+  def _empty(self, size, dtype, key=None):
+    if key is None:
+      return self.gpuarray.empty(size, dtype=dtype, allocator=self.allocator)
+    key = (self.context_key, key)
+    dtype = np.dtype(dtype)
+    required = int(size)
+    buffer = self._buffers.get(key)
+    if buffer is None or buffer.dtype != dtype or buffer.size < required:
+      previous = 0 if buffer is None or buffer.dtype != dtype else int(buffer.size)
+      capacity = max(required, int(np.ceil(previous * self.upload_growth_factor)))
+      # Do not send obsolete storage to the size-binned pool: retaining one
+      # allocation for every previous hierarchy size was the memory growth.
+      self._buffers.pop(key, None)
+      buffer = None
+      buffer = self.gpuarray.empty(capacity, dtype=dtype)
+      self._buffers[key] = buffer
+    return buffer[:required]
 
-  def _to_gpu(self, value, dtype=None):
-    array = np.asarray(value, dtype=dtype)
-    return self.gpuarray.to_gpu(array, allocator=self.allocator)
+  def _zeros(self, size, dtype, key=None):
+    result = self._empty(size, dtype, key)
+    result.fill(0)
+    return result
+
+  def _to_gpu(self, value, dtype=None, key=None):
+    array = np.ascontiguousarray(value, dtype=dtype)
+    if key is None:
+      return self.gpuarray.to_gpu(array, allocator=self.allocator)
+    result = self._empty(array.size, array.dtype, key).reshape(array.shape)
+    if array.size:
+      result.set(array)
+    return result
 
   def _upload(
     self, key: str, value, dtype, *, immutable: bool = False,
@@ -1168,7 +1200,7 @@ class DeviceMASRuntime:
         int(np.ceil(previous * self.upload_growth_factor)),
         1,
       )
-      slot = UploadSlot(self._empty(grown, dtype), grown)
+      slot = UploadSlot(self._empty(grown, dtype, f"upload:{key}"), grown)
       self._uploads[key] = slot
       self.upload_reallocations += 1
     unchanged = bool(
@@ -1184,9 +1216,8 @@ class DeviceMASRuntime:
   def _domain_layout(self, level: HierarchyLevel):
     sizes = level.domain_scalar_sizes.astype(np.uint32, copy=True)
     if self.fixed_inverse_bucket_size is None:
-      padded = np.asarray(
-        [bucket_size(int(size)) for size in sizes], dtype=np.uint32
-      )
+      unique_sizes, inverse = np.unique(sizes, return_inverse=True)
+      padded = np.asarray([bucket_size(int(size)) for size in unique_sizes], dtype=np.uint32)[inverse]
     else:
       if sizes.size and int(sizes.max()) > self.fixed_inverse_bucket_size:
         raise ValueError(
@@ -1198,18 +1229,16 @@ class DeviceMASRuntime:
       )
     node_domains = np.empty(level.number_of_nodes, dtype=np.uint32)
     node_local_offsets = np.empty(level.number_of_nodes, dtype=np.uint32)
-    domain_nodes = np.concatenate(level.domains).astype(np.int64, copy=False)
-    domain_ids = np.repeat(
-      np.arange(len(level.domains), dtype=np.uint32),
-      [len(nodes) for nodes in level.domains],
-    )
-    local_offsets = np.concatenate(level.domain_scalar_offsets).astype(np.uint32, copy=False)
+    domain_nodes, domain_offsets = domain_arrays(level.domains)
+    counts = np.diff(domain_offsets)
+    domain_ids = np.repeat(np.arange(len(level.domains), dtype=np.uint32), counts)
+    prefix = np.r_[0, np.cumsum(level.node_dimensions[domain_nodes])]
+    local_offsets = (prefix[:-1] - np.repeat(prefix[domain_offsets[:-1]], counts)).astype(np.uint32)
     node_domains[domain_nodes] = domain_ids
     node_local_offsets[domain_nodes] = local_offsets
 
     vector_offsets = np.cumsum(np.r_[0, sizes[:-1]], dtype=np.uint64)
     dimensions = level.node_dimensions.astype(np.int64, copy=False)
-    scalar_nodes = np.repeat(np.arange(level.number_of_nodes, dtype=np.int64), dimensions)
     within_node = np.arange(level.number_of_scalar_dofs, dtype=np.uint64) - np.repeat(
       level.node_scalar_offsets.astype(np.uint64, copy=False), dimensions
     )
@@ -1217,7 +1246,7 @@ class DeviceMASRuntime:
       vector_offsets[node_domains.astype(np.int64)] + node_local_offsets
     ).astype(np.uint64, copy=False)
     scalar_to_packed = np.repeat(packed_node_starts, dimensions) + within_node
-    return sizes, padded, node_domains, node_local_offsets, vector_offsets, scalar_to_packed
+    return sizes, padded, node_domains, node_local_offsets, vector_offsets, scalar_to_packed, domain_nodes, domain_offsets
 
   @staticmethod
   def _fine_scalar_to_level(level: HierarchyLevel, fine: HierarchyLevel, node_map):
@@ -1229,7 +1258,7 @@ class DeviceMASRuntime:
     starts = level.node_scalar_offsets[np.asarray(node_map, dtype=np.int64)[scalar_nodes]]
     return (starts.astype(np.int64, copy=False) + within_node).astype(np.uint32)
 
-  def _build_static_state(self, view: BlockSparseMatrixView) -> None:
+  def _build_static_state(self, view: BlockSparseMatrixView, solution_buffer=None) -> None:
     started = perf_counter()
     fine = self.hierarchy.levels[0]
     self.fine_node_count = fine.number_of_nodes
@@ -1275,12 +1304,12 @@ class DeviceMASRuntime:
       self.spmv_auxiliary_capacity * 6, np.uint64
     )
     self.spmv_auxiliary_descriptors = self._empty(
-      self.spmv_auxiliary_capacity * 6, np.uint64
+      self.spmv_auxiliary_capacity * 6, np.uint64, "spmv_auxiliary_descriptors"
     )
     boundary = np.full(view.rows, np.iinfo(np.uint32).max, dtype=np.uint32)
     boundary[offsets] = np.arange(offsets.size, dtype=np.uint32)
-    self.boundary_to_node = self._to_gpu(boundary)
-    self.fine_dimensions = self._to_gpu(dimensions)
+    self.boundary_to_node = self._to_gpu(boundary, key="boundary_to_node")
+    self.fine_dimensions = self._to_gpu(dimensions, key="fine_dimensions")
 
     # Do not add an unchanged local Schwarz space repeatedly merely because
     # other components of the graph continue coarsening. A target domain is
@@ -1292,6 +1321,7 @@ class DeviceMASRuntime:
     fine_level_active = np.ones(
       (self.level_count, self.fine_node_count), dtype=np.uint8
     )
+    host_layouts = [self._domain_layout(level) for level in self.hierarchy.levels]
     # Runtime aliases change coordinates inside a static bank, but do not
     # make an already duplicated static Schwarz space independent. Keep
     # this topology weight active in collision-aware mode as well; dropping
@@ -1300,37 +1330,10 @@ class DeviceMASRuntime:
     for level_index, transfer in enumerate(
       self.hierarchy.adjacent_maps, start=1
     ):
-      previous = self.hierarchy.levels[level_index - 1]
-      current = self.hierarchy.levels[level_index]
       mapping = np.asarray(
         transfer.fine_node_to_parent, dtype=np.int64
       )
-      children: list[list[int]] = [
-        [] for _ in range(current.number_of_nodes)
-      ]
-      for child, parent in enumerate(mapping):
-        children[int(parent)].append(child)
-      previous_domain = np.empty(
-        previous.number_of_nodes, dtype=np.int64
-      )
-      for domain, nodes in enumerate(previous.domains):
-        previous_domain[np.asarray(nodes, dtype=np.int64)] = domain
-      duplicate_parent = np.zeros(
-        current.number_of_nodes, dtype=bool
-      )
-      for nodes in current.domains:
-        child_nodes = []
-        for parent in nodes:
-          if len(children[parent]) != 1:
-            break
-          child_nodes.append(children[parent][0])
-        else:
-          source_domain = int(previous_domain[child_nodes[0]])
-          if (all(previous_domain[child] == source_domain
-              for child in child_nodes)
-              and set(child_nodes)
-              == set(previous.domains[source_domain])):
-            duplicate_parent[np.asarray(nodes, dtype=np.int64)] = True
+      duplicate_parent = duplicate_domain_nodes(mapping, host_layouts[level_index - 1][2], host_layouts[level_index][6], host_layouts[level_index][7])
       fine_parents = np.asarray(
         self.hierarchy.composed_node_maps[level_index],
         dtype=np.int64,
@@ -1339,9 +1342,8 @@ class DeviceMASRuntime:
         ~duplicate_parent[fine_parents]
       ).astype(np.uint8, copy=False)
     self.fine_node_level_active = self._to_gpu(
-      fine_level_active.reshape(-1), np.uint8
+      fine_level_active.reshape(-1), np.uint8, "fine_node_level_active"
     )
-    host_layouts = [self._domain_layout(level) for level in self.hierarchy.levels]
     level_node_bases = np.cumsum(
       np.r_[0, [level.number_of_nodes
            for level in self.hierarchy.levels][:-1]],
@@ -1362,28 +1364,29 @@ class DeviceMASRuntime:
     self.domain_count = int(sizes.size)
     self.fine_domain_count = len(self.hierarchy.levels[0].domains)
 
-    grouped: dict[tuple[int, int], list[int]] = {}
-    for domain, (active_size, padded_size) in enumerate(zip(sizes, padded)):
-      grouped.setdefault(
-        (int(padded_size), int(active_size)), []
-      ).append(domain)
+    # Stable sorting retains the old ascending domain order within buckets.
+    keys = (padded.astype(np.uint64) << np.uint64(32)) | sizes
+    bucket_order = np.argsort(keys, kind="stable")
+    sorted_keys = keys[bucket_order]
+    bucket_offsets = np.r_[0, np.flatnonzero(sorted_keys[1:] != sorted_keys[:-1]) + 1, sizes.size]
     matrix_offsets = np.empty(self.domain_count, dtype=np.uint64)
     inverse_bucket_specs = []
     matrix_cursor = 0
-    for (padded_size, active_size), domains in sorted(grouped.items()):
+    for first, last in zip(bucket_offsets[:-1], bucket_offsets[1:]):
+      if first == last:
+        continue
+      domains = bucket_order[first:last]
+      padded_size, active_size = int(padded[domains[0]]), int(sizes[domains[0]])
       matrix_start = matrix_cursor
-      for batch, domain in enumerate(domains):
-        matrix_offsets[domain] = matrix_start + batch * padded_size * padded_size
+      matrix_offsets[domains] = matrix_start + np.arange(domains.size, dtype=np.uint64) * padded_size * padded_size
       matrix_cursor += len(domains) * padded_size * padded_size
       inverse_bucket_specs.append((
         padded_size, active_size, matrix_start,
-        np.asarray(domains, np.int64),
+        domains,
       ))
     self.matrix_storage_size = int(matrix_cursor)
-    maximum_inverse_shared = max(
-      (2 * int(size) * int(size) + int(size)) * 8
-      for size in padded
-    )
+    maximum_padded_size = int(padded.max(initial=0))
+    maximum_inverse_shared = (2 * maximum_padded_size * maximum_padded_size + maximum_padded_size) * 8
     default_shared = int(self.cuda.Context.get_device().get_attribute(
       self.cuda.device_attribute.MAX_SHARED_MEMORY_PER_BLOCK
     ))
@@ -1429,7 +1432,7 @@ class DeviceMASRuntime:
     node_domain_ordinals_parts = []
     node_type_parts = []
     domain_nodes_parts = []
-    domain_node_offsets = [0]
+    domain_node_offsets = [np.zeros(1, dtype=np.uint64)]
     for level_index, (level, layout, domain_base, vector_base, node_map) in enumerate(zip(
       self.hierarchy.levels,
       host_layouts,
@@ -1437,7 +1440,7 @@ class DeviceMASRuntime:
       level_vector_bases,
       self.hierarchy.composed_node_maps,
     )):
-      _, _, node_domains, node_local, vector_offsets, scalar_to_packed = layout
+      _, _, node_domains, node_local, vector_offsets, scalar_to_packed, domain_nodes_flat, domain_offsets = layout
       node_map = np.asarray(node_map, dtype=np.int64)
       vector_offsets_parts.append(vector_offsets + vector_base)
       fine_to_level = self._fine_scalar_to_level(level, fine, node_map)
@@ -1457,18 +1460,9 @@ class DeviceMASRuntime:
       node_domains_parts.append(node_domains + domain_base)
       node_local_parts.append(node_local)
       ordinals = np.empty(level.number_of_nodes, dtype=np.uint32)
-      for domain_nodes in level.domains:
-        domain_array = np.asarray(domain_nodes, dtype=np.int64)
-        ordinals[domain_array] = np.arange(
-          domain_array.size, dtype=np.uint32
-        )
-        domain_nodes_parts.append(
-          domain_array.astype(np.uint32, copy=False)
-          + np.uint32(level_node_bases[level_index])
-        )
-        domain_node_offsets.append(
-          domain_node_offsets[-1] + int(domain_array.size)
-        )
+      ordinals[domain_nodes_flat] = np.arange(domain_nodes_flat.size) - np.repeat(domain_offsets[:-1], np.diff(domain_offsets))
+      domain_nodes_parts.append(domain_nodes_flat.astype(np.uint32) + np.uint32(level_node_bases[level_index]))
+      domain_node_offsets.append(domain_offsets[1:].astype(np.uint64) + domain_node_offsets[-1][-1])
       node_domain_ordinals_parts.append(ordinals)
       node_type_parts.append(
         np.zeros(level.number_of_nodes, dtype=np.int64)
@@ -1524,7 +1518,7 @@ class DeviceMASRuntime:
     domain_nodes = np.concatenate(domain_nodes_parts).astype(
       np.uint32, copy=False
     )
-    domain_node_offsets = np.asarray(domain_node_offsets, dtype=np.uint64)
+    domain_node_offsets = np.concatenate(domain_node_offsets)
     node_to_next = np.full(
       self.packed_node_count, np.iinfo(np.uint32).max, dtype=np.uint32
     )
@@ -1586,10 +1580,7 @@ class DeviceMASRuntime:
     )
     preconditioner_specialized = self._get_specialized_preconditioner_kernels(
       self.maximum_fine_dimension, self.level_count,
-      tuple(sorted({
-        (int(size), int(pad))
-        for size, pad in zip(sizes, padded)
-      })), self.level_weights,
+      tuple(sorted((active, pad) for pad, active, _, _ in inverse_bucket_specs)), self.level_weights,
       tuple(sorted(map(int, np.unique(dimensions)))),
       self.duplicate_level_weight,
       self.compact_packed_offsets,
@@ -1650,9 +1641,7 @@ class DeviceMASRuntime:
       np.arange(self.domain_count, dtype=np.uint32),
       sizes.astype(np.int64, copy=False),
     )
-    packed_scalar_local_offsets = np.concatenate([
-      np.arange(int(size), dtype=np.uint32) for size in sizes
-    ])
+    packed_scalar_local_offsets = (np.arange(self.packed_vector_size, dtype=np.uint64) - np.repeat(vector_offsets, sizes.astype(np.int64))).astype(np.uint32)
     level0_packed_to_fine = np.empty(self.fine_dofs, dtype=np.uint32)
     level0_packed_to_fine[
       fine_to_packed[:self.fine_dofs].astype(np.int64, copy=False)
@@ -1753,28 +1742,28 @@ class DeviceMASRuntime:
         unresolved[selected] = False
 
     self.static_destination_offsets = self._to_gpu(
-      static_destinations
+      static_destinations, key="static_destination_offsets"
     )
-    self.static_transpose_offsets = self._to_gpu(static_transposes)
-    self.static_destination_strides = self._to_gpu(static_strides)
+    self.static_transpose_offsets = self._to_gpu(static_transposes, key="static_transpose_offsets")
+    self.static_destination_strides = self._to_gpu(static_strides, key="static_destination_strides")
 
-    self.matrix_offsets = self._to_gpu(matrix_offsets)
-    self.vector_offsets = self._to_gpu(vector_offsets)
-    self.sizes = self._to_gpu(sizes)
-    self.padded_sizes = self._to_gpu(padded)
-    self.fine_to_packed = self._to_gpu(fine_to_packed)
-    self.fine_to_level = self._to_gpu(fine_to_level)
-    self.fine_node_domains = self._to_gpu(fine_node_domains)
-    self.fine_node_local_offsets = self._to_gpu(fine_node_local)
-    self.fine_node_scalar_starts = self._to_gpu(fine_node_scalar_starts)
-    self.fine_node_scalar_offsets = self._to_gpu(offsets)
-    self.packed_node_starts = self._to_gpu(packed_node_starts)
-    self.packed_node_dimensions = self._to_gpu(packed_node_dimensions)
-    self.fine_node_to_packed_starts = self._to_gpu(fine_node_to_packed_starts)
-    self.fine_node_level_keys = self._to_gpu(fine_node_level_keys)
+    self.matrix_offsets = self._to_gpu(matrix_offsets, key="matrix_offsets")
+    self.vector_offsets = self._to_gpu(vector_offsets, key="vector_offsets")
+    self.sizes = self._to_gpu(sizes, key="sizes")
+    self.padded_sizes = self._to_gpu(padded, key="padded_sizes")
+    self.fine_to_packed = self._to_gpu(fine_to_packed, key="fine_to_packed")
+    self.fine_to_level = self._to_gpu(fine_to_level, key="fine_to_level")
+    self.fine_node_domains = self._to_gpu(fine_node_domains, key="fine_node_domains")
+    self.fine_node_local_offsets = self._to_gpu(fine_node_local, key="fine_node_local_offsets")
+    self.fine_node_scalar_starts = self._to_gpu(fine_node_scalar_starts, key="fine_node_scalar_starts")
+    self.fine_node_scalar_offsets = self._to_gpu(offsets, key="fine_node_scalar_offsets")
+    self.packed_node_starts = self._to_gpu(packed_node_starts, key="packed_node_starts")
+    self.packed_node_dimensions = self._to_gpu(packed_node_dimensions, key="packed_node_dimensions")
+    self.fine_node_to_packed_starts = self._to_gpu(fine_node_to_packed_starts, key="fine_node_to_packed_starts")
+    self.fine_node_level_keys = self._to_gpu(fine_node_level_keys, key="fine_node_level_keys")
     self.compact_fine_node_to_packed_starts = (
       None if compact_fine_node_to_packed_starts is None else
-      self._to_gpu(compact_fine_node_to_packed_starts)
+      self._to_gpu(compact_fine_node_to_packed_starts, key="compact_fine_node_to_packed_starts")
     )
     self.specialized_restriction_offsets = (
       self.compact_fine_node_to_packed_starts
@@ -1784,30 +1773,30 @@ class DeviceMASRuntime:
       self.compact_fine_node_to_packed_starts
       if self.compact_packed_offsets else self.fine_node_to_packed_starts
     )
-    self.restriction_order = self._to_gpu(restriction_order)
-    self.packed_scalar_domains = self._to_gpu(packed_scalar_domains)
+    self.restriction_order = self._to_gpu(restriction_order, key="restriction_order")
+    self.packed_scalar_domains = self._to_gpu(packed_scalar_domains, key="packed_scalar_domains")
     self.packed_scalar_local_offsets = self._to_gpu(
-      packed_scalar_local_offsets
+      packed_scalar_local_offsets, key="packed_scalar_local_offsets"
     )
-    self.level0_packed_to_fine = self._to_gpu(level0_packed_to_fine)
-    self.packed_to_next_packed = self._to_gpu(packed_to_next)
-    self.level_node_bases = self._to_gpu(level_node_bases)
-    self.fine_to_level_node = self._to_gpu(fine_to_level_node)
-    self.node_domains = self._to_gpu(node_domains)
-    self.node_local_offsets = self._to_gpu(node_local_offsets)
-    self.node_domain_ordinals = self._to_gpu(node_domain_ordinals)
-    self.node_type_ids = self._to_gpu(node_type_ids)
-    self.domain_nodes = self._to_gpu(domain_nodes)
-    self.domain_node_offsets = self._to_gpu(domain_node_offsets)
-    self.node_to_next = self._to_gpu(node_to_next)
+    self.level0_packed_to_fine = self._to_gpu(level0_packed_to_fine, key="level0_packed_to_fine")
+    self.packed_to_next_packed = self._to_gpu(packed_to_next, key="packed_to_next_packed")
+    self.level_node_bases = self._to_gpu(level_node_bases, key="level_node_bases")
+    self.fine_to_level_node = self._to_gpu(fine_to_level_node, key="fine_to_level_node")
+    self.node_domains = self._to_gpu(node_domains, key="node_domains")
+    self.node_local_offsets = self._to_gpu(node_local_offsets, key="node_local_offsets")
+    self.node_domain_ordinals = self._to_gpu(node_domain_ordinals, key="node_domain_ordinals")
+    self.node_type_ids = self._to_gpu(node_type_ids, key="node_type_ids")
+    self.domain_nodes = self._to_gpu(domain_nodes, key="domain_nodes")
+    self.domain_node_offsets = self._to_gpu(domain_node_offsets, key="domain_node_offsets")
+    self.node_to_next = self._to_gpu(node_to_next, key="node_to_next")
     self.connection_masks = self._zeros(
-      self.packed_node_count, np.uint64
+      self.packed_node_count, np.uint64, "connection_masks"
     )
     self.representatives = self._to_gpu(
-      np.arange(self.packed_node_count, dtype=np.uint32)
+      np.arange(self.packed_node_count, dtype=np.uint32), key="representatives"
     )
     self.packed_active = self._to_gpu(
-      np.ones(self.packed_vector_size, dtype=np.uint8)
+      np.ones(self.packed_vector_size, dtype=np.uint8), key="packed_active"
     )
     self.level_domain_bases = [int(value) for value in level_domain_bases]
     self.level_domain_counts = [
@@ -1816,67 +1805,77 @@ class DeviceMASRuntime:
 
 
 
-    self.matrices = self._empty(self.matrix_storage_size, np.float64)
-    # Inversion arithmetic is FP64 in shared memory for either algorithm;
-    # only the reusable GIPC-style bank is materialized, in FP32.
-    self.inverses = self._empty(1, np.float64)
-    self.mixed_inverses = self._empty(self.matrix_storage_size, np.float32)
-    self.packed_residual = self._empty(self.packed_vector_size, np.float32)
-    self.packed_correction = self._empty(self.packed_vector_size, np.float32)
-    self._preconditioned_output = self._empty(self.fine_dofs, np.float64)
-    self._matvec_output = self._empty(self.fine_dofs, np.float64)
-    self._pcg_solution = self._empty(self.fine_dofs, np.float64)
-    self._pcg_residual = self._empty(self.fine_dofs, np.float64)
-    self._pcg_direction = self._empty(self.fine_dofs, np.float64)
-    self._pcg_state = self._zeros(13, np.float64)
+    self.matrices = self._empty(self.matrix_storage_size, np.float64, "matrices")
+    # Keep both inversion and its stored result/application in FP64. Historical
+    # "mixed" entrypoint/attribute names remain for internal compatibility;
+    # they no longer imply float storage. Optional mixed SpMV is independent.
+    self.inverses = self._empty(1, np.float64, "inverses")
+    self.mixed_inverses = self._empty(self.matrix_storage_size, np.float64, "mixed_inverses")
+    self.packed_residual = self._empty(self.packed_vector_size, np.float64, "packed_residual")
+    self.packed_correction = self._empty(self.packed_vector_size, np.float64, "packed_correction")
+    self._preconditioned_output = self._empty(self.fine_dofs, np.float64, "_preconditioned_output")
+    self._matvec_output = self._empty(self.fine_dofs, np.float64, "_matvec_output")
+    # The fine solution survives repartitioning; domain-dependent contents
+    # are rebuilt in reusable storage. PCG initializes its state every solve.
+    if solution_buffer is not None:
+      if solution_buffer.dtype != np.float64 or solution_buffer.shape != (self.fine_dofs,):
+        raise ValueError("solution buffer must match the fine FP64 vector layout")
+      self._pcg_solution = solution_buffer
+    else:
+      self._pcg_solution = self._empty(self.fine_dofs, np.float64, "_pcg_solution")
+    self._pcg_residual = self._empty(self.fine_dofs, np.float64, "_pcg_residual")
+    self._pcg_direction = self._empty(self.fine_dofs, np.float64, "_pcg_direction")
+    self._pcg_state = self._zeros(15, np.float64, "_pcg_state")
     self._pcg_curvature = self._pcg_state[2:3]
     self._pcg_next_values = self._pcg_state[3:5]
     self._pcg_relative_tolerance = self._pcg_state[9:10]
     self._pcg_host_status = self.cuda.pagelocked_empty(2, np.float64)
     self._pcg_host_completion = self.cuda.pagelocked_empty(4, np.float64)
-    self._pcg_host_initial = self.cuda.pagelocked_empty(13, np.float64)
-    self._pcg_host_control = self.cuda.pagelocked_empty(13, np.float64)
+    self._pcg_host_initial = self.cuda.pagelocked_empty(15, np.float64)
+    self._pcg_host_control = self.cuda.pagelocked_empty(15, np.float64)
     self._pcg_initial_start_event = self.cuda.Event()
     self._pcg_initial_end_event = self.cuda.Event()
     # status[0] reports block-assembly validation; status[1] folds every
     # bucket's inverse failure so the successful hot path needs one D2H.
-    self.status = self._zeros(2, np.int32)
+    self.status = self._zeros(2, np.int32, "status")
     self.inverse_failure = self.status[1:2]
-    self.domain_status = self._zeros(self.domain_count, np.int32)
+    self.domain_status = self._zeros(self.domain_count, np.int32, "domain_status")
     self.dynamic_edge_capacity = 1
     edge_storage = (
       self.dynamic_edge_capacity
       * self.dynamic_edge_padded_size * self.dynamic_edge_padded_size
     )
-    self.dynamic_edge_matrices = self._empty(edge_storage, np.float64)
-    self.dynamic_edge_inverses = self._empty(edge_storage, np.float32)
+    self.dynamic_edge_matrices = self._empty(edge_storage, np.float64, "dynamic_edge_matrices")
+    self.dynamic_edge_inverses = self._empty(edge_storage, np.float64, "dynamic_edge_inverses")
     self.dynamic_edge_status = self._zeros(
-      self.dynamic_edge_capacity, np.int32
+      self.dynamic_edge_capacity, np.int32, "dynamic_edge_status"
     )
     self.dynamic_group_active_sizes = self._zeros(
-      self.dynamic_edge_capacity, np.uint32
+      self.dynamic_edge_capacity, np.uint32, "dynamic_group_active_sizes"
     )
     self.dynamic_group_scalar_indices = self._empty(
       self.dynamic_edge_capacity * self.dynamic_edge_padded_size,
-      np.uint32,
+      np.uint32, "dynamic_group_scalar_indices",
     )
     self.dynamic_group_scalar_nodes = self._empty(
       self.dynamic_edge_capacity * self.dynamic_edge_padded_size,
-      np.uint32,
+      np.uint32, "dynamic_group_scalar_nodes",
     )
     self.dynamic_edge_node_counts = self._zeros(
-      self.fine_node_count, np.uint32
+      self.fine_node_count, np.uint32, "dynamic_edge_node_counts"
     )
     self._assembly_start_event = self.cuda.Event()
     self._assembly_end_event = self.cuda.Event()
     self._inverse_end_event = self.cuda.Event()
     self._numeric_host_status = self.cuda.pagelocked_empty(2, np.int32)
     self._numeric_update_pending = False
+    self._numeric_update_failed = False
 
     self.inverse_buckets: list[InverseBucket] = []
     for padded_size, active_size, matrix_start, domains in inverse_bucket_specs:
-      batch_sizes = self._to_gpu(sizes[domains].astype(np.int32))
-      status = self._zeros(len(domains), np.int32)
+      bucket_key = f"inverse_bucket:{padded_size}:{active_size}"
+      batch_sizes = self._to_gpu(sizes[domains].astype(np.int32), key=f"{bucket_key}:sizes")
+      status = self._zeros(len(domains), np.int32, f"{bucket_key}:status")
       self.inverse_buckets.append(
         InverseBucket(
           padded_size, active_size, matrix_start, domains,
@@ -1957,15 +1956,15 @@ class DeviceMASRuntime:
       capacity * self.dynamic_edge_padded_size
       * self.dynamic_edge_padded_size
     )
-    self.dynamic_edge_matrices = self._empty(storage, np.float64)
-    self.dynamic_edge_inverses = self._empty(storage, np.float32)
-    self.dynamic_edge_status = self._zeros(capacity, np.int32)
-    self.dynamic_group_active_sizes = self._zeros(capacity, np.uint32)
+    self.dynamic_edge_matrices = self._empty(storage, np.float64, "dynamic_edge_matrices")
+    self.dynamic_edge_inverses = self._empty(storage, np.float64, "dynamic_edge_inverses")
+    self.dynamic_edge_status = self._zeros(capacity, np.int32, "dynamic_edge_status")
+    self.dynamic_group_active_sizes = self._zeros(capacity, np.uint32, "dynamic_group_active_sizes")
     self.dynamic_group_scalar_indices = self._empty(
-      capacity * self.dynamic_edge_padded_size, np.uint32
+      capacity * self.dynamic_edge_padded_size, np.uint32, "dynamic_group_scalar_indices"
     )
     self.dynamic_group_scalar_nodes = self._empty(
-      capacity * self.dynamic_edge_padded_size, np.uint32
+      capacity * self.dynamic_edge_padded_size, np.uint32, "dynamic_group_scalar_nodes"
     )
     self.dynamic_edge_capacity = capacity
     current_bytes = (
@@ -2089,7 +2088,7 @@ class DeviceMASRuntime:
           int(np.ceil(old_capacity * self.upload_growth_factor)),
           1,
         )
-        current[index] = self._empty(capacity, np.float32)
+        current[index] = self._empty(capacity, np.float32, f"spmv_values:{index}")
     self.spmv_value_buffers = current[:len(self.metadata)]
     current_bytes = sum(
       int(array.nbytes) for array in self.spmv_value_buffers
@@ -2643,6 +2642,9 @@ class DeviceMASRuntime:
     """Recompute current collision collapse/local inverses without static rebuild."""
     if self._numeric_update_pending:
       self._finalize_numeric_update()
+    # A reported failure is consumed, but its banks must never be reused by
+    # the optional lagged-preconditioner path. Rebuild from the new operator.
+    rebuild_preconditioner = rebuild_preconditioner or self._numeric_update_failed
     update_started = perf_counter()
     if view.layout_signature != self.view.layout_signature:
       raise ValueError("CUDA runtime cannot change the variable layout")
@@ -2889,10 +2891,14 @@ class DeviceMASRuntime:
 
   def _finalize_numeric_update(self, *, synchronize: bool = True) -> None:
     """Validate an enqueued rebuild after an existing stream barrier."""
-    if not self._numeric_update_pending:
+    if not self._numeric_update_pending and not self._numeric_update_failed:
       return
     if synchronize:
       self._pcg_stream.synchronize()
+    # Mark the submission consumed even if validation raises. Otherwise the
+    # next Newton update rethrows this stale error before assembling new H.
+    self._numeric_update_pending = False
+    self._numeric_update_failed = True
     status_values = self._numeric_host_status
     status_code = int(status_values[0])
     if status_code:
@@ -2937,7 +2943,7 @@ class DeviceMASRuntime:
       self.numeric_assembly_seconds
       + self.local_assembly_seconds + self.inverse_seconds
     )
-    self._numeric_update_pending = False
+    self._numeric_update_failed = False
 
   def _launch_mapped_spmv(
     self, vector, output, level_index: int, stream=None,
@@ -3144,8 +3150,8 @@ class DeviceMASRuntime:
       packed_correction = self.packed_correction
       final = self._preconditioned_output
     else:
-      packed_residual = self._empty(self.packed_vector_size, np.float32)
-      packed_correction = self._empty(self.packed_vector_size, np.float32)
+      packed_residual = self._empty(self.packed_vector_size, np.float64)
+      packed_correction = self._empty(self.packed_vector_size, np.float64)
       final = self._empty(self.fine_dofs, np.float64)
     large_problem = self.fine_dofs >= 200_000
     restriction_threads = 256
@@ -3217,7 +3223,7 @@ class DeviceMASRuntime:
         self.matrix_offsets, self.vector_offsets, self.sizes,
         self.padded_sizes, np.uint32(self.domain_count),
         block=(128, 1, 1), grid=(self.domain_count, 1, 1),
-        shared=self.maximum_padded_size * np.dtype(np.float32).itemsize,
+        shared=self.maximum_padded_size * np.dtype(np.float64).itemsize,
         stream=stream,
       )
     elif not self.fused_fine_domain_apply:
@@ -3234,7 +3240,7 @@ class DeviceMASRuntime:
         self.level0_packed_to_fine, self.matrix_offsets,
         self.vector_offsets, self.sizes, self.padded_sizes,
         np.uint32(self.fine_domain_count),
-        np.float32(self.active_fine_level_weight),
+        np.float64(self.active_fine_level_weight),
         block=(128, 1, 1),
         grid=((self.fine_domain_count + 3) // 4, 1, 1), stream=stream,
       )
@@ -3256,7 +3262,7 @@ class DeviceMASRuntime:
           self.fine_node_scalar_offsets, self.fine_dimensions,
           self.fine_node_level_active,
           np.uint32(self.fine_node_count),
-          np.float32(self.active_fine_level_weight),
+          np.float64(self.active_fine_level_weight),
           block=(512, 1, 1),
           grid=((self.fine_node_count + 511) // 512, 1, 1),
           stream=stream,
@@ -3279,7 +3285,7 @@ class DeviceMASRuntime:
           self.fine_node_scalar_offsets, self.fine_dimensions,
           self.fine_node_level_active,
           np.uint32(self.fine_node_count),
-          np.float32(self.active_fine_level_weight),
+          np.float64(self.active_fine_level_weight),
           block=(512, 1, 1),
           grid=((self.fine_node_count + 511) // 512, 1, 1),
           stream=stream,
@@ -3555,6 +3561,7 @@ class DeviceMASRuntime:
     initial_guess=None,
     tolerance: float = 1e-3,
     max_iterations: int = 20_000,
+    _restarts_remaining: int = 8,
   ) -> PCGResult:
     if tolerance <= 0 or max_iterations < 0:
       raise ValueError("tolerance must be positive and max_iterations non-negative")
@@ -3673,6 +3680,10 @@ class DeviceMASRuntime:
     residual_norm = float(np.sqrt(max(initial_state[4], 0.0)))
     rz = float(initial_state[1])
     reference_rz = float(initial_state[12])
+    # A zero residual is already solved. Do not mistake its r^T M r=0 for
+    # an invalid preconditioner when the initial guess already solves A x=b.
+    if initial_state[4] == 0.0 and rz == 0.0:
+      return PCGResult(x, 0, 0.0, 0.0, True, initial_seconds)
     if (np.isfinite(rz) and rz >= 0.0 and
         np.isfinite(reference_rz) and reference_rz > 0.0 and
         rz <= tolerance * reference_rz):
@@ -3716,6 +3727,8 @@ class DeviceMASRuntime:
       breakdown = None
       if status < 0.0 or not np.isfinite(status_value):
         breakdown = "matrix or preconditioner is not positive definite"
+        # A failure stores curvature or r^T z, not a squared residual norm.
+        residual_norm = float(np.sqrt(self._dot(residual, residual)))
       return PCGResult(
         x, max_iterations, residual_norm, residual_norm / denominator,
         False, initial_seconds + perf_counter() - iteration_started,
@@ -3733,12 +3746,40 @@ class DeviceMASRuntime:
     )
     completed = int(completed_raw)
     residual_norm = float(np.sqrt(max(status_value, 0.0)))
-    if status < 0.0:
+    if status == 2.0:
+      # Recompute b-Ax, not just p=M^-1*r using a possibly drifted residual.
+      # The reference norm remains b^T M^-1 b, and the total iteration budget
+      # is shared with the restarted solve. Copy the borrowed solution before
+      # reinitializing the persistent recurrence workspaces. Only curvature
+      # breakdown retries; residual plateaus do not terminate or restart PCG.
+      if _restarts_remaining and completed < max_iterations:
+        guess = x.copy()
+        result = self.pcg(
+          rhs, use_mas=use_mas, initial_guess=guess,
+          tolerance=tolerance, max_iterations=max_iterations - completed,
+          _restarts_remaining=_restarts_remaining - 1,
+        )
+        return PCGResult(
+          result.solution, completed + result.iterations,
+          result.final_residual, result.relative_residual, result.converged,
+          initial_seconds + perf_counter() - iteration_started,
+          result.breakdown, result.restarts + 1,
+        )
+      return PCGResult(
+        x, completed, residual_norm, residual_norm / denominator, False,
+        initial_seconds + perf_counter() - iteration_started,
+        "non-positive curvature after residual restarts",
+      )
+    if status < 0.0 or not np.isfinite(status_value):
+      # Do not turn a negative breakdown diagnostic into a fake zero residual.
+      residual_norm = float(np.sqrt(self._dot(residual, residual)))
       return PCGResult(
         x, max(completed - 1, 0), residual_norm,
         residual_norm / denominator, False,
         initial_seconds + perf_counter() - iteration_started,
-        "matrix or preconditioner is not positive definite",
+        {-2.0: "preconditioned residual diverged",
+         -3.0: "preconditioned residual stagnated (no 1% improvement for 1024 iterations)"}.get(
+           status, "matrix or preconditioner is not positive definite"),
       )
     if status > 0.0:
       return PCGResult(
@@ -3748,6 +3789,7 @@ class DeviceMASRuntime:
     return PCGResult(
       x, completed, residual_norm, residual_norm / denominator, False,
       initial_seconds + perf_counter() - iteration_started,
+      "CG iteration limit reached",
     )
 
   def _pcg_legacy(

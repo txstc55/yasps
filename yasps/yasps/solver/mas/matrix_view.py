@@ -154,7 +154,10 @@ class BlockSparseMatrixView:
     self._structure_signature_cache = None
 
   def _validate_part(self, name: str) -> None:
-    values = to_host(getattr(self, f"{name}_values"), np.float64).reshape(-1)
+    values = getattr(self, f"{name}_values")
+    # Validation needs only the allocation length, not a device-to-host copy
+    # of the Hessian's numerical coefficients.
+    value_count = int(values.size) if hasattr(values, "size") else to_host(values, np.float64).size
     positions = to_host(getattr(self, f"{name}_positions"), np.int64)
     positions = positions.reshape((-1, 2)) if positions.size else np.empty((0, 2), np.int64)
     starts = to_host(getattr(self, f"{name}_category_starts"), np.int64).reshape(-1)
@@ -166,25 +169,28 @@ class BlockSparseMatrixView:
       raise ValueError(f"{name} category counts do not cover positions")
     if np.any(shapes <= 0):
       raise ValueError(f"{name} block dimensions must be positive")
-    boundary_to_node = {
-      int(offset): index
-      for index, offset in enumerate(to_host(self.variable_scalar_offsets, np.int64).reshape(-1))
-    }
+    offsets = to_host(self.variable_scalar_offsets, np.int64).reshape(-1)
     variable_dims = to_host(self.variable_dimensions, np.int64).reshape(-1)
     position_index = 0
     for category, ((block_rows, block_cols), start, count) in enumerate(zip(shapes, starts, counts)):
-      required = int(start + count * block_rows * block_cols)
-      if start < 0 or required > values.size:
+      required = int(start) + int(count) * int(block_rows) * int(block_cols)
+      if start < 0 or required > value_count:
         raise ValueError(f"{name} category {category} exceeds its values buffer")
-      for row, col in positions[position_index : position_index + count]:
-        if int(row) not in boundary_to_node or int(col) not in boundary_to_node:
-          raise ValueError(f"{name} block ({row}, {col}) starts inside or outside a variable")
-        row_node, col_node = boundary_to_node[int(row)], boundary_to_node[int(col)]
-        if variable_dims[row_node] != block_rows or variable_dims[col_node] != block_cols:
-          raise ValueError(
-            f"{name} block ({row}, {col}) shape {block_rows}x{block_cols} "
-            "does not match variable dimensions"
-          )
+      coordinates = positions[position_index : position_index + count]
+      nodes = np.searchsorted(offsets, coordinates)
+      invalid = np.any(nodes >= offsets.size, axis=1)
+      if not np.any(invalid):
+        invalid = np.any(offsets[nodes] != coordinates, axis=1)
+      if np.any(invalid):
+        row, col = coordinates[np.flatnonzero(invalid)[0]]
+        raise ValueError(f"{name} block ({row}, {col}) starts inside or outside a variable")
+      invalid = np.any(variable_dims[nodes] != (block_rows, block_cols), axis=1)
+      if np.any(invalid):
+        row, col = coordinates[np.flatnonzero(invalid)[0]]
+        raise ValueError(
+          f"{name} block ({row}, {col}) shape {block_rows}x{block_cols} "
+          "does not match variable dimensions"
+        )
       position_index += int(count)
 
   def iter_blocks(self, part: str = "both") -> Iterator[tuple[int, int, np.ndarray]]:
@@ -211,21 +217,24 @@ class BlockSparseMatrixView:
           yield boundary_to_node[int(row)], boundary_to_node[int(col)], block
         position_start += int(count)
 
-  def iter_block_coordinates(self, part: str = "static") -> Iterator[tuple[int, int]]:
-    """Yield node coordinates without reading or depending on block values."""
+  def block_coordinates(self, part: str = "static") -> np.ndarray:
+    """Map scalar block starts to node IDs without reading numerical values."""
     if part not in ("static", "dynamic"):
       raise ValueError("part must be 'static' or 'dynamic'")
     offsets = to_host(self.variable_scalar_offsets, np.int64).reshape(-1)
-    boundary_to_node = {int(offset): i for i, offset in enumerate(offsets)}
     positions = to_host(getattr(self, f"{part}_positions"), np.int64)
     positions = positions.reshape((-1, 2)) if positions.size else np.empty((0, 2), np.int64)
     counts = to_host(getattr(self, f"{part}_category_counts"), np.int64).reshape(-1)
     if counts.sum(initial=0) != len(positions):
       raise ValueError(f"{part} category counts do not cover positions")
-    for row, col in positions:
-      if int(row) not in boundary_to_node or int(col) not in boundary_to_node:
-        raise ValueError(f"{part} block ({row}, {col}) starts inside or outside a variable")
-      yield boundary_to_node[int(row)], boundary_to_node[int(col)]
+    nodes = np.searchsorted(offsets, positions)
+    if np.any(nodes >= offsets.size) or not np.array_equal(offsets[nodes], positions):
+      raise ValueError(f"{part} block starts inside or outside a variable")
+    return nodes
+
+  def iter_block_coordinates(self, part: str = "static") -> Iterator[tuple[int, int]]:
+    """Yield node coordinates without reading or depending on block values."""
+    yield from map(tuple, self.block_coordinates(part).tolist())
 
   @classmethod
   def from_blocks(

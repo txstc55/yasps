@@ -156,6 +156,7 @@ class jacobianPCGSolver:
       "converged": result >= 0,
       "iterations": int(self.__solverKernel.iterations),
       "result": int(result),
+      "breakdown": self.__solverKernel.breakdown,
       "diagonal_inverse_seconds": inverse_seconds,
       "pcg_seconds": pcg_seconds,
       "solve_seconds": perf_counter() - total_started,

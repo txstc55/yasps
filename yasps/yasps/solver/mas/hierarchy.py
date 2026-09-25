@@ -10,8 +10,9 @@ import numpy as np
 from .block_graph import BlockGraph
 from .matrix_view import BlockSparseMatrixView, to_host
 from .metis import metis_order
-from .partition import pack_domain_groups
+from .partition import domain_arrays, pack_domain_groups
 from .transfer import TransferMap, make_transfer, prefix_offsets
+from ._hierarchy_native import collapse as _collapse
 
 
 @dataclass
@@ -94,12 +95,10 @@ class Hierarchy:
 
 
 def _domain_layout(domains: list[list[int]], dimensions: np.ndarray) -> tuple[list[np.ndarray], np.ndarray]:
-  local_offsets, sizes = [], []
-  for domain in domains:
-    domain_dims = dimensions[np.asarray(domain, dtype=np.int64)]
-    local_offsets.append(prefix_offsets(domain_dims))
-    sizes.append(int(domain_dims.sum()))
-  return local_offsets, np.asarray(sizes, dtype=np.int64)
+  nodes, offsets = domain_arrays(domains)
+  prefix = np.r_[0, np.cumsum(dimensions[nodes])]
+  local = prefix[:-1] - np.repeat(prefix[offsets[:-1]], np.diff(offsets))
+  return [local[first:last] for first, last in zip(offsets[:-1], offsets[1:])], np.diff(prefix[offsets])
 
 
 def _collapse_compatible(
@@ -108,40 +107,11 @@ def _collapse_compatible(
   dimensions: np.ndarray,
   type_ids: np.ndarray | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-  count = graph.node_count
-  parent = np.arange(count, dtype=np.int64)
-
-  def find(node: int) -> int:
-    while parent[node] != node:
-      parent[node] = parent[parent[node]]
-      node = int(parent[node])
-    return node
-
-  def union(left: int, right: int) -> None:
-    a, b = find(left), find(right)
-    if a != b:
-      parent[max(a, b)] = min(a, b)
-
-  node_domain = np.full(count, -1, dtype=np.int64)
-  for domain_id, domain in enumerate(domains):
-    node_domain[np.asarray(domain, dtype=np.int64)] = domain_id
-  for left, right in graph.edges:
-    compatible_type = type_ids is None or type_ids[left] == type_ids[right]
-    if (
-      node_domain[left] == node_domain[right]
-      and dimensions[left] == dimensions[right]
-      and compatible_type
-    ):
-      union(left, right)
-
-  roots = [find(node) for node in range(count)]
-  root_to_compact: dict[int, int] = {}
-  mapping = np.empty(count, dtype=np.int64)
-  for node, root in enumerate(roots):
-    mapping[node] = root_to_compact.setdefault(root, len(root_to_compact))
-  representative = np.empty(len(root_to_compact), dtype=np.int64)
-  for root, compact in root_to_compact.items():
-    representative[compact] = root
+  nodes, offsets = domain_arrays(domains)
+  # Compare IDs rather than sorting/encoding them: IDs can be mixed objects,
+  # and NaN IDs must remain unequal just as in the original edge test.
+  types = np.empty(0, dtype=np.uint8) if type_ids is None else (np.repeat(type_ids, np.diff(graph.xadj)) == type_ids[graph.adjncy]).astype(np.uint8)
+  representative, mapping = _collapse(graph.xadj, graph.adjncy, nodes, offsets, np.ascontiguousarray(dimensions, dtype=np.int64), types)
   coarse_dims = dimensions[representative].copy()
   coarse_types = None if type_ids is None else type_ids[representative].copy()
   return mapping, coarse_dims, coarse_types
@@ -177,8 +147,7 @@ def build_hierarchy(
   graph = (
     BlockGraph.from_edges(
       view.node_count,
-      (*view.iter_block_coordinates("static"),
-      *view.iter_block_coordinates("dynamic")),
+      np.concatenate((view.block_coordinates("static"), view.block_coordinates("dynamic"))),
     )
     if include_dynamic_edges else BlockGraph.from_static_view(view)
   )
@@ -187,13 +156,7 @@ def build_hierarchy(
   levels: list[HierarchyLevel] = []
   transfers: list[TransferMap] = []
   composed = [np.arange(graph.node_count, dtype=np.int64)]
-  seen_signatures: set[tuple] = set()
-
   while len(levels) < max_levels:
-    signature = (tuple(dimensions.tolist()), graph.edges)
-    if signature in seen_signatures:
-      break
-    seen_signatures.add(signature)
     level_index = len(levels)
     level_target_nodes = (
       target_nodes_per_partition if target_node_schedule is None else
@@ -228,7 +191,7 @@ def build_hierarchy(
     levels.append(level)
     if (
       len(levels) >= max_levels or graph.node_count <= 1 or
-      not graph.edges or
+      not graph.adjncy.size or
       (
         len(levels) >= 3 and minimum_domains_for_next_level and
         len(levels[-2].domains) < minimum_domains_for_next_level
@@ -238,15 +201,14 @@ def build_hierarchy(
 
     mapping, coarse_dims, coarse_types = _collapse_compatible(graph, domains, dimensions, type_ids)
     parent_count = int(coarse_dims.size)
+    # Every continuing level has fewer nodes, so a hierarchy graph cannot
+    # repeat. No full Python-edge signature needs to be materialized/hashed.
     if parent_count == graph.node_count:
       break
     level.fine_to_parent = mapping
     transfers.append(make_transfer(mapping, dimensions, coarse_dims))
     composed.append(mapping[composed[-1]])
     coarse_graph = graph.remap(mapping, parent_count)
-    coarse_signature = (tuple(coarse_dims.tolist()), coarse_graph.edges)
-    if coarse_signature == signature:
-      break
     graph, dimensions, type_ids = coarse_graph, coarse_dims, coarse_types
 
   # Disconnected static components can become coupled by collision blocks at

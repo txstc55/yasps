@@ -64,5 +64,22 @@ class solver:
   def reset(self):
     self.__implementation.reset()
 
+  def rebuildHierarchy(self, block_positions, block_dimensions, num_blocks):
+    """Explicit MAS graph rebuild from two GPU arrays and a block count."""
+    if self.__solver_name != "mas":
+      raise ValueError("rebuildHierarchy is only available for the MAS solver")
+    return self.__implementation.rebuildHierarchy(block_positions, block_dimensions, num_blocks)
+
   def computeSolution(self, *args, **kwargs):
+    """Return 0 on convergence; negative codes indicate failure.
+
+    MAS: -4 is a definiteness/curvature breakdown, -5 stagnation, -6 divergence,
+    -7 residual verification failure or another named breakdown, and -8 local
+    block inversion failure (no solution; details in statistics.breakdown).
+    Iteration limits return -1000-iteration. Counts include MAS residual restarts.
+    Jacobi: iterative breakdowns and limits return -1000-iteration; -5 remains
+    its invalid-initial-residual/tolerance code. Other setup/CUDA exceptions remain.
+    Decode counts only for code <= -1000. Otherwise read statistics.iterations;
+    statistics.breakdown records the reason for either solver.
+    """
     return self.__implementation.computeSolution(*args, **kwargs)

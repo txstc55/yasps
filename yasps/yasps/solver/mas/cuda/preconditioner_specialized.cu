@@ -1,5 +1,8 @@
 #include <cstdint>
 
+// Legacy _mixed entrypoint names remain for runtime kernel lookup compatibility;
+// preconditioner inverse banks, work vectors, and arithmetic are all FP64.
+
 #if !defined(YASPS_MAS_MAX_DIMENSION) || !defined(YASPS_MAS_LEVEL_COUNT) || \
     !defined(YASPS_MAS_MAX_PADDED_SIZE)
 #error "preconditioner dimensions must be supplied at compile time"
@@ -25,7 +28,7 @@ static __device__ __forceinline__ unsigned int yasps_mas_packed_offset(
 
 template <unsigned int DIMENSION>
 __device__ __forceinline__ void yasps_mas_restrict_one_node(
-    const double* __restrict__ fine, float* __restrict__ packed,
+    const double* __restrict__ fine, double* __restrict__ packed,
     const yasps_mas_packed_offset_t* __restrict__ fine_node_level_keys,
     const unsigned int* fine_node_scalar_offsets,
     unsigned int fine_node, unsigned int fine_node_count) {
@@ -33,10 +36,10 @@ __device__ __forceinline__ void yasps_mas_restrict_one_node(
   const unsigned int input = fine_node_scalar_offsets[fine_node];
   const unsigned int lane = threadIdx.x & 31u;
   const unsigned int active = __activemask();
-  float original[DIMENSION];
+  double original[DIMENSION];
 #pragma unroll
   for (unsigned int component = 0; component < DIMENSION; ++component) {
-    original[component] = static_cast<float>(fine[input + component]);
+    original[component] = static_cast<double>(fine[input + component]);
     const unsigned int level_zero = yasps_mas_packed_offset(
         fine_node_level_keys[fine_node]) + component;
     packed[level_zero] = original[component];
@@ -52,12 +55,12 @@ __device__ __forceinline__ void yasps_mas_restrict_one_node(
     const bool segment_head = lane == 0 || previous_key != key;
 #pragma unroll
     for (unsigned int component = 0; component < DIMENSION; ++component) {
-      float value = original[component];
+      double value = original[component];
 #pragma unroll
       for (unsigned int offset = 1; offset < 32; offset <<= 1) {
         const unsigned int other_key =
             __shfl_down_sync(active, key, offset);
-        const float other_value =
+        const double other_value =
             __shfl_down_sync(active, value, offset);
         const bool source_active = lane + offset < 32
             && (active & (1u << (lane + offset)));
@@ -73,7 +76,7 @@ __device__ __forceinline__ void yasps_mas_restrict_one_node(
 // genuinely reduced levels in the packed workspace.
 template <unsigned int DIMENSION>
 __device__ __forceinline__ void yasps_mas_restrict_one_node_coarse(
-    const double* __restrict__ fine, float* __restrict__ packed,
+    const double* __restrict__ fine, double* __restrict__ packed,
     const yasps_mas_packed_offset_t* __restrict__ fine_node_level_keys,
     const unsigned int* fine_node_scalar_offsets,
     unsigned int fine_node, unsigned int fine_node_count) {
@@ -81,10 +84,10 @@ __device__ __forceinline__ void yasps_mas_restrict_one_node_coarse(
   const unsigned int input = fine_node_scalar_offsets[fine_node];
   const unsigned int lane = threadIdx.x & 31u;
   const unsigned int active = __activemask();
-  float original[DIMENSION];
+  double original[DIMENSION];
 #pragma unroll
   for (unsigned int component = 0; component < DIMENSION; ++component)
-    original[component] = static_cast<float>(fine[input + component]);
+    original[component] = static_cast<double>(fine[input + component]);
 #pragma unroll
   for (unsigned int level = 1; level < level_count; ++level) {
     const unsigned int map_index = level * fine_node_count + fine_node;
@@ -96,11 +99,11 @@ __device__ __forceinline__ void yasps_mas_restrict_one_node_coarse(
     const bool segment_head = lane == 0 || previous_key != key;
 #pragma unroll
     for (unsigned int component = 0; component < DIMENSION; ++component) {
-      float value = original[component];
+      double value = original[component];
 #pragma unroll
       for (unsigned int offset = 1; offset < 32; offset <<= 1) {
         const unsigned int other_key = __shfl_down_sync(active, key, offset);
-        const float other_value = __shfl_down_sync(active, value, offset);
+        const double other_value = __shfl_down_sync(active, value, offset);
         const bool source_active = lane + offset < 32
             && (active & (1u << (lane + offset)));
         if (source_active && other_key == key) value += other_value;
@@ -111,7 +114,7 @@ __device__ __forceinline__ void yasps_mas_restrict_one_node_coarse(
 }
 
 extern "C" __global__ void yasps_mas_restrict_warp_nodes_mixed_specialized(
-    const double* __restrict__ fine, float* __restrict__ packed,
+    const double* __restrict__ fine, double* __restrict__ packed,
     const unsigned int* __restrict__ restriction_order,
     const yasps_mas_packed_offset_t* __restrict__ fine_node_level_keys,
     const unsigned int* fine_node_scalar_offsets,
@@ -131,13 +134,13 @@ extern "C" __global__ void yasps_mas_restrict_warp_nodes_mixed_specialized(
   const unsigned int lane = threadIdx.x & 31u;
   const unsigned int active = __activemask();
 
-  float original[max_dimension];
+  double original[max_dimension];
 
 #pragma unroll
   for (unsigned int component = 0; component < max_dimension; ++component) {
     const bool valid = component < dimension;
     original[component] =
-        valid ? static_cast<float>(fine[input + component]) : 0.0f;
+        valid ? static_cast<double>(fine[input + component]) : 0.0;
     if (valid) {
       const unsigned int level_zero = yasps_mas_packed_offset(
           fine_node_level_keys[fine_node]) + component;
@@ -160,10 +163,10 @@ extern "C" __global__ void yasps_mas_restrict_warp_nodes_mixed_specialized(
     const unsigned int key_16 = __shfl_down_sync(active, key, 16);
 #pragma unroll
     for (unsigned int component = 0; component < max_dimension; ++component) {
-      float value = original[component];
+      double value = original[component];
 #pragma unroll
       for (unsigned int offset = 1; offset < 32; offset <<= 1) {
-        const float other_value = __shfl_down_sync(active, value, offset);
+        const double other_value = __shfl_down_sync(active, value, offset);
         const unsigned int other_key =
             offset == 1 ? key_1 : offset == 2 ? key_2 :
             offset == 4 ? key_4 : offset == 8 ? key_8 : key_16;
@@ -179,7 +182,7 @@ extern "C" __global__ void yasps_mas_restrict_warp_nodes_mixed_specialized(
 
 extern "C" __global__ void
 yasps_mas_restrict_coarse_warp_nodes_mixed_specialized(
-    const double* __restrict__ fine, float* __restrict__ packed,
+    const double* __restrict__ fine, double* __restrict__ packed,
     const unsigned int* __restrict__ restriction_order,
     const yasps_mas_packed_offset_t* __restrict__ fine_node_level_keys,
     const unsigned int* fine_node_scalar_offsets,
@@ -203,7 +206,7 @@ template <unsigned int DIMENSION>
 __device__ __forceinline__ void yasps_mas_update_restrict_one_node(
     double* __restrict__ solution, const double* __restrict__ direction,
     double* __restrict__ residual, const double* __restrict__ product,
-    const double* __restrict__ state, float* __restrict__ packed,
+    const double* __restrict__ state, double* __restrict__ packed,
     const yasps_mas_packed_offset_t* __restrict__ fine_node_level_keys,
     const unsigned int* fine_node_scalar_offsets,
     unsigned int fine_node, unsigned int fine_node_count) {
@@ -212,14 +215,14 @@ __device__ __forceinline__ void yasps_mas_update_restrict_one_node(
   const unsigned int lane = threadIdx.x & 31u;
   const unsigned int active = __activemask();
   const double alpha = state[5];
-  float updated[DIMENSION];
+  double updated[DIMENSION];
 #pragma unroll
   for (unsigned int component = 0; component < DIMENSION; ++component) {
     const unsigned int scalar = input + component;
     solution[scalar] += alpha * direction[scalar];
     const double value = residual[scalar] - alpha * product[scalar];
     residual[scalar] = value;
-    updated[component] = static_cast<float>(value);
+    updated[component] = value;
     const unsigned int level_zero = yasps_mas_packed_offset(
         fine_node_level_keys[fine_node]) + component;
     packed[level_zero] = updated[component];
@@ -240,10 +243,10 @@ __device__ __forceinline__ void yasps_mas_update_restrict_one_node(
     const unsigned int key_16 = __shfl_down_sync(active, key, 16);
 #pragma unroll
     for (unsigned int component = 0; component < DIMENSION; ++component) {
-      float value = updated[component];
+      double value = updated[component];
 #pragma unroll
       for (unsigned int offset = 1; offset < 32; offset <<= 1) {
-        const float other_value = __shfl_down_sync(active, value, offset);
+        const double other_value = __shfl_down_sync(active, value, offset);
         const unsigned int other_key =
             offset == 1 ? key_1 : offset == 2 ? key_2 :
             offset == 4 ? key_4 : offset == 8 ? key_8 : key_16;
@@ -260,7 +263,7 @@ extern "C" __global__ void
 yasps_mas_update_restrict_warp_nodes_mixed_specialized(
     double* __restrict__ solution, const double* __restrict__ direction,
     double* __restrict__ residual, const double* __restrict__ product,
-    const double* __restrict__ state, float* __restrict__ packed,
+    const double* __restrict__ state, double* __restrict__ packed,
     const unsigned int* __restrict__ restriction_order,
     const yasps_mas_packed_offset_t* __restrict__ fine_node_level_keys,
     const unsigned int* fine_node_scalar_offsets,
@@ -280,7 +283,7 @@ template <unsigned int DIMENSION>
 __device__ __forceinline__ void yasps_mas_update_restrict_one_node_coarse(
     double* __restrict__ solution, const double* __restrict__ direction,
     double* __restrict__ residual, const double* __restrict__ product,
-    const double* __restrict__ state, float* __restrict__ packed,
+    const double* __restrict__ state, double* __restrict__ packed,
     const yasps_mas_packed_offset_t* __restrict__ fine_node_level_keys,
     const unsigned int* fine_node_scalar_offsets,
     unsigned int fine_node, unsigned int fine_node_count) {
@@ -289,14 +292,14 @@ __device__ __forceinline__ void yasps_mas_update_restrict_one_node_coarse(
   const unsigned int lane = threadIdx.x & 31u;
   const unsigned int active = __activemask();
   const double alpha = state[5];
-  float updated[DIMENSION];
+  double updated[DIMENSION];
 #pragma unroll
   for (unsigned int component = 0; component < DIMENSION; ++component) {
     const unsigned int scalar = input + component;
     solution[scalar] += alpha * direction[scalar];
     const double value = residual[scalar] - alpha * product[scalar];
     residual[scalar] = value;
-    updated[component] = static_cast<float>(value);
+    updated[component] = value;
   }
 #pragma unroll
   for (unsigned int level = 1; level < level_count; ++level) {
@@ -309,11 +312,11 @@ __device__ __forceinline__ void yasps_mas_update_restrict_one_node_coarse(
     const bool segment_head = lane == 0 || previous_key != key;
 #pragma unroll
     for (unsigned int component = 0; component < DIMENSION; ++component) {
-      float value = updated[component];
+      double value = updated[component];
 #pragma unroll
       for (unsigned int offset = 1; offset < 32; offset <<= 1) {
         const unsigned int other_key = __shfl_down_sync(active, key, offset);
-        const float other_value = __shfl_down_sync(active, value, offset);
+        const double other_value = __shfl_down_sync(active, value, offset);
         const bool source_active = lane + offset < 32
             && (active & (1u << (lane + offset)));
         if (source_active && other_key == key) value += other_value;
@@ -327,7 +330,7 @@ extern "C" __global__ void
 yasps_mas_update_restrict_coarse_warp_nodes_mixed_specialized(
     double* __restrict__ solution, const double* __restrict__ direction,
     double* __restrict__ residual, const double* __restrict__ product,
-    const double* __restrict__ state, float* __restrict__ packed,
+    const double* __restrict__ state, double* __restrict__ packed,
     const unsigned int* __restrict__ restriction_order,
     const yasps_mas_packed_offset_t* __restrict__ fine_node_level_keys,
     const unsigned int* fine_node_scalar_offsets,
@@ -344,7 +347,7 @@ yasps_mas_update_restrict_coarse_warp_nodes_mixed_specialized(
 
 template <unsigned int DIMENSION>
 __device__ __forceinline__ void yasps_mas_restrict_fixed_dimension_body(
-    const double* fine, float* packed,
+    const double* fine, double* packed,
     const unsigned int* restriction_order,
     const yasps_mas_packed_offset_t* fine_node_to_packed_starts,
     const unsigned int* fine_node_scalar_offsets,
@@ -358,19 +361,19 @@ __device__ __forceinline__ void yasps_mas_restrict_fixed_dimension_body(
   const unsigned int active = __activemask();
 #pragma unroll
   for (unsigned int component = 0; component < DIMENSION; ++component) {
-    const float original = static_cast<float>(fine[input + component]);
+    const double original = static_cast<double>(fine[input + component]);
     packed[fine_node_to_packed_starts[fine_node] + component] = original;
 #pragma unroll
     for (unsigned int level = 1; level < level_count; ++level) {
       const unsigned long long key =
           fine_node_to_packed_starts[level * fine_node_count + fine_node]
           + component;
-      float value = original;
+      double value = original;
 #pragma unroll
       for (unsigned int offset = 1; offset < 32; offset <<= 1) {
         const unsigned long long other_key =
             __shfl_down_sync(active, key, offset);
-        const float other_value = __shfl_down_sync(active, value, offset);
+        const double other_value = __shfl_down_sync(active, value, offset);
         const bool source_active = lane + offset < 32
             && (active & (1u << (lane + offset)));
         if (source_active && other_key == key) value += other_value;
@@ -384,12 +387,12 @@ __device__ __forceinline__ void yasps_mas_restrict_fixed_dimension_body(
 
 template <unsigned int DIMENSION>
 __device__ __forceinline__ void yasps_mas_collect_fixed_dimension_body(
-    const float* packed, double* fine,
+    const double* packed, double* fine,
     const unsigned int* restriction_order,
     const yasps_mas_packed_offset_t* fine_node_to_packed_starts,
     const unsigned int* fine_node_scalar_offsets,
     unsigned int ordered_count, unsigned int fine_node_count,
-    float coarsest_level_weight) {
+    double coarsest_level_weight) {
   constexpr unsigned int level_count = YASPS_MAS_LEVEL_COUNT;
   const unsigned int ordered_node = blockIdx.x * blockDim.x + threadIdx.x;
   if (ordered_node >= ordered_count) return;
@@ -397,13 +400,13 @@ __device__ __forceinline__ void yasps_mas_collect_fixed_dimension_body(
   const unsigned int output = fine_node_scalar_offsets[fine_node];
 #pragma unroll
   for (unsigned int component = 0; component < DIMENSION; ++component) {
-    float sum = 0.0f;
+    double sum = 0.0;
 #pragma unroll
     for (unsigned int level = 0; level < level_count; ++level) {
       const unsigned long long input =
           fine_node_to_packed_starts[level * fine_node_count + fine_node];
-      const float weight = level + 1 == level_count
-          ? coarsest_level_weight : 1.0f;
+      const double weight = level + 1 == level_count
+          ? coarsest_level_weight : 1.0;
       sum += weight * packed[input + component];
     }
     fine[output + component] = static_cast<double>(sum);
@@ -414,25 +417,25 @@ __device__ __forceinline__ void yasps_mas_collect_fixed_dimension_body(
 
 template <unsigned int DIMENSION, unsigned int LEVEL_COUNT>
 __device__ __forceinline__ void yasps_mas_collect_one_node(
-    const float* packed, double* fine,
+    const double* packed, double* fine,
     const yasps_mas_packed_offset_t* fine_node_to_packed_starts,
     const unsigned int* fine_node_scalar_offsets,
     const unsigned char* fine_node_level_active,
     unsigned int fine_node, unsigned int fine_node_count,
-    const float (&level_weights)[LEVEL_COUNT],
-    float duplicate_level_weight, float fine_level_weight) {
+    const double (&level_weights)[LEVEL_COUNT],
+    double duplicate_level_weight, double fine_level_weight) {
   const unsigned int output = fine_node_scalar_offsets[fine_node];
 #pragma unroll
   for (unsigned int component = 0; component < DIMENSION; ++component) {
-    float sum = 0.0f;
+    double sum = 0.0;
 #pragma unroll
     for (unsigned int level = 0; level < LEVEL_COUNT; ++level) {
       const unsigned long long input =
           fine_node_to_packed_starts[level * fine_node_count + fine_node];
-      const float topology_weight = fine_node_level_active[
+      const double topology_weight = fine_node_level_active[
           level * fine_node_count + fine_node]
-          ? 1.0f : duplicate_level_weight;
-      const float level_weight = level == 0
+          ? 1.0 : duplicate_level_weight;
+      const double level_weight = level == 0
           ? fine_level_weight : level_weights[level];
       sum += topology_weight * level_weight
           * packed[input + component];
@@ -443,26 +446,26 @@ __device__ __forceinline__ void yasps_mas_collect_one_node(
 
 template <unsigned int DIMENSION, unsigned int LEVEL_COUNT>
 __device__ __forceinline__ void yasps_mas_collect_one_node_dots(
-    const float* packed, double* fine, const double* residual,
+    const double* packed, double* fine, const double* residual,
     const yasps_mas_packed_offset_t* fine_node_to_packed_starts,
     const unsigned int* fine_node_scalar_offsets,
     const unsigned char* fine_node_level_active,
     unsigned int fine_node, unsigned int fine_node_count,
-    const float (&level_weights)[LEVEL_COUNT],
-    float duplicate_level_weight, float fine_level_weight,
+    const double (&level_weights)[LEVEL_COUNT],
+    double duplicate_level_weight, double fine_level_weight,
     double& local_rz, double& local_residual2) {
   const unsigned int output = fine_node_scalar_offsets[fine_node];
 #pragma unroll
   for (unsigned int component = 0; component < DIMENSION; ++component) {
-    float sum = 0.0f;
+    double sum = 0.0;
 #pragma unroll
     for (unsigned int level = 0; level < LEVEL_COUNT; ++level) {
       const unsigned long long input =
           fine_node_to_packed_starts[level * fine_node_count + fine_node];
-      const float topology_weight = fine_node_level_active[
+      const double topology_weight = fine_node_level_active[
           level * fine_node_count + fine_node]
-          ? 1.0f : duplicate_level_weight;
-      const float level_weight = level == 0
+          ? 1.0 : duplicate_level_weight;
+      const double level_weight = level == 0
           ? fine_level_weight : level_weights[level];
       sum += topology_weight * level_weight * packed[input + component];
     }
@@ -475,21 +478,21 @@ __device__ __forceinline__ void yasps_mas_collect_one_node_dots(
 }
 
 extern "C" __global__ void yasps_mas_collect_nodes_mixed_specialized(
-    const float* packed, double* fine,
+    const double* packed, double* fine,
     const yasps_mas_packed_offset_t* fine_node_to_packed_starts,
     const unsigned int* fine_node_scalar_offsets,
     const unsigned int* fine_node_dimensions,
     const unsigned char* fine_node_level_active,
-    unsigned int fine_node_count, float fine_level_weight) {
+    unsigned int fine_node_count, double fine_level_weight) {
   constexpr unsigned int level_count = YASPS_MAS_LEVEL_COUNT;
   constexpr unsigned int max_dimension = YASPS_MAS_MAX_DIMENSION;
   // These positive weights are part of the compiled preconditioner shape.
   // Keeping them literal lets NVCC unroll the six-level collection without
   // a device-memory lookup or a runtime branch per level.
-  constexpr float level_weights[level_count] = {
+  constexpr double level_weights[level_count] = {
       // YASPS_MAS_GENERATED_LEVEL_WEIGHTS
   };
-  constexpr float duplicate_level_weight =
+  constexpr double duplicate_level_weight =
       YASPS_MAS_GENERATED_DUPLICATE_LEVEL_WEIGHT;
   const unsigned int fine_node = blockIdx.x * blockDim.x + threadIdx.x;
   if (fine_node >= fine_node_count) return;
@@ -502,15 +505,15 @@ extern "C" __global__ void yasps_mas_collect_nodes_mixed_specialized(
 #pragma unroll
   for (unsigned int component = 0; component < max_dimension; ++component) {
     if (component >= dimension) continue;
-    float sum = 0.0f;
+    double sum = 0.0;
 #pragma unroll
     for (unsigned int level = 0; level < level_count; ++level) {
       const unsigned long long input =
           fine_node_to_packed_starts[level * fine_node_count + fine_node];
-      const float topology_weight = fine_node_level_active[
+      const double topology_weight = fine_node_level_active[
           level * fine_node_count + fine_node]
-          ? 1.0f : duplicate_level_weight;
-      const float level_weight = level == 0
+          ? 1.0 : duplicate_level_weight;
+      const double level_weight = level == 0
           ? fine_level_weight : level_weights[level];
       sum += topology_weight * level_weight
           * packed[input + component];
@@ -528,17 +531,17 @@ static __device__ __forceinline__ double yasps_mas_warp_sum(
 
 extern "C" __global__ void
 yasps_mas_collect_nodes_mixed_specialized_dots(
-    const float* packed, double* fine, const double* residual, double* state,
+    const double* packed, double* fine, const double* residual, double* state,
     const yasps_mas_packed_offset_t* fine_node_to_packed_starts,
     const unsigned int* fine_node_scalar_offsets,
     const unsigned int* fine_node_dimensions,
     const unsigned char* fine_node_level_active,
-    unsigned int fine_node_count, float fine_level_weight) {
+    unsigned int fine_node_count, double fine_level_weight) {
   constexpr unsigned int level_count = YASPS_MAS_LEVEL_COUNT;
-  constexpr float level_weights[level_count] = {
+  constexpr double level_weights[level_count] = {
       // YASPS_MAS_GENERATED_LEVEL_WEIGHTS
   };
-  constexpr float duplicate_level_weight =
+  constexpr double duplicate_level_weight =
       YASPS_MAS_GENERATED_DUPLICATE_LEVEL_WEIGHT;
   const unsigned int fine_node = blockIdx.x * blockDim.x + threadIdx.x;
   double local_rz = 0.0;
@@ -578,24 +581,24 @@ yasps_mas_collect_nodes_mixed_specialized_dots(
 
 template <unsigned int DIMENSION, unsigned int LEVEL_COUNT>
 __device__ __forceinline__ void yasps_mas_collect_coarse_one_node(
-    const float* packed, double* fine,
+    const double* packed, double* fine,
     const yasps_mas_packed_offset_t* fine_node_to_packed_starts,
     const unsigned int* fine_node_scalar_offsets,
     const unsigned char* fine_node_level_active,
     unsigned int fine_node, unsigned int fine_node_count,
-    const float (&level_weights)[LEVEL_COUNT],
-    float duplicate_level_weight) {
+    const double (&level_weights)[LEVEL_COUNT],
+    double duplicate_level_weight) {
   const unsigned int output = fine_node_scalar_offsets[fine_node];
 #pragma unroll
   for (unsigned int component = 0; component < DIMENSION; ++component) {
-    float sum = 0.0f;
+    double sum = 0.0;
 #pragma unroll
     for (unsigned int level = 1; level < LEVEL_COUNT; ++level) {
       const unsigned long long input =
           fine_node_to_packed_starts[level * fine_node_count + fine_node];
-      const float topology_weight = fine_node_level_active[
+      const double topology_weight = fine_node_level_active[
           level * fine_node_count + fine_node]
-          ? 1.0f : duplicate_level_weight;
+          ? 1.0 : duplicate_level_weight;
       sum += topology_weight * level_weights[level]
           * packed[input + component];
     }
@@ -605,25 +608,25 @@ __device__ __forceinline__ void yasps_mas_collect_coarse_one_node(
 
 template <unsigned int DIMENSION, unsigned int LEVEL_COUNT>
 __device__ __forceinline__ void yasps_mas_collect_coarse_one_node_dots(
-    const float* packed, double* fine, const double* residual,
+    const double* packed, double* fine, const double* residual,
     const yasps_mas_packed_offset_t* fine_node_to_packed_starts,
     const unsigned int* fine_node_scalar_offsets,
     const unsigned char* fine_node_level_active,
     unsigned int fine_node, unsigned int fine_node_count,
-    const float (&level_weights)[LEVEL_COUNT],
-    float duplicate_level_weight, double& local_rz,
+    const double (&level_weights)[LEVEL_COUNT],
+    double duplicate_level_weight, double& local_rz,
     double& local_residual2) {
   const unsigned int output = fine_node_scalar_offsets[fine_node];
 #pragma unroll
   for (unsigned int component = 0; component < DIMENSION; ++component) {
-    float coarse_sum = 0.0f;
+    double coarse_sum = 0.0;
 #pragma unroll
     for (unsigned int level = 1; level < LEVEL_COUNT; ++level) {
       const unsigned long long input =
           fine_node_to_packed_starts[level * fine_node_count + fine_node];
-      const float topology_weight = fine_node_level_active[
+      const double topology_weight = fine_node_level_active[
           level * fine_node_count + fine_node]
-          ? 1.0f : duplicate_level_weight;
+          ? 1.0 : duplicate_level_weight;
       coarse_sum += topology_weight * level_weights[level]
           * packed[input + component];
     }
@@ -638,17 +641,17 @@ __device__ __forceinline__ void yasps_mas_collect_coarse_one_node_dots(
 
 extern "C" __global__ void
 yasps_mas_collect_coarse_nodes_mixed_specialized(
-    const float* packed, double* fine,
+    const double* packed, double* fine,
     const yasps_mas_packed_offset_t* fine_node_to_packed_starts,
     const unsigned int* fine_node_scalar_offsets,
     const unsigned int* fine_node_dimensions,
     const unsigned char* fine_node_level_active,
     unsigned int fine_node_count) {
   constexpr unsigned int level_count = YASPS_MAS_LEVEL_COUNT;
-  constexpr float level_weights[level_count] = {
+  constexpr double level_weights[level_count] = {
       // YASPS_MAS_COARSE_LEVEL_WEIGHTS
   };
-  constexpr float duplicate_level_weight =
+  constexpr double duplicate_level_weight =
       YASPS_MAS_GENERATED_DUPLICATE_LEVEL_WEIGHT;
   const unsigned int fine_node = blockIdx.x * blockDim.x + threadIdx.x;
   if (fine_node >= fine_node_count) return;
@@ -660,17 +663,17 @@ yasps_mas_collect_coarse_nodes_mixed_specialized(
 
 extern "C" __global__ void
 yasps_mas_collect_coarse_nodes_mixed_specialized_dots(
-    const float* packed, double* fine, const double* residual, double* state,
+    const double* packed, double* fine, const double* residual, double* state,
     const yasps_mas_packed_offset_t* fine_node_to_packed_starts,
     const unsigned int* fine_node_scalar_offsets,
     const unsigned int* fine_node_dimensions,
     const unsigned char* fine_node_level_active,
     unsigned int fine_node_count) {
   constexpr unsigned int level_count = YASPS_MAS_LEVEL_COUNT;
-  constexpr float level_weights[level_count] = {
+  constexpr double level_weights[level_count] = {
       // YASPS_MAS_COARSE_DOT_LEVEL_WEIGHTS
   };
-  constexpr float duplicate_level_weight =
+  constexpr double duplicate_level_weight =
       YASPS_MAS_GENERATED_DUPLICATE_LEVEL_WEIGHT;
   const unsigned int fine_node = blockIdx.x * blockDim.x + threadIdx.x;
   double local_rz = 0.0;
@@ -709,21 +712,21 @@ yasps_mas_collect_coarse_nodes_mixed_specialized_dots(
 
 template <int N, int P>
 __device__ __forceinline__ void yasps_mas_apply_exact_domain(
-    const float* inverses, const float* residuals, float* corrections,
+    const double* inverses, const double* residuals, double* corrections,
     unsigned long long matrix_offset, unsigned long long vector_offset) {
-  const float* inverse = inverses + matrix_offset;
-  const float* residual = residuals + vector_offset;
+  const double* inverse = inverses + matrix_offset;
+  const double* residual = residuals + vector_offset;
   for (unsigned int row = threadIdx.x; row < N; row += blockDim.x) {
-    float value = 0.0f;
+    double value = 0.0;
 #pragma unroll
     for (unsigned int col = 0; col < N; ++col)
-      value = fmaf(inverse[row * P + col], residual[col], value);
+      value = fma(inverse[row * P + col], residual[col], value);
     corrections[vector_offset + row] = value;
   }
 }
 
 extern "C" __global__ void yasps_mas_dense_inverse_apply_mixed_specialized(
-    const float* inverses, const float* residuals, float* corrections,
+    const double* inverses, const double* residuals, double* corrections,
     const unsigned long long* matrix_offsets,
     const unsigned long long* vector_offsets,
     const unsigned int* sizes, const unsigned int* padded_sizes,
@@ -739,33 +742,33 @@ extern "C" __global__ void yasps_mas_dense_inverse_apply_mixed_specialized(
 
 template <int N, int P>
 __device__ __forceinline__ void yasps_mas_apply_exact_domain_warp(
-    const float* inverses, const float* residuals, float* corrections,
+    const double* inverses, const double* residuals, double* corrections,
     unsigned long long matrix_offset, unsigned long long vector_offset,
     unsigned int lane) {
-  const float* inverse = inverses + matrix_offset;
-  const float* residual = residuals + vector_offset;
+  const double* inverse = inverses + matrix_offset;
+  const double* residual = residuals + vector_offset;
   for (unsigned int row = lane; row < N; row += 32u) {
-    float value = 0.0f;
+    double value = 0.0;
 #pragma unroll
     for (unsigned int col = 0; col < N; ++col)
-      value = fmaf(inverse[row * P + col], residual[col], value);
+      value = fma(inverse[row * P + col], residual[col], value);
     corrections[vector_offset + row] = value;
   }
 }
 
 template <int N, int P>
 __device__ __forceinline__ void yasps_mas_apply_fine_domain_warp(
-    const float* inverses, const double* fine_residual,
+    const double* inverses, const double* fine_residual,
     double* fine_correction, const unsigned int* packed_to_fine,
-    const float* staged_residual,
+    const double* staged_residual,
     unsigned long long matrix_offset, unsigned long long vector_offset,
-    unsigned int lane, float fine_level_weight) {
-  const float* inverse = inverses + matrix_offset;
+    unsigned int lane, double fine_level_weight) {
+  const double* inverse = inverses + matrix_offset;
   for (unsigned int row = lane; row < N; row += 32u) {
-    float value = 0.0f;
+    double value = 0.0;
 #pragma unroll
     for (unsigned int col = 0; col < N; ++col) {
-      value = fmaf(
+      value = fma(
           inverse[row * P + col], staged_residual[col], value);
     }
     fine_correction[packed_to_fine[vector_offset + row]] =
@@ -775,23 +778,23 @@ __device__ __forceinline__ void yasps_mas_apply_fine_domain_warp(
 
 extern "C" __global__ void
 yasps_mas_apply_fine_inverse_warp_domains_specialized(
-    const float* inverses, const double* fine_residual,
+    const double* inverses, const double* fine_residual,
     double* fine_correction, const unsigned int* packed_to_fine,
     const unsigned long long* matrix_offsets,
     const unsigned long long* vector_offsets,
     const unsigned int* sizes, const unsigned int* padded_sizes,
-    unsigned int fine_domain_count, float fine_level_weight) {
+    unsigned int fine_domain_count, double fine_level_weight) {
   const unsigned int warp = threadIdx.x >> 5;
   const unsigned int lane = threadIdx.x & 31u;
   const unsigned int warps_per_block = blockDim.x >> 5u;
   const unsigned int domain = blockIdx.x * warps_per_block + warp;
   if (domain >= fine_domain_count) return;
-  __shared__ float staged[4u * YASPS_MAS_MAX_PADDED_SIZE];
-  float* warp_residual = staged + warp * YASPS_MAS_MAX_PADDED_SIZE;
+  __shared__ double staged[4u * YASPS_MAS_MAX_PADDED_SIZE];
+  double* warp_residual = staged + warp * YASPS_MAS_MAX_PADDED_SIZE;
   const unsigned int size = sizes[domain];
   const unsigned long long vector_offset = vector_offsets[domain];
   for (unsigned int col = lane; col < size; col += 32u)
-    warp_residual[col] = static_cast<float>(
+    warp_residual[col] = static_cast<double>(
         fine_residual[packed_to_fine[vector_offset + col]]);
   __syncwarp();
   const unsigned int key = (sizes[domain] << 8) | padded_sizes[domain];
@@ -806,7 +809,7 @@ yasps_mas_apply_fine_inverse_warp_domains_specialized(
 // banks that fit within one warp. Size and stride remain compile-time constants.
 extern "C" __global__ void
 yasps_mas_dense_inverse_apply_warp_domains_specialized(
-    const float* inverses, const float* residuals, float* corrections,
+    const double* inverses, const double* residuals, double* corrections,
     const unsigned long long* matrix_offsets,
     const unsigned long long* vector_offsets,
     const unsigned int* sizes, const unsigned int* padded_sizes,
@@ -828,10 +831,10 @@ yasps_mas_dense_inverse_apply_warp_domains_specialized(
 // with ceil(N/8) FMAs plus a three-step subgroup reduction.
 template <int N, int P>
 __device__ __forceinline__ void yasps_mas_apply_exact_domain_subwarp(
-    const float* inverses, const float* residuals, float* corrections,
+    const double* inverses, const double* residuals, double* corrections,
     unsigned long long matrix_offset, unsigned long long vector_offset) {
-  const float* inverse = inverses + matrix_offset;
-  const float* residual = residuals + vector_offset;
+  const double* inverse = inverses + matrix_offset;
+  const double* residual = residuals + vector_offset;
   const unsigned int warp = threadIdx.x >> 5;
   const unsigned int lane = threadIdx.x & 31u;
   const unsigned int subgroup = lane >> 3;
@@ -839,11 +842,11 @@ __device__ __forceinline__ void yasps_mas_apply_exact_domain_subwarp(
   for (unsigned int row_base = warp * 4u; row_base < N;
        row_base += 16u) {
     const unsigned int row = row_base + subgroup;
-    float value = 0.0f;
+    double value = 0.0;
 #pragma unroll
     for (unsigned int col = subgroup_lane; col < N; col += 8u)
       if (row < N)
-        value = fmaf(inverse[row * P + col], residual[col], value);
+        value = fma(inverse[row * P + col], residual[col], value);
     value += __shfl_down_sync(0xffffffffu, value, 4, 8);
     value += __shfl_down_sync(0xffffffffu, value, 2, 8);
     value += __shfl_down_sync(0xffffffffu, value, 1, 8);
@@ -854,7 +857,7 @@ __device__ __forceinline__ void yasps_mas_apply_exact_domain_subwarp(
 
 extern "C" __global__ void
 yasps_mas_dense_inverse_apply_subwarp_domains_specialized(
-    const float* inverses, const float* residuals, float* corrections,
+    const double* inverses, const double* residuals, double* corrections,
     const unsigned long long* matrix_offsets,
     const unsigned long long* vector_offsets,
     const unsigned int* sizes, const unsigned int* padded_sizes,

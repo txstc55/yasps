@@ -23,7 +23,7 @@ class TransferMap:
       raise ValueError("transfer map needs one parent per fine node")
     if np.any(mapping < 0) or np.any(mapping >= parent_dims.size):
       raise ValueError("transfer map parent is out of range")
-    if any(fine_dims[i] != parent_dims[parent] for i, parent in enumerate(mapping)):
+    if np.any(fine_dims != parent_dims[mapping]):
       raise ValueError("identity transfer cannot connect different dimensions")
 
   @property

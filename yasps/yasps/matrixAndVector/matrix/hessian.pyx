@@ -8,7 +8,7 @@ from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 from yasps.attribute import attribute
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.codeGenerator import codeGenerator
-from yasps.jacobianBlockLayout import generate_jacobian_block_layout, pack_jacobian_block_nonzeros
+from yasps.jacobianBlockLayout import generate_jacobian_block_layout, pack_jacobian_block_nonzeros, generate_inner_hessian_block_layout, pack_inner_hessian_block_nonzeros, generate_segment_block_layout
 import numpy as np
 import pycuda.autoinit
 import pycuda.gpuarray as gpuarray
@@ -61,6 +61,7 @@ class hessian(matrix):
     self.__project_entire_hessian: List[bool] = []
     self.__projection_methods: List[int] = []
     self.__separate_hessian_jacobian: List[bool] = []
+    self.__auto_partitions: List[int] = []
     self.__grouped_add: List[bool] = []
     self.__lto: List[bool] = []
     self.__intermediate_compute_pairs: List[Dict[str, Tuple[attribute, attribute]]] = []
@@ -83,6 +84,7 @@ class hessian(matrix):
     self.__project_entire_hessian_dynamic: List[bool] = []
     self.__projection_methods_dynamic: List[int] = []
     self.__separate_hessian_jacobian_dynamic: List[bool] = []
+    self.__auto_partitions_dynamic: List[int] = []
     self.__grouped_add_dynamic: List[bool] = []
     self.__lto_dynamic: List[bool] = []
     self.__intermediate_compute_pairs_dynamic: List[Dict[str, Tuple[attribute, attribute]]] = []
@@ -106,6 +108,7 @@ class hessian(matrix):
 
     self.__compression_kernel: Optional[coordinateCompressionKernel] = None
     self.__compression_kernel_dynamic: Optional[coordinateCompressionKernel] = None
+    self.__dynamic_coordinate_cache = {}
 
   def __compute_wrt_start_indices(self):
     gradient_sizes = [item.size * item.correspondance.numInstances for item in self.__wrt]
@@ -311,6 +314,18 @@ class hessian(matrix):
     if any(not isinstance(item, bool) for item in value):
       raise TypeError("hessian.separate_hessian_jacobian: all items must be bool.")
     self.__separate_hessian_jacobian = value
+
+  @property
+  def auto_partitions(self) -> List[int]:
+    return self.__auto_partitions
+
+  @auto_partitions.setter
+  def auto_partitions(self, value: List[int]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.auto_partitions: value must be a list.")
+    if any(not isinstance(item, int) or item not in (0, 1, 2, 3) for item in value):
+      raise ValueError("hessian.auto_partitions: all items must be integers in 0, 1, 2, 3.")
+    self.__auto_partitions = [int(item) for item in value]
 
   @property
   def grouped_add(self) -> List[bool]:
@@ -530,6 +545,18 @@ class hessian(matrix):
     self.__separate_hessian_jacobian_dynamic = value
 
   @property
+  def auto_partitions_dynamic(self) -> List[int]:
+    return self.__auto_partitions_dynamic
+
+  @auto_partitions_dynamic.setter
+  def auto_partitions_dynamic(self, value: List[int]) -> None:
+    if not isinstance(value, list):
+      raise TypeError("hessian.auto_partitions_dynamic: value must be a list.")
+    if any(not isinstance(item, int) or item not in (0, 1, 2, 3) for item in value):
+      raise ValueError("hessian.auto_partitions_dynamic: all items must be integers in 0, 1, 2, 3.")
+    self.__auto_partitions_dynamic = [int(item) for item in value]
+
+  @property
   def grouped_add_dynamic(self) -> List[bool]:
     return self.__grouped_add_dynamic
 
@@ -741,6 +768,7 @@ class hessian(matrix):
     result.project_entire_hessian = self.__project_entire_hessian + other.project_entire_hessian
     result.projection_methods = self.__projection_methods + other.projection_methods
     result.separate_hessian_jacobian = self.__separate_hessian_jacobian + other.separate_hessian_jacobian
+    result.auto_partitions = self.__auto_partitions + other.auto_partitions
     result.grouped_add = self.__grouped_add + other.grouped_add
     result.lto = self.__lto + other.lto
     result.intermediate_compute_pairs = self.__intermediate_compute_pairs + other.intermediate_compute_pairs
@@ -761,6 +789,7 @@ class hessian(matrix):
     result.project_entire_hessian_dynamic = self.__project_entire_hessian_dynamic + other.project_entire_hessian_dynamic
     result.projection_methods_dynamic = self.__projection_methods_dynamic + other.projection_methods_dynamic
     result.separate_hessian_jacobian_dynamic = self.__separate_hessian_jacobian_dynamic + other.separate_hessian_jacobian_dynamic
+    result.auto_partitions_dynamic = self.__auto_partitions_dynamic + other.auto_partitions_dynamic
     result.grouped_add_dynamic = self.__grouped_add_dynamic + other.grouped_add_dynamic
     result.lto_dynamic = self.__lto_dynamic + other.lto_dynamic
     result.intermediate_compute_pairs_dynamic = self.__intermediate_compute_pairs_dynamic + other.intermediate_compute_pairs_dynamic
@@ -786,6 +815,11 @@ class hessian(matrix):
 
     for item in self.__indices_kernels:
       item.computeIndices(self.__wrt_start_indices)
+    # Explicit static-coordinate rebuilds invalidate the otherwise once-only
+    # padding prepass, even if the instance count and buffers did not change.
+    for kernel in self.__hessian_and_gradient_kernels:
+      if kernel is not None:
+        kernel.invalidateBlockActivity()
 
     self.__compression_kernel = coordinateCompressionKernel(
       [x.outputCoordinates for x in self.__indices_kernels],
@@ -794,6 +828,8 @@ class hessian(matrix):
       self.__wrt
     )
     self.__compression_kernel.compressCoordinatesAndDimensions()
+    for item in self.__indices_kernels:
+      item.releaseRawCoordinates()
     self.__block_indices_gpu = self.__compression_kernel.lookupArrays
 
     # Separated kernels map their permuted entries to these original lookups.
@@ -822,6 +858,7 @@ class hessian(matrix):
       self.__wrt
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
+    # Dynamic kernels reuse raw capacity on the next topology update.
 
     lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
     self.__block_indices_gpu_dynamic = []
@@ -859,6 +896,7 @@ class hessian(matrix):
       [x.numTotalCoordinates for x in self.__indices_kernels_dynamic]
     )
     self.__compression_kernel_dynamic.compressCoordinatesAndDimensions()
+    # Dynamic kernels reuse raw capacity on the next topology update.
 
     lookup_arrays = self.__compression_kernel_dynamic.lookupArrays
     self.__block_indices_gpu_dynamic = []
@@ -892,6 +930,8 @@ class hessian(matrix):
     global_jacobian_block_nonzero_attributes: List[attribute],
     global_jacobian_block_nonzero_local_positions,
     global_jacobian_block_layout,
+    auto_partition = 0,
+    segment_sizes = None,
   ) -> attribute:
     merged_hessian_and_gradient = []
     merged_hessian_rows = 0
@@ -911,12 +951,16 @@ class hessian(matrix):
           # only its structurally nonzero upper-triangular entries.
           if global_inner_hessian[i, j].isZero == 0:
             merged_hessian_and_gradient.append(global_inner_hessian[i, j])
-      # Match the consumer's component order. H and gradient retain their
-      # original storage order; J blocks are emitted contiguous without a gather.
-      layout = global_jacobian_block_layout
-      if layout is None:
-        layout = generate_jacobian_block_layout(global_jacobian.rows, global_jacobian.cols, global_jacobian_block_nonzero_local_positions)
-      packing = pack_jacobian_block_nonzeros(layout, global_jacobian_block_nonzero_local_positions)
+      # Match the selected consumer's blocks. H and gradient retain their
+      # original storage order; J nonzeros are contiguous within each block.
+      if auto_partition == 1:
+        layout = global_jacobian_block_layout
+        if layout is None:
+          layout = generate_jacobian_block_layout(global_jacobian.rows, global_jacobian.cols, global_jacobian_block_nonzero_local_positions)
+        packing = pack_jacobian_block_nonzeros(layout, global_jacobian_block_nonzero_local_positions)
+      else:
+        layout = generate_segment_block_layout(global_jacobian.rows, global_jacobian.cols, segment_sizes) if auto_partition >= 2 else generate_inner_hessian_block_layout(global_jacobian.rows, global_jacobian.cols)
+        packing = pack_inner_hessian_block_nonzeros(layout, global_jacobian_block_nonzero_local_positions)
       merged_hessian_and_gradient.extend(global_jacobian_block_nonzero_attributes[i] for i in packing["nonzero_permutation"])
       for i in range(global_gradient.size):
         merged_hessian_and_gradient.append(global_gradient[i])
@@ -946,7 +990,7 @@ class hessian(matrix):
     else:
       merged_attribute_name = f'hessian_and_gradient_{derivative_name}'
     if separate_hessian_jacobian and not project_entire_hessian and not gradient_only:
-      merged_attribute_name += '_packed_components'
+      merged_attribute_name += ('_packed_inner_hessian_blocks', '_packed_components', '_packed_segments_left', '_packed_segments_direct')[auto_partition]
     if merged_attribute_name in source.correspondance.attributes:
       return source.correspondance[merged_attribute_name]
     return source.correspondance.addAttribute(
@@ -966,6 +1010,7 @@ class hessian(matrix):
       project_entire_hessian = self.__project_entire_hessian
       projection_methods = self.__projection_methods
       separate_hessian_jacobian = self.__separate_hessian_jacobian
+      auto_partitions = self.__auto_partitions
       grouped_add = self.__grouped_add
       lto = self.__lto
       merged_attributes = self.__merged_hessian_and_gradient_attributes
@@ -986,6 +1031,7 @@ class hessian(matrix):
       project_entire_hessian = self.__project_entire_hessian_dynamic
       projection_methods = self.__projection_methods_dynamic
       separate_hessian_jacobian = self.__separate_hessian_jacobian_dynamic
+      auto_partitions = self.__auto_partitions_dynamic
       grouped_add = self.__grouped_add_dynamic
       lto = self.__lto_dynamic
       merged_attributes = self.__merged_hessian_and_gradient_attributes_dynamic
@@ -1003,6 +1049,7 @@ class hessian(matrix):
       index >= len(global_gradients)
       or index >= len(global_hessians)
       or index >= len(gradient_only)
+      or index >= len(auto_partitions)
       or index >= len(grouped_add)
       or index >= len(lto)
     ):
@@ -1012,6 +1059,10 @@ class hessian(matrix):
       merged_attributes.append(None)
     while len(kernels) <= index:
       kernels.append(None)
+
+    segment_sizes = indices_kernels[index].fixedSegmentSizes if auto_partitions[index] >= 2 else None
+    if auto_partitions[index] >= 2 and (gradient_only[index] or not separate_hessian_jacobian[index] or project_entire_hessian[index]):
+      raise ValueError("Segment assembly requires a separated J^T H J Hessian without UNION.")
 
     if merged_attributes[index] is None:
       merged_attributes[index] = self.__buildMergedHessianAndGradientAttribute(
@@ -1025,7 +1076,9 @@ class hessian(matrix):
         sources[index],
         global_jacobian_block_nonzero_attributes[index],
         global_jacobian_block_nonzero_local_positions[index],
-        global_jacobian_block_layouts[index]
+        global_jacobian_block_layouts[index],
+        auto_partition=auto_partitions[index],
+        segment_sizes=segment_sizes
       )
 
     if kernels[index] is None:
@@ -1064,7 +1117,9 @@ class hessian(matrix):
         local_hessian_nonzero_upper_positions,
         dynamic_term = dynamic_term,
         grouped_add = grouped_add[index],
-        lto = lto[index]
+        lto = lto[index],
+        auto_partition = auto_partitions[index],
+        segment_sizes = segment_sizes
       )
       kernels[index].generateKernel(
         indices_kernels[index].outputUniqueGradientSizesCPU.tolist(),
@@ -1138,6 +1193,10 @@ class hessian(matrix):
         self.__global_jacobian_block_layouts_dynamic[index]
       )
 
+    # Static topology reuses its flags. Dynamic terms must refresh even when
+    # cached coordinates are restored or the count stays the same: a different
+    # union branch can have different active multiplication blocks.
+    kernel.recomputeBlockActivity(indices_kernel, force=is_dynamic)
     counts_gpu = [x.children_primitive_counts_gpu for x in merged_attribute.deviceKernel.kernelPrimitiveUnions]
     arguments: List[gpuarray.GPUArray] = [x.value for x in merged_attribute.deviceKernel.kernelDatas]
     arguments += [x.value for x in merged_attribute.deviceKernel.kernelConnectivity]
@@ -1155,8 +1214,53 @@ class hessian(matrix):
       self.__gradient_segments_start
     )
 
+  def clearDynamicCoordinateCache(self):
+    """Invalidate cached batches after changing connectivity or target layout."""
+    for item in self.__indices_kernels_dynamic:
+      item.releaseAssemblyIndices()
+    self.__dynamic_coordinate_cache.clear()
+
+  @property
+  def dynamicCoordinateCacheBytes(self):
+    return sum(entry["bytes"] for entry in self.__dynamic_coordinate_cache.values())
+
+  def __saveDynamicCoordinates(self):
+    indices = [item.saveAssemblyIndices() for item in self.__indices_kernels_dynamic]
+    lookups = [value.copy() if value.size else gpuarray.empty(0, np.uint32) for value in self.__block_indices_gpu_dynamic]
+    count = 2 * sum(self.block_counts_dynamic)
+    positions = self.block_positions_dynamic[:count].copy() if count else gpuarray.empty(0, np.uint32)
+    arrays = lookups + [positions] + [value for state in indices for value in state["arrays"].values()]
+    return {"indices": indices, "lookups": lookups, "positions": positions,
+      "counts": list(self.block_counts_dynamic), "dimensions": list(self.block_dimensions_dynamic),
+      "starts": list(self.blocks_start_indices_dynamic), "size": self.__compression_kernel_dynamic.totalBlockSize,
+      "signature": (tuple(self.__wrt_start_indices), tuple(source.correspondance.numInstances for source in self.__sources_dynamic)),
+      "bytes": sum(value.nbytes for value in arrays)}
+
+  @timed("hessian.restoreDynamicCoordinates")
+  def __restoreDynamicCoordinates(self, saved):
+    signature = (tuple(self.__wrt_start_indices), tuple(source.correspondance.numInstances for source in self.__sources_dynamic))
+    if signature != saved["signature"]:
+      raise ValueError("Dynamic coordinate cache layout changed; clear the cache or use a different key.")
+    for item, state in zip(self.__indices_kernels_dynamic, saved["indices"]):
+      item.restoreAssemblyIndices(state)
+    self.__block_indices_gpu_dynamic = saved["lookups"]
+    self.block_positions_dynamic = saved["positions"]
+    self.block_counts_dynamic = list(saved["counts"])
+    self.block_dimensions_dynamic = list(saved["dimensions"])
+    self.blocks_start_indices_dynamic = list(saved["starts"])
+    if self.blocks_flattened_dynamic.size < saved["size"]:
+      self.blocks_flattened_dynamic = gpuarray.empty(saved["size"], np.float64)
+
   @timed("hessian.compute")
-  def compute(self, local_gradient: Optional[gradient] = None):
+  def compute(self, local_gradient: Optional[gradient] = None, coordinate_cache_key=None):
+    """Assemble fresh values, optionally reusing a frozen dynamic topology.
+
+    The caller owns cache invalidation: keys must identify unchanged join/union
+    connectivity and target ordering, not merely equal instance counts. Clear
+    at every connectivity update (e.g. each MPM P2G frame). Do not cache contact
+    or active-wall topologies that change within Newton or line search.
+    Existing calls without a key always regenerate dynamic coordinates.
+    """
     if local_gradient is not None:
       self.gradient = local_gradient
     if self.__gradient is None:
@@ -1164,10 +1268,16 @@ class hessian(matrix):
     else:
       self.__gradient.hessian = self
 
+    cache_enabled = coordinate_cache_key is not None and len(self.__indices_kernels_dynamic) > 0
     if not self.__is_setup:
       self.__setupCompute()
+    elif cache_enabled and coordinate_cache_key in self.__dynamic_coordinate_cache:
+      self.__restoreDynamicCoordinates(self.__dynamic_coordinate_cache[coordinate_cache_key])
     elif len(self.__indices_kernels_dynamic) > 0:
       self.getSparseIndicesDynamicAgain()
+
+    if cache_enabled and coordinate_cache_key not in self.__dynamic_coordinate_cache:
+      self.__dynamic_coordinate_cache[coordinate_cache_key] = self.__saveDynamicCoordinates()
 
     self.__gradient.value.fill(0)
     self.__diagonal.fill(0)

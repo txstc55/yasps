@@ -11,6 +11,7 @@
 #include "cuda_tools.h"
 #include <cstdint>
 #include <cub/device/device_radix_sort.cuh>
+#include <cub/block/block_reduce.cuh>
 #include <iostream>
 #include <fstream>
 #include <utility>
@@ -1079,6 +1080,41 @@ __global__ void query_face_candidates(const int*      btype,
     }
 }
 
+// Higher-ID partners of a trailing single-mesh suffix are all excluded.
+// Find that suffix from original edge IDs, not Morton order or a body ID.
+__global__ void find_edge_query_end(const uint2* edges,
+                                    const uint32_t* meshIndices,
+                                    uint32_t edgeCount,
+                                    uint32_t* queryEnd)
+{
+    const uint2 last = edges[edgeCount - 1u];
+    const uint32_t mesh = meshIndices ? meshIndices[last.x] : 0u;
+    if(mesh == 0u || mesh != meshIndices[last.y])
+    {
+        // The final edge has no higher-ID partner even without mesh filtering.
+        if(threadIdx.x == 0)
+            *queryEnd = edgeCount - 1u;
+        return;
+    }
+
+    uint32_t end = 0u;
+    for(int64_t id = static_cast<int64_t>(edgeCount) - 2 - threadIdx.x;
+        id >= 0; id -= blockDim.x)
+    {
+        const uint2 edge = edges[id];
+        if(meshIndices[edge.x] != mesh || meshIndices[edge.y] != mesh)
+        {
+            end = static_cast<uint32_t>(id) + 1u;
+            break;
+        }
+    }
+    using Reduce = cub::BlockReduce<uint32_t, BVH_THREADS>;
+    __shared__ typename Reduce::TempStorage scratch;
+    const uint32_t result = Reduce(scratch).Reduce(end, cub::Max());
+    if(threadIdx.x == 0)
+        *queryEnd = result;
+}
+
 __global__ void query_edge_candidates(const int*      btype,
                                       const uint32_t* meshIndices,
                                       const uint2*    edges,
@@ -1090,15 +1126,18 @@ __global__ void query_edge_candidates(const int*      btype,
                                       uint32_t        candidateCapacity,
                                       uint32_t*       candidateOverflow,
                                       double          dHat,
-                                      uint32_t        edgeCount)
+                                      uint32_t        edgeCount,
+                                      const uint32_t* queryEnd)
 {
     uint32_t leaf = blockIdx.x * blockDim.x + threadIdx.x;
     if(leaf >= edgeCount)
         return;
 
     leaf += edgeCount - 1;
-    const AABB query = bvs[leaf];
     const uint32_t selfId = nodes[leaf].element_idx;
+    if(selfId >= *queryEnd)
+        return;
+    const AABB query = bvs[leaf];
     const uint2 self = edges[selfId];
     const double gap = sqrt(dHat);
 
@@ -1399,6 +1438,10 @@ void launch_edge_query(lbvh_e* obj, double dHat)
 {
     if(!obj || obj->edge_number == 0 || !obj->_candidatePairs || !obj->_candidateNum)
         return;
+    // Build scratch is dead during traversal; retain the complete edge BVH.
+    uint32_t* queryEnd = reinterpret_cast<uint32_t*>(obj->_tempLeafBox);
+    find_edge_query_end<<<1, BVH_THREADS>>>(obj->_edges, obj->_meshIndices,
+                                            obj->edge_number, queryEnd);
     const uint32_t blocks = (obj->edge_number + BVH_THREADS - 1) / BVH_THREADS;
     query_edge_candidates<<<blocks, BVH_THREADS>>>(obj->_btype,
                                                    obj->_meshIndices,
@@ -1411,7 +1454,8 @@ void launch_edge_query(lbvh_e* obj, double dHat)
                                                    obj->_maxCandidatePairs,
                                                    obj->_overflowCount,
                                                    dHat,
-                                                   obj->edge_number);
+                                                   obj->edge_number,
+                                                   queryEnd);
 }
 
 double scene_diagonal_squared(const AABB& scene)

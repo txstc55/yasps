@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from time import perf_counter
+
 import numpy as np
 import pycuda.gpuarray as gpuarray
 
 from .mas.cuda_runtime import is_pycuda_array
+from .mas.local_inverse import LocalInverseError
 from .mas.solver import MASSolver
 from .yaspsMatrixView import YASPSMatrixView
 
@@ -13,7 +16,10 @@ from .yaspsMatrixView import YASPSMatrixView
 class masSolver:
   """Solve a YASPS matrix or Hessian with MAS-preconditioned CG.
 
-  The static block graph builds the METIS hierarchy once. Current static
+  The static block graph builds the METIS hierarchy once unless explicitly
+  supplied via rebuildHierarchy. No static-sparsity comparison rebuilds it.
+  Call rebuildHierarchy (or reset) when the desired partition changes. Static
+  operator coordinates must remain fixed between these calls. Current static
   values and all dynamic blocks are assembled on every solve, so changing
   collision connectivity is reflected without rerunning static partitioning.
   """
@@ -32,6 +38,8 @@ class masSolver:
 
   @property
   def solution(self):
+    if self.__statistics.get("result") == -8:
+      return self.__empty_solution
     solution = self.__solver.device_solution
     return self.__empty_solution if solution is None else solution
 
@@ -53,6 +61,24 @@ class masSolver:
     self.__active_matrix = None
     self.__statistics = {}
 
+  def rebuildHierarchy(self, block_positions, block_dimensions, num_blocks):
+    """Build a partition from two GPU arrays, each of length 2*num_blocks.
+
+    Positions contain global scalar (row, column) starts; dimensions contain
+    one (rows, columns) pair per block, not one pair per compressed category.
+    Include every variable, including isolated diagonal blocks. Only these
+    coordinates are read; no dummy Hessian values are allocated or assembled.
+    METIS still runs on the CPU after downloading the graph metadata.
+    """
+    if not is_pycuda_array(block_positions) or not is_pycuda_array(block_dimensions):
+      raise TypeError("rebuildHierarchy requires two GPU arrays")
+    hierarchy = self.__solver.rebuild_hierarchy_from_blocks(block_positions, block_dimensions, num_blocks)
+    # The next real matrix must build a fresh view and numerical scatter maps.
+    self.__view = None
+    self.__active_matrix = None
+    self.__statistics = {}
+    return hierarchy
+
   def __updateView(self, active_matrix):
     if self.__view is None:
       self.__view = YASPSMatrixView(active_matrix)
@@ -60,8 +86,9 @@ class masSolver:
       self.__view.update_numeric(active_matrix)
     else:
       candidate = YASPSMatrixView(active_matrix)
-      if candidate.structure_signature() != self.__view.structure_signature():
-        self.__solver.reset()
+      # A different numerical matrix needs fresh scatter descriptors, but it
+      # must not replace an explicitly supplied partition graph.
+      self.__solver.invalidate_numeric_state()
       self.__view = candidate
     self.__active_matrix = active_matrix
     return self.__view
@@ -106,21 +133,46 @@ class masSolver:
         )
 
     view = self.__updateView(active_matrix)
-    self.__solver.solve(
-      view,
-      rhs,
-      initial_guess=guess,
-      tolerance=float(tolerance),
-      max_iterations=int(maxIterations),
-    )
+    started = perf_counter()
+    try:
+      self.__solver.solve(
+        view,
+        rhs,
+        initial_guess=guess,
+        tolerance=float(tolerance),
+        max_iterations=int(maxIterations),
+      )
+    except LocalInverseError as error:
+      # No CG iterate exists for this call. Do not expose the previous solve's
+      # solution or statistics; retain the hierarchy for the next rebuild.
+      self.__empty_solution = gpuarray.empty(0, dtype=np.float64)
+      self.__statistics = {
+        "solver": "mas", "result": -8, "converged": False, "iterations": 0,
+        "breakdown": str(error), "solve_seconds": perf_counter() - started,
+        "matrix_size": int(active_matrix.rows), "tolerance": float(tolerance),
+      }
+      return -8
     stats = self.__solver.statistics
     compact = stats.as_dict()
     compact.pop("domain_scalar_sizes", None)
+    result = 0 if stats.converged else -1000 - int(stats.iterations)
+    if not stats.converged:
+      reason = stats.breakdown or ""
+      # These are public MAS codes, not the CUDA recurrence's status values.
+      # Counts (including residual restarts) remain in statistics.iterations.
+      if reason.startswith("preconditioned residual stagnated"):
+        result = -5
+      elif reason == "preconditioned residual diverged":
+        result = -6
+      elif "not positive definite" in reason or reason.startswith("non-positive curvature"):
+        result = -4
+      elif reason not in ("", "CG iteration limit reached"):
+        result = -7  # Residual verification failure or another named breakdown.
     self.__statistics = compact | {
       "solver": "mas",
-      "result": 0 if stats.converged else -4,
+      "result": result,
       "metis_seconds": float(sum(stats.metis_seconds_per_level)),
       "matrix_size": int(active_matrix.rows),
       "tolerance": float(tolerance),
     }
-    return 0 if stats.converged else -4
+    return result

@@ -4,7 +4,7 @@ from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 class hessianKernelHost:
-  def __init__(self, att: attribute, unique_gradient_sizes: Set[int], max_child_gradient_size: int, project_entire_hessian: bool):
+  def __init__(self, att: attribute, unique_gradient_sizes: Set[int], max_child_gradient_size: int, project_entire_hessian: bool, block_activity: bool = False):
     self.__att = att
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
@@ -36,6 +36,7 @@ int compute_hessian_and_gradient_with_compression(
   const unsigned int* coordinatesOuter,           // this will tell us for each instance, the starting and ending index in the lookup table for putting the hessian blocks into the global hessian data array
   const unsigned int* groupedIndicesInner, // we need to know which instance will correspond to the current size
   const unsigned int* groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
+  {"const unsigned char* block_activity, const unsigned int activity_stride," if block_activity else ""}
   const unsigned int nth_gradient_size,    // this indicates which position we are in the outer array, let's keep it in the host function just so that we have a 1 to 1 match
   const unsigned int projection_method,
   double* gradient,   // the gradient output
@@ -95,6 +96,7 @@ int compute_hessian_and_gradient_with_compression(
           coordinatesOuter,           // this will tell us for each instance, the starting and ending index in the lookup table for putting the hessian blocks into the global hessian data array
           groupedIndicesInner, // we need to know which instance will correspond to the current size
           groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
+          {"block_activity, activity_stride," if block_activity else ""}
           i,    // this indicates which position we are in the outer array, let's keep it in the host function just so that we have a 1 to 1 match
           projection_method,
           gradient,   // the gradient output
@@ -128,6 +130,7 @@ int compute_hessian_and_gradient_with_compression(
       coordinatesOuter,           // this will tell us for each instance, the starting and ending index in the lookup table for putting the hessian blocks into the global hessian data array
       groupedIndicesInner, // we need to know which instance will correspond to the current size
       groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
+      {"block_activity, activity_stride," if block_activity else ""}
       i,    // this indicates which position we are in the outer array, let's keep it in the host function just so that we have a 1 to 1 match
       projection_method,
       gradient,   // the gradient output

@@ -28,6 +28,7 @@ extensions = [
     Extension("yasps.diagonalBlockInverseKernel", ["yasps/kernel/Solver/diagonalBlockInverseKernel.pyx"]),
     Extension("yasps.solverKernel", ["yasps/kernel/Solver/solverKernel.pyx"]),
     Extension("yasps.solver.jacobianPCGSolver", ["yasps/solver/jacobianPCGSolver.pyx"]),
+    Extension("yasps.solver.mas._hierarchy_native", ["yasps/solver/mas/_hierarchy_native.pyx"]),
     Extension("yasps.energy", ["yasps/energy/energy.pyx"]),
     Extension("yasps.minimizer", ["yasps/minimizer/minimizer.pyx"]),
     Extension("yasps.autodiff", ["yasps/attribute/autodiff.pyx"]),
@@ -56,7 +57,7 @@ setup(
     packages=find_packages(),  # Finds all packages in the directory
     package_data={
       'yasps': ['*.txt', '*.cuh', '*.cu'],
-      'yasps.solver.mas': ['cuda/*.cu'],
+      'yasps.solver.mas': ['cuda/*.cu', '*.pyx'],
     },
     ext_modules=cythonize(
       extensions,
