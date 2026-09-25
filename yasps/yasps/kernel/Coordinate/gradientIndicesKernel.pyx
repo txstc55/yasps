@@ -218,6 +218,7 @@ int compress_indices(
 coordinate_kernel_string = '''
 #include <stdio.h>
 #include <stdlib.h>
+#include <algorithm>
 #include <cuda_runtime.h>
 // for checking cuda error
 #define CUDA_CHECK_ERROR(ans)                                                  \
@@ -296,6 +297,50 @@ __global__ void computeCoordinatesGlobalFunction(const unsigned int* indices, //
 }
 
 
+// Cooperatively compact the valid segments, preserving their original order.
+// A warp then writes consecutive upper-triangular pairs, rather than one
+// thread serially writing an entire instance into widely separated addresses.
+__global__ void computeCoordinatesWarp(const unsigned int* indices,
+  const short int* permutations, const unsigned short int* sizes,
+  unsigned int* coordinates, unsigned short int* dimensions,
+  const unsigned int* outer, unsigned int stride, unsigned int instances) {
+  const unsigned int lane = threadIdx.x % 32;
+  const unsigned int warp = threadIdx.x / 32;
+  const unsigned int instance = blockIdx.x * (blockDim.x / 32) + warp;
+  if (instance >= instances) return;
+  extern __shared__ uint2 segments[];
+  uint2* active = segments + warp * stride;
+  unsigned int count = 0;
+  const size_t start = size_t(instance) * stride;
+  for (unsigned int base = 0; base < stride; base += 32) {
+    unsigned int slot = base + lane;
+    bool valid = slot < stride && permutations[start + slot] > 0 && indices[start + slot] >= 2;
+    unsigned int mask = __ballot_sync(0xffffffff, valid);
+    if (valid) {
+      unsigned int rank = __popc(mask & ((1u << lane) - 1));
+      active[count + rank] = make_uint2(indices[start + slot] - 2, sizes[start + slot]);
+    }
+    count += __popc(mask);
+  }
+  __syncwarp();
+  unsigned int pairs = count * (count + 1) / 2;
+  for (unsigned int pair = lane; pair < pairs; pair += 32) {
+    // Invert the triangular row prefix. Correct sqrt rounding at boundaries
+    // so the output order exactly matches the serial i, j >= i loop.
+    float width = 2.0f * count + 1.0f;
+    unsigned int i = min(count - 1, unsigned((width - sqrtf(width * width - 8.0f * pair)) * 0.5f));
+    unsigned int prefix = i * (2 * count + 1 - i) / 2;
+    while (prefix > pair) { --i; prefix = i * (2 * count + 1 - i) / 2; }
+    while (prefix + count - i <= pair) { prefix += count - i; ++i; }
+    unsigned int j = i + pair - prefix;
+    uint2 a = active[i], b = active[j];
+    if (a.x >= b.x) { uint2 swap = a; a = b; b = swap; }
+    size_t output = size_t(outer[instance]) + pair;
+    reinterpret_cast<uint2*>(coordinates)[output] = make_uint2(a.x, b.x);
+    reinterpret_cast<ushort2*>(dimensions)[output] = make_ushort2(a.y, b.y);
+  }
+}
+
 extern "C"
 {
 int computeCoordinates(
@@ -308,7 +353,15 @@ int computeCoordinates(
   const unsigned int num_indices_for_each_instance, // how many indices are we expecting for each instance
   const unsigned int num_instances // how many instances
 ){
-  computeCoordinatesGlobalFunction<<<(num_instances + 255) / 256, 256>>>(indices, permutations, indexSizes, coordinates, dimensions, coordinatesCountsOuterIndices, num_indices_for_each_instance, num_instances);
+  if (!num_instances || !num_indices_for_each_instance) return 0;
+  if (num_indices_for_each_instance <= 8 || num_indices_for_each_instance > 2048) {
+    computeCoordinatesGlobalFunction<<<(num_instances + 255) / 256, 256>>>(indices, permutations, indexSizes, coordinates, dimensions, coordinatesCountsOuterIndices, num_indices_for_each_instance, num_instances);
+  } else {
+    // Bound shared memory independently of the symbolic index count.
+    unsigned int warps = std::min(8u, 2048u / num_indices_for_each_instance);
+    size_t shared = warps * num_indices_for_each_instance * sizeof(uint2);
+    computeCoordinatesWarp<<<(num_instances + warps - 1) / warps, 32 * warps, shared>>>(indices, permutations, indexSizes, coordinates, dimensions, coordinatesCountsOuterIndices, num_indices_for_each_instance, num_instances);
+  }
   cudaError_t err = cudaDeviceSynchronize();
   if (err != cudaSuccess) {
     fprintf(stderr, "CUDA Error (synchronize): %s\\n", cudaGetErrorString(err));
@@ -525,7 +578,7 @@ class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__getCoordinateKernel")
   def __getCoordinateKernel(self):
     if self.__coordinate_kernel is None:
-      file_name = ".yasps_constant/coordinate_kernel"
+      file_name = ".yasps_constant/coordinate_kernel_" + hashlib.sha256(coordinate_kernel_string.encode()).hexdigest()[:16]
       # check if the file exists
       if not os.path.exists(f'{file_name}.so'):
         # generate the kernel
