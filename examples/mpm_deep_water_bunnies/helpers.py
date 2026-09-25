@@ -16,7 +16,7 @@ GRID = GRID_ORIGIN + DX * np.indices((GRID_N,) * 3).reshape(3, -1).T
 TRANSFER_OPTIONS = ["-std=c++17", f"-DGRID_N={GRID_N}", f"-DGRID_DX={DX!r}"] + [f"-DGRID_ORIGIN_{axis}={float(value)!r}" for axis, value in zip("XYZ", GRID_ORIGIN)]
 
 
-def create_collision_detector(geometry, faces, edges, query_ids, mesh_ids, capacity, cd_capacity=20_000_000):
+def create_collision_detector(geometry, faces, edges, query_ids, mesh_ids, capacity, cd_capacity=10_000_000):
   from ccd import CCD
   import pycuda.gpuarray as gpuarray
   detector = CCD(len(query_ids), len(mesh_ids), max_cd_pairs=cd_capacity, max_ccd_pairs=capacity, mesh_indices=mesh_ids, print_timings=False)
@@ -25,7 +25,7 @@ def create_collision_detector(geometry, faces, edges, query_ids, mesh_ids, capac
   return detector
 
 
-def ccd_sweep_with_growth(detector, capacity, geometry, distance_squared, direction, alpha, faces, edges, query_ids, mesh_ids, cd_capacity=20_000_000):
+def ccd_sweep_with_growth(detector, capacity, geometry, distance_squared, direction, alpha, faces, edges, query_ids, mesh_ids, cd_capacity=10_000_000):
   # Retry the identical sweep after capacity growth; do not change the step.
   while True:
     try:

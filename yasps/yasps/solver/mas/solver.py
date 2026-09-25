@@ -234,6 +234,7 @@ class MASSolver:
     self._numeric: NumericHierarchy | None = None
     self._preconditioner: MASPreconditioner | None = None
     self._cuda_runtime: DeviceMASRuntime | None = None
+    self._cuda_buffers: dict = {}
     self._solution: np.ndarray | None = None
     self._statistics = SolverStatistics(solve_mode=solve_mode)
     self._hierarchy_build_count = 0
@@ -312,7 +313,9 @@ class MASSolver:
     return self.build_hierarchy(topology)
 
   def invalidate_numeric_state(self, *, preserve_solution=False) -> None:
-    """Drop numerical state; optionally retain the unchanged fine solution buffer."""
+    """Drop numerical state/launches, retaining capacity for the next hierarchy."""
+    if self._cuda_runtime is not None:
+      self._cuda_runtime.close()
     self._numeric = None
     self._preconditioner = None
     if not preserve_solution:
@@ -346,6 +349,7 @@ class MASSolver:
   def reset(self) -> None:
     self._hierarchy = None
     self.invalidate_numeric_state()
+    self._cuda_buffers.clear()
     self._hierarchy_build_count = 0
     self._cuda_runtime_build_count = 0
     self._statistics = SolverStatistics(solve_mode=self.solve_mode)
@@ -605,10 +609,12 @@ class MASSolver:
           runtime.dynamic_edge_domains_active
         )
     else:
+      self.invalidate_numeric_state(preserve_solution=True)
       runtime = DeviceMASRuntime(
         matrix_view,
         hierarchy,
         solution_buffer=self._solution if is_pycuda_array(self._solution) else None,
+        buffers=self._cuda_buffers,
         inverse_algorithm=algorithm,
         threads_per_block=self.cuda_threads_per_block,
         fixed_inverse_bucket_size=self.cuda_fixed_inverse_bucket_size,

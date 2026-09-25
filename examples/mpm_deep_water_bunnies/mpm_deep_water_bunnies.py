@@ -29,7 +29,7 @@ sys.path.insert(0, str(HERE.parent / "ccd"))
 ## Configuration: SI, y-up, 64 nodes per axis, eight bodies in total
 ##################################################################
 FRAME_DT = 0.01
-NUM_FRAMES = 400
+NUM_FRAMES = 100
 PARTICLES_PER_BUNNY = 80_000
 LIQUID_PARTICLES_PER_BUNNY = [184_000] * 5
 MOTION_TOLERANCE = 2e-2
@@ -54,6 +54,7 @@ INITIAL_VELOCITY = np.zeros(3)
 LIQUID_DEPTH_FRACTION = 0.30
 LIQUID_BULK = 2e3
 LIQUID_VOLUME_WEIGHT = 100.0
+LIQUID_GN_AUTO_PARTITION = 2  # Fixed grid segments: cache J^T H, then scatter 3x3 blocks.
 LIQUID_DETERMINANT_WEIGHT = 1.0  # Relative to the weighted liquid bulk coefficient.
 LIQUID_DENSITY = 1000.0
 DENSITIES = [1100.0, 200.0] + [LIQUID_DENSITY] * 5 + [900.0]
@@ -131,6 +132,7 @@ specs.update({"liquid_bulk_pa": LIQUID_BULK, "liquid_volume_weight": LIQUID_VOLU
 specs.update({"linear_solver": "mas", "fallback_solver": "jacobian", "grid_inertia_min_mass": GRID_INERTIA_MIN_MASS, "cg_tolerance": CG_TOLERANCE, "max_cg_iterations": MAX_CG_ITERATIONS, "max_newton_iterations": MAX_NEWTON_ITERATIONS, "motion_tolerance": MOTION_TOLERANCE, "max_backtracks": MAX_BACKTRACKS, "ccd_slackness": CCD_SLACKNESS})
 specs.update({"contact_distance_m": CONTACT_DISTANCE, "contact_stiffness": CONTACT_STIFFNESS, "container_bounds_m": [BOX_LOWER.tolist(), BOX_UPPER.tolist()], "initial_velocity_m_s": INITIAL_VELOCITY.tolist(), "container_mesh_id": CONTAINER_MESH_ID, "ccd_capacity_growth": 1.5})
 specs.update({"mpm_liquid_model": "weighted frozen scalar volume/divergence GN residual", "liquid_inner_hessian": "1x1, projection_method=-1", "liquid_positive_determinant_guarantee": False, "determinant_step_limit": False, "mas_hierarchy_rebuild_interval": HIERARCHY_REBUILD_INTERVAL, "mpm_solid_model": "projected stable Neo-Hookean", "gpu_baseline_used_gib": (gpu_total - free_at_start) / 2**30})
+specs["liquid_gn_auto_partition"] = LIQUID_GN_AUTO_PARTITION
 specs.update({"liquid_determinant_weight": LIQUID_DETERMINANT_WEIGHT, "liquid_determinant_model": "additive exact (1 - J_previous * det(I + D))^2", "liquid_determinant_projection": 1, "liquid_determinant_inner_hessian": "9x9", "liquid_determinant_product_tiles": "9x9, auto_partition=False"})
 (OUTPUT / "configuration.json").write_text(json.dumps(specs, indent=2))
 print("CONFIGURATION " + json.dumps(specs), flush=True)
@@ -306,8 +308,9 @@ for group in groups:
   print(f"DIFFERENTIATE {group['primitive'].name}: {model}, batch size {args.batch_size}", flush=True)
   material_hessian = None
   for energies, projection_method, model_name in group["energy_groups"]:
-    print(f"  {model_name}: {len(energies)} energy type(s), projection_method={projection_method}", flush=True)
-    term_hessian = differentiator().diff2(energies, targets, targets, projection_method=projection_method, dynamic_instances=True, separate_hessian_jacobian=True, grouped_add=True, auto_partition=False)
+    auto_partition = LIQUID_GN_AUTO_PARTITION if group["liquid"] and projection_method == -1 else 0
+    print(f"  {model_name}: {len(energies)} energy type(s), projection_method={projection_method}, auto_partition={auto_partition}", flush=True)
+    term_hessian = differentiator().diff2(energies, targets, targets, projection_method=projection_method, dynamic_instances=True, separate_hessian_jacobian=True, grouped_add=True, auto_partition=auto_partition)
     material_hessian = term_hessian if material_hessian is None else material_hessian + term_hessian
   # Material connectivity is frozen per frame; ordinary scene contacts refresh
   # independently at every Newton iterate and every line-search trial.
@@ -376,7 +379,7 @@ for group in groups:
 if invalid.get()[0]:
   raise ValueError("Initial particle stencil left the grid")
 initial_geometry = union_x.compute().value.copy()
-ccd_capacity = 30_000_000
+ccd_capacity = 20_000_000
 ccd = create_collision_detector(initial_geometry, faces, edges, query_ids, mesh_ids, ccd_capacity)
 # Evaluate only the ordinary scene once to obtain its fixed sparse metadata;
 # particle Hessians are external to this minimizer and are not evaluated here.
