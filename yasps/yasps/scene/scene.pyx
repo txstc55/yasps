@@ -152,9 +152,9 @@ class scene:
   def energies(self) -> Dict[int, attribute]:
     return self.__energies
 
-  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False, lto = False, auto_partition = True) -> None:
-    # With separation: True uses sparsity components; False uses inner-Hessian-sized tiles.
-    # auto_partition has no effect when separate_hessian_jacobian is disabled.
+  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False, lto = False, auto_partition = 0) -> None:
+    # 0: inner-Hessian tiles; 1: sparsity components; 2: segment blocks with
+    # stored J^T H; 3: direct segment products. Modes 2/3 require no UNION.
     # projection_method = 0 means no projection, 1 means project eigen value to absolute, 2 means project eigen value to max(e, 0)
     # save_intermediate = True means save intermediate results for gradient and hessian computation
     # gradient only means in the CG system we will not have the hessian
@@ -164,8 +164,10 @@ class scene:
       raise TypeError("scene.addEnergy: grouped_add must be bool.")
     if not isinstance(lto, bool):
       raise TypeError("scene.addEnergy: lto must be bool.")
-    if not isinstance(auto_partition, bool):
-      raise TypeError("scene.addEnergy: auto_partition must be bool.")
+    if not isinstance(auto_partition, int) or auto_partition not in (0, 1, 2, 3):
+      raise ValueError("scene.addEnergy: auto_partition must be an integer in 0, 1, 2, 3.")
+    if auto_partition >= 2 and (not separate_hessian_jacobian or gradient_only):
+      raise ValueError("Segment assembly requires separate_hessian_jacobian=True and a Hessian.")
     # we add the names of the targes to the pre_targets_full_names set
     for t in targets:
       self.__seen_pre_targets_full_names.add(t.fullName)

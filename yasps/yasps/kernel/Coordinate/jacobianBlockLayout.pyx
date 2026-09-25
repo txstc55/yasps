@@ -169,7 +169,19 @@ def generate_inner_hessian_block_layout(rows, cols):
   rows, cols = index(rows), index(cols)
   if rows <= 0 or cols < 0 or max(rows, cols) > 65535:
     raise ValueError("Inner Hessian tiles require positive M and uint16 local axes.")
-  blocks = [{"rows": list(range(rows)), "cols": list(range(first, min(first + rows, cols)))} for first in range(0, cols, rows)]
+  return generate_segment_block_layout(rows, cols, [min(rows, cols - first) for first in range(0, cols, rows)])
+
+
+def generate_segment_block_layout(rows, cols, segment_sizes):
+  """Full-height J strips, one per original destination segment; no permutation."""
+  rows, cols = index(rows), index(cols)
+  widths = [index(width) for width in segment_sizes]
+  if rows <= 0 or cols < 0 or max(rows, cols) > 65535 or any(width <= 0 for width in widths) or sum(widths) != cols:
+    raise ValueError("Segment layout requires positive widths covering all uint16 Jacobian columns.")
+  blocks, first = [], 0
+  for width in widths:
+    blocks.append({"rows": list(range(rows)), "cols": list(range(first, first + width))})
+    first += width
   return {"rows": rows, "cols": cols, "blocks": blocks,
     "sizes": [rows for block in blocks], "spans": [len(block["cols"]) for block in blocks],
     "row_permutation": list(range(rows)), "column_permutation": list(range(cols)),
@@ -184,11 +196,12 @@ def pack_inner_hessian_block_nonzeros(layout, nonzero_positions):
   if len(positions) % 2:
     raise ValueError("Nonzero positions must contain row/column pairs.")
   blocks = [{} for _ in layout["blocks"]]
+  column_blocks = [(block_id, local_col) for block_id, block in enumerate(layout["blocks"]) for local_col in range(len(block["cols"]))]
   for value_id in range(len(positions) // 2):
     row, col = positions[2 * value_id:2 * value_id + 2]
     if not 0 <= row < rows or not 0 <= col < cols:
       raise ValueError("Nonzero position is outside the Jacobian dimensions.")
-    block, local_col = divmod(col, rows)
+    block, local_col = column_blocks[col]
     if (row, local_col) in blocks[block]:
       raise ValueError("Duplicate Jacobian nonzero position.")
     blocks[block][row, local_col] = value_id

@@ -482,6 +482,26 @@ class gradientIndicesKernel:
     return self.__maxChildGradientSize
 
   @property
+  def fixedSegmentSizes(self):
+    """Leaf widths in exactly the original order emitted by get_indices."""
+    def segments(current):
+      if current.operator == UNION:
+        raise ValueError("auto_partition=2/3 requires differentiation paths without UNION.")
+      if current.operator == DATA or current.operator == CONSTANT:
+        return [current.size]
+      widths = [width for child in self.__path_dict[current] for width in segments(child)]
+      if current.operator == JOIN:
+        if current.through.dimension <= 0:
+          raise ValueError("auto_partition=2/3 requires fixed-arity JOIN connectivity.")
+        widths *= current.through.dimension
+      return widths
+
+    widths = segments(self.__energy)
+    if len(widths) != self.maxNumIndicesNeeded or sum(widths) != self.__gradientSize:
+      raise ValueError("Fixed Hessian segments disagree with the coordinate generation paths.")
+    return widths
+
+  @property
   def outputIndices(self):
     return self.__outputIndices
 

@@ -31,7 +31,7 @@ class energyRequest:
     separate_hessian_jacobian = False,
     grouped_add = False,
     lto = False,
-    auto_partition = True
+    auto_partition = 0
   ):
     self.__energy: attribute = energy
     self.__targets: List[attribute] = list(targets)
@@ -42,7 +42,7 @@ class energyRequest:
     self.__separate_hessian_jacobian: bool = separate_hessian_jacobian
     self.__grouped_add: bool = grouped_add
     self.__lto: bool = lto
-    self.__auto_partition: bool = auto_partition
+    self.__auto_partition: int = int(auto_partition)
 
   @property
   def energy(self) -> attribute:
@@ -81,7 +81,7 @@ class energyRequest:
     return self.__lto
 
   @property
-  def auto_partition(self) -> bool:
+  def auto_partition(self) -> int:
     return self.__auto_partition
 
   @property
@@ -188,9 +188,8 @@ class minimizer:
     for item in energies:
       self.addEnergy(item)
 
-  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False, lto = False, auto_partition = True) -> None:
-    # Separated assembly defaults to sparsity components; False selects inner-Hessian tiles.
-    # The option does not change ordinary, nonseparated Hessian assembly.
+  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False, lto = False, auto_partition = 0) -> None:
+    # 0/1 select tiles/components; 2/3 select segment assembly with/without J^T H storage.
     if e.name == "":
       raise ValueError("minimizer.addEnergy: energy attribute must have a name.")
     if gradient_only:
@@ -199,8 +198,10 @@ class minimizer:
       raise TypeError("minimizer.addEnergy: grouped_add must be bool.")
     if not isinstance(lto, bool):
       raise TypeError("minimizer.addEnergy: lto must be bool.")
-    if not isinstance(auto_partition, bool):
-      raise TypeError("minimizer.addEnergy: auto_partition must be bool.")
+    if not isinstance(auto_partition, int) or auto_partition not in (0, 1, 2, 3):
+      raise ValueError("minimizer.addEnergy: auto_partition must be an integer in 0, 1, 2, 3.")
+    if auto_partition >= 2 and not separate_hessian_jacobian:
+      raise ValueError("Segment assembly requires separate_hessian_jacobian=True.")
 
     for t in targets:
       self.__seen_pre_targets_full_names.add(t.fullName)

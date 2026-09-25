@@ -8,7 +8,7 @@ from yasps.coordinateCompressionKernel import coordinateCompressionKernel
 from yasps.attribute import attribute
 from yasps.gradientIndicesKernel import gradientIndicesKernel
 from yasps.codeGenerator import codeGenerator
-from yasps.jacobianBlockLayout import generate_jacobian_block_layout, pack_jacobian_block_nonzeros, generate_inner_hessian_block_layout, pack_inner_hessian_block_nonzeros
+from yasps.jacobianBlockLayout import generate_jacobian_block_layout, pack_jacobian_block_nonzeros, generate_inner_hessian_block_layout, pack_inner_hessian_block_nonzeros, generate_segment_block_layout
 import numpy as np
 import pycuda.autoinit
 import pycuda.gpuarray as gpuarray
@@ -61,7 +61,7 @@ class hessian(matrix):
     self.__project_entire_hessian: List[bool] = []
     self.__projection_methods: List[int] = []
     self.__separate_hessian_jacobian: List[bool] = []
-    self.__auto_partitions: List[bool] = []
+    self.__auto_partitions: List[int] = []
     self.__grouped_add: List[bool] = []
     self.__lto: List[bool] = []
     self.__intermediate_compute_pairs: List[Dict[str, Tuple[attribute, attribute]]] = []
@@ -84,7 +84,7 @@ class hessian(matrix):
     self.__project_entire_hessian_dynamic: List[bool] = []
     self.__projection_methods_dynamic: List[int] = []
     self.__separate_hessian_jacobian_dynamic: List[bool] = []
-    self.__auto_partitions_dynamic: List[bool] = []
+    self.__auto_partitions_dynamic: List[int] = []
     self.__grouped_add_dynamic: List[bool] = []
     self.__lto_dynamic: List[bool] = []
     self.__intermediate_compute_pairs_dynamic: List[Dict[str, Tuple[attribute, attribute]]] = []
@@ -316,16 +316,16 @@ class hessian(matrix):
     self.__separate_hessian_jacobian = value
 
   @property
-  def auto_partitions(self) -> List[bool]:
+  def auto_partitions(self) -> List[int]:
     return self.__auto_partitions
 
   @auto_partitions.setter
-  def auto_partitions(self, value: List[bool]) -> None:
+  def auto_partitions(self, value: List[int]) -> None:
     if not isinstance(value, list):
       raise TypeError("hessian.auto_partitions: value must be a list.")
-    if any(not isinstance(item, bool) for item in value):
-      raise TypeError("hessian.auto_partitions: all items must be bool.")
-    self.__auto_partitions = value
+    if any(not isinstance(item, int) or item not in (0, 1, 2, 3) for item in value):
+      raise ValueError("hessian.auto_partitions: all items must be integers in 0, 1, 2, 3.")
+    self.__auto_partitions = [int(item) for item in value]
 
   @property
   def grouped_add(self) -> List[bool]:
@@ -545,16 +545,16 @@ class hessian(matrix):
     self.__separate_hessian_jacobian_dynamic = value
 
   @property
-  def auto_partitions_dynamic(self) -> List[bool]:
+  def auto_partitions_dynamic(self) -> List[int]:
     return self.__auto_partitions_dynamic
 
   @auto_partitions_dynamic.setter
-  def auto_partitions_dynamic(self, value: List[bool]) -> None:
+  def auto_partitions_dynamic(self, value: List[int]) -> None:
     if not isinstance(value, list):
       raise TypeError("hessian.auto_partitions_dynamic: value must be a list.")
-    if any(not isinstance(item, bool) for item in value):
-      raise TypeError("hessian.auto_partitions_dynamic: all items must be bool.")
-    self.__auto_partitions_dynamic = value
+    if any(not isinstance(item, int) or item not in (0, 1, 2, 3) for item in value):
+      raise ValueError("hessian.auto_partitions_dynamic: all items must be integers in 0, 1, 2, 3.")
+    self.__auto_partitions_dynamic = [int(item) for item in value]
 
   @property
   def grouped_add_dynamic(self) -> List[bool]:
@@ -930,7 +930,8 @@ class hessian(matrix):
     global_jacobian_block_nonzero_attributes: List[attribute],
     global_jacobian_block_nonzero_local_positions,
     global_jacobian_block_layout,
-    auto_partition = True,
+    auto_partition = 0,
+    segment_sizes = None,
   ) -> attribute:
     merged_hessian_and_gradient = []
     merged_hessian_rows = 0
@@ -952,13 +953,13 @@ class hessian(matrix):
             merged_hessian_and_gradient.append(global_inner_hessian[i, j])
       # Match the selected consumer's blocks. H and gradient retain their
       # original storage order; J nonzeros are contiguous within each block.
-      if auto_partition:
+      if auto_partition == 1:
         layout = global_jacobian_block_layout
         if layout is None:
           layout = generate_jacobian_block_layout(global_jacobian.rows, global_jacobian.cols, global_jacobian_block_nonzero_local_positions)
         packing = pack_jacobian_block_nonzeros(layout, global_jacobian_block_nonzero_local_positions)
       else:
-        layout = generate_inner_hessian_block_layout(global_jacobian.rows, global_jacobian.cols)
+        layout = generate_segment_block_layout(global_jacobian.rows, global_jacobian.cols, segment_sizes) if auto_partition >= 2 else generate_inner_hessian_block_layout(global_jacobian.rows, global_jacobian.cols)
         packing = pack_inner_hessian_block_nonzeros(layout, global_jacobian_block_nonzero_local_positions)
       merged_hessian_and_gradient.extend(global_jacobian_block_nonzero_attributes[i] for i in packing["nonzero_permutation"])
       for i in range(global_gradient.size):
@@ -989,7 +990,7 @@ class hessian(matrix):
     else:
       merged_attribute_name = f'hessian_and_gradient_{derivative_name}'
     if separate_hessian_jacobian and not project_entire_hessian and not gradient_only:
-      merged_attribute_name += '_packed_components' if auto_partition else '_packed_inner_hessian_blocks'
+      merged_attribute_name += ('_packed_inner_hessian_blocks', '_packed_components', '_packed_segments_left', '_packed_segments_direct')[auto_partition]
     if merged_attribute_name in source.correspondance.attributes:
       return source.correspondance[merged_attribute_name]
     return source.correspondance.addAttribute(
@@ -1059,6 +1060,10 @@ class hessian(matrix):
     while len(kernels) <= index:
       kernels.append(None)
 
+    segment_sizes = indices_kernels[index].fixedSegmentSizes if auto_partitions[index] >= 2 else None
+    if auto_partitions[index] >= 2 and (gradient_only[index] or not separate_hessian_jacobian[index] or project_entire_hessian[index]):
+      raise ValueError("Segment assembly requires a separated J^T H J Hessian without UNION.")
+
     if merged_attributes[index] is None:
       merged_attributes[index] = self.__buildMergedHessianAndGradientAttribute(
         global_gradients[index],
@@ -1072,7 +1077,8 @@ class hessian(matrix):
         global_jacobian_block_nonzero_attributes[index],
         global_jacobian_block_nonzero_local_positions[index],
         global_jacobian_block_layouts[index],
-        auto_partition=auto_partitions[index]
+        auto_partition=auto_partitions[index],
+        segment_sizes=segment_sizes
       )
 
     if kernels[index] is None:
@@ -1112,7 +1118,8 @@ class hessian(matrix):
         dynamic_term = dynamic_term,
         grouped_add = grouped_add[index],
         lto = lto[index],
-        auto_partition = auto_partitions[index]
+        auto_partition = auto_partitions[index],
+        segment_sizes = segment_sizes
       )
       kernels[index].generateKernel(
         indices_kernels[index].outputUniqueGradientSizesCPU.tolist(),

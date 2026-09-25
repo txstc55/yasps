@@ -318,11 +318,15 @@ class differentiator:
       result.second_order_jacobians = [self.__gradient]
     return result
 
-  def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, grouped_add = False, lto = False, auto_partition = True):
-    # auto_partition=True uses sparsity components; False uses inner-Hessian-sized tiles.
+  def diff2(self, source: List[attribute], target1: List[attribute], target2: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, grouped_add = False, lto = False, auto_partition = 0):
+    # 0: inner-Hessian tiles; 1: sparsity components; 2/3: original segments,
+    # with a stored J^T H / direct J_i^T H J_j product, respectively.
     # Only separated Hessian assembly changes; symbolic differentiation is shared.
-    if not isinstance(auto_partition, bool):
-      raise TypeError("differentiator.diff2: auto_partition must be bool.")
+    if not isinstance(auto_partition, int) or auto_partition not in (0, 1, 2, 3):
+      raise ValueError("differentiator.diff2: auto_partition must be an integer in 0, 1, 2, 3.")
+    auto_partition = int(auto_partition) # Preserve False/True as aliases for 0/1.
+    if auto_partition >= 2 and (not separate_hessian_jacobian or not self.__sameTargets(target1, target2)):
+      raise ValueError("Segment assembly requires a separated Hessian, not a rectangular Jacobian.")
     if not isinstance(source, list):
       source = [source]
     if len(source) == 0:
@@ -492,7 +496,7 @@ class differentiator:
       result.second_order_jacobians = [rectangular_jacobian]
     return result
 
-  def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, gradient_only = False, grouped_add = False, lto = False, auto_partition = True):
+  def __diff2_hessian_all(self, source: List[attribute], global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, gradient_only = False, grouped_add = False, lto = False, auto_partition = 0):
     total_hessian: Optional[hessian] = None
     for item in source:
       current_hessian = self.__diff2_hessian_single(item, global_targets, local_targets, projection_method, save_intermediate, separate_hessian_jacobian, dynamic_instances, gradient_only, grouped_add, lto, auto_partition)
@@ -507,7 +511,7 @@ class differentiator:
   ## Hessian differentiation, each differentiation
   ## will return us a Hessian matrix object
   #########################################################
-  def __diff2_hessian_single(self, source: attribute, global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, gradient_only = False, grouped_add = False, lto = False, auto_partition = True) -> hessian:
+  def __diff2_hessian_single(self, source: attribute, global_targets: List[attribute], local_targets: List[attribute] = [], projection_method = 1, save_intermediate = False, separate_hessian_jacobian = False, dynamic_instances = False, gradient_only = False, grouped_add = False, lto = False, auto_partition = 0) -> hessian:
     if source.size != 1:
       raise ValueError("differentiator.__diff2_hessian_single: source must be a scalar attribute.")
 
@@ -517,6 +521,12 @@ class differentiator:
     paths = path(global_targets, local_targets)
     paths.getRoots(source, [source], paths.wrt if gradient_only else [])
     paths.getPathDict()
+
+    if auto_partition >= 2:
+      if any(att.operator == UNION for att in paths.path_dict):
+        raise ValueError("Segment assembly (auto_partition=2/3) does not support UNION.")
+      if any(att.operator == JOIN and att.through.dimension <= 0 for att in paths.path_dict):
+        raise ValueError("Segment assembly requires fixed-arity JOIN connectivity.")
 
     indices_kernel = gradientIndicesKernel(
       paths.path_dict,
@@ -544,6 +554,9 @@ class differentiator:
     if not gradient_only:
       self.__generateHessianThroughPathDict(paths.wrt, autodiff_engine)
       assert self.__hessian is not None
+
+    if auto_partition >= 2 and (gradient_only or self.__project_entire_hessian or self.__global_jacobian is None or self.__global_inner_hessian is None):
+      raise ValueError("Segment assembly requires a pure J^T H J factorization; nonlinear chain-rule remainder terms are not supported.")
 
     global_jacobian_block_nonzero_attributes = [list(self.__global_jacobian_block_nonzero_attributes)]
     global_jacobian_block_nonzero_local_positions = [list(self.__global_jacobian_block_nonzero_local_positions)]
