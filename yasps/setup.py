@@ -37,6 +37,7 @@ extensions = [
     Extension("yasps.attributeOperations", ["yasps/attribute/attributeOperations.pyx"]),
     Extension("yasps.path", ["yasps/differentiator/path.pyx"]),
     Extension("yasps.differentiator", ["yasps/differentiator/differentiator.pyx"]),
+    Extension("yasps.hessianEvaluationRequest", ["yasps/differentiator/hessianEvaluationRequest.pyx"]),
     Extension("yasps.context", ["yasps/context/context.pyx"]),
     Extension("yasps.hessianKernelHeader", ["yasps/kernel/Hessian/hessianKernelHeader.pyx"]),
     Extension("yasps.hessianKernelFullProject", ["yasps/kernel/Hessian/hessianKernelFullProject.pyx"]),

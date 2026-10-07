@@ -25,7 +25,7 @@ class hessianAndGradientKernel:
   att_name_to_kernel: dict[str, hessianAndGradientKernel] = {}  # maps attribute names to their hessian and gradient kernel instances, this way we can just return the previous existing kernel
 
 
-  def __init__(self, att: attribute, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, local_hessian_nonzero_upper_positions: List[int] = [], dynamic_term = False, grouped_add: bool = False, lto: bool = False, auto_partition: int = 0, segment_sizes = None):
+  def __init__(self, evaluation, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, local_hessian_nonzero_upper_positions: List[int] = [], dynamic_term = False, grouped_add: bool = False, lto: bool = False, auto_partition: int = 0, segment_sizes = None):
     self.__kernelString: str = ""
     self.__headerFileString: str = ""
     self.__kernel = None # the kernel for computhing the gradient and hessians
@@ -33,20 +33,16 @@ class hessianAndGradientKernel:
     self.__project_entire_hessian = project_entire_hessian
     self.__projection_method = projection_method
     self.__gradient_only = gradeient_only
-    self.__att = att
+    self.__evaluation = evaluation
     self.__clear_separation = clear_separation
     self.__jacobian_rows = jacobian_rows
     self.__jacobian_cols = jacobian_cols
     self.__hessian_row_size = hessian_row_size
     self.__local_hessian_nonzero_upper_positions = list(local_hessian_nonzero_upper_positions)
     if not self.__gradient_only and not self.__clear_separation:
-      expected_size = hessian_row_size * (hessian_row_size + 1) // 2 + hessian_row_size
-      if self.__att.size != expected_size:
-        raise ValueError(
-          "hessianAndGradientKernel: packed Hessian/gradient size mismatch: "
-          f"got {self.__att.size}, expected {expected_size} for a "
-          f"{hessian_row_size} by {hessian_row_size} Hessian."
-        )
+      expected_size = hessian_row_size * (hessian_row_size + 1) // 2
+      if evaluation.hessianSize != expected_size or evaluation.gradient.size != hessian_row_size:
+        raise ValueError("hessianAndGradientKernel: staged Hessian/gradient dimensions do not match.")
     self.__additional_compile_flags = []  # --ptxas-options=-v,-warn-spills,-warn-lmem-usage  use this for memory checking
     self.__dynamic_terms = dynamic_term
     self.__grouped_add = grouped_add
@@ -96,17 +92,17 @@ class hessianAndGradientKernel:
 
 
     ## first we get all the header functions
-    sortedDependency: List[deviceKernel] = self.__att.deviceKernel.dependents
-    sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
-    sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
-    sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
+    sortedDependency: List[deviceKernel] = self.__evaluation.kernels
+    sortedDatas: List[attribute] = self.__evaluation.kernelDatas
+    sortedConnectivities: List[connectivity] = self.__evaluation.kernelConnectivity
+    sortedPrimitiveUnions: List[primitiveUnion] = self.__evaluation.kernelPrimitiveUnions
     if self.__clear_separation and not self.__project_entire_hessian and self.__separate_kernel is None:
-      self.__separate_kernel = hessianKernelSeparateJacobian(self.__att, self.__gradient_only, self.__grouped_add, self.__auto_partition, self.__segment_sizes)
+      self.__separate_kernel = hessianKernelSeparateJacobian(self.__evaluation, self.__gradient_only, self.__grouped_add, self.__auto_partition, self.__segment_sizes)
       self.__separate_kernel.create_multiplied_blocks(global_jacobian_block_nonzero_attributes, global_jacobian_block_nonzero_local_positions, global_jacobian_children_sizes, global_jacobian_children_spans, self.__local_hessian_nonzero_upper_positions, global_jacobian_block_layout)
     uses_activity = self.__separate_kernel is not None
     wrt_names = "_".join([att.fullName for att in wrt])
     size_names = "_".join([str(size) for size in unique_gradient_sizes])
-    full_file_name = f"compute_hessian_and_gradient_for_{self.__att.fullNameWithHash}_wrt_{wrt_names}_with_sizes_{size_names}_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}_layout_{global_jacobian_block_layout}"
+    full_file_name = f"compute_hessian_and_gradient_for_{self.__evaluation.cacheKey}_wrt_{wrt_names}_with_sizes_{size_names}_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}_layout_{global_jacobian_block_layout}"
     if self.__clear_separation and not self.__auto_partition:
       full_file_name += "_inner_hessian_blocks"
     if self.__clear_separation and self.__auto_partition >= 2:
@@ -119,7 +115,7 @@ class hessianAndGradientKernel:
     # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
     # print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
-      hessian_header_file = hessianKernelHeader(self.__att, self.__unique_gradient_sizes, sortedDependency, uses_activity)
+      hessian_header_file = hessianKernelHeader(self.__evaluation.gradient, self.__unique_gradient_sizes, [], uses_activity, evaluation=self.__evaluation)
       with open(".yasps_tmp/allHeaders.cuh", 'w') as f:
         f.write(hessian_header_file.kernelString)
         f.close()
@@ -128,10 +124,10 @@ class hessianAndGradientKernel:
       obj_files = []
       seen_obj_files = set([])
       lto_flags = ["-dlto"] if self.__lto else []
-      for item in (sortedDependency + [self.__att.deviceKernel]):
+      for item in sortedDependency:
         # we check if the .o file exists
-        cu_file = f".yasps_tmp/{item.attributeName}_lto_{int(self.__lto)}.cu"
-        obj_file = f".yasps_tmp/{item.attributeName}_lto_{int(self.__lto)}.o"
+        cu_file = f".yasps_tmp/{item.attributeName}_staged_v1_lto_{int(self.__lto)}.cu"
+        obj_file = f".yasps_tmp/{item.attributeName}_staged_v1_lto_{int(self.__lto)}.o"
         if not obj_file in seen_obj_files:
           obj_files.append(obj_file)
         if (not os.path.exists(obj_file)) and (not obj_file in seen_obj_files):
@@ -157,11 +153,6 @@ extern "C"{{
         seen_obj_files.add(obj_file)
 
       # now actually generate the global kernel
-      attributeName: str = ""
-      if self.__att.name == "":
-        attributeName = f'attr_{self.__att.hash}'.replace("-", "_neg_")
-      else:
-        attributeName = self.__att.fullName
       for unique_gradient_size in self.__unique_gradient_sizes:
         if unique_gradient_size == 0:
           continue
@@ -172,13 +163,13 @@ extern "C"{{
         if True: # always regenerate the kernel because header has been replaced
           with open(cu_file, 'w') as f:
             if self.__project_entire_hessian:
-              kernel_source = hessianKernelFullProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt), self.__hessian_row_size, self.__grouped_add).kernelString
+              kernel_source = hessianKernelFullProject(self.__evaluation, unique_gradient_size, self.__gradient_only, max_num_indices, "", len(wrt), self.__hessian_row_size, self.__grouped_add).kernelString
             elif not self.__clear_separation:
-              kernel_source = hessianKernelNoProject(self.__att, unique_gradient_size, self.__gradient_only, max_num_indices, attributeName, len(wrt), self.__hessian_row_size, self.__grouped_add).kernelString
+              kernel_source = hessianKernelNoProject(self.__evaluation, unique_gradient_size, self.__gradient_only, max_num_indices, "", len(wrt), self.__hessian_row_size, self.__grouped_add).kernelString
             else:
               # if we need to separate the jacobian and hessian, the first thing we need to do is reconstruct the jacobian and hessian symbolically
               # which we will use to figure out how to compute the final hessian block by performing J_i^T H_ij J_j for each block
-              kernel_source = self.__separate_kernel.generateKernelString(unique_gradient_size, max_num_indices, attributeName, len(wrt))
+              kernel_source = self.__separate_kernel.generateKernelString(unique_gradient_size, max_num_indices, "", len(wrt))
             f.write(kernel_source)
             f.close()
           compile_cmd = [
@@ -194,7 +185,7 @@ extern "C"{{
           compile_jobs.append(job)
 
       # now we add the c functions that will go over all the unique gradient sizes
-      self.__kernelString = hessianKernelHost(self.__att, self.__unique_gradient_sizes, max_child_gradient_size, self.__project_entire_hessian, uses_activity).kernelString
+      self.__kernelString = hessianKernelHost(self.__evaluation, self.__unique_gradient_sizes, max_child_gradient_size, self.__project_entire_hessian, uses_activity).kernelString
       # prune duplicate functions
       self.__kernelString = prune_duplicate_functions(self.__kernelString)
       # generate the code to check

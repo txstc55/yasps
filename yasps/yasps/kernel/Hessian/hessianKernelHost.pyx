@@ -4,11 +4,10 @@ from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 class hessianKernelHost:
-  def __init__(self, att: attribute, unique_gradient_sizes: Set[int], max_child_gradient_size: int, project_entire_hessian: bool, block_activity: bool = False):
-    self.__att = att
-    sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
-    sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
-    sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
+  def __init__(self, evaluation, unique_gradient_sizes: Set[int], max_child_gradient_size: int, project_entire_hessian: bool, block_activity: bool = False):
+    sortedDatas: List[attribute] = evaluation.kernelDatas
+    sortedConnectivities: List[connectivity] = evaluation.kernelConnectivity
+    sortedPrimitiveUnions: List[primitiveUnion] = evaluation.kernelPrimitiveUnions
     self.__kernelString = f'''
 #include "allHeaders.cuh"
 #define CUDA_CHECK_ERROR(ans)                                                  \

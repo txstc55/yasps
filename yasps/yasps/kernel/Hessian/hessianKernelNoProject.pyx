@@ -4,12 +4,11 @@ from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 class hessianKernelNoProject:
-  def __init__(self, att: attribute, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int, hessian_row_size: int, grouped_add: bool = False):
-    self.__att = att
+  def __init__(self, evaluation, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int, hessian_row_size: int, grouped_add: bool = False):
     atomic_add = "atomic_add_grouped" if grouped_add else "atomicAdd"
-    sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
-    sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
-    sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
+    sortedDatas: List[attribute] = evaluation.kernelDatas
+    sortedConnectivities: List[connectivity] = evaluation.kernelConnectivity
+    sortedPrimitiveUnions: List[primitiveUnion] = evaluation.kernelPrimitiveUnions
     self.__kernelString = f'''
 #include "allHeaders.cuh"
 extern "C"{{
@@ -46,19 +45,8 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   index = start + index; // add to begin
   const unsigned int instance = groupedIndicesInner[index]; // this will tell us which instance of the hessian we are computing
   constexpr unsigned int HESSIAN_ROWS = {hessian_row_size};
-  constexpr unsigned int PACKED_HESSIAN_SIZE = HESSIAN_ROWS * (HESSIAN_ROWS + 1) / 2;
-  double hg_mat[{self.__att.size}]; // [packed upper Hessian, gradient]
-
-
-  // now we call the device function
-  {attributeName}_device_function(
-    {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
-    {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
-    {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
-    {"".join([f"{x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
-    instance,
-    hg_mat
-  );
+  double hg_mat[{evaluation.scratchSize}];
+  {evaluation.call(evaluation.gradient, "hg_mat")}
   // ok we now first put the gradient into the correct place
   unsigned int gradient_offset = 0;
   for (unsigned int i = 0; i < {max_num_indices}; i++){{
@@ -78,11 +66,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     segment_placement -= 2; // make it 0 indexed
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
-  #if {int(not gradient_only)} // did we compute the hessian
-      {atomic_add}(&gradient[segment_placement + j], hg_mat[PACKED_HESSIAN_SIZE + gradient_offset + j]);
-#else
       {atomic_add}(&gradient[segment_placement + j], hg_mat[gradient_offset + j]);
-  #endif
     }}
     gradient_offset += segment_size;
   }}
@@ -90,6 +74,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 
 
 #if {int(not gradient_only)}
+  {evaluation.call(evaluation.hessian, "hg_mat")}
   // first we allocate a new array, which computes that for each index
   short int unique_segment_placements[{max_num_indices}] = {{0}}; // this will count how many unique positions we can put the segment, and this is 0 based index
   unsigned short int unique_segment_placements_counts[{max_num_indices}] = {{0}}; // this will count how many segments are placed in each unique position, this is used for the compression

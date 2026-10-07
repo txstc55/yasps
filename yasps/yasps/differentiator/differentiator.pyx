@@ -579,7 +579,7 @@ class differentiator:
       hessian_local.grouped_add = [grouped_add]
       hessian_local.lto = [lto]
       hessian_local.intermediate_compute_pairs = [dict(self.__intermediate_compute_pairs)]
-      hessian_local.merged_hessian_and_gradient_attributes = [None]
+      hessian_local.evaluation_attributes = [None]
       hessian_local.hessian_and_gradient_kernels = [None]
       hessian_local.sources = [source]
       hessian_local.global_jacobian_block_nonzero_attributes = global_jacobian_block_nonzero_attributes
@@ -602,7 +602,7 @@ class differentiator:
       hessian_local.grouped_add_dynamic = [grouped_add]
       hessian_local.lto_dynamic = [lto]
       hessian_local.intermediate_compute_pairs_dynamic = [dict(self.__intermediate_compute_pairs)]
-      hessian_local.merged_hessian_and_gradient_attributes_dynamic = [None]
+      hessian_local.evaluation_attributes_dynamic = [None]
       hessian_local.hessian_and_gradient_kernels_dynamic = [None]
       hessian_local.sources_dynamic = [source]
       hessian_local.global_jacobian_block_nonzero_attributes_dynamic = global_jacobian_block_nonzero_attributes

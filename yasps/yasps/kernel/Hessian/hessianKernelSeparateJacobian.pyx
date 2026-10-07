@@ -8,8 +8,8 @@ import pycuda.gpuarray as gpuarray
 
 
 class hessianKernelSeparateJacobian:
-  def __init__(self, att: attribute, gradient_only: bool = False, grouped_add: bool = False, auto_partition: int = 0, segment_sizes = None):
-    self.__att = att
+  def __init__(self, evaluation, gradient_only: bool = False, grouped_add: bool = False, auto_partition: int = 0, segment_sizes = None):
+    self.__evaluation = evaluation
     self.__gradient_only = gradient_only
     self.__auto_partition = auto_partition
     self.__segment_sizes = segment_sizes
@@ -21,7 +21,6 @@ class hessianKernelSeparateJacobian:
     self.__hessian_operands = []
     self.__packed_jacobian = None
     self.__local_hessian_nonzero_count = 0
-    self.__merged_hessian_jacobian_nonzeros = 0
     self.__left_patterns = []
     self.__inner_products = []
     self.__activity_kernel = None
@@ -139,7 +138,8 @@ int recompute_hessian_block_activity(
     if len(global_jacobian_block_nonzero_local_positions) != 2 * len(global_jacobian_block_nonzero_attributes):
       raise ValueError("Separate Hessian: Jacobian positions and values have different lengths.")
     self.__local_hessian_nonzero_count = len(local_hessian_nonzero_upper_positions) // 2
-    self.__merged_hessian_jacobian_nonzeros = self.__local_hessian_nonzero_count + len(global_jacobian_block_nonzero_attributes)
+    if not self.__gradient_only and (self.__evaluation.hessianSize != self.__local_hessian_nonzero_count or self.__evaluation.jacobianSize != len(global_jacobian_block_nonzero_attributes)):
+      raise ValueError("Separate Hessian: producer sizes do not match the packed Hessian/Jacobian layout.")
     self.__block_patterns = []
     self.__patterns = []
     self.__hessian_operands = []
@@ -493,18 +493,14 @@ static __device__ __noinline__ void scatter_segment_{pattern_id}_{suffix}(
     return "\n".join(source)
 
   def generateKernelString(self, unique_gradient_size: int, max_num_indices: int, attributeName: str, num_attributes: int):
-    data = self.__att.deviceKernel.kernelDatas
-    connectivity = self.__att.deviceKernel.kernelConnectivity
-    unions = self.__att.deviceKernel.kernelPrimitiveUnions
+    data = self.__evaluation.kernelDatas
+    connectivity = self.__evaluation.kernelConnectivity
+    unions = self.__evaluation.kernelPrimitiveUnions
     suffix = str(unique_gradient_size)
     declarations = "".join(f"const double* {x.code_generation_data_name}, " for x in data)
     declarations += "".join(f"const unsigned int* {x.code_generation_index_name}, " for x in connectivity)
     declarations += "".join(f"const unsigned int* {x.code_generation_csr_name}, " for x in connectivity if x.dimension == 0)
     declarations += "".join(f"const unsigned int* {x.code_generation_counts_name}, " for x in unions)
-    arguments = "".join(f"{x.code_generation_data_name}, " for x in data)
-    arguments += "".join(f"{x.code_generation_index_name}, " for x in connectivity)
-    arguments += "".join(f"{x.code_generation_csr_name}, " for x in connectivity if x.dimension == 0)
-    arguments += "".join(f"{x.code_generation_counts_name}, " for x in unions)
     source = ['#include "allHeaders.cuh"', 'extern "C" {']
     if not self.__gradient_only and self.__block_patterns:
       if self.__auto_partition >= 2 and max_num_indices != len(self.__segment_sizes):
@@ -546,7 +542,6 @@ static __device__ __noinline__ void scatter_segment_{pattern_id}_{suffix}(
         source.append(self.__scatterFunction(suffix, num_attributes))
       if self.__auto_partition == 0 and self.__layout["rows"] > 1:
         source.append(self.__denseTileScatterFunction(suffix, num_attributes))
-    gradient_start = 0 if self.__gradient_only else self.__merged_hessian_jacobian_nonzeros
     entry_source = f'''
 __global__ void compute_hessian_and_gradient_global_function_final_gradient_size_{suffix}(
   {declarations}
@@ -573,8 +568,8 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index >= end - start) return;
   const unsigned int instance = groupedIndicesInner[start + index];
-  double hg_mat[{self.__att.size}];
-  {attributeName}_device_function({arguments}instance, hg_mat);
+  double hg_mat[{self.__evaluation.scratchSize}];
+  {self.__evaluation.call(self.__evaluation.gradient, "hg_mat")}
   const unsigned int* indices = segment_indices + instance * {max_num_indices};
   const unsigned short int* sizes = segment_sizes + instance * {max_num_indices};
   const short int* permutations = local_permutations + instance * {max_num_indices};
@@ -582,7 +577,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   for (unsigned int i = 0; i < {max_num_indices}; ++i) {{
     if (indices[i] >= 2) {{
       for (unsigned int k = 0; k < sizes[i]; ++k) {{
-        {self.__atomic_add}(&gradient[indices[i] - 2 + k], hg_mat[{gradient_start} + gradient_offset + k]);
+        {self.__atomic_add}(&gradient[indices[i] - 2 + k], hg_mat[gradient_offset + k]);
       }}
     }}
     gradient_offset += sizes[i];
@@ -646,6 +641,8 @@ static __device__ __noinline__ void assemble_sparse_hessian_{suffix}(
 ''')
       source.append("}")
       entry_source += f'''
+  {self.__evaluation.call(self.__evaluation.hessian, "hg_mat")}
+  {self.__evaluation.call(self.__evaluation.jacobian, f"hg_mat + {self.__local_hessian_nonzero_count}")}
   assemble_sparse_hessian_{suffix}(hg_mat, indices, sizes, permutations, block_activity + instance, activity_stride, lookups + coordinatesOuter[instance], hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
 '''
     source.append(entry_source + "}\n}\n")

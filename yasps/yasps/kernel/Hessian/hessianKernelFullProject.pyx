@@ -1,15 +1,20 @@
-from typing import List, Set
+from typing import List
 from yasps.attribute import attribute
-from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 class hessianKernelFullProject:
-  def __init__(self, att: attribute, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int, hessian_row_size: int, grouped_add: bool = False):
-    self.__att = att
+  def __init__(self, evaluation, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int, hessian_row_size: int, grouped_add: bool = False):
     atomic_add = "atomic_add_grouped" if grouped_add else "atomicAdd"
-    sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
-    sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
-    sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
+    packed_size = hessian_row_size * (hessian_row_size + 1) // 2
+    dense_size = hessian_row_size * hessian_row_size
+    packed_compression = packed_size + unique_gradient_size * unique_gradient_size < dense_size
+    compressed_offset = packed_size if packed_compression else 0
+    scratch_size = evaluation.gradient.size
+    if not gradient_only:
+      scratch_size = max(scratch_size, min(dense_size, packed_size + unique_gradient_size * unique_gradient_size))
+    sortedDatas: List[attribute] = evaluation.kernelDatas
+    sortedConnectivities: List[connectivity] = evaluation.kernelConnectivity
+    sortedPrimitiveUnions: List[primitiveUnion] = evaluation.kernelPrimitiveUnions
     self.__kernelString = f'''
 #include "allHeaders.cuh"
 extern "C"{{
@@ -46,19 +51,9 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   index = start + index; // add to begin
   const unsigned int instance = groupedIndicesInner[index]; // this will tell us which instance of the hessian we are computing
   constexpr unsigned int HESSIAN_ROWS = {hessian_row_size};
-  constexpr unsigned int PACKED_HESSIAN_SIZE = HESSIAN_ROWS * (HESSIAN_ROWS + 1) / 2;
-  double hg_mat[{self.__att.size}]; // [packed upper Hessian, gradient]
+  double intermediates[{scratch_size}];
 
-
-  // now we call the device function
-  {attributeName}_device_function(
-    {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
-    {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
-    {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
-    {"".join([f"{x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
-    instance,
-    hg_mat
-  );
+  {evaluation.call(evaluation.gradient, "intermediates")}
   // ok we now first put the gradient into the correct place
   unsigned int gradient_offset = 0;
   for (unsigned int i = 0; i < {max_num_indices}; i++){{
@@ -78,11 +73,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
     segment_placement -= 2; // make it 0 indexed
     // now we access the gradient and put it into the correct place
     for (unsigned int j = 0; j < segment_size; j++){{
-  #if {int(not gradient_only)} // did we compute the hessian
-      {atomic_add}(&gradient[segment_placement + j], hg_mat[PACKED_HESSIAN_SIZE + gradient_offset + j]);
-#else
-      {atomic_add}(&gradient[segment_placement + j], hg_mat[gradient_offset + j]);
-  #endif
+      {atomic_add}(&gradient[segment_placement + j], intermediates[gradient_offset + j]);
     }}
     gradient_offset += segment_size;
   }}
@@ -90,45 +81,59 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 
 
 #if {int(not gradient_only)}
+  {evaluation.call(evaluation.hessian, "intermediates") if not gradient_only else ""}
+
+#if {int(not packed_compression)}
+  // Expand the packed upper triangle backwards. Both symmetric destinations
+  // are at or above the packed source index, so unread inputs remain intact.
+  for (int row = HESSIAN_ROWS - 1; row >= 0; --row){{
+    for (int column = HESSIAN_ROWS - 1; column >= row; --column){{
+      const double value = symmetric_upper_get<HESSIAN_ROWS>(intermediates, row, column);
+      intermediates[row * HESSIAN_ROWS + column] = value;
+      intermediates[column * HESSIAN_ROWS + row] = value;
+    }}
+  }}
+#endif
+  Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>> compressed_hessian(intermediates + {compressed_offset});
+#if {int(packed_compression)}
+  // For heavy compression, packed input plus a separate region for the
+  // compressed result is smaller than expanding to the original dense size.
+  compressed_hessian.setZero();
+#endif
+
+  // computePermutation preserves first-occurrence order: a compressed scalar
+  // index never exceeds its original index, and N <= HESSIAN_ROWS. Traverse
+  // the dense source in row-major order, clearing each consumed cell before
+  // accumulating into an earlier/equal cell. No unread source is overwritten.
   unsigned int row_offset = 0;
-  // we are projecting the entire Hessian
-  Eigen::Matrix<double, N, N> compressed_hessian = Eigen::Matrix<double, N, N>::Zero(); // first we allocate the matrix
-  for (unsigned int i = 0; i < {max_num_indices}; i++){{
-    unsigned int col_offset = 0;
-    // we first determine what's the correct position to put in the compressed hessian
-    short int permutation_i = local_permutations[instance * {max_num_indices} + i];
-    if (permutation_i == 0){{
-      row_offset += segment_sizes[instance * {max_num_indices} + i]; // done with the row since it's reserved for union empty space
-      continue; // we encountered space reserved for union, skip
-    }}
-    if (permutation_i < 0){{
-      // this block position exists, we need to get the negative of it
-      permutation_i = -permutation_i;
-    }}
-    permutation_i -= 1; // back to 0 indexed
-    unsigned short int segment_size_i = segment_sizes[instance * {max_num_indices} + i];
-    for (unsigned int j = 0; j < {max_num_indices}; j++){{
-      short int permutation_j = local_permutations[instance * {max_num_indices} + j];
-      if (permutation_j == 0){{
-        col_offset += segment_sizes[instance * {max_num_indices} + j]; // done with the column since it's reserved for union empty space
-        continue; // we encountered space reserved for union, skip
-      }}
-      if (permutation_j < 0){{
-        // this block position exists, we need to get the negative of it
-        permutation_j = -permutation_j;
-      }}
-      permutation_j -= 1; // back to 0 indexed
-      // ok at this point we know the correct position to put in the compressed hessian
-      unsigned short int segment_size_j = segment_sizes[instance * {max_num_indices} + j];
+  if (N != HESSIAN_ROWS){{ // Equal sizes imply the compression is the identity.
+    for (unsigned int i = 0; i < {max_num_indices}; i++){{
+      short int permutation_i = local_permutations[instance * {max_num_indices} + i];
+      if (permutation_i < 0) permutation_i = -permutation_i;
+      const unsigned short int segment_size_i = segment_sizes[instance * {max_num_indices} + i];
       for (unsigned int k = 0; k < segment_size_i; k++){{
-        for (unsigned int l = 0; l < segment_size_j; l++){{
-          // we put the block into the compressed hessian
-          compressed_hessian(permutation_i + k, permutation_j + l) += symmetric_upper_get<HESSIAN_ROWS>(hg_mat, row_offset + k, col_offset + l);
+        unsigned int col_offset = 0;
+        for (unsigned int j = 0; j < {max_num_indices}; j++){{
+          short int permutation_j = local_permutations[instance * {max_num_indices} + j];
+          if (permutation_j < 0) permutation_j = -permutation_j;
+          const unsigned short int segment_size_j = segment_sizes[instance * {max_num_indices} + j];
+          for (unsigned int l = 0; l < segment_size_j; l++){{
+#if {int(packed_compression)}
+            const double value = symmetric_upper_get<HESSIAN_ROWS>(intermediates, row_offset + k, col_offset + l);
+#else
+            const unsigned int source = (row_offset + k) * HESSIAN_ROWS + col_offset + l;
+            const double value = intermediates[source];
+            intermediates[source] = 0.0;
+#endif
+            if (permutation_i != 0 && permutation_j != 0){{
+              compressed_hessian(permutation_i - 1 + k, permutation_j - 1 + l) += value;
+            }}
+          }}
+          col_offset += segment_size_j;
         }}
       }}
-      col_offset += segment_size_j;
+      row_offset += segment_size_i;
     }}
-    row_offset += segment_size_i;
   }}
   // now we have the compressed hessian
   // we will project it if needed

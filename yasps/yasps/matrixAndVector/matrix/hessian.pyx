@@ -5,9 +5,9 @@ from yasps.matrix import matrix
 from yasps.gradient import gradient
 from yasps.hessianAndGradientKernel import hessianAndGradientKernel
 from yasps.coordinateCompressionKernel import coordinateCompressionKernel
-from yasps.attribute import attribute
+from yasps.attribute import attribute, ARRAY
 from yasps.gradientIndicesKernel import gradientIndicesKernel
-from yasps.codeGenerator import codeGenerator
+from yasps.hessianEvaluationRequest import hessianEvaluationRequest
 from yasps.jacobianBlockLayout import generate_jacobian_block_layout, pack_jacobian_block_nonzeros, generate_inner_hessian_block_layout, pack_inner_hessian_block_nonzeros, generate_segment_block_layout
 import numpy as np
 import pycuda.autoinit
@@ -65,7 +65,7 @@ class hessian(matrix):
     self.__grouped_add: List[bool] = []
     self.__lto: List[bool] = []
     self.__intermediate_compute_pairs: List[Dict[str, Tuple[attribute, attribute]]] = []
-    self.__merged_hessian_and_gradient_attributes: List[Optional[attribute]] = []
+    self.__evaluation_attributes: List[Optional[hessianEvaluationRequest]] = []
     self.__hessian_and_gradient_kernels: List[Optional[hessianAndGradientKernel]] = []
     self.__sources: List[attribute] = []
 
@@ -88,7 +88,7 @@ class hessian(matrix):
     self.__grouped_add_dynamic: List[bool] = []
     self.__lto_dynamic: List[bool] = []
     self.__intermediate_compute_pairs_dynamic: List[Dict[str, Tuple[attribute, attribute]]] = []
-    self.__merged_hessian_and_gradient_attributes_dynamic: List[Optional[attribute]] = []
+    self.__evaluation_attributes_dynamic: List[Optional[hessianEvaluationRequest]] = []
     self.__hessian_and_gradient_kernels_dynamic: List[Optional[hessianAndGradientKernel]] = []
     self.__sources_dynamic: List[attribute] = []
 
@@ -362,17 +362,17 @@ class hessian(matrix):
     self.__intermediate_compute_pairs = value
 
   @property
-  def merged_hessian_and_gradient_attributes(self) -> List[Optional[attribute]]:
-    return self.__merged_hessian_and_gradient_attributes
+  def evaluation_attributes(self) -> List[Optional[hessianEvaluationRequest]]:
+    return self.__evaluation_attributes
 
-  @merged_hessian_and_gradient_attributes.setter
-  def merged_hessian_and_gradient_attributes(self, value: List[Optional[attribute]]) -> None:
+  @evaluation_attributes.setter
+  def evaluation_attributes(self, value: List[Optional[hessianEvaluationRequest]]) -> None:
     if not isinstance(value, list):
-      raise TypeError("hessian.merged_hessian_and_gradient_attributes: value must be a list.")
+      raise TypeError("hessian.evaluation_attributes: value must be a list.")
     for item in value:
-      if item is not None and not isinstance(item, attribute):
-        raise TypeError("hessian.merged_hessian_and_gradient_attributes: items must be attributes or None.")
-    self.__merged_hessian_and_gradient_attributes = value
+      if item is not None and not isinstance(item, hessianEvaluationRequest):
+        raise TypeError("hessian.evaluation_attributes: items must be hessianEvaluationRequest objects or None.")
+    self.__evaluation_attributes = value
 
   @property
   def hessian_and_gradient_kernels(self) -> List[Optional[hessianAndGradientKernel]]:
@@ -591,17 +591,17 @@ class hessian(matrix):
     self.__intermediate_compute_pairs_dynamic = value
 
   @property
-  def merged_hessian_and_gradient_attributes_dynamic(self) -> List[Optional[attribute]]:
-    return self.__merged_hessian_and_gradient_attributes_dynamic
+  def evaluation_attributes_dynamic(self) -> List[Optional[hessianEvaluationRequest]]:
+    return self.__evaluation_attributes_dynamic
 
-  @merged_hessian_and_gradient_attributes_dynamic.setter
-  def merged_hessian_and_gradient_attributes_dynamic(self, value: List[Optional[attribute]]) -> None:
+  @evaluation_attributes_dynamic.setter
+  def evaluation_attributes_dynamic(self, value: List[Optional[hessianEvaluationRequest]]) -> None:
     if not isinstance(value, list):
-      raise TypeError("hessian.merged_hessian_and_gradient_attributes_dynamic: value must be a list.")
+      raise TypeError("hessian.evaluation_attributes_dynamic: value must be a list.")
     for item in value:
-      if item is not None and not isinstance(item, attribute):
-        raise TypeError("hessian.merged_hessian_and_gradient_attributes_dynamic: items must be attributes or None.")
-    self.__merged_hessian_and_gradient_attributes_dynamic = value
+      if item is not None and not isinstance(item, hessianEvaluationRequest):
+        raise TypeError("hessian.evaluation_attributes_dynamic: items must be hessianEvaluationRequest objects or None.")
+    self.__evaluation_attributes_dynamic = value
 
   @property
   def hessian_and_gradient_kernels_dynamic(self) -> List[Optional[hessianAndGradientKernel]]:
@@ -772,7 +772,7 @@ class hessian(matrix):
     result.grouped_add = self.__grouped_add + other.grouped_add
     result.lto = self.__lto + other.lto
     result.intermediate_compute_pairs = self.__intermediate_compute_pairs + other.intermediate_compute_pairs
-    result.merged_hessian_and_gradient_attributes = self.__merged_hessian_and_gradient_attributes + other.merged_hessian_and_gradient_attributes
+    result.evaluation_attributes = self.__evaluation_attributes + other.evaluation_attributes
     result.hessian_and_gradient_kernels = self.__hessian_and_gradient_kernels + other.hessian_and_gradient_kernels
     result.sources = self.__sources + other.sources
     result.global_jacobian_block_nonzero_attributes = self.__global_jacobian_block_nonzero_attributes + other.global_jacobian_block_nonzero_attributes
@@ -793,7 +793,7 @@ class hessian(matrix):
     result.grouped_add_dynamic = self.__grouped_add_dynamic + other.grouped_add_dynamic
     result.lto_dynamic = self.__lto_dynamic + other.lto_dynamic
     result.intermediate_compute_pairs_dynamic = self.__intermediate_compute_pairs_dynamic + other.intermediate_compute_pairs_dynamic
-    result.merged_hessian_and_gradient_attributes_dynamic = self.__merged_hessian_and_gradient_attributes_dynamic + other.merged_hessian_and_gradient_attributes_dynamic
+    result.evaluation_attributes_dynamic = self.__evaluation_attributes_dynamic + other.evaluation_attributes_dynamic
     result.hessian_and_gradient_kernels_dynamic = self.__hessian_and_gradient_kernels_dynamic + other.hessian_and_gradient_kernels_dynamic
     result.sources_dynamic = self.__sources_dynamic + other.sources_dynamic
     result.global_jacobian_block_nonzero_attributes_dynamic = self.__global_jacobian_block_nonzero_attributes_dynamic + other.global_jacobian_block_nonzero_attributes_dynamic
@@ -917,7 +917,7 @@ class hessian(matrix):
     self.block_counts_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsBlockCountsCPU.tolist()
     self.block_dimensions_dynamic = self.__compression_kernel_dynamic.uniqueDimensionsCPU.tolist()
 
-  def __buildMergedHessianAndGradientAttribute(
+  def __buildHessianEvaluation(
     self,
     global_gradient: attribute,
     global_hessian: Optional[attribute],
@@ -932,72 +932,50 @@ class hessian(matrix):
     global_jacobian_block_layout,
     auto_partition = 0,
     segment_sizes = None,
-  ) -> attribute:
-    merged_hessian_and_gradient = []
-    merged_hessian_rows = 0
-    merged_hessian_cols = 0
-
-    if gradient_only:
-      for i in range(global_gradient.size):
-        merged_hessian_and_gradient.append(global_gradient[i])
-      merged_hessian_rows = 1
-      merged_hessian_cols = global_gradient.size
-    elif separate_hessian_jacobian and not project_entire_hessian:
-      assert global_jacobian is not None
-      assert global_inner_hessian is not None
-      for i in range(global_inner_hessian.rows):
-        for j in range(i, global_inner_hessian.cols):
-          # The separate path reconstructs the symmetric local Hessian from
-          # only its structurally nonzero upper-triangular entries.
-          if global_inner_hessian[i, j].isZero == 0:
-            merged_hessian_and_gradient.append(global_inner_hessian[i, j])
-      # Match the selected consumer's blocks. H and gradient retain their
-      # original storage order; J nonzeros are contiguous within each block.
-      if auto_partition == 1:
-        layout = global_jacobian_block_layout
-        if layout is None:
-          layout = generate_jacobian_block_layout(global_jacobian.rows, global_jacobian.cols, global_jacobian_block_nonzero_local_positions)
-        packing = pack_jacobian_block_nonzeros(layout, global_jacobian_block_nonzero_local_positions)
+  ) -> hessianEvaluationRequest:
+    hessian_values = [] # get the upper triangular entries of the hessian if it exists
+    jacobian_values = []
+    if not gradient_only:
+      if separate_hessian_jacobian and not project_entire_hessian:
+        assert global_jacobian is not None and global_inner_hessian is not None
+        hessian_values = [global_inner_hessian[i, j]
+                          for i in range(global_inner_hessian.rows)
+                          for j in range(i, global_inner_hessian.cols)
+                          if global_inner_hessian[i, j].isZero == 0]
+        # Each producer uses the consumer's existing block order.
+        if auto_partition == 1:
+          layout = global_jacobian_block_layout
+          if layout is None:
+            layout = generate_jacobian_block_layout(global_jacobian.rows, global_jacobian.cols, global_jacobian_block_nonzero_local_positions)
+          packing = pack_jacobian_block_nonzeros(layout, global_jacobian_block_nonzero_local_positions)
+        else:
+          layout = generate_segment_block_layout(global_jacobian.rows, global_jacobian.cols, segment_sizes) if auto_partition >= 2 else generate_inner_hessian_block_layout(global_jacobian.rows, global_jacobian.cols)
+          packing = pack_inner_hessian_block_nonzeros(layout, global_jacobian_block_nonzero_local_positions)
+        jacobian_values = [global_jacobian_block_nonzero_attributes[i] for i in packing["nonzero_permutation"]]
       else:
-        layout = generate_segment_block_layout(global_jacobian.rows, global_jacobian.cols, segment_sizes) if auto_partition >= 2 else generate_inner_hessian_block_layout(global_jacobian.rows, global_jacobian.cols)
-        packing = pack_inner_hessian_block_nonzeros(layout, global_jacobian_block_nonzero_local_positions)
-      merged_hessian_and_gradient.extend(global_jacobian_block_nonzero_attributes[i] for i in packing["nonzero_permutation"])
-      for i in range(global_gradient.size):
-        merged_hessian_and_gradient.append(global_gradient[i])
-      merged_hessian_rows = 1
-      merged_hessian_cols = len(merged_hessian_and_gradient)
+        assert global_hessian is not None
+        # Both consumers start from packed upper entries. Full projection
+        # expands or compresses them inside its shared workspace.
+        hessian_values = [global_hessian[i, j]
+                          for i in range(global_hessian.rows)
+                          for j in range(i, global_hessian.cols)]
 
-    else:
-      assert global_hessian is not None
-      for i in range(global_hessian.rows):
-        for j in range(i, global_hessian.cols):
-          merged_hessian_and_gradient.append(global_hessian[i, j])
-      for i in range(global_gradient.size):
-        merged_hessian_and_gradient.append(global_gradient[i])
-      merged_hessian_rows = 1
-      merged_hessian_cols = len(merged_hessian_and_gradient)
-    merged_attribute = attribute.to_array(merged_hessian_and_gradient, rows=merged_hessian_rows, cols=merged_hessian_cols)
-    # The symbolic Hessian name contains its full generation configuration.
-    # Carry that identity into the merged compute attribute as well so two
-    # Hessian modes for the same source and targets cannot collide here.
-    # Direct per-primitive energies can produce an unnamed inline Hessian
-    # expression even though their registered gradient is fully named. Falling
-    # back to that gradient identity prevents unrelated energies on the same
-    # primitive from all reusing the ambiguous "hessian_and_gradient_" kernel.
     derivative_name = global_gradient.name if global_hessian is None or global_hessian.name == "" else global_hessian.name
-    if gradient_only:
-      merged_attribute_name = f'hessian_and_gradient_gradient_only_{derivative_name}'
-    else:
-      merged_attribute_name = f'hessian_and_gradient_{derivative_name}'
-    if separate_hessian_jacobian and not project_entire_hessian and not gradient_only:
-      merged_attribute_name += ('_packed_inner_hessian_blocks', '_packed_components', '_packed_segments_left', '_packed_segments_direct')[auto_partition]
-    if merged_attribute_name in source.correspondance.attributes:
-      return source.correspondance[merged_attribute_name]
-    return source.correspondance.addAttribute(
-      merged_attribute_name,
-      computed_attribute=merged_attribute,
-      rows=merged_hessian_rows,
-      cols=merged_hessian_cols
+    prefix = f'derivative_stages_v2_{derivative_name}_full_{int(project_entire_hessian)}_separate_{int(separate_hessian_jacobian)}_partition_{auto_partition}_nonzeros'
+    def stage(name, values):
+      if not values:
+        return None
+      name = prefix + '_' + name
+      if name in source.correspondance.attributes:
+        return source.correspondance[name]
+      # Explicit correspondence also covers constant and scalar derivatives.
+      result = attribute(children=values, operator=ARRAY, rows=1, cols=len(values), correspondance=source.correspondance)
+      return source.correspondance.addAttribute(name, computed_attribute=result)
+
+    return hessianEvaluationRequest(
+      stage('gradient', [global_gradient[i] for i in range(global_gradient.size)]),
+      stage('hessian', hessian_values),
+      stage('jacobian', jacobian_values),
     )
 
   def __ensureTermKernel(self, index: int, dynamic_term = False) -> None:
@@ -1013,7 +991,7 @@ class hessian(matrix):
       auto_partitions = self.__auto_partitions
       grouped_add = self.__grouped_add
       lto = self.__lto
-      merged_attributes = self.__merged_hessian_and_gradient_attributes
+      evaluations = self.__evaluation_attributes
       kernels = self.__hessian_and_gradient_kernels
       sources = self.__sources
       indices_kernels = self.__indices_kernels
@@ -1034,7 +1012,7 @@ class hessian(matrix):
       auto_partitions = self.__auto_partitions_dynamic
       grouped_add = self.__grouped_add_dynamic
       lto = self.__lto_dynamic
-      merged_attributes = self.__merged_hessian_and_gradient_attributes_dynamic
+      evaluations = self.__evaluation_attributes_dynamic
       kernels = self.__hessian_and_gradient_kernels_dynamic
       sources = self.__sources_dynamic
       indices_kernels = self.__indices_kernels_dynamic
@@ -1055,8 +1033,8 @@ class hessian(matrix):
     ):
       raise ValueError("hessian.__ensureTermKernel: symbolic term metadata is incomplete.")
 
-    while len(merged_attributes) <= index:
-      merged_attributes.append(None)
+    while len(evaluations) <= index:
+      evaluations.append(None)
     while len(kernels) <= index:
       kernels.append(None)
 
@@ -1064,8 +1042,8 @@ class hessian(matrix):
     if auto_partitions[index] >= 2 and (gradient_only[index] or not separate_hessian_jacobian[index] or project_entire_hessian[index]):
       raise ValueError("Segment assembly requires a separated J^T H J Hessian without UNION.")
 
-    if merged_attributes[index] is None:
-      merged_attributes[index] = self.__buildMergedHessianAndGradientAttribute(
+    if evaluations[index] is None:
+      evaluations[index] = self.__buildHessianEvaluation(
         global_gradients[index],
         global_hessians[index],
         gradient_only[index],
@@ -1082,9 +1060,7 @@ class hessian(matrix):
       )
 
     if kernels[index] is None:
-      assert merged_attributes[index] is not None
-      codegen: codeGenerator = codeGenerator(merged_attributes[index])
-      codegen.generateCode()
+      assert evaluations[index] is not None
       jacobian_rows = 0
       jacobian_cols = 0
       inner_hessian_rows = 0
@@ -1106,7 +1082,7 @@ class hessian(matrix):
       elif index < len(global_hessians) and global_hessians[index] is not None:
         inner_hessian_rows = global_hessians[index].rows
       kernels[index] = hessianAndGradientKernel(
-        merged_attributes[index],
+        evaluations[index],
         project_entire_hessian[index],
         projection_methods[index],
         gradient_only[index],
@@ -1163,7 +1139,7 @@ class hessian(matrix):
     indices_kernel: gradientIndicesKernel,
     lookup: gpuarray.GPUArray,
     hessian_blocks: gpuarray.GPUArray,
-    merged_attributes: List[Optional[attribute]],
+    evaluations: List[Optional[hessianEvaluationRequest]],
     kernels: List[Optional[hessianAndGradientKernel]],
     intermediate_compute_pairs: List[Dict[str, Tuple[attribute, attribute]]],
     is_dynamic
@@ -1175,9 +1151,9 @@ class hessian(matrix):
         value[0].compute()
         value[1].updateValue(value[0].value)
 
-    merged_attribute = merged_attributes[index]
+    evaluation = evaluations[index]
     kernel = kernels[index]
-    assert merged_attribute is not None
+    assert evaluation is not None
     assert kernel is not None
     # TODO: This doesn't need to be done every iteration for the static parts
     if is_dynamic:
@@ -1197,11 +1173,7 @@ class hessian(matrix):
     # cached coordinates are restored or the count stays the same: a different
     # union branch can have different active multiplication blocks.
     kernel.recomputeBlockActivity(indices_kernel, force=is_dynamic)
-    counts_gpu = [x.children_primitive_counts_gpu for x in merged_attribute.deviceKernel.kernelPrimitiveUnions]
-    arguments: List[gpuarray.GPUArray] = [x.value for x in merged_attribute.deviceKernel.kernelDatas]
-    arguments += [x.value for x in merged_attribute.deviceKernel.kernelConnectivity]
-    arguments += [x.compressedRows for x in merged_attribute.deviceKernel.kernelConnectivity if x.dimension == 0]
-    arguments += counts_gpu
+    arguments = evaluation.arguments()
     kernel.compute(
       arguments,
       indices_kernel,
@@ -1293,7 +1265,7 @@ class hessian(matrix):
         indices_kernel,
         self.__block_indices_gpu[index],
         self.blocks_flattened,
-        self.__merged_hessian_and_gradient_attributes,
+        self.__evaluation_attributes,
         self.__hessian_and_gradient_kernels,
         self.__intermediate_compute_pairs,
         False
@@ -1309,7 +1281,7 @@ class hessian(matrix):
         indices_kernel,
         self.__block_indices_gpu_dynamic[index],
         self.blocks_flattened_dynamic,
-        self.__merged_hessian_and_gradient_attributes_dynamic,
+        self.__evaluation_attributes_dynamic,
         self.__hessian_and_gradient_kernels_dynamic,
         self.__intermediate_compute_pairs_dynamic,
         True

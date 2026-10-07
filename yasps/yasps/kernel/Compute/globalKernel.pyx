@@ -38,7 +38,7 @@ class globalKernel:
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
-    file_name = f".yasps_tmp/compute_{self.__att.fullNameWithHash}"
+    file_name = f".yasps_tmp/compute_{self.__att.fullNameWithHash}_spd_upper_v1"
     if not os.path.exists(f'{file_name}.so'):
       print(f"File {file_name}.so does not exist, compiling")
       self.__headerFileString += '''
@@ -117,6 +117,87 @@ __device__ __forceinline__ bool is_positive_semidefinite(
   }
   return true;
 }
+// A must be symmetric. Preserve its lower triangle and diagonal, reuse the
+// strict upper triangle for Schur storage, and restore it on every exit.
+// Like the packed check, this is a floating-point test without a tolerance;
+// failure falls back to eigenvalue projection.
+template <unsigned int N>
+__device__ __forceinline__ bool is_positive_semidefinite_reuse_upper(
+    double *__restrict__ A) {
+  static_assert(N > 0);
+  bool ok = true;
+
+#pragma unroll 1
+  for (unsigned int row = 0; row < N; ++row) {
+    if (!isfinite(A[row * N + row])) ok = false;
+#pragma unroll 4
+    for (unsigned int column = 0; column < row; ++column) {
+      const double value = A[row * N + column];
+      if (!isfinite(value)) ok = false;
+      A[column * N + row] = value;
+    }
+  }
+
+#pragma unroll 1
+  for (unsigned int column = 0; column < N && ok; ++column) {
+    const double pivot =
+        (column == 0) ? A[0] : A[(column - 1) * N + column];
+    if (!isfinite(pivot) || pivot < 0.0) {
+      ok = false;
+      break;
+    }
+
+    if (pivot == 0.0) {
+#pragma unroll 4
+      for (unsigned int row = column + 1; row < N; ++row) {
+        if (A[column * N + row] != 0.0) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) break;
+#pragma unroll 4
+      for (unsigned int row = column + 1; row < N; ++row) {
+        A[column * N + row] = (column == 0)
+            ? A[row * N + row] : A[(column - 1) * N + row];
+      }
+      continue;
+    }
+
+    const double inverse_pivot = __drcp_rn(pivot);
+    if (!isfinite(inverse_pivot)) {
+      ok = false;
+      break;
+    }
+
+    // Descend so current-column entries stay live until their last use.
+#pragma unroll 1
+    for (unsigned int row = N - 1; row > column; --row) {
+      const double column_entry = A[column * N + row];
+      const double factor = column_entry * inverse_pivot;
+#pragma unroll 4
+      for (unsigned int trailing_column = column + 1;
+           trailing_column < row; ++trailing_column) {
+        A[trailing_column * N + row] = __fma_rn(
+            -factor, A[column * N + trailing_column],
+            A[trailing_column * N + row]);
+      }
+      const double old_diagonal = (column == 0)
+          ? A[row * N + row] : A[(column - 1) * N + row];
+      A[column * N + row] = __fma_rn(-factor, column_entry, old_diagonal);
+    }
+  }
+
+#pragma unroll 1
+  for (unsigned int row = 1; row < N; ++row) {
+#pragma unroll 4
+    for (unsigned int column = 0; column < row; ++column) {
+      A[column * N + row] = A[row * N + column];
+    }
+  }
+  return ok;
+}
+
 // For small matrix < 4
 template <unsigned int N>
 __device__ void spd_projection_small(const double *A, double* output, int choice) {
@@ -176,28 +257,29 @@ __device__ void spd_projection(const double *A, double* output, int choice) {
     }
     return;
   }
-  if (is_positive_semidefinite<N>(A)) {
-    for (unsigned int i = 0; i < N * N; ++i) output[i] = A[i];
-    return;
-  }
-
-  // Map A to an N x N Eigen matrix without copying
-  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
+  // The output is writable scratch; the const input remains untouched.
+  for (unsigned int i = 0; i < N * N; ++i) output[i] = A[i];
+  if (is_positive_semidefinite_reuse_upper<N>(output)) return;
+  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(output);
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
   const auto& B = eigenSolver.eigenvectors();
-  Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
+  const auto& eigenValues = eigenSolver.eigenvalues();
 
-  for (int i = 0; i < N; i++) {
-    if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 1e-6;
+  // Reconstruct one triangle directly into the output, then mirror it.
+  for (unsigned int i = 0; i < N; ++i) {
+    for (unsigned int j = i; j < N; ++j) {
+      double sum = 0.0;
+      for (unsigned int k = 0; k < N; ++k) {
+        double lambda = eigenValues[k];
+        if (lambda < 0.0) {
+          lambda = (choice == 1) ? -lambda : 0.0;
+        }
+        sum += B(i, k) * lambda * B(j, k);
+      }
+      output[i * N + j] = sum;
+      output[j * N + i] = sum;
     }
   }
-
-  Eigen::Matrix<double, N, N> A_reconstructed;
-  A_reconstructed.noalias() = B * eigenValues.asDiagonal() * B.transpose();
-
-  Eigen::Map<Eigen::Matrix<double, N, N, Eigen::RowMajor>> outputMap(output);
-  outputMap = A_reconstructed;
   return;
 }
 
@@ -206,26 +288,26 @@ __device__ void spd_projection_inplace(double *A, int choice) {
   if (choice == 0){
     return;
   }
-  if (is_positive_semidefinite<N>(A)) return;
+  if (is_positive_semidefinite_reuse_upper<N>(A)) return;
   // Map A to an N x N Eigen matrix without copying
   Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
   const auto& B = eigenSolver.eigenvectors();
-  Eigen::Matrix<double, N, 1> eigenValues = eigenSolver.eigenvalues();
-  for (int i = 0; i < N; i++) {
-    if (eigenValues[i] < 0) {
-      eigenValues[i] = choice == 1 ? abs(eigenValues[i]) : 0.0;
-    }
-  }
+  const auto& eigenValues = eigenSolver.eigenvalues();
 
-  // Reconstruct the matrix directly without using an intermediate matrix
-  for (int i = 0; i < N; ++i) {
-    for (int j = 0; j < N; ++j) {
+  // Reconstruct one triangle directly into A, then mirror it.
+  for (unsigned int i = 0; i < N; ++i) {
+    for (unsigned int j = i; j < N; ++j) {
       double sum = 0.0;
-      for (int k = 0; k < N; ++k) {
-        sum += B(i, k) * eigenValues[k] * B(j, k);
+      for (unsigned int k = 0; k < N; ++k) {
+        double lambda = eigenValues[k];
+        if (lambda < 0.0) {
+          lambda = (choice == 1) ? -lambda : 0.0;
+        }
+        sum += B(i, k) * lambda * B(j, k);
       }
       A[i * N + j] = sum;
+      A[j * N + i] = sum;
     }
   }
   return;
@@ -246,8 +328,8 @@ extern "C" {{
       seen_obj_files = set([])
       for item in (sortedDependency + [self.__att.deviceKernel]):
         # we check if the .o file exists
-        cu_file = f".yasps_tmp/{item.attributeName}.cu"
-        obj_file = f".yasps_tmp/{item.attributeName}.o"
+        cu_file = f".yasps_tmp/{item.attributeName}_spd_upper_v1.cu"
+        obj_file = f".yasps_tmp/{item.attributeName}_spd_upper_v1.o"
         if not obj_file in seen_obj_files:
           obj_files.append(obj_file)
         if (not os.path.exists(obj_file)) and (not obj_file in seen_obj_files):

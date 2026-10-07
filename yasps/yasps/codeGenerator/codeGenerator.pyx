@@ -626,6 +626,13 @@ __device__ void {attributeName}_device_function(
 
   def __generate_code_for_array(self, current: ya.attribute) -> str:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
+    if current.size == 1:
+      if current == self.__input:
+        attribute_initialization = "result[0]"
+      self.__code_strings.append(f'''
+  {attribute_initialization} = {self.getIntermediateName(current.children[0])};
+''')
+      return ""
     if current == self.__input:
       attribute_initialization = "out"
       attribute_name = attribute_initialization
