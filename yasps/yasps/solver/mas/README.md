@@ -41,7 +41,7 @@ Local inverse storage and the complete preconditioner application are FP64.
 Historical internal names containing `mixed` are retained for compatibility;
 optional mixed SpMV storage is a separate feature. Inversion never replaces a
 small or zero pivot with one: invalid pivots follow the existing failure and
-Cholesky-fallback paths. The default pivot tolerance is `1e-12`. Any physical
+Cholesky-fallback paths. The default Gauss-Jordan pivot tolerance is `1e-12`. Any physical
 mass floor belongs in the application, not this solver.
 
 A reported numeric failure consumes that submission and forces a fresh rebuild
@@ -54,10 +54,15 @@ or suspicious Schur pivots, including a relative pivot below `1e-8` or a
 pivot spread above `1e7`. These are retry criteria, not diagonal shifts.
 Cholesky factors the original bank after diagonal equilibration,
 `B = D^-1/2 A_local D^-1/2`, where `D = diag(A_local)`, and undoes the scaling
-on its inverse. No fallback adds anything to the diagonal. Small positive
-normalized pivots remain valid if their physical pivots exceed the configured
-tolerance; nonpositive/nonfinite pivots are rejected. Gauss-Jordan tests signed
-pivots, so a negative pivot cannot pass merely because its magnitude is large.
+on its inverse. The scaled retry has no small-pivot cutoff: it rejects exact
+zero pivots and nonfinite real factors or inverses (including square roots of
+negative pivots). Tiny positive original diagonals and Schur pivots are accepted
+regardless of the Gauss-Jordan tolerance. This applies to packed and underfilled
+exact-size retries, including packed collision-edge domains. Direct, non-retry
+SPD inversions retain their configured tolerance. No fallback adds anything to
+the diagonal or replaces a failed domain with identity. Unresolved local
+inversion failures propagate to the caller; the hand example then uses Jacobi.
+Gauss-Jordan's signed-pivot and conditioning retry criteria remain unchanged.
 
 Non-positive CG curvature requests a restart with a freshly computed `b-Ax`,
 not only a direction reset from the old recurrence residual. At most eight
@@ -68,8 +73,8 @@ budget is reported explicitly, not as an unspecified non-SPD error.
 Stagnation does not terminate or restart PCG. A residual plateau continues
 until convergence, another numerical failure, or the iteration limit.
 
-The public YASPS solver returns `-8` if local block inversion fails after its
-fallback. `statistics.breakdown` preserves the failure details, `iterations`
+The public YASPS solver returns `-8` if local block inversion remains unresolved
+after its enabled fallbacks. `statistics.breakdown` preserves the failure details, `iterations`
 is zero, and `solution` is empty because no valid iterate exists for that call.
 The hierarchy is retained, and a subsequent solve rebuilds the failed numeric
 state normally. This translates the internal `LocalInverseError`; unrelated

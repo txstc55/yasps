@@ -100,6 +100,8 @@ extern "C" __global__ void yasps_mas_inverse_gj_exact_strided(
 extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
     const double* input, double* output, const int* sizes, int* status,
     int matrix_count, double pivot_tolerance, int* any_failure) {
+  // The tolerance flags banks for retry in Gauss-Jordan, not rejection here.
+  (void)pivot_tolerance;
   constexpr int N = YASPS_MAS_ACTIVE_SIZE;
   constexpr int P = YASPS_MAS_STORAGE_STRIDE;
   const int matrix_id = blockIdx.x;
@@ -116,7 +118,7 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
   if (tid == 0) {
     status[matrix_id] = 0;
     for (int k = 0; k < N; ++k)
-      if (!isfinite(source[k * P + k]) || source[k * P + k] <= pivot_tolerance) {
+      if (source[k * P + k] == 0.0 || !isfinite(sqrt(source[k * P + k]))) {
         status[matrix_id] = k + 1;
         atomicExch(any_failure, 1);
       }
@@ -137,13 +139,14 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
 #pragma unroll 1
       for (int s = 0; s < k; ++s)
         diagonal -= lower[k * N + s] * lower[k * N + s];
-      // Equilibration only changes units; do not add a diagonal shift.
-      if (!isfinite(diagonal) || diagonal <= 0.0
-          || diagonal * source[k * P + k] <= pivot_tolerance) {
+      // No magnitude cutoff or shift. Negative pivots cannot produce a
+      // finite real factor, even though they are nonzero.
+      const double root = sqrt(diagonal);
+      if (diagonal == 0.0 || !isfinite(root)) {
         status[matrix_id] = k + 1;
         atomicExch(any_failure, 1);
       } else {
-        lower[k * N + k] = sqrt(diagonal);
+        lower[k * N + k] = root;
       }
     }
     __syncthreads();
@@ -194,6 +197,15 @@ extern "C" __global__ void yasps_mas_inverse_spd_exact_fallback(
       destination[row * P + col] = value;
       destination[col * P + row] = value;
     }
+  }
+  __syncthreads();
+  // Report overflow/nonfinite inverses rather than letting PCG use them.
+  bool finite = true;
+  for (int entry = tid; entry < P * P; entry += blockDim.x)
+    finite = finite && isfinite(destination[entry]);
+  if (!finite) {
+    atomicExch(status + matrix_id, 2);
+    atomicExch(any_failure, 1);
   }
   (void)sizes;
 }

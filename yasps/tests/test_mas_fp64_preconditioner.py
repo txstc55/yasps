@@ -26,6 +26,7 @@ sys.modules[_PACKAGE_NAME] = _MAS
 _SPEC.loader.exec_module(_MAS)
 BlockSparseMatrixView = _MAS.BlockSparseMatrixView
 MASSolver = _MAS.MASSolver
+LocalInverseError = sys.modules[f"{_PACKAGE_NAME}.local_inverse"].LocalInverseError
 
 _SAVED_BANK = (
   _REPOSITORY / "examples" / "mpm_fem_affine_bunnies" / "outputs"
@@ -196,6 +197,64 @@ class FP64PreconditionerGPUTests(unittest.TestCase):
     for padded in (None, 32):
       with self.subTest(padded_size=padded):
         self.check_local_bank(matrix, residual, reference, padded_size=padded)
+
+  def test_tiny_domain_uses_real_inverse_and_numeric_failure_can_recover(self):
+    healthy = np.array([[4.0, 1.0], [1.0, 3.0]])
+    tiny = 1e-19 * np.eye(2)
+    residual = np.array([1.0, -2.0, 3.0, -4.0])
+    for padded in (2, 4):
+      with self.subTest(padded_size=padded):
+        options = dict(max_domain_dofs=2, max_levels=1,
+                       cuda_fixed_inverse_bucket_size=padded,
+                       level_weights=(1.0,), adaptive_fine_level_weight=False)
+        view = BlockSparseMatrixView.from_blocks(
+          [2, 2], [((0, 0), healthy), ((1, 1), tiny)])
+        original = view.static_values.copy()
+        view.static_values = self.gpuarray.to_gpu(original)
+        rhs = self.gpuarray.to_gpu(residual)
+        selected = self.make_solver(**options)
+        selected.solve(view, rhs, max_iterations=0)
+        runtime, hierarchy = selected._cuda_runtime, selected.hierarchy
+        self.assertEqual(runtime.domain_count, 2)
+        self.assertIsNone(selected.statistics.breakdown)
+        offsets, strides = runtime.matrix_offsets.get(), runtime.padded_sizes.get()
+        stored = runtime.mixed_inverses.get()
+        for domain, nodes in enumerate(hierarchy.levels[0].domains):
+          self.assertEqual(len(nodes), 1)
+          offset, stride = int(offsets[domain]), int(strides[domain])
+          inverse = stored[offset:offset + stride * stride].reshape(stride, stride)
+          expected = np.eye(stride)
+          expected[:2, :2] = np.linalg.inv(healthy if nodes[0] == 0 else tiny)
+          np.testing.assert_allclose(inverse, expected, rtol=1e-13, atol=0)
+        expected = np.r_[np.linalg.solve(healthy, residual[:2]), residual[2:] / 1e-19]
+        np.testing.assert_allclose(self.apply(runtime, residual, True), expected,
+                                   rtol=1e-13, atol=0)
+        np.testing.assert_array_equal(view.static_values.get(), original)
+        np.testing.assert_allclose(runtime.matvec(rhs).get(),
+                                   np.r_[healthy @ residual[:2], tiny @ residual[2:]],
+                                   rtol=1e-13, atol=0)
+
+        # An exactly singular bank must propagate an error, not become identity.
+        singular = np.r_[healthy.ravel(), np.zeros(4)]
+        view.static_values.set(singular)
+        with self.assertRaises(LocalInverseError):
+          selected.solve(view, rhs, max_iterations=0)
+        np.testing.assert_array_equal(view.static_values.get(), singular)
+
+        # Reuse the same graph/runtime after a failure with valid new values.
+        restored = 2.0 * np.eye(2)
+        updated = np.r_[healthy.ravel(), restored.ravel()]
+        view.static_values.set(updated)
+        selected.solve(view, rhs, tolerance=1e-14, max_iterations=20)
+        self.assertIs(selected._cuda_runtime, runtime)
+        self.assertIs(selected.hierarchy, hierarchy)
+        self.assertEqual(selected.hierarchy_build_count, 1)
+        self.assertTrue(selected.statistics.converged, selected.statistics)
+        expected = np.r_[np.linalg.solve(healthy, residual[:2]), residual[2:] / 2]
+        np.testing.assert_allclose(self.apply(runtime, residual, True), expected,
+                                   rtol=1e-13, atol=0)
+        np.testing.assert_allclose(selected.solution.get(), expected, rtol=1e-13, atol=0)
+        np.testing.assert_array_equal(view.static_values.get(), updated)
 
   def test_saved_24_by_24_bank_has_positive_fp64_quadratic(self):
     matrix, residual, reference, _ = _saved_bank()

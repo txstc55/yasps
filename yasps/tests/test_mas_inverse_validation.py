@@ -1,4 +1,4 @@
-"""Strict pivot rejection and synchronization checks for MAS GPU inverses.
+"""Zero-cutoff scaled retry and synchronization checks for MAS GPU inverses.
 
 No dense simulation matrix is built: test matrices are at most 64 by 64.
 The CUDA sources are loaded from this checkout, not an installed package.
@@ -82,24 +82,27 @@ class InverseValidationTests(unittest.TestCase):
         self.assertEqual(status, 0)
         np.testing.assert_allclose(inverse, np.eye(n) / pivot, rtol=1e-6)
 
-  def test_singular_small_and_nonfinite_pivots_are_rejected(self):
+  def test_fast_path_still_flags_small_singular_and_nonfinite_pivots(self):
     for variant in ("generic", "mixed", "packed", "exact"):
       n = 3 if variant == "exact" else 4
       for bad in (0.0, 0.5e-16, 1e-13, np.nan, np.inf):
         with self.subTest(variant=variant, pivot=bad):
           A = np.eye(n)
           A[1, 1] = bad
-          _, status, _ = self.inverse(A, variant, fallback=variant in ("packed", "exact"))
+          _, status, _ = self.inverse(A, variant)
           self.assertNotEqual(status, 0)
 
-  def test_cholesky_fallback_inverts_ill_scaled_spd(self):
+  def test_cholesky_fallback_inverts_tiny_and_ill_scaled_spd(self):
     for variant in ("packed", "exact"):
       n = 3 if variant == "exact" else 4
-      diagonal = np.array([1.0, 1e-9, 3.0, 2.0])[:n]
-      result, status, first_status = self.inverse(np.diag(diagonal), variant, fallback=True)
-      self.assertNotEqual(first_status, 0)
-      self.assertEqual(status, 0)
-      np.testing.assert_allclose(result, np.diag(1.0 / diagonal), rtol=1e-6)
+      for tiny in (1e-9, 1e-14, 1e-19):
+        for diagonal in (np.full(n, tiny), np.array([1.0, tiny, 3.0, 2.0])[:n]):
+          with self.subTest(variant=variant, diagonal=diagonal):
+            result, status, first_status = self.inverse(np.diag(diagonal), variant, fallback=True)
+            if tiny < 1e-12 or diagonal.max() > tiny:
+              self.assertNotEqual(first_status, 0)
+            self.assertEqual(status, 0)
+            np.testing.assert_allclose(result, np.diag(1.0 / diagonal), rtol=1e-6)
 
   def test_negative_pivot_still_fails_fallback(self):
     for variant in ("packed", "exact"):
@@ -108,6 +111,41 @@ class InverseValidationTests(unittest.TestCase):
       _, status, first_status = self.inverse(np.diag(diagonal), variant, fallback=True)
       self.assertNotEqual(first_status, 0)
       self.assertNotEqual(status, 0)
+
+  def test_cholesky_fallback_accepts_small_positive_physical_schur_pivot(self):
+    for variant in ("packed", "exact"):
+      n = 3 if variant == "exact" else 4
+      A = np.eye(n)
+      scale, delta = 2.0 ** -24, 2.0 ** -24
+      A[:2, :2] = scale * np.array([[1.0, 1.0], [1.0, 1.0 + delta]])
+      self.assertGreater(A.diagonal().min(), 1e-12)
+      schur = A[1, 1] - A[1, 0] ** 2 / A[0, 0]
+      self.assertGreater(schur, 0.0)
+      self.assertLess(schur, 1e-12)
+      result, status, first_status = self.inverse(A, variant, fallback=True)
+      self.assertNotEqual(first_status, 0)
+      self.assertEqual(status, 0)
+      np.testing.assert_allclose(result, np.linalg.inv(A), rtol=1e-6)
+      np.testing.assert_allclose(A @ result, np.eye(n), atol=1e-7)
+
+  def test_cholesky_fallback_rejects_invalid_pivots_and_inverse_overflow(self):
+    for variant in ("packed", "exact"):
+      n = 3 if variant == "exact" else 4
+      # 1e-310 is finite and positive but its reciprocal is not finite.
+      for bad in (0.0, -1.0, np.nan, np.inf, 1e-310):
+        with self.subTest(variant=variant, diagonal=bad):
+          A = np.eye(n)
+          A[1, 1] = bad
+          _, status, first_status = self.inverse(A, variant, fallback=True)
+          self.assertNotEqual(first_status, 0)
+          self.assertGreater(status, 0)
+      for off_diagonal in (1.0, 2.0, np.nan, np.inf):
+        with self.subTest(variant=variant, off_diagonal=off_diagonal):
+          A = np.eye(n)
+          A[0, 1] = A[1, 0] = off_diagonal
+          _, status, first_status = self.inverse(A, variant, fallback=True)
+          self.assertNotEqual(first_status, 0)
+          self.assertGreater(status, 0)
 
   def test_multiple_warps_read_pivot_before_column_overwrite(self):
     # 27-lane groups straddle warp boundaries; 33/64 also span warps.

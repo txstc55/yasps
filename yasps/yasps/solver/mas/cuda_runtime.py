@@ -2912,9 +2912,12 @@ class DeviceMASRuntime:
       for bucket in self.inverse_buckets:
         failed = np.flatnonzero(bucket.status.get())
         failures.extend(int(bucket.domains[index]) for index in failed)
-      edge_failures = np.flatnonzero(
+      edge_status = (
         self.dynamic_edge_status[:self.dynamic_group_count].get()
+        if self.dynamic_edge_domains_active and self.view.symmetric_storage
+        else np.empty(0, dtype=np.int32)
       )
+      edge_failures = np.flatnonzero(edge_status)
       if edge_failures.size:
         raise LocalInverseError(
           "CUDA dynamic collision-edge inversion failed for blocks "

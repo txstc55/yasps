@@ -386,6 +386,8 @@ template <int N, int GROUPS>
 __device__ __forceinline__ void yasps_mas_inverse_spd_packed_fallback_body(
     const double* input, double* output, int* status, int matrix_count,
     double pivot_tolerance, int* any_failure, double* shared) {
+  // The tolerance flags banks for retry in Gauss-Jordan, not rejection here.
+  (void)pivot_tolerance;
   const int group = threadIdx.x / N;
   const int lane = threadIdx.x - group * N;
   const int matrix_id = blockIdx.x * GROUPS + group;
@@ -398,7 +400,7 @@ __device__ __forceinline__ void yasps_mas_inverse_spd_packed_fallback_body(
     if (lane == 0) {
       status[matrix_id] = 0;
       for (int k = 0; k < N; ++k)
-        if (!isfinite(source[k * N + k]) || source[k * N + k] <= pivot_tolerance) {
+        if (source[k * N + k] == 0.0 || !isfinite(sqrt(source[k * N + k]))) {
           status[matrix_id] = k + 1;
           atomicExch(any_failure, 1);
         }
@@ -416,14 +418,14 @@ __device__ __forceinline__ void yasps_mas_inverse_spd_packed_fallback_body(
 #pragma unroll 1
       for (int s = 0; s < k; ++s)
         diagonal -= lower[k * N + s] * lower[k * N + s];
-      // Equilibration only changes units. Invert the original bank without
-      // shifting its diagonal, including valid small positive Schur pivots.
-      if (!isfinite(diagonal) || diagonal <= 0.0
-          || diagonal * input[matrix_id * N * N + k * N + k] <= pivot_tolerance) {
+      // No magnitude cutoff or shift. A nonzero pivot must still admit a
+      // finite real Cholesky factor; negative pivots produce NaN here.
+      const double root = sqrt(diagonal);
+      if (diagonal == 0.0 || !isfinite(root)) {
         status[matrix_id] = k + 1;
         atomicExch(any_failure, 1);
       } else {
-        lower[k * N + k] = sqrt(diagonal);
+        lower[k * N + k] = root;
       }
     }
     __syncthreads();
@@ -470,6 +472,18 @@ __device__ __forceinline__ void yasps_mas_inverse_spd_packed_fallback_body(
           destination[lane * N + col] + destination[col * N + lane]);
       destination[lane * N + col] = value;
       destination[col * N + lane] = value;
+    }
+  }
+  __syncthreads();
+  // With no small-pivot cutoff, a real factor can still overflow on inversion.
+  if (marked && status[matrix_id] == 0) {
+    const double* destination = output + matrix_id * N * N;
+    bool finite = true;
+    for (int row = 0; row < N; ++row)
+      finite = finite && isfinite(destination[row * N + lane]);
+    if (!finite) {
+      atomicExch(status + matrix_id, 2);
+      atomicExch(any_failure, 1);
     }
   }
 }
