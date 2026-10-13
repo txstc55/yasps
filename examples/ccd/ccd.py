@@ -308,10 +308,10 @@ class CCD:
     self.__lbvh_e_scene_size.restype = ctypes.c_double
 
     try:
-      self.__largest_step_compact = self.__accd.self_largestFeasibleStepSizeCompact
+      self.__largest_step_compact = self.__accd.self_largestFeasibleStepSizeCompactWithBound
     except AttributeError as error:
       raise RuntimeError(
-        "libaccd.so is stale and lacks compact-candidate support"
+        "libaccd.so is stale and lacks bounded compact-candidate support"
       ) from error
     self.__largest_step_compact.argtypes = [
       ctypes.c_double,
@@ -322,6 +322,7 @@ class CCD:
       pointer,
       pointer,
       ctypes.c_int,
+      ctypes.c_double,
     ]
     self.__largest_step_compact.restype = ctypes.c_double
 
@@ -944,6 +945,7 @@ class CCD:
       self.__to_void_p(moving_directions),
       self.__to_void_p(self.__mqueue),
       ctypes.c_int(self.__candidate_count),
+      ctypes.c_double(self.__cached_alpha),
     )
     cuda.Context.synchronize()
     step = min(float(step), self.__cached_alpha)
