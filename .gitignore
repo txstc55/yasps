@@ -34,6 +34,9 @@ examples/ccd/.ccd-architecture
 *.ele
 *.node
 *.obj
+!/examples/data/plant.obj
+!/examples/data/plant.node
+!/examples/data/plant.ele
 
 **/__pycache__/*
 
@@ -41,8 +44,10 @@ examples/ccd/.ccd-architecture
 
 *.mp4
 *.png
+!/examples/data/plant_preview.png
 *.npy
 *.npz
+!/examples/data/plant_rest_repair.npz
 
 .venv/*
 
@@ -85,6 +90,7 @@ examples/swing/*
 examples/pendulum/*
 examples/affine_hand_collision/*
 examples/pendulum_midpoint
+/examples/robotic_arm_pick/
 
 StiffGIPC/
 /mas/
