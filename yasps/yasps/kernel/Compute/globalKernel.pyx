@@ -12,6 +12,7 @@ import pycuda.gpuarray as gpuarray
 from yasps.primitiveUnion import primitiveUnion
 import subprocess
 from yasps.context import context
+from yasps.projection import SMALL_EVD_HEADER, PROJECTION_CACHE_TAG
 
 class globalKernel:
   @timed("globalKernel.__init__")
@@ -38,9 +39,10 @@ class globalKernel:
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
-    file_name = f".yasps_tmp/compute_{self.__att.fullNameWithHash}_spd_upper_v1"
+    file_name = f".yasps_tmp/compute_{self.__att.fullNameWithHash}_{PROJECTION_CACHE_TAG}"
     if not os.path.exists(f'{file_name}.so'):
       print(f"File {file_name}.so does not exist, compiling")
+      self.__headerFileString += SMALL_EVD_HEADER
       self.__headerFileString += '''
 #include <stdio.h>
 #include <stdlib.h>
@@ -211,10 +213,7 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
     output[0] = choice == 1 ? abs(A[0]) : (A[0] < 1e-6 ? 1e-6: A[0]);
     return;
   }
-  if (is_positive_semidefinite<N>(A)) {
-    for (unsigned int i = 0; i < N * N; ++i) output[i] = A[i];
-    return;
-  }
+  // PSD prechecks are temporarily bypassed; keep their implementations above.
 
   const int M = 4;
   // Initialize an M x M matrix with zeros
@@ -257,60 +256,23 @@ __device__ void spd_projection(const double *A, double* output, int choice) {
     }
     return;
   }
-  // The output is writable scratch; the const input remains untouched.
-  for (unsigned int i = 0; i < N * N; ++i) output[i] = A[i];
-  if (is_positive_semidefinite_reuse_upper<N>(output)) return;
-  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(output);
-  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
-  const auto& B = eigenSolver.eigenvectors();
-  const auto& eigenValues = eigenSolver.eigenvalues();
-
-  // Reconstruct one triangle directly into the output, then mirror it.
-  for (unsigned int i = 0; i < N; ++i) {
-    for (unsigned int j = i; j < N; ++j) {
-      double sum = 0.0;
-      for (unsigned int k = 0; k < N; ++k) {
-        double lambda = eigenValues[k];
-        if (lambda < 0.0) {
-          lambda = (choice == 1) ? -lambda : 0.0;
-        }
-        sum += B(i, k) * lambda * B(j, k);
-      }
-      output[i * N + j] = sum;
-      output[j * N + i] = sum;
-    }
+  // Read row-major lower storage directly; output is the EVD workspace.
+  // No full copy or preliminary mirror; a distinct const input stays untouched.
+  // No PSD precheck: always project for nonzero choices.
+  if (!small_evd::project_reuse_output<N, true>(A, output, choice)) {
+    // A failed decomposition has partially overwritten output; never use it.
+    asm volatile("trap;");
   }
-  return;
 }
 
 template <unsigned int N>
 __device__ void spd_projection_inplace(double *A, int choice) {
-  if (choice == 0){
-    return;
+  if (choice == 0) return;
+  // The scaling pass safely consumes row-major lower storage in place.
+  // No PSD precheck: always project for nonzero choices.
+  if (!small_evd::project_reuse_output<N, true>(A, A, choice)) {
+    asm volatile("trap;");
   }
-  if (is_positive_semidefinite_reuse_upper<N>(A)) return;
-  // Map A to an N x N Eigen matrix without copying
-  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
-  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
-  const auto& B = eigenSolver.eigenvectors();
-  const auto& eigenValues = eigenSolver.eigenvalues();
-
-  // Reconstruct one triangle directly into A, then mirror it.
-  for (unsigned int i = 0; i < N; ++i) {
-    for (unsigned int j = i; j < N; ++j) {
-      double sum = 0.0;
-      for (unsigned int k = 0; k < N; ++k) {
-        double lambda = eigenValues[k];
-        if (lambda < 0.0) {
-          lambda = (choice == 1) ? -lambda : 0.0;
-        }
-        sum += B(i, k) * lambda * B(j, k);
-      }
-      A[i * N + j] = sum;
-      A[j * N + i] = sum;
-    }
-  }
-  return;
 }
 '''
       # we first generate the header file
@@ -328,8 +290,8 @@ extern "C" {{
       seen_obj_files = set([])
       for item in (sortedDependency + [self.__att.deviceKernel]):
         # we check if the .o file exists
-        cu_file = f".yasps_tmp/{item.attributeName}_spd_upper_v1.cu"
-        obj_file = f".yasps_tmp/{item.attributeName}_spd_upper_v1.o"
+        cu_file = f".yasps_tmp/{item.attributeName}_{PROJECTION_CACHE_TAG}.cu"
+        obj_file = f".yasps_tmp/{item.attributeName}_{PROJECTION_CACHE_TAG}.o"
         if not obj_file in seen_obj_files:
           obj_files.append(obj_file)
         if (not os.path.exists(obj_file)) and (not obj_file in seen_obj_files):
@@ -411,8 +373,9 @@ int compute(
     result,
     MAX_INDEX
   );
-  cudaDeviceSynchronize();
   cudaError_t err = cudaGetLastError();
+  cudaError_t sync_error = cudaDeviceSynchronize();
+  if (err == cudaSuccess) err = sync_error;
   if (err != cudaSuccess) {{
     fprintf(stderr, "CUDA error: %s\\n", cudaGetErrorString(err));
     return -1;

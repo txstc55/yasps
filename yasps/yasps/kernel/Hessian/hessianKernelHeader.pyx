@@ -2,6 +2,7 @@ from yasps.attribute import attribute
 from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
+from yasps.projection import SMALL_EVD_HEADER
 from typing import List, Set
 class hessianKernelHeader:
   def __init__(self, att: attribute, unique_gradient_sizes: Set[int], sortedDependency: List[deviceKernel], block_activity: bool = False, evaluation = None):
@@ -10,7 +11,7 @@ class hessianKernelHeader:
     sortedDatas: List[attribute] = inputs.kernelDatas
     sortedConnectivities: List[connectivity] = inputs.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = inputs.kernelPrimitiveUnions
-    self.__kernelString = ""
+    self.__kernelString = SMALL_EVD_HEADER
     self.__kernelString += '''
 #include <stdio.h>
 #include <stdlib.h>
@@ -233,10 +234,7 @@ __device__ void spd_projection_small(const double *A, double* output, int choice
     return;
   }
 
-  if (is_positive_semidefinite<N>(A)) {
-    for (unsigned int i = 0; i < N * N; ++i) output[i] = A[i];
-    return;
-  }
+  // PSD prechecks are temporarily bypassed; keep their implementations above.
 
   const int M = 4;
   // Initialize an M x M matrix with zeros
@@ -279,60 +277,23 @@ __device__ void spd_projection(const double *A, double* output, int choice) {
     }
     return;
   }
-  // The output is writable scratch; the const input remains untouched.
-  for (unsigned int i = 0; i < N * N; ++i) output[i] = A[i];
-  if (is_positive_semidefinite_reuse_upper<N>(output)) return;
-  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(output);
-  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
-  const auto& B = eigenSolver.eigenvectors();
-  const auto& eigenValues = eigenSolver.eigenvalues();
-
-  // Reconstruct one triangle directly into the output, then mirror it.
-  for (unsigned int i = 0; i < N; ++i) {
-    for (unsigned int j = i; j < N; ++j) {
-      double sum = 0.0;
-      for (unsigned int k = 0; k < N; ++k) {
-        double lambda = eigenValues[k];
-        if (lambda < 0.0) {
-          lambda = (choice == 1) ? -lambda : 0.0;
-        }
-        sum += B(i, k) * lambda * B(j, k);
-      }
-      output[i * N + j] = sum;
-      output[j * N + i] = sum;
-    }
+  // Read row-major lower storage directly; output is the EVD workspace.
+  // No full copy or preliminary mirror; a distinct const input stays untouched.
+  // No PSD precheck: always project for nonzero choices.
+  if (!small_evd::project_reuse_output<N, true>(A, output, choice)) {
+    // A failed decomposition has partially overwritten output; never use it.
+    asm volatile("trap;");
   }
-  return;
 }
 
 template <unsigned int N>
 __device__ void spd_projection_inplace(double *A, int choice) {
-  if (choice == 0){
-    return;
+  if (choice == 0) return;
+  // The scaling pass safely consumes row-major lower storage in place.
+  // No PSD precheck: always project for nonzero choices.
+  if (!small_evd::project_reuse_output<N, true>(A, A, choice)) {
+    asm volatile("trap;");
   }
-  if (is_positive_semidefinite_reuse_upper<N>(A)) return;
-  // Map A to an N x N Eigen matrix without copying
-  Eigen::Map<const Eigen::Matrix<double, N, N>> mappedA(A);
-  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> eigenSolver(mappedA);
-  const auto& B = eigenSolver.eigenvectors();
-  const auto& eigenValues = eigenSolver.eigenvalues();
-
-  // Reconstruct one triangle directly into A, then mirror it.
-  for (unsigned int i = 0; i < N; ++i) {
-    for (unsigned int j = i; j < N; ++j) {
-      double sum = 0.0;
-      for (unsigned int k = 0; k < N; ++k) {
-        double lambda = eigenValues[k];
-        if (lambda < 0.0) {
-          lambda = (choice == 1) ? -lambda : 0.0;
-        }
-        sum += B(i, k) * lambda * B(j, k);
-      }
-      A[i * N + j] = sum;
-      A[j * N + i] = sum;
-    }
-  }
-  return;
 }
 #endif // EIGEN_PROJECTION
 '''

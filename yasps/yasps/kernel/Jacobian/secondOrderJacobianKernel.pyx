@@ -13,6 +13,7 @@ import pycuda.gpuarray as gpuarray
 from yasps.attribute import attribute
 from yasps.connectivity import connectivity
 from yasps.context import context
+from yasps.projection import PROJECTION_CACHE_TAG
 from yasps.deviceKernel import deviceKernel
 from yasps.hessianKernelHeader import hessianKernelHeader
 from yasps.helper import prune_duplicate_functions, timed
@@ -198,6 +199,7 @@ int compute_second_order_jacobian_no_project(
     # incorrectly.
     signature = "|".join([
       "rectangular_no_project_raw_offsets_v2",
+      PROJECTION_CACHE_TAG,
       self.__att.fullNameWithHash,
       str(self.__att.rows),
       str(self.__att.cols),
@@ -223,14 +225,14 @@ int compute_second_order_jacobian_no_project(
       compile_commands: List[List[str]] = []
       seen_objects = set()
       for item in sorted_dependencies + [self.__att.deviceKernel]:
-        object_file = f".yasps_tmp/{item.attributeName}.o"
+        object_file = f".yasps_tmp/{item.attributeName}_rectangular_{PROJECTION_CACHE_TAG}.o"
         if object_file in seen_objects:
           continue
         seen_objects.add(object_file)
         dependency_objects.append(object_file)
         if os.path.exists(object_file):
           continue
-        source_file = f".yasps_tmp/{item.attributeName}.cu"
+        source_file = f".yasps_tmp/{item.attributeName}_rectangular_{PROJECTION_CACHE_TAG}.cu"
         with open(source_file, "w") as output:
           output.write(f'''
 #include "allHeaders.cuh"

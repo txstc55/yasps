@@ -13,6 +13,7 @@ from typing import List, Set
 import hashlib
 import subprocess
 from yasps.context import context
+from yasps.projection import PROJECTION_CACHE_TAG
 import numpy as np
 from yasps.hessianKernelHeader import hessianKernelHeader
 from yasps.hessianKernelFullProject import hessianKernelFullProject
@@ -109,6 +110,7 @@ class hessianAndGradientKernel:
       full_file_name += f"_segments_{self.__auto_partition}_{self.__segment_sizes}"
     if uses_activity:
       full_file_name += "_block_activity"
+    full_file_name += f"_{PROJECTION_CACHE_TAG}"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     kernel_mode_suffix = f"_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}"
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}{kernel_mode_suffix}" + ("" if self.__project_entire_hessian else "_no_proj")
@@ -126,8 +128,8 @@ class hessianAndGradientKernel:
       lto_flags = ["-dlto"] if self.__lto else []
       for item in sortedDependency:
         # we check if the .o file exists
-        cu_file = f".yasps_tmp/{item.attributeName}_staged_v1_lto_{int(self.__lto)}.cu"
-        obj_file = f".yasps_tmp/{item.attributeName}_staged_v1_lto_{int(self.__lto)}.o"
+        cu_file = f".yasps_tmp/{item.attributeName}_staged_v1_lto_{int(self.__lto)}_{PROJECTION_CACHE_TAG}.cu"
+        obj_file = f".yasps_tmp/{item.attributeName}_staged_v1_lto_{int(self.__lto)}_{PROJECTION_CACHE_TAG}.o"
         if not obj_file in seen_obj_files:
           obj_files.append(obj_file)
         if (not os.path.exists(obj_file)) and (not obj_file in seen_obj_files):

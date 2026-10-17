@@ -114,3 +114,7 @@ StiffGIPC/
 
 
 tests/*
+
+# Packaged small-matrix projection source and its upstream license.
+!/yasps/yasps/projection/small_evd.cuh
+!/yasps/yasps/projection/LICENSE.txt

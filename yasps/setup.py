@@ -58,6 +58,7 @@ setup(
     packages=find_packages(),  # Finds all packages in the directory
     package_data={
       'yasps': ['*.txt', '*.cuh', '*.cu'],
+      'yasps.projection': ['*.cuh', 'LICENSE.txt'],
       'yasps.solver.mas': ['cuda/*.cu', '*.pyx'],
     },
     ext_modules=cythonize(

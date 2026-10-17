@@ -144,13 +144,15 @@ int compute_hessian_and_gradient_with_compression(
   }
   // cudaDeviceSynchronize();
   // cudaDeviceSetLimit(cudaLimitStackSize, 128);
-  // close the streams
+  // Preserve launch and asynchronous errors, including projection failure.
+  cudaError_t err = cudaGetLastError();
   for (unsigned int i = 0; i < num_unique_gradient_sizes; i++) {
-    cudaStreamSynchronize(streams[i]);
+    cudaError_t stream_error = cudaStreamSynchronize(streams[i]);
+    if (err == cudaSuccess) err = stream_error;
     cudaStreamDestroy(streams[i]);
   }
-  cudaDeviceSynchronize();
-  cudaError_t err = cudaGetLastError();
+  cudaError_t sync_error = cudaDeviceSynchronize();
+  if (err == cudaSuccess) err = sync_error;
   if (err != cudaSuccess) {
     printf("CUDA error during kernel execution: %s\\n", cudaGetErrorString(err));
     return -1;  // Return error to Python
