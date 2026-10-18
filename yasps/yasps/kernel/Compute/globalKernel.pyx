@@ -1,6 +1,6 @@
 # cython: language_level=3
 from __future__ import annotations
-from yasps.deviceKernel import deviceKernel
+from yasps.deviceKernel import deviceKernel, CODEGEN_CACHE_TAG
 from yasps.attribute import attribute
 from yasps.connectivity import connectivity
 from typing import List
@@ -39,7 +39,7 @@ class globalKernel:
     sortedDatas: List[attribute] = self.__att.deviceKernel.kernelDatas
     sortedConnectivities: List[connectivity] = self.__att.deviceKernel.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__att.deviceKernel.kernelPrimitiveUnions
-    file_name = f".yasps_tmp/compute_{self.__att.fullNameWithHash}_{PROJECTION_CACHE_TAG}"
+    file_name = f".yasps_tmp/compute_{self.__att.fullNameWithHash}_{PROJECTION_CACHE_TAG}_{CODEGEN_CACHE_TAG}"
     if not os.path.exists(f'{file_name}.so'):
       print(f"File {file_name}.so does not exist, compiling")
       self.__headerFileString += SMALL_EVD_HEADER

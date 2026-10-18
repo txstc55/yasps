@@ -5,6 +5,8 @@ from yasps.attribute import attribute
 from yasps.primitiveUnion import primitiveUnion
 from typing import List, Set
 
+CODEGEN_CACHE_TAG = "floatmat_literals_inplace_spd_v5"
+
 class deviceKernel:
   def __init__(self, kernel_string: str, kernel_header: str, kernel_datas: List[attribute], kernel_connectivity: List[connectivity], kernel_union_primitives: List[primitiveUnion], dependents: List[deviceKernel], allEvdSizes: Set[int] = set(), attributeName: str = ""):
     self.__kernelString: str = kernel_string
@@ -14,7 +16,7 @@ class deviceKernel:
     self.__kernelPrimitiveUnions: List[primitiveUnion] = sorted(set(kernel_union_primitives), key = lambda x: x.fullName) # all the union primitives needed for the kernel
     self.__dependents: List[deviceKernel] = sorted(set(dependents), key = lambda x: x.kernelHeader)
     self.__allEvdSizes = allEvdSizes
-    self.__attributeName = attributeName
+    self.__attributeName = attributeName + "_" + CODEGEN_CACHE_TAG
 
 
   @property

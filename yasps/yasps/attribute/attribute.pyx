@@ -363,16 +363,17 @@ class attribute:
           return False
       self.__isFloatMat = True
       return True
-    # TODO:
-    # we did not handle JOIN and UNION effectively when everything is float
-    # this caused lots of problem with the multiplication that happens at the differentiation
-    # right now we materialize this whole matrix, which is completely wasteful'
-
-    # # SPECIAL CASES FOR CHECKING IF A MAT IS FLOAT
-    # if self.operator == FLOAT:
-    #   return True
-    # if self.operator == ARRAY_ACCESS:
-    #   return self.children[0].isFloatMat
+    if self.operator == JOIN:
+      # Only fixed-arity gathers have a compile-time matrix shape. A joined
+      # literal UNION is still piecewise and retains its connectivity/domain.
+      self.__isFloatMat = (self.through is not None and self.through.dimension > 0
+        and (self.children[0].operator == FLOAT or self.children[0].isFloatMat))
+      return self.__isFloatMat
+    if self.operator == UNION:
+      # Literal-valued does not mean instance-independent: different branches
+      # may have different coefficients.
+      self.__isFloatMat = all(child.operator == FLOAT or child.isFloatMat for child in self.children)
+      return self.__isFloatMat
     if self.operator == NEG or self.operator == ABS or self.operator == ROW or self.operator == COL or self.operator == RESIZE or self.operator == TRANSPOSE:
       self.__isFloatMat = self.children[0].isFloatMat
       return self.children[0].isFloatMat
@@ -473,7 +474,7 @@ class attribute:
         row = index // self.cols
         col = index % self.cols
         return self.children[0][col, row]
-      if self.isFloatMat:
+      if self.operator == ARRAY and self.isFloatMat:
         return self.children[index]
       if self.operator == ARRAY and not self.__disable_array_access:
         return self.children[index]
@@ -501,7 +502,7 @@ class attribute:
         raise ValueError(f"attribute.__getitem__: index out of range, acceessing index of {index} in a matrix of {self.rows}x{self.cols}.")
       if self.operator == TRANSPOSE:
         return self.children[0][index[1], index[0]]
-      if self.isFloatMat:
+      if self.operator == ARRAY and self.isFloatMat:
         return self.children[index[0] * self.cols + index[1]]
       if self.operator == ARRAY:
         return self.children[index[0] * self.cols + index[1]]
@@ -609,7 +610,7 @@ class attribute:
   def __neg__(self)->attribute:
     if self.operator == FLOAT:
       return attribute(float_value = -self.float_value)
-    if self.isFloatMat:
+    if self.operator == ARRAY and self.isFloatMat:
       return attribute(children = [-x for x in self.children], operator = ARRAY, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
     return attribute(children = [self], operator = NEG, correspondance = self.correspondance, rows = self.rows, cols = self.cols)
 

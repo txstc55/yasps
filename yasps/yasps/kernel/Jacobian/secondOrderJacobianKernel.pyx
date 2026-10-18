@@ -14,7 +14,7 @@ from yasps.attribute import attribute
 from yasps.connectivity import connectivity
 from yasps.context import context
 from yasps.projection import PROJECTION_CACHE_TAG
-from yasps.deviceKernel import deviceKernel
+from yasps.deviceKernel import deviceKernel, CODEGEN_CACHE_TAG
 from yasps.hessianKernelHeader import hessianKernelHeader
 from yasps.helper import prune_duplicate_functions, timed
 from yasps.primitiveUnion import primitiveUnion
@@ -200,6 +200,7 @@ int compute_second_order_jacobian_no_project(
     signature = "|".join([
       "rectangular_no_project_raw_offsets_v2",
       PROJECTION_CACHE_TAG,
+      CODEGEN_CACHE_TAG,
       self.__att.fullNameWithHash,
       str(self.__att.rows),
       str(self.__att.cols),

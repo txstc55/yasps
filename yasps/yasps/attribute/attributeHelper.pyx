@@ -235,9 +235,22 @@ def checkHeritage(a1: ya.attribute, a2: ya.attribute) -> ya.attribute:
   if a2.operator == ya.FLOAT:
     return a1
 
-  if a1.isFloatMat:
+  def instance_independent_float_matrix(current):
+    if not current.isFloatMat:
+      return False
+    pending = [current]
+    while pending:
+      child = pending.pop()
+      if child.operator == ya.UNION:
+        return False
+      pending.extend(child.children)
+    return True
+
+  # A literal UNION (also through JOIN/views) still selects values by its
+  # correspondence. Only uniform literal matrices may ignore that domain.
+  if instance_independent_float_matrix(a1):
     return a2
-  if a2.isFloatMat:
+  if instance_independent_float_matrix(a2):
     return a1
 
   if a1.correspondance is None or a2.correspondance is None:

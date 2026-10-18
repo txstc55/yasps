@@ -1,6 +1,6 @@
 # cython: language_level=3
 from __future__ import annotations
-from yasps.deviceKernel import deviceKernel
+from yasps.deviceKernel import deviceKernel, CODEGEN_CACHE_TAG
 from yasps.attribute import attribute
 from yasps.connectivity import connectivity
 import pycuda.gpuarray as gpuarray
@@ -111,6 +111,7 @@ class hessianAndGradientKernel:
     if uses_activity:
       full_file_name += "_block_activity"
     full_file_name += f"_{PROJECTION_CACHE_TAG}"
+    full_file_name += f"_{CODEGEN_CACHE_TAG}"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     kernel_mode_suffix = f"_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}"
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}{kernel_mode_suffix}" + ("" if self.__project_entire_hessian else "_no_proj")

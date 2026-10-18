@@ -138,11 +138,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   // now we have the compressed hessian
   // we will project it if needed
   // project the hessian
-  if (N < 4){{
-    spd_projection_small<N>(compressed_hessian.data(), compressed_hessian.data(), projection_method);
-  }}else{{
-    spd_projection_inplace<N>(compressed_hessian.data(), projection_method);
-  }}
+  spd_projection_inplace<N>(compressed_hessian.data(), projection_method);
 
 
   // we will now put the compressed hessian into the global hessian blocks

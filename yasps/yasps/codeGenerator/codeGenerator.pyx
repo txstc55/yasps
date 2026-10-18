@@ -1,6 +1,7 @@
 # cython: language_level=3
 from __future__ import annotations
 from enum import IntFlag
+import numpy as np
 import yasps.attribute as ya
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
@@ -26,6 +27,8 @@ class codeGenerator:
     self.__repeated_intermediates: Set[int] = set()
     self.__seen_elements: Set[int] = set()
     self.__seen_evd_projection_sizes: Set[int] = set() # used to track the projection size for evd
+    self.__floatmat_connectivities = set()
+    self.__floatmat_unions = set()
     self.__attribute_last_appear: Dict[int, int] = {} # when is this attribute last used
     self.__attribute_appear_times: Dict[int, int] = {} # store for each attribute, the number of times it appears
     self.__skipped_attribute_count: int = 0
@@ -52,6 +55,13 @@ class codeGenerator:
         self.__attribute_last_appear[att.hash] = len(self.__order) # this is the time where all the children are free
       else:
         self.__attribute_last_appear[att.hash] = max(self.__attribute_last_appear[att.hash], len(self.__order)) # we take the max because we want to make sure we cover all the uses of this attribute
+    # Matrix SPD results alias their operand. Keep that storage alive through
+    # uses of the projected result, including individual coefficient accesses.
+    storage = att.children[0] if att.operator == ya.ARRAY_ACCESS else att
+    while storage.operator == ya.SPD and storage.size > 1:
+      storage = storage.children[0]
+      self.__attribute_last_appear[storage.hash] = max(
+        self.__attribute_last_appear.get(storage.hash, 0), len(self.__order))
 
   def __generateCodeOrderDFS(self, current):
     # print("Generating code for attribute:", current.fullName)
@@ -66,24 +76,7 @@ class codeGenerator:
       return
     elif current.isFloatMat:
       self.__attribute_last_appear[current.hash] = int(1e9)
-      if current.correspondance is None:
-        if current.operator == ya.TRANSPOSE:
-          self.__generateCodeOrderDFS(current.children[0])
-        self.__order.append(current)
-      elif current.correspondance.fullName != self.__input.correspondance.fullName:
-        # special case, we have a children from another correspondance
-        # that is a float mat
-        # this is likely because it's a unioned child or a joined child
-        # so special handling is needed
-        if current.hash not in self.__childrenAttributeKernels:
-          childCodeGenerator = codeGenerator(current)
-          childCodeGenerator.generateCode()
-          self.__childrenAttributeKernels[current.hash] = current
-      else:
-        # special case for transpose
-        if current.operator == ya.TRANSPOSE:
-          self.__generateCodeOrderDFS(current.children[0])
-        self.__order.append(current)
+      self.__order.append(current)
     elif current.operator == ya.SELECT:
       self.__generateCodeOrderDFS(current.children[0])
       self.__generateCodeOrderDFS(current.children[1])
@@ -113,6 +106,8 @@ class codeGenerator:
       else:
         # we go over its children first
         for item in current.children:
+          if current.operator == ya.UNION and item.isFloatMat:
+            continue # emitted inside its branch, using the branch-local index
           self.__generateCodeOrderDFS(item)
         # we went over the children, now we know if we need to put it in the order
         if current.hash not in self.__seen_elements:
@@ -136,6 +131,8 @@ class codeGenerator:
             self.__childrenAttributeKernels[current.hash] = current
         else:
           for item in current.children:
+            if current.operator == ya.UNION and item.isFloatMat:
+              continue
             self.__generateCodeOrderDFS(item)
           if current.hash not in self.__seen_elements:
             self.__seen_elements.add(current.hash)
@@ -180,8 +177,11 @@ class codeGenerator:
 __device__ void {current.fullName}_device_function(const double* {current.code_generation_data_name}, unsigned int {current.correspondance.fullName}_index, double* result)'''
       current.deviceKernel = deviceKernel(f'{kernelHeader}{{\n{kernelString}\n}}', kernelHeader, [current], [], [], [], set(), current.fullNameWithHash) # initialize the kernel with the code, the header, self as data, no connectivity, no dependents
       return
-    for item in self.__input.children:
-      self.__generateCodeOrderDFS(item)
+    if not self.__input.isFloatMat:
+      for item in self.__input.children:
+        if self.__input.operator == ya.UNION and item.isFloatMat:
+          continue
+        self.__generateCodeOrderDFS(item)
     self.__order.append(self.__input)
     for item in self.__input.children:
       self.__store_last_appear_time(item)
@@ -210,7 +210,7 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
         # we don't need to do anything about it
         continue
 
-      if current.hash == self.__input.hash or current.name == "" or (current.name != "" and not current.generate_code):
+      if current.isFloatMat or current.hash == self.__input.hash or current.name == "" or (current.name != "" and not current.generate_code):
         # we need to generate the code accordingly
         if current.name != "":
           # don't differentiate special cases, lets just use intermediate all the time
@@ -231,7 +231,9 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
         #     continue
 
         # now we generate the computation code
-        if current.operator.type == 0:
+        if current.isFloatMat:
+          self.__generate_code_for_floatmat(current)
+        elif current.operator.type == 0:
           self.__generate_code_for_type_0(current)
         elif current.operator.type == 1:
           self.__generate_code_for_type_1(current)
@@ -321,11 +323,14 @@ __device__ void {current.fullName}_device_function(const double* {current.code_g
 
     # if we are a joining operation
     # we need to set the connectivity
-    if self.__input.operator == ya.JOIN or self.__input.operator == ya.SUM or self.__input.operator == ya.AVERAGE:
+    if self.__input.operator in (ya.JOIN, ya.SUM, ya.AVERAGE):
       allConnectivities.append(self.__input.through)
-
     if self.__input.operator == ya.UNION:
       allPrimitiveUnions.append(self.__input.correspondance)
+    # Literal descendants are not traversed by DFS. Their routing inputs are
+    # discovered by the literal evaluator instead.
+    allConnectivities.extend(self.__floatmat_connectivities)
+    allPrimitiveUnions.extend(self.__floatmat_unions)
 
     # sort and remove duplicates
     allDatas = sorted(set(allDatas), key = lambda x: x.fullName)
@@ -825,19 +830,8 @@ __device__ void {attributeName}_device_function(
       self.__code_strings.append(f'''
          {attribute_initialization} = {mn} == 0 ? {an} : ({mn} == 1 ? abs({an}) : max(0.0, {an}));''')
     else:
-      if current.rows <= 3:
-        self.__seen_evd_projection_sizes.add(current.rows)
-        self.__code_strings.append(f'''
-  // {attribute_initialization} = {mn} == 0 ? Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>({an}.data()) : Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
-  if ({mn} != 0) {{
-    spd_projection_small<{current.children[0].rows}>({an}.data(), {an}.data(), int({mn}));
-  }}
-  ''')
-      else:
-        # we do the normal projection
-        self.__seen_evd_projection_sizes.add(current.rows)
-        self.__code_strings.append(f'''
-  // {attribute_initialization} = {mn} == 0 ? Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>({an}.data()) : Eigen::Matrix<double, {current.rows}, {current.cols}, Eigen::RowMajor>::Zero();
+      self.__seen_evd_projection_sizes.add(current.rows)
+      self.__code_strings.append(f'''
   if ({mn} != 0) {{
     spd_projection_inplace<{current.children[0].rows}>({an}.data(), int({mn}));
   }}
@@ -845,7 +839,7 @@ __device__ void {attributeName}_device_function(
     if current == self.__input:
       if current.size == 1:
         self.__code_strings.append(f'''
-  result[0] = {attribute_initialization};''')
+  result[0] = {attribute_name};''')
       else:
         self.__code_strings.append(f'''
   out.noalias() = {an};''')
@@ -905,6 +899,101 @@ __device__ void {attributeName}_device_function(
     return ""
 
 
+  def __floatmat_values(self, current, instance):
+    """Fold literal operations on the CPU; keep only JOIN/UNION routing live.
+
+    Each entry is (branch condition, flat output positions, numeric values).
+    Positions let JOIN concatenate independently selected rows without building
+    every possible combination of UNION branches.
+    """
+    op = current.operator
+    if op == ya.FLOAT:
+      return [(None, np.arange(1), np.array([current.float_value]))]
+    if op == ya.ARRAY:
+      values = np.array([child.float_value for child in current.children], dtype=np.float64)
+      return [(None, np.arange(current.size), values)]
+    if op == ya.UNION:
+      self.__floatmat_unions.add(current.correspondance)
+      counts = current.correspondance.code_generation_counts_name
+      result = []
+      for i, child in enumerate(current.children):
+        prefix = " + ".join(f"{counts}[{j}]" for j in range(i)) or "0u"
+        condition = f"({instance}) >= ({prefix}) && ({instance}) < ({prefix} + {counts}[{i}])"
+        local_index = f"(({instance}) - ({prefix}))"
+        for guard, positions, values in self.__floatmat_values(child, local_index):
+          guard = condition if guard is None else f"({condition}) && ({guard})"
+          result.append((guard, positions, values))
+      return result
+    if op == ya.JOIN:
+      self.__floatmat_connectivities.add(current.through)
+      child = current.children[0]
+      result = []
+      for slot in range(current.through.dimension):
+        source_index = f"{current.through.code_generation_index_name}[({instance}) * {current.through.dimension} + {slot}]"
+        for guard, positions, values in self.__floatmat_values(child, source_index):
+          result.append((guard, positions + slot * child.size, values))
+      if all(guard is None for guard, _, _ in result):
+        return [(None, np.arange(current.size), np.concatenate([values for _, _, values in result]))]
+      return result
+
+    child = current.children[0]
+    fragments = self.__floatmat_values(child, instance)
+    if op in (ya.NEG, ya.ABS):
+      return [(guard, positions, -values if op == ya.NEG else np.abs(values))
+              for guard, positions, values in fragments]
+    # Apply the view operation to an index matrix on the CPU. The resulting
+    # coefficient map also handles a view spanning different UNION/JOIN pieces.
+    indices = np.arange(child.size).reshape(child.rows, child.cols)
+    if op == ya.TRANSPOSE:
+      indices = indices.T
+    elif op == ya.ROW:
+      indices = indices[current.children[1].index_value, :]
+    elif op == ya.COL:
+      indices = indices[:, current.children[1].index_value]
+    elif op == ya.RESIZE:
+      indices = indices.reshape(current.rows, current.cols)
+    else:
+      raise ValueError(f"Unsupported FloatMat operator: {op}")
+    destinations = np.full(child.size, -1, dtype=np.int64)
+    destinations[indices.ravel()] = np.arange(current.size)
+    result = []
+    for guard, positions, values in fragments:
+      mapped = destinations[positions]
+      keep = mapped >= 0
+      if np.any(keep):
+        order = np.argsort(mapped[keep])
+        result.append((guard, mapped[keep][order], values[keep][order]))
+    return result
+
+  def __floatmat_assignments(self, current, destination, instance):
+    code = []
+    for guard, positions, values in self.__floatmat_values(current, instance):
+      numbers = [repr(float(value)) if np.isfinite(value) else
+                 ("NAN" if np.isnan(value) else "INFINITY" if value > 0 else "-INFINITY")
+                 for value in values]
+      if guard is not None:
+        code.append(f"  if ({guard}) {{")
+      if current.size == 1:
+        code.append(f"  {destination} = {numbers[0]};")
+      elif np.array_equal(positions, np.arange(current.size)):
+        code.append(f"  {destination} << {', '.join(numbers)};")
+      else:
+        for position, number in zip(positions, numbers):
+          code.append(f"  {destination}.data()[{position}] = {number};")
+      if guard is not None:
+        code.append("  }")
+    return "\n".join(code)
+
+  def __generate_code_for_floatmat(self, current):
+    if current == self.__input:
+      destination = "result[0]" if current.size == 1 else "out"
+    else:
+      destination, initialization = self.__generate_attribute_name_and_initialization(current)
+      self.__code_strings.append(f"  {initialization};")
+    self.__code_strings.append(self.__floatmat_assignments(
+      current, destination, f"{self.__input.correspondance.fullName}_index"))
+
+
   def __generate_code_for_union(self, current: ya.attribute) -> str:
     attribute_name, attribute_initialization = self.__generate_attribute_name_and_initialization(current)
     if current == self.__input:
@@ -937,20 +1026,9 @@ __device__ void {attributeName}_device_function(
       case {i}:
 '''
       if child_attribute.isFloatMat or child_attribute.operator == ya.FLOAT:
-        # this is likely a constant value
-        # we can just get the constant value I guess
-        if child_attribute.size == 1:
-          code_string += f'''
-        {attribute_name} = {str(child_attribute.float_value)};
-        break;
-'''
-        else:
-          float_mat_string = ", ".join([str(child_attribute[j].float_value) for j in range(child_attribute.size)])
-          code_string += f'''
-        // appending value for UNION float mat
-        {attribute_name} << {float_mat_string};
-        break;
-'''
+        local_index = f"({current.correspondance.fullName}_index - {current.fullName}_primitive_total_counts[{i}])"
+        code_string += self.__floatmat_assignments(child_attribute, attribute_name, local_index)
+        code_string += "\n        break;\n"
       else:
         code_string += f'''
         {current.children[i].fullName}_device_function(
