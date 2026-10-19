@@ -152,7 +152,17 @@ class scene:
   def energies(self) -> Dict[int, attribute]:
     return self.__energies
 
-  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False, lto = False, auto_partition = 0) -> None:
+  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False, lto = False, auto_partition = 0, reduced_dimension = False) -> None:
+    """Register an energy with optional exact-coordinate Hessian grouping.
+
+    reduced_dimension groups complete ordered index/size rows before pair
+    expansion. Every instance still evaluates and projects its own Hessian;
+    only assembly coordinates and the materialized group destination are shared.
+    The two-pass assembly uses one sorted-member kernel (per local matrix size
+    for full projection), with segmented warp reduction, then scatters group blocks
+    and diagonals. It can save memory for repeated supports but adds launch and
+    temporary-buffer cost. It is off by default and does not change the physics.
+    """
     # 0: inner-Hessian tiles; 1: sparsity components; 2: segment blocks with
     # stored J^T H; 3: direct segment products. Modes 2/3 require no UNION.
     # projection_method = 0 means no projection, 1 means project eigen value to absolute, 2 means project eigen value to max(e, 0)
@@ -164,6 +174,8 @@ class scene:
       raise TypeError("scene.addEnergy: grouped_add must be bool.")
     if not isinstance(lto, bool):
       raise TypeError("scene.addEnergy: lto must be bool.")
+    if not isinstance(reduced_dimension, bool):
+      raise TypeError("scene.addEnergy: reduced_dimension must be bool.")
     if not isinstance(auto_partition, int) or auto_partition not in (0, 1, 2, 3):
       raise ValueError("scene.addEnergy: auto_partition must be an integer in 0, 1, 2, 3.")
     if auto_partition >= 2 and (not separate_hessian_jacobian or gradient_only):
@@ -171,7 +183,7 @@ class scene:
     # we add the names of the targes to the pre_targets_full_names set
     for t in targets:
       self.__seen_pre_targets_full_names.add(t.fullName)
-    self.__minimizer.addEnergy(e, targets = targets, projection_method = projection_method, save_intermediate = save_intermediate, gradient_only = gradient_only, dynamic_instances = dynamic_instances, separate_hessian_jacobian = separate_hessian_jacobian, grouped_add = grouped_add, lto = lto, auto_partition = auto_partition)
+    self.__minimizer.addEnergy(e, targets = targets, projection_method = projection_method, save_intermediate = save_intermediate, gradient_only = gradient_only, dynamic_instances = dynamic_instances, separate_hessian_jacobian = separate_hessian_jacobian, grouped_add = grouped_add, lto = lto, auto_partition = auto_partition, reduced_dimension = reduced_dimension)
 
 
   def minimizeEnergy(self, tolerance = 1e-3, maxIterations = 20000):

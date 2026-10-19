@@ -4,10 +4,14 @@ from yasps.deviceKernel import deviceKernel
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 class hessianKernelHost:
-  def __init__(self, evaluation, unique_gradient_sizes: Set[int], max_child_gradient_size: int, project_entire_hessian: bool, block_activity: bool = False):
+  def __init__(self, evaluation, unique_gradient_sizes: Set[int], max_child_gradient_size: int, project_entire_hessian: bool, block_activity: bool = False, reduced_dimension: bool = False):
     sortedDatas: List[attribute] = evaluation.kernelDatas
     sortedConnectivities: List[connectivity] = evaluation.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = evaluation.kernelPrimitiveUnions
+    if reduced_dimension:
+      self.__generateReducedKernel(sortedDatas, sortedConnectivities, sortedPrimitiveUnions,
+          unique_gradient_sizes, max_child_gradient_size, project_entire_hessian, block_activity)
+      return
     self.__kernelString = f'''
 #include "allHeaders.cuh"
 #define CUDA_CHECK_ERROR(ans)                                                  \
@@ -67,7 +71,11 @@ int compute_hessian_and_gradient_with_compression(
   std::vector<cudaStream_t> streams;
   streams.resize(num_unique_gradient_sizes);
   for (unsigned int i = 0; i < num_unique_gradient_sizes; i++) {{
-    cudaStreamCreate(&streams[i]);
+    const cudaError_t error = cudaStreamCreate(&streams[i]);
+    if (error != cudaSuccess) {{
+      for (unsigned int j = 0; j < i; ++j) cudaStreamDestroy(streams[j]);
+      return (int)error;
+    }}
   }}
 
   // cudaDeviceSynchronize();
@@ -110,6 +118,10 @@ int compute_hessian_and_gradient_with_compression(
       self.__kernelString += '''
       default:
         printf("Invalid gradient size, %u\\n", unique_gradient_sizes[i]);
+        if (unique_gradient_sizes[i] != 0) {
+          for (unsigned int j = 0; j < num_unique_gradient_sizes; ++j) cudaStreamDestroy(streams[j]);
+          return (int)cudaErrorInvalidValue;
+        }
         break;
     }
 '''
@@ -162,6 +174,92 @@ int compute_hessian_and_gradient_with_compression(
   // printf("stack size: %zu -> %zu\\n", before, after);
   // printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\\n");
   return 0; // success
+}
+'''
+
+  def __generateReducedKernel(self, sortedDatas, sortedConnectivities, sortedPrimitiveUnions,
+      unique_gradient_sizes, max_child_gradient_size, project_entire_hessian, block_activity):
+    self.__kernelString = f'''
+#include "allHeaders.cuh"
+#include <algorithm>
+extern "C"
+int compute_hessian_and_gradient_with_compression(
+  {"".join([f"const double* {x.code_generation_data_name}, " for x in sortedDatas])}
+  {"".join([f"const unsigned int* {x.code_generation_index_name}, " for x in sortedConnectivities])}
+  {"".join([f"const unsigned int* {x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+  {"".join([f"const unsigned int* {x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
+  const unsigned int* segment_indices,
+  const unsigned short int* segment_sizes,
+  const short int* local_permutations,
+  const unsigned int* lookups,
+  const unsigned int* coordinatesOuter,
+  const unsigned int* groupedIndicesInner,
+  const unsigned int* groupedIndicesOuter,
+  const unsigned short int* coordinate_group_sizes,
+  const unsigned int coordinate_group_count,
+  {"const unsigned char* block_activity, const unsigned int activity_stride," if block_activity else ""}
+  const unsigned int nth_gradient_size, // total sorted member count in reduced mode
+  const unsigned int projection_method,
+  double* gradient,
+  double* hessian_blocks,
+  double* diagonal,
+  double* diagonal_blocks,
+  const unsigned int* diagonal_blocks_start,
+  const unsigned int* gradient_segments_start,
+  const short unsigned int* unique_gradient_sizes,
+  const unsigned int num_unique_gradient_sizes
+){{
+  if (nth_gradient_size == 0) return 0;
+  if (coordinate_group_count == 0 || num_unique_gradient_sizes == 0)
+    return (int)cudaErrorInvalidValue;
+  // Each thread handles one sorted member. Kernels find its group on device;
+  // full projection filters groups by its compile-time local matrix size.
+  const unsigned int blocks = (nth_gradient_size - 1) / 32 + 1;
+'''
+    sizes = sorted(size for size in unique_gradient_sizes if size != 0) if project_entire_hessian else [max_child_gradient_size]
+    for size in sizes:
+      if project_entire_hessian:
+        self.__kernelString += f'''
+  if (std::find(unique_gradient_sizes, unique_gradient_sizes + num_unique_gradient_sizes, {size})
+      != unique_gradient_sizes + num_unique_gradient_sizes) {{
+'''
+      self.__kernelString += f'''
+  compute_hessian_and_gradient_global_function_final_gradient_size_{size}<<<blocks, 32>>>(
+    {"".join([f"{x.code_generation_data_name}, " for x in sortedDatas])}
+    {"".join([f"{x.code_generation_index_name}, " for x in sortedConnectivities])}
+    {"".join([f"{x.code_generation_csr_name}, " for x in sortedConnectivities if x.dimension == 0])}
+    {"".join([f"{x.code_generation_counts_name}, " for x in sortedPrimitiveUnions])}
+    segment_indices,
+    segment_sizes,
+    local_permutations,
+    lookups,
+    coordinatesOuter,
+    groupedIndicesInner,
+    groupedIndicesOuter,
+    coordinate_group_sizes,
+    coordinate_group_count,
+    {"block_activity, activity_stride," if block_activity else ""}
+    nth_gradient_size,
+    projection_method,
+    gradient,
+    hessian_blocks,
+    diagonal,
+    diagonal_blocks,
+    diagonal_blocks_start,
+    gradient_segments_start
+  );
+  {{
+    const cudaError_t error = cudaGetLastError();
+    if (error != cudaSuccess) {{
+      cudaDeviceSynchronize();
+      return (int)error;
+    }}
+  }}
+'''
+      if project_entire_hessian:
+        self.__kernelString += "  }\n"
+    self.__kernelString += '''
+  return (int)cudaDeviceSynchronize();
 }
 '''
 

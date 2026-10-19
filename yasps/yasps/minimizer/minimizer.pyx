@@ -31,7 +31,8 @@ class energyRequest:
     separate_hessian_jacobian = False,
     grouped_add = False,
     lto = False,
-    auto_partition = 0
+    auto_partition = 0,
+    reduced_dimension = False
   ):
     self.__energy: attribute = energy
     self.__targets: List[attribute] = list(targets)
@@ -43,6 +44,7 @@ class energyRequest:
     self.__grouped_add: bool = grouped_add
     self.__lto: bool = lto
     self.__auto_partition: int = int(auto_partition)
+    self.__reduced_dimension: bool = reduced_dimension
 
   @property
   def energy(self) -> attribute:
@@ -83,6 +85,10 @@ class energyRequest:
   @property
   def auto_partition(self) -> int:
     return self.__auto_partition
+
+  @property
+  def reduced_dimension(self) -> bool:
+    return self.__reduced_dimension
 
   @property
   def hash(self) -> int:
@@ -188,7 +194,7 @@ class minimizer:
     for item in energies:
       self.addEnergy(item)
 
-  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False, lto = False, auto_partition = 0) -> None:
+  def addEnergy(self, e: attribute, targets: List[attribute] = [], projection_method = 1, save_intermediate = False, gradient_only = False, dynamic_instances = False, separate_hessian_jacobian = False, grouped_add = False, lto = False, auto_partition = 0, reduced_dimension = False) -> None:
     # 0/1 select tiles/components; 2/3 select segment assembly with/without J^T H storage.
     if e.name == "":
       raise ValueError("minimizer.addEnergy: energy attribute must have a name.")
@@ -198,6 +204,8 @@ class minimizer:
       raise TypeError("minimizer.addEnergy: grouped_add must be bool.")
     if not isinstance(lto, bool):
       raise TypeError("minimizer.addEnergy: lto must be bool.")
+    if not isinstance(reduced_dimension, bool):
+      raise TypeError("minimizer.addEnergy: reduced_dimension must be bool.")
     if not isinstance(auto_partition, int) or auto_partition not in (0, 1, 2, 3):
       raise ValueError("minimizer.addEnergy: auto_partition must be an integer in 0, 1, 2, 3.")
     if auto_partition >= 2 and not separate_hessian_jacobian:
@@ -216,7 +224,8 @@ class minimizer:
       separate_hessian_jacobian=separate_hessian_jacobian,
       grouped_add=grouped_add,
       lto=lto,
-      auto_partition=auto_partition
+      auto_partition=auto_partition,
+      reduced_dimension=reduced_dimension
     )
     existing_hashes = [item.hash for item in self.__energy_requests + self.__energy_requests_dynamic]
     if new_request.hash in existing_hashes:
@@ -272,6 +281,7 @@ class minimizer:
           grouped_add=request.grouped_add,
           lto=request.lto,
           auto_partition=request.auto_partition,
+          reduced_dimension=request.reduced_dimension,
           dynamic_instances=False
         )
       )
@@ -289,6 +299,7 @@ class minimizer:
           grouped_add=request.grouped_add,
           lto=request.lto,
           auto_partition=request.auto_partition,
+          reduced_dimension=request.reduced_dimension,
           dynamic_instances=True
         )
       )

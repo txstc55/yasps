@@ -23,7 +23,8 @@ __device__ double grid_coordinate(unsigned int index, int axis) {
   return grid_origin(axis) + node * GRID_DX;
 }
 
-extern "C" __global__ void p2g(
+template<bool flip>
+__device__ void p2g_impl(
     const double* x, const double* v, const double* F, const double* C,
     const double* mass, unsigned int* indices, double* weights, double* B,
     double* grid_mass, double* momentum, int* invalid, int count, int liquid) {
@@ -51,7 +52,7 @@ extern "C" __global__ void p2g(
     for (int a = 0; a < 3; ++a) {
       double velocity = v[p*3+a], b = 0.0;
       for (int j = 0; j < 3; ++j) {
-        velocity += C[p*9+a*3+j]*(grid_coordinate(node,j)-x[p*3+j]);
+        if (!flip) velocity += C[p*9+a*3+j]*(grid_coordinate(node,j)-x[p*3+j]);
         if (!liquid) b += grad[j]*F[p*9+j*3+a];
       }
       atomicAdd(momentum+node*3+a, mass[p]*weight*velocity);
@@ -59,6 +60,24 @@ extern "C" __global__ void p2g(
       B[p*81+i*3+a] = liquid ? grad[a] : b;
     }
   }
+}
+
+// Preserve the quadratic APIC ABI and affine velocity-gradient state C.
+extern "C" __global__ void p2g(
+    const double* x, const double* v, const double* F, const double* C,
+    const double* mass, unsigned int* indices, double* weights, double* B,
+    double* grid_mass, double* momentum, int* invalid, int count, int liquid) {
+  p2g_impl<false>(x, v, F, C, mass, indices, weights, B,
+                  grid_mass, momentum, invalid, count, liquid);
+}
+
+// Pure liquid FLIP deposits translational momentum only; C is never read.
+extern "C" __global__ void p2g_flip(
+    const double* x, const double* v, const double* F, const double* C,
+    const double* mass, unsigned int* indices, double* weights, double* B,
+    double* grid_mass, double* momentum, int* invalid, int count, int liquid) {
+  p2g_impl<true>(x, v, F, C, mass, indices, weights, B,
+                 grid_mass, momentum, invalid, count, liquid);
 }
 
 extern "C" __global__ void grid_targets(const double* mass, const double* momentum, double* target, double h) {
@@ -107,26 +126,35 @@ extern "C" __global__ void topology_block_dimensions(
   }
 }
 
-extern "C" __global__ void g2p(
+template<bool flip>
+__device__ void g2p_impl(
     const double* q, double h,
     const double* old_x, const double* old_F, const unsigned int* indices,
-    const double* weights, const double* B, double* x, double* v, double* F, double* C, int count, const double* old_J, double* J, int liquid) {
+    const double* weights, const double* B, double* x, double* v, double* F, double* C, int count, const double* old_J, double* J, int liquid,
+    const double* old_v, const double* grid_mass, const double* grid_momentum) {
   const int p = blockIdx.x * blockDim.x + threadIdx.x;
   if (p >= count) return;
   double incremental_F[9];
   for (int a = 0; a < 3; ++a) {
-    double dx = 0.0, df[3] = {0,0,0}, c[3] = {0,0,0};
+    double dx = 0.0, dv = 0.0, df[3] = {0,0,0}, c[3] = {0,0,0};
     for (int i = 0; i < 27; ++i) {
       const unsigned int node = indices[p*27+i];
       const double d = q[node*3+a] - grid_coordinate(node,a);
       const double w = weights[p*27+i];
       dx += w*d;
+      if (flip) {
+        // Use the mixed physical P2G baseline before gravity, never qhat or
+        // the floored grid-inertia mass. Inactive zero-weight nodes are safe.
+        const double previous_grid_v = grid_mass[node] > 0.0 ? grid_momentum[node*3+a]/grid_mass[node] : 0.0;
+        dv += w * (d/h - previous_grid_v);
+      }
       for (int b = 0; b < 3; ++b) {
         df[b] += d*B[p*81+i*3+b];
-        c[b] += w*(d/h)*(grid_coordinate(node,b)-old_x[p*3+b]);
+        if (!flip) c[b] += w*(d/h)*(grid_coordinate(node,b)-old_x[p*3+b]);
       }
     }
-    x[p*3+a] = old_x[p*3+a]+dx; v[p*3+a] = dx/h;
+    x[p*3+a] = old_x[p*3+a]+dx;
+    v[p*3+a] = flip ? old_v[p*3+a] + dv : dx/h;
     for (int b = 0; b < 3; ++b) {
       if (liquid) {
         incremental_F[a*3+b] = (a == b ? 1.0 : 0.0) + df[b];
@@ -136,7 +164,7 @@ extern "C" __global__ void g2p(
       } else {
         F[p*9+a*3+b] = old_F[p*9+a*3+b]+df[b];
       }
-      C[p*9+a*3+b] = 4.0/(GRID_DX*GRID_DX)*c[b];
+      C[p*9+a*3+b] = flip ? 0.0 : 4.0/(GRID_DX*GRID_DX)*c[b];
     }
   }
   if (liquid) {
@@ -145,6 +173,25 @@ extern "C" __global__ void g2p(
     const double determinant = a[0]*(a[4]*a[8]-a[5]*a[7]) - a[1]*(a[3]*a[8]-a[5]*a[6]) + a[2]*(a[3]*a[7]-a[4]*a[6]);
     J[p] = old_J[p]*determinant;
   }
+}
+
+extern "C" __global__ void g2p(
+    const double* q, double h,
+    const double* old_x, const double* old_F, const unsigned int* indices,
+    const double* weights, const double* B, double* x, double* v, double* F,
+    double* C, int count, const double* old_J, double* J, int liquid) {
+  g2p_impl<false>(q, h, old_x, old_F, indices, weights, B, x, v, F,
+                  C, count, old_J, J, liquid, nullptr, nullptr, nullptr);
+}
+
+extern "C" __global__ void g2p_flip(
+    const double* q, double h,
+    const double* old_x, const double* old_F, const unsigned int* indices,
+    const double* weights, const double* B, double* x, double* v, double* F,
+    double* C, int count, const double* old_J, double* J, int liquid,
+    const double* old_v, const double* grid_mass, const double* grid_momentum) {
+  g2p_impl<true>(q, h, old_x, old_F, indices, weights, B, x, v, F,
+                 C, count, old_J, J, liquid, old_v, grid_mass, grid_momentum);
 }
 
 // Keep the CCD row ordering while separating the AV point from the SV feature.

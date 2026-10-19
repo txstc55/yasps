@@ -150,6 +150,8 @@ class secondOrderJacobianIndicesKernel:
     row_start_indices: List[int],
     column_start_indices: List[int]
   ):
+    if row_indices_kernel.reduced_dimension or column_indices_kernel.reduced_dimension:
+      raise ValueError("secondOrderJacobianIndicesKernel: reduced coordinate groups require symmetric Hessian assembly.")
     self.__row_indices_kernel = row_indices_kernel
     self.__column_indices_kernel = column_indices_kernel
     self.__row_start_indices = list(row_start_indices)

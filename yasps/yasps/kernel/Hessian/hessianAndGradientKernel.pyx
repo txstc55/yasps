@@ -26,7 +26,7 @@ class hessianAndGradientKernel:
   att_name_to_kernel: dict[str, hessianAndGradientKernel] = {}  # maps attribute names to their hessian and gradient kernel instances, this way we can just return the previous existing kernel
 
 
-  def __init__(self, evaluation, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, local_hessian_nonzero_upper_positions: List[int] = [], dynamic_term = False, grouped_add: bool = False, lto: bool = False, auto_partition: int = 0, segment_sizes = None):
+  def __init__(self, evaluation, project_entire_hessian: bool, projection_method: int = 1, gradeient_only: bool = False, clear_separation: bool = True, jacobian_rows = 0, jacobian_cols = 0, hessian_row_size = 0, local_hessian_nonzero_upper_positions: List[int] = [], dynamic_term = False, grouped_add: bool = False, lto: bool = False, auto_partition: int = 0, segment_sizes = None, reduced_dimension: bool = False):
     self.__kernelString: str = ""
     self.__headerFileString: str = ""
     self.__kernel = None # the kernel for computhing the gradient and hessians
@@ -50,6 +50,8 @@ class hessianAndGradientKernel:
     self.__lto = lto
     self.__auto_partition = auto_partition
     self.__segment_sizes = segment_sizes
+    self.__reduced_dimension = reduced_dimension
+    self.__reduced_hessian = None
     self.__separate_kernel = None
     self.__context = context()
     # self.__generateKernel(att)
@@ -98,7 +100,7 @@ class hessianAndGradientKernel:
     sortedConnectivities: List[connectivity] = self.__evaluation.kernelConnectivity
     sortedPrimitiveUnions: List[primitiveUnion] = self.__evaluation.kernelPrimitiveUnions
     if self.__clear_separation and not self.__project_entire_hessian and self.__separate_kernel is None:
-      self.__separate_kernel = hessianKernelSeparateJacobian(self.__evaluation, self.__gradient_only, self.__grouped_add, self.__auto_partition, self.__segment_sizes)
+      self.__separate_kernel = hessianKernelSeparateJacobian(self.__evaluation, self.__gradient_only, self.__grouped_add, self.__auto_partition, self.__segment_sizes, self.__reduced_dimension)
       self.__separate_kernel.create_multiplied_blocks(global_jacobian_block_nonzero_attributes, global_jacobian_block_nonzero_local_positions, global_jacobian_children_sizes, global_jacobian_children_spans, self.__local_hessian_nonzero_upper_positions, global_jacobian_block_layout)
     uses_activity = self.__separate_kernel is not None
     wrt_names = "_".join([att.fullName for att in wrt])
@@ -112,13 +114,14 @@ class hessianAndGradientKernel:
       full_file_name += "_block_activity"
     full_file_name += f"_{PROJECTION_CACHE_TAG}"
     full_file_name += f"_{CODEGEN_CACHE_TAG}"
+    full_file_name += f"_reduced_dimension_{int(self.__reduced_dimension)}_v3"
     full_file_name_hashed = int(hashlib.sha256(full_file_name.encode('utf-8')).hexdigest(), 16)
     kernel_mode_suffix = f"_grouped_add_{int(self.__grouped_add)}_lto_{int(self.__lto)}"
     file_name = f".yasps_tmp/compute_hessian_and_gradient_for_{full_file_name_hashed}{kernel_mode_suffix}" + ("" if self.__project_entire_hessian else "_no_proj")
     # print(f"full file name: {full_file_name}\nhashed: {file_name}.cu")
     # print(f"hashed: {file_name}.cu")
     if not os.path.exists(f'{file_name}.so'):
-      hessian_header_file = hessianKernelHeader(self.__evaluation.gradient, self.__unique_gradient_sizes, [], uses_activity, evaluation=self.__evaluation)
+      hessian_header_file = hessianKernelHeader(self.__evaluation.gradient, self.__unique_gradient_sizes, [], uses_activity, evaluation=self.__evaluation, reduced_dimension=self.__reduced_dimension)
       with open(".yasps_tmp/allHeaders.cuh", 'w') as f:
         f.write(hessian_header_file.kernelString)
         f.close()
@@ -166,9 +169,9 @@ extern "C"{{
         if True: # always regenerate the kernel because header has been replaced
           with open(cu_file, 'w') as f:
             if self.__project_entire_hessian:
-              kernel_source = hessianKernelFullProject(self.__evaluation, unique_gradient_size, self.__gradient_only, max_num_indices, "", len(wrt), self.__hessian_row_size, self.__grouped_add).kernelString
+              kernel_source = hessianKernelFullProject(self.__evaluation, unique_gradient_size, self.__gradient_only, max_num_indices, "", len(wrt), self.__hessian_row_size, self.__grouped_add, self.__reduced_dimension).kernelString
             elif not self.__clear_separation:
-              kernel_source = hessianKernelNoProject(self.__evaluation, unique_gradient_size, self.__gradient_only, max_num_indices, "", len(wrt), self.__hessian_row_size, self.__grouped_add).kernelString
+              kernel_source = hessianKernelNoProject(self.__evaluation, unique_gradient_size, self.__gradient_only, max_num_indices, "", len(wrt), self.__hessian_row_size, self.__grouped_add, self.__reduced_dimension).kernelString
             else:
               # if we need to separate the jacobian and hessian, the first thing we need to do is reconstruct the jacobian and hessian symbolically
               # which we will use to figure out how to compute the final hessian block by performing J_i^T H_ij J_j for each block
@@ -188,7 +191,7 @@ extern "C"{{
           compile_jobs.append(job)
 
       # now we add the c functions that will go over all the unique gradient sizes
-      self.__kernelString = hessianKernelHost(self.__evaluation, self.__unique_gradient_sizes, max_child_gradient_size, self.__project_entire_hessian, uses_activity).kernelString
+      self.__kernelString = hessianKernelHost(self.__evaluation, self.__unique_gradient_sizes, max_child_gradient_size, self.__project_entire_hessian, uses_activity, self.__reduced_dimension).kernelString
       # prune duplicate functions
       self.__kernelString = prune_duplicate_functions(self.__kernelString)
       # generate the code to check
@@ -255,6 +258,7 @@ extern "C"{{
         ctypes.c_void_p,    # coordinatesOuter
         ctypes.c_void_p,    # groupedIndicesInner
         ctypes.c_void_p,    # groupedIndicesOuter
+        *([ctypes.c_void_p, ctypes.c_uint32] if self.__reduced_dimension else []),
         *([ctypes.c_void_p, ctypes.c_uint32] if uses_activity else []),  # block activity and instance stride
         # Scalars
         ctypes.c_uint32,      # nth_gradient_size
@@ -287,6 +291,7 @@ extern "C"{{
         ctypes.c_void_p,    # coordinatesOuter
         ctypes.c_void_p,    # groupedIndicesInner
         ctypes.c_void_p,    # groupedIndicesOuter
+        *([ctypes.c_void_p, ctypes.c_uint32] if self.__reduced_dimension else []),
         *([ctypes.c_void_p, ctypes.c_uint32] if uses_activity else []),  # block activity and instance stride
         # Scalars
         ctypes.c_uint32,      # nth_gradient_size
@@ -305,6 +310,13 @@ extern "C"{{
 
     if uses_activity:
       self.__separate_kernel.bindBlockActivityKernel(ctypes.CDLL(f"{file_name}.so"))
+    if self.__reduced_dimension and not self.__gradient_only and self.__reduced_hessian is None:
+      from yasps.reduced_dimension import reducedHessian
+      self.__reduced_hessian = reducedHessian(max_num_indices, len(wrt), self.__project_entire_hessian, uses_activity)
+
+  @property
+  def reducedWorkspaceBytes(self):
+    return 0 if self.__reduced_hessian is None else self.__reduced_hessian.workspaceBytes
 
   def invalidateBlockActivity(self):
     if self.__separate_kernel is not None:
@@ -337,29 +349,37 @@ extern "C"{{
     # self.__context.useNamedContext("dynamic_hessian" if self.__dynamic_terms else "static_hessian")
     self.__context.useDefaultContext()
     # self.__context.useNamedContext("hessian")
+    reduced = self.__reduced_dimension
+    if self.__reduced_hessian is not None:
+      self.__reduced_hessian.clear(giKernel)
+    sizes_cpu = giKernel.outputUniqueGradientSizesCPU
     error_code = self.__kernel(
       *[self.__to_void_p(x) for x in attributeArgs],
       self.__to_void_p(giKernel.outputIndices),
       self.__to_void_p(giKernel.outputSizes),
       self.__to_void_p(giKernel.outputPermutations),
-      self.__to_void_p(lookups),
+      self.__to_void_p(giKernel.coordinateGroupLocalLookups if reduced else lookups),
       self.__to_void_p(giKernel.outputCompressedCoordinateCountsOuter),
-      self.__to_void_p(giKernel.outputGroupedIndicesInner),
-      self.__to_void_p(giKernel.outputGroupedIndicesOuter),
-      *([self.__to_void_p(self.__separate_kernel.blockActivity), ctypes.c_uint32(giKernel.numInstances)] if self.__separate_kernel is not None else []),
-      ctypes.c_uint32(0),
+      self.__to_void_p(giKernel.coordinateGroupInstances if reduced else giKernel.outputGroupedIndicesInner),
+      self.__to_void_p(giKernel.coordinateGroupOffsets if reduced else giKernel.outputGroupedIndicesOuter),
+      *([self.__to_void_p(giKernel.coordinateGroupGradientSizes), ctypes.c_uint32(giKernel.numCoordinateGroups)] if reduced else []),
+      *([self.__to_void_p(self.__separate_kernel.blockActivity), ctypes.c_uint32(giKernel.numCoordinateGroups if reduced else giKernel.numInstances)] if self.__separate_kernel is not None else []),
+      ctypes.c_uint32(giKernel.numInstances if reduced else 0),
       ctypes.c_uint32(self.__projection_method),
       self.__to_void_p(gradient),
-      self.__to_void_p(hessian_blocks),
+      self.__to_void_p(self.__reduced_hessian.values if self.__reduced_hessian is not None else hessian_blocks),
       self.__to_void_p(diagonal),
       self.__to_void_p(diagonal_blocks),
       self.__to_void_p(diagonal_blocks_start),
       self.__to_void_p(gradient_segments_start),
-      giKernel.outputUniqueGradientSizesCPU.ctypes.data_as(ctypes.c_void_p),
-      ctypes.c_uint32(giKernel.numUniqueGradientSizesCPU)
+      sizes_cpu.ctypes.data_as(ctypes.c_void_p),
+      ctypes.c_uint32(sizes_cpu.size)
     )
     if error_code != 0:
       raise RuntimeError(f"HessianAndGradientKernel.compute: Kernel execution failed with error code {error_code}")
+    if self.__reduced_hessian is not None:
+      self.__reduced_hessian.compute(giKernel, lookups, hessian_blocks, diagonal,
+          diagonal_blocks, diagonal_blocks_start, gradient_segments_start)
 
   @property
   def kernelString(self) -> str:

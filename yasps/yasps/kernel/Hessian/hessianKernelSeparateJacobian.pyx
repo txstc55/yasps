@@ -8,12 +8,13 @@ import pycuda.gpuarray as gpuarray
 
 
 class hessianKernelSeparateJacobian:
-  def __init__(self, evaluation, gradient_only: bool = False, grouped_add: bool = False, auto_partition: int = 0, segment_sizes = None):
+  def __init__(self, evaluation, gradient_only: bool = False, grouped_add: bool = False, auto_partition: int = 0, segment_sizes = None, reduced_dimension: bool = False):
     self.__evaluation = evaluation
     self.__gradient_only = gradient_only
     self.__auto_partition = auto_partition
     self.__segment_sizes = segment_sizes
-    self.__atomic_add = "atomic_add_grouped" if grouped_add else "atomicAdd"
+    self.__reduced_dimension = reduced_dimension
+    self.__atomic_add = "atomic_add_grouped" if grouped_add or reduced_dimension else "atomicAdd"
     self.__kernelString = ""
     self.__layout = None
     self.__block_patterns = []
@@ -40,7 +41,7 @@ class hessianKernelSeparateJacobian:
   def recomputeBlockActivity(self, indices_kernel, force=False):
     if self.__activity_kernel is None:
       return
-    count = indices_kernel.numInstances
+    count = indices_kernel.numCoordinateGroups if self.__reduced_dimension else indices_kernel.numInstances
     state = (indices_kernel, count)
     if not force and self.__activity_state == state:
       return
@@ -429,7 +430,7 @@ static __device__ __noinline__ void scatter_segment_{pattern_id}_{suffix}(
   const bool transpose = start_a > start_b;
   const bool diagonal = start_a == start_b;
   unsigned int diagonal_start = 0;
-  if (diagonal) {{
+  if ({int(not self.__reduced_dimension)} && diagonal) {{
     const unsigned int segment_start = start_a - 2;
     unsigned int attribute_id = 0;
     while (attribute_id + 1 < {num_attributes} && segment_start >= gradient_segments_start[attribute_id + 1]) ++attribute_id;
@@ -443,12 +444,12 @@ static __device__ __noinline__ void scatter_segment_{pattern_id}_{suffix}(
     const double value = block[a * {cols} + b];
     {self.__atomic_add}(&hessian_blocks[placement + (transpose ? b * {rows} + a : a * {cols} + b)], value);
     if (diagonal) {{
-      {self.__atomic_add}(&diagonal_blocks[diagonal_start + a * {rows} + b], value);
+      if ({int(not self.__reduced_dimension)}) {self.__atomic_add}(&diagonal_blocks[diagonal_start + a * {rows} + b], value);
       // Distinct local occurrences of the same vertex contribute B + B^T,
       // including twice their diagonal. A single segment supplies one triangle.
       if (i != j || a != b) {{
         {self.__atomic_add}(&hessian_blocks[placement + b * {rows} + a], value);
-        {self.__atomic_add}(&diagonal_blocks[diagonal_start + b * {rows} + a], value);
+        if ({int(not self.__reduced_dimension)}) {self.__atomic_add}(&diagonal_blocks[diagonal_start + b * {rows} + a], value);
       }}
     }}
   }}
@@ -542,6 +543,19 @@ static __device__ __noinline__ void scatter_segment_{pattern_id}_{suffix}(
         source.append(self.__scatterFunction(suffix, num_attributes))
       if self.__auto_partition == 0 and self.__layout["rows"] > 1:
         source.append(self.__denseTileScatterFunction(suffix, num_attributes))
+    schedule = '''
+  const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= nth_gradient_size) return; // reduced ABI: total member count
+  const unsigned int coordinate_row = coordinate_group_for_member(index, groupedIndicesOuter, coordinate_group_count);
+  const unsigned int instance = groupedIndicesInner[index];
+''' if self.__reduced_dimension else '''
+  const unsigned int start = groupedIndicesOuter[nth_gradient_size];
+  const unsigned int end = groupedIndicesOuter[nth_gradient_size + 1];
+  const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= end - start) return;
+  const unsigned int instance = groupedIndicesInner[start + index];
+  const unsigned int coordinate_row = instance;
+'''
     entry_source = f'''
 __global__ void compute_hessian_and_gradient_global_function_final_gradient_size_{suffix}(
   {declarations}
@@ -552,6 +566,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int* coordinatesOuter,
   const unsigned int* groupedIndicesInner,
   const unsigned int* groupedIndicesOuter,
+  {"const unsigned short* coordinate_group_sizes, const unsigned int coordinate_group_count," if self.__reduced_dimension else ""}
   const unsigned char* block_activity,
   const unsigned int activity_stride,
   const unsigned int nth_gradient_size,
@@ -563,16 +578,12 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int* diagonal_blocks_start,
   const unsigned int* gradient_segments_start
 ) {{
-  const unsigned int start = groupedIndicesOuter[nth_gradient_size];
-  const unsigned int end = groupedIndicesOuter[nth_gradient_size + 1];
-  const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (index >= end - start) return;
-  const unsigned int instance = groupedIndicesInner[start + index];
+  {schedule}
   double hg_mat[{self.__evaluation.scratchSize}];
   {self.__evaluation.call(self.__evaluation.gradient, "hg_mat")}
-  const unsigned int* indices = segment_indices + instance * {max_num_indices};
-  const unsigned short int* sizes = segment_sizes + instance * {max_num_indices};
-  const short int* permutations = local_permutations + instance * {max_num_indices};
+  const unsigned int* indices = segment_indices + (size_t)coordinate_row * {max_num_indices};
+  const unsigned short int* sizes = segment_sizes + (size_t)coordinate_row * {max_num_indices};
+  const short int* permutations = local_permutations + (size_t)coordinate_row * {max_num_indices};
   unsigned int gradient_offset = 0;
   for (unsigned int i = 0; i < {max_num_indices}; ++i) {{
     if (indices[i] >= 2) {{
@@ -643,7 +654,7 @@ static __device__ __noinline__ void assemble_sparse_hessian_{suffix}(
       entry_source += f'''
   {self.__evaluation.call(self.__evaluation.hessian, "hg_mat")}
   {self.__evaluation.call(self.__evaluation.jacobian, f"hg_mat + {self.__local_hessian_nonzero_count}")}
-  assemble_sparse_hessian_{suffix}(hg_mat, indices, sizes, permutations, block_activity + instance, activity_stride, lookups + coordinatesOuter[instance], hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
+  assemble_sparse_hessian_{suffix}(hg_mat, indices, sizes, permutations, block_activity + coordinate_row, activity_stride, lookups + coordinatesOuter[coordinate_row], hessian_blocks, diagonal_blocks, diagonal_blocks_start, gradient_segments_start);
 '''
     source.append(entry_source + "}\n}\n")
     self.__kernelString = "\n".join(source)
@@ -691,7 +702,7 @@ static __device__ __noinline__ void scatter_dense_tile_{suffix}(
       const unsigned int column_stride = start_a <= start_b ? 1 : size_a;
       const bool same_target = start_a == start_b;
       unsigned int diagonal_start = 0;
-      if (same_target) {{
+      if ({int(not self.__reduced_dimension)} && same_target) {{
         const unsigned int segment_start = start_a - 2;
         unsigned int which_attribute = 0;
         while (which_attribute + 1 < {num_attributes} && segment_start >= gradient_segments_start[which_attribute + 1]) ++which_attribute;
@@ -707,11 +718,11 @@ static __device__ __noinline__ void scatter_dense_tile_{suffix}(
           const double value = values[(a - row_begin) * {size} + b - column_begin];
           {self.__atomic_add}(&hessian_blocks[placement + offset_a * row_stride + offset_b * column_stride], value);
           if (same_target) {{
-            {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_a * size_a + offset_b], value);
+            if ({int(not self.__reduced_dimension)}) {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_a * size_a + offset_b], value);
             // Different local occurrences can resolve to the same vertex.
             if (a != b) {{
               {self.__atomic_add}(&hessian_blocks[placement + offset_b * size_a + offset_a], value);
-              {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_b * size_a + offset_a], value);
+              if ({int(not self.__reduced_dimension)}) {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_b * size_a + offset_a], value);
             }}
           }}
         }}
@@ -768,9 +779,9 @@ static __device__ __forceinline__ void scatter_sparse_hessian_{suffix}(
     while (which_attribute + 1 < {num_attributes} && segment_start >= gradient_segments_start[which_attribute + 1]) ++which_attribute;
     const unsigned int local_instance = (segment_start - gradient_segments_start[which_attribute]) / size;
     const unsigned int diagonal_start = diagonal_blocks_start[which_attribute] + local_instance * size * size;
-    {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_a * size + offset_b], value);
+    if ({int(not self.__reduced_dimension)}) {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_a * size + offset_b], value);
     if (original_a != original_b) {{
-      {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_b * size + offset_a], value);
+      if ({int(not self.__reduced_dimension)}) {self.__atomic_add}(&diagonal_blocks[diagonal_start + offset_b * size + offset_a], value);
     }}
   }}
 }}

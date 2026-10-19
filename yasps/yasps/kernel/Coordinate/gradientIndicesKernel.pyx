@@ -13,6 +13,7 @@ from yasps.helper import prune_duplicate_functions
 from yasps.context import context
 import time
 import hashlib
+import subprocess
 
 ########################################################################
 # The gradient indices kernel has multiple functions
@@ -198,13 +199,17 @@ int compress_indices(
 
   // now we count for the energy, the number of coordinates we need to allocate
   thrust::device_ptr<unsigned int> count_ptr(d_compressed_coordinate_counts_ounter);
-  thrust::transform_inclusive_scan(
-    count_ptr + 1,
-    count_ptr + 1 + num_instances,
-    count_ptr + 1,
-    triangular_transform(),
-    thrust::plus<unsigned int>()
-  );
+  // Reduced assembly expands only representative rows later. Retain the
+  // per-instance valid segment counts, without an N-row triangular prefix.
+  if (compute_coordinate_metadata == 1) {
+    thrust::transform_inclusive_scan(
+      count_ptr + 1,
+      count_ptr + 1 + num_instances,
+      count_ptr + 1,
+      triangular_transform(),
+      thrust::plus<unsigned int>()
+    );
+  }
   cudaError_t err = cudaDeviceSynchronize();
   if (err != cudaSuccess) {
     fprintf(stderr, "CUDA Error (synchronize): %s\\n", cudaGetErrorString(err));
@@ -379,6 +384,222 @@ int computeCoordinates(
 # The third thing is just the size of the compressed hessian
 # so that we can pre allocate a kernel for that specific hessian size (for projection)
 # The first three things should have same dimension, as in the output array have the same size
+grouping_kernel_string = r'''
+#include <thrust/device_vector.h>
+#include <thrust/execution_policy.h>
+#include <thrust/sequence.h>
+#include <thrust/sort.h>
+#include <thrust/scan.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/transform_scan.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/functional.h>
+#include <limits>
+#include <exception>
+
+// Hashes accelerate ordering only. Neither ordering nor grouping relies on
+// hash equality: all ordered (index, size) pairs are compared exactly.
+struct coordinate_row_order {
+  const unsigned int* indices;
+  const unsigned short* sizes;
+  const unsigned long long* hashes;
+  unsigned int width;
+  __device__ bool operator()(unsigned int a, unsigned int b) const {
+    if (hashes[a] != hashes[b]) return hashes[a] < hashes[b];
+    for (unsigned int j = 0; j < width; ++j) {
+      const size_t x = size_t(a) * width + j, y = size_t(b) * width + j;
+      if (indices[x] != indices[y]) return indices[x] < indices[y];
+      if (sizes[x] != sizes[y]) return sizes[x] < sizes[y];
+    }
+    return a < b; // Stable, deterministic membership and representative.
+  }
+};
+
+__global__ void hash_coordinate_rows(const unsigned int* indices,
+  const unsigned short* sizes, unsigned long long* hashes,
+  unsigned int count, unsigned int width, unsigned long long mask) {
+  const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= count) return;
+  unsigned long long hash = 14695981039346656037ull;
+  for (unsigned int j = 0; j < width; ++j) {
+    const size_t p = size_t(i) * width + j;
+    hash = (hash ^ indices[p]) * 1099511628211ull;
+    hash = (hash ^ sizes[p]) * 1099511628211ull;
+  }
+  hashes[i] = hash & mask;
+}
+
+__global__ void mark_coordinate_groups(const unsigned int* indices,
+  const unsigned short* sizes, const unsigned long long* hashes,
+  const unsigned int* members, unsigned int* starts,
+  unsigned int count, unsigned int width) {
+  const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= count) return;
+  bool different = i == 0;
+  if (i) {
+    const unsigned int a = members[i - 1], b = members[i];
+    different = hashes[a] != hashes[b];
+    for (unsigned int j = 0; !different && j < width; ++j) {
+      const size_t x = size_t(a) * width + j, y = size_t(b) * width + j;
+      different = indices[x] != indices[y] || sizes[x] != sizes[y];
+    }
+  }
+  starts[i] = different;
+}
+
+__global__ void build_coordinate_groups(const unsigned int* members,
+  const unsigned int* ids, const unsigned short* sizes, const short* permutations,
+  const unsigned int* valid_counts, unsigned int* representatives,
+  unsigned int* offsets,
+  unsigned short* gradient_sizes, unsigned long long* pair_counts,
+  unsigned int count, unsigned int width) {
+  const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= count) return;
+  const unsigned int group = ids[i] - 1, instance = members[i];
+  if (i && ids[i - 1] == ids[i]) return;
+  representatives[group] = instance;
+  offsets[group] = i;
+  unsigned int extent = 0;
+  for (unsigned int j = 0; j < width; ++j) {
+    const size_t p = size_t(instance) * width + j;
+    int permutation = permutations[p];
+    if (permutation < 0) permutation = -permutation;
+    if (permutation) extent = max(extent, unsigned(permutation - 1) + sizes[p]);
+  }
+  gradient_sizes[group] = extent;
+  const unsigned long long valid = valid_counts[instance + 1];
+  pair_counts[group] = valid * (valid + 1) / 2;
+}
+
+__global__ void write_coordinate_group_outer(const unsigned long long* prefix,
+  unsigned int* outer, unsigned int count) {
+  const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < count) outer[i + 1] = static_cast<unsigned int>(prefix[i]);
+}
+
+extern "C" int groupCoordinateRows(const unsigned int* indices,
+  const unsigned short* sizes, const short* permutations,
+  const unsigned int* valid_counts, unsigned int* representatives,
+  unsigned int* members, unsigned int* offsets,
+  unsigned short* gradient_sizes, unsigned int* coordinate_outer,
+  unsigned int count, unsigned int width, unsigned long long hash_mask,
+  unsigned int* host_group_count, unsigned int* host_coordinate_count) {
+  *host_group_count = 0;
+  *host_coordinate_count = 0;
+  if (!count) return 0;
+  try {
+    thrust::device_vector<unsigned long long> hashes(count), pairs(count);
+    thrust::device_vector<unsigned int> ids(count);
+    auto hash_ptr = thrust::raw_pointer_cast(hashes.data());
+    auto id_ptr = thrust::raw_pointer_cast(ids.data());
+    hash_coordinate_rows<<<(count + 255) / 256, 256>>>(indices, sizes, hash_ptr, count, width, hash_mask);
+    auto member_begin = thrust::device_pointer_cast(members);
+    thrust::sequence(member_begin, member_begin + count);
+    thrust::sort(member_begin, member_begin + count, coordinate_row_order{indices, sizes, hash_ptr, width});
+    mark_coordinate_groups<<<(count + 255) / 256, 256>>>(indices, sizes, hash_ptr, members, id_ptr, count, width);
+    thrust::inclusive_scan(ids.begin(), ids.end(), ids.begin());
+    cudaError_t error = cudaMemcpy(host_group_count, id_ptr + count - 1, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    if (error != cudaSuccess) return int(error);
+    const unsigned int groups = *host_group_count;
+    auto pair_ptr = thrust::raw_pointer_cast(pairs.data());
+    build_coordinate_groups<<<(count + 255) / 256, 256>>>(members, id_ptr, sizes, permutations,
+      valid_counts, representatives, offsets, gradient_sizes, pair_ptr, count, width);
+    thrust::inclusive_scan(pairs.begin(), pairs.begin() + groups, pairs.begin());
+    unsigned long long total = 0;
+    error = cudaMemcpy(&total, pair_ptr + groups - 1, sizeof(total), cudaMemcpyDeviceToHost);
+    if (error != cudaSuccess) return int(error);
+    if (total > std::numeric_limits<unsigned int>::max()) return -2;
+    *host_coordinate_count = static_cast<unsigned int>(total);
+    error = cudaMemset(coordinate_outer, 0, sizeof(unsigned int));
+    if (error != cudaSuccess) return int(error);
+    error = cudaMemcpy(offsets + groups, &count, sizeof(count), cudaMemcpyHostToDevice);
+    if (error != cudaSuccess) return int(error);
+    write_coordinate_group_outer<<<(groups + 255) / 256, 256>>>(pair_ptr, coordinate_outer, groups);
+    error = cudaGetLastError();
+    if (error != cudaSuccess) return int(error);
+    return int(cudaDeviceSynchronize());
+  } catch (const std::exception& error) {
+    fprintf(stderr, "Coordinate grouping failed: %s\n", error.what());
+    return -1;
+  }
+}
+
+__global__ void compact_coordinate_rows(const unsigned int* indices,
+  const unsigned short* sizes, const short* permutations,
+  const unsigned int* representatives, unsigned int* compact_indices,
+  unsigned short* compact_sizes, short* compact_permutations,
+  unsigned int groups, unsigned int width) {
+  const size_t position = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (position >= size_t(groups) * width) return;
+  const size_t source = size_t(representatives[position / width]) * width + position % width;
+  compact_indices[position] = indices[source];
+  compact_sizes[position] = sizes[source];
+  compact_permutations[position] = permutations[source];
+}
+
+extern "C" int compactCoordinateRows(const unsigned int* indices,
+  const unsigned short* sizes, const short* permutations,
+  const unsigned int* representatives, unsigned int* compact_indices,
+  unsigned short* compact_sizes, short* compact_permutations,
+  unsigned int groups, unsigned int width) {
+  if (!groups || !width) return 0;
+  compact_coordinate_rows<<<(size_t(groups) * width + 255) / 256, 256>>>(
+    indices, sizes, permutations, representatives,
+    compact_indices, compact_sizes, compact_permutations, groups, width);
+  cudaError_t error = cudaGetLastError();
+  return int(error == cudaSuccess ? cudaDeviceSynchronize() : error);
+}
+
+__global__ void generate_group_coordinates(const unsigned int* indices,
+  const short* permutations, const unsigned short* sizes,
+  const unsigned int* outer,
+  unsigned int* coordinates, unsigned short* dimensions,
+  unsigned int groups, unsigned int width) {
+  const unsigned int group = blockIdx.x * blockDim.x + threadIdx.x;
+  if (group >= groups) return;
+  const size_t source = size_t(group) * width;
+  const size_t target = size_t(outer[group]) * 2;
+  computeCoordinatesDeviceFunction(indices + source, permutations + source, sizes + source,
+    coordinates + target, dimensions + target, width);
+}
+
+struct coordinate_block_area {
+  const unsigned short* dimensions;
+  __device__ unsigned long long operator()(unsigned int i) const {
+    return static_cast<unsigned long long>(dimensions[size_t(i) * 2]) * dimensions[size_t(i) * 2 + 1];
+  }
+};
+
+extern "C" int computeGroupCoordinates(const unsigned int* indices,
+  const short* permutations, const unsigned short* sizes,
+  const unsigned int* outer,
+  unsigned int* coordinates, unsigned short* dimensions, unsigned int* local_lookups,
+  unsigned int groups, unsigned int width, unsigned int coordinate_count,
+  unsigned int* host_storage_size) {
+  *host_storage_size = 0;
+  if (!groups || !coordinate_count) return 0;
+  generate_group_coordinates<<<(groups + 255) / 256, 256>>>(indices, permutations, sizes,
+    outer, coordinates, dimensions, groups, width);
+  cudaError_t error = cudaGetLastError();
+  if (error != cudaSuccess) return int(error);
+  try {
+    auto begin = thrust::make_counting_iterator<unsigned int>(0);
+    coordinate_block_area area{dimensions};
+    const unsigned long long total = thrust::transform_reduce(thrust::device, begin, begin + coordinate_count, area,
+      0ull, thrust::plus<unsigned long long>());
+    if (total > std::numeric_limits<unsigned int>::max()) return -2;
+    *host_storage_size = static_cast<unsigned int>(total);
+    thrust::transform_exclusive_scan(thrust::device, begin, begin + coordinate_count,
+      thrust::device_pointer_cast(local_lookups), area, 0u, thrust::plus<unsigned int>());
+  } catch (const std::exception& exception) {
+    fprintf(stderr, "Coordinate group storage failed: %s\n", exception.what());
+    return -1;
+  }
+  return int(cudaDeviceSynchronize());
+}
+'''
+
+
 class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__init__")
   def __init__(
@@ -389,8 +610,26 @@ class gradientIndicesKernel:
     wrt_start_indices: List[int],
     energy: attribute,
     no_local_permutation: bool = False,
-    generate_coordinates: bool = True
+    generate_coordinates: bool = True,
+    reduced_dimension: bool = False
   ):
+    if not isinstance(reduced_dimension, bool):
+      raise TypeError("gradientIndicesKernel: reduced_dimension must be bool.")
+    if reduced_dimension and not generate_coordinates:
+      raise ValueError("Reduced Hessian assembly requires coordinate generation.")
+    self.__reduced_dimension = reduced_dimension
+    self.__numCoordinateGroups = 0
+    self.__coordinateGroupGradientSizesCPU = None
+    self.__grouping_kernel = None
+    self.__compact_coordinate_kernel = None
+    self.__group_coordinate_kernel = None
+    self.__coordinateGroupRepresentatives = gpuarray.empty(0, dtype=np.uint32)
+    self.__coordinateGroupInstances = gpuarray.empty(0, dtype=np.uint32)
+    self.__coordinateGroupOffsets = gpuarray.empty(0, dtype=np.uint32)
+    self.__coordinateGroupGradientSizes = gpuarray.empty(0, dtype=np.uint16)
+    self.__groupCoordinateCountsOuter = gpuarray.empty(0, dtype=np.uint32)
+    self.__coordinateGroupLocalLookups = gpuarray.empty(0, dtype=np.uint32)
+    self.__coordinateGroupStorageSize = 0
     self.__path_dict: Dict[attribute, List[attribute]] = path_dict # the path dict is basically from parent to children
     self.__unioned_child_to_its_children: Dict[attribute, List[attribute]] = unioned_child_to_its_children # this is the unioned child to its children
     # print("Checking unioned child to its children")
@@ -463,7 +702,7 @@ class gradientIndicesKernel:
     self.__coordinate_kernel = None # the kernel for compressing the indices
     self.__generateKernel() # generate and compile the kernel
     self.__getCompressionKernel() # generate or just get the compression kernel
-    if self.__generate_coordinates:
+    if self.__generate_coordinates and not self.__reduced_dimension:
       self.__getCoordinateKernel() # generate or just get the coordinate kernel
 
     # we can pre allocate the spaces for unique sizes
@@ -503,6 +742,7 @@ class gradientIndicesKernel:
 
   @property
   def outputIndices(self):
+    """Ordered segment rows: N instances normally, M groups when reduced."""
     return self.__outputIndices
 
   @property
@@ -563,6 +803,7 @@ class gradientIndicesKernel:
     self.__outputUniqueGradientSizesCPU = None
     self.__outputNumUniqueGradientSizesCPU = None
     self.__numTotalCoordinatesCPU = None
+    self.__coordinateGroupGradientSizesCPU = None
 
   @property
   def outputPermutations(self):
@@ -570,7 +811,50 @@ class gradientIndicesKernel:
 
   @property
   def outputCompressedCoordinateCountsOuter(self):
+    if self.__reduced_dimension:
+      return self.__groupCoordinateCountsOuter
     return self.__outputCompressedCoordinateCountsOuter
+
+  @property
+  def reduced_dimension(self):
+    return self.__reduced_dimension
+
+  @property
+  def numCoordinateGroups(self):
+    return self.__numCoordinateGroups
+
+  @property
+  def coordinateGroupRepresentatives(self):
+    return self.__coordinateGroupRepresentatives
+
+  @property
+  def coordinateGroupInstances(self):
+    return self.__coordinateGroupInstances
+
+  @property
+  def coordinateGroupOffsets(self):
+    return self.__coordinateGroupOffsets
+
+  @property
+  def coordinateGroupGradientSizes(self):
+    return self.__coordinateGroupGradientSizes
+
+  @property
+  def coordinateGroupGradientSizesCPU(self):
+    if self.__coordinateGroupGradientSizesCPU is None:
+      self.__coordinateGroupGradientSizesCPU = (
+        self.__coordinateGroupGradientSizes[:self.__numCoordinateGroups].get()
+        if self.__numCoordinateGroups else np.empty(0, dtype=np.uint16))
+      self.__coordinateGroupGradientSizesCPU.setflags(write=False)
+    return self.__coordinateGroupGradientSizesCPU
+
+  @property
+  def coordinateGroupLocalLookups(self):
+    return self.__coordinateGroupLocalLookups
+
+  @property
+  def coordinateGroupStorageSize(self):
+    return self.__coordinateGroupStorageSize
 
   @property
   def numInstances(self):
@@ -579,7 +863,7 @@ class gradientIndicesKernel:
   @timed("gradientIndicesKernel.__getCompressionKernel")
   def __getCompressionKernel(self):
     if self.__compression_kernel is None:
-      file_name = ".yasps_constant/compression_kernel_reduce_v1" + ("" if not self.__no_local_permutation else "_no_perm")
+      file_name = ".yasps_constant/compression_kernel_" + hashlib.sha256(compression_kernel_string.encode()).hexdigest()[:16] + ("" if not self.__no_local_permutation else "_no_perm")
       # check if the file exists
       if not os.path.exists(f'{file_name}.so'):
         # generate the kernel
@@ -620,6 +904,93 @@ class gradientIndicesKernel:
       return ctypes.c_void_p(None)
     assert x.gpudata is not None
     return ctypes.c_void_p(int(x.gpudata))
+
+  def __getGroupingKernel(self):
+    if self.__grouping_kernel is not None:
+      return
+    source = coordinate_kernel_string + grouping_kernel_string
+    file_name = ".yasps_constant/coordinate_groups_" + hashlib.sha256(source.encode()).hexdigest()[:16]
+    if not os.path.exists(file_name + ".so"):
+      with open(file_name + ".cu", "w") as output:
+        output.write(source)
+      subprocess.run(["nvcc", "-Xcompiler", "-fPIC", "-shared", "-std=c++17", "-O3", "-arch=sm_89",
+                      file_name + ".cu", "-o", file_name + ".so", "-lcudart", "-lcuda"], check=True)
+    library = ctypes.CDLL(file_name + ".so")
+    self.__grouping_kernel = library.groupCoordinateRows
+    self.__grouping_kernel.restype = ctypes.c_int
+    self.__grouping_kernel.argtypes = ([ctypes.c_void_p] * 9 + [ctypes.c_uint32] * 2
+      + [ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32)])
+    self.__compact_coordinate_kernel = library.compactCoordinateRows
+    self.__compact_coordinate_kernel.restype = ctypes.c_int
+    self.__compact_coordinate_kernel.argtypes = [ctypes.c_void_p] * 7 + [ctypes.c_uint32] * 2
+    self.__group_coordinate_kernel = library.computeGroupCoordinates
+    self.__group_coordinate_kernel.restype = ctypes.c_int
+    self.__group_coordinate_kernel.argtypes = ([ctypes.c_void_p] * 7 + [ctypes.c_uint32] * 3
+      + [ctypes.POINTER(ctypes.c_uint32)])
+
+  def __groupCoordinates(self):
+    self.__getGroupingKernel()
+    count = self.__numInstances
+    for name in ("__coordinateGroupRepresentatives", "__coordinateGroupInstances",
+                 "__coordinateGroupOffsets", "__groupCoordinateCountsOuter"):
+      size = count + 1 if name in ("__coordinateGroupOffsets", "__groupCoordinateCountsOuter") else count
+      setattr(self, "_gradientIndicesKernel" + name, gpuarray.empty(size, dtype=np.uint32))
+    self.__coordinateGroupGradientSizes = gpuarray.empty(count, dtype=np.uint16)
+    groups, coordinates = ctypes.c_uint32(), ctypes.c_uint32()
+    error = self.__grouping_kernel(
+      self.__to_void_p(self.__outputIndices), self.__to_void_p(self.__outputIndexSizes),
+      self.__to_void_p(self.__outputPermutations), self.__to_void_p(self.__outputCompressedCoordinateCountsOuter),
+      self.__to_void_p(self.__coordinateGroupRepresentatives), self.__to_void_p(self.__coordinateGroupInstances),
+      self.__to_void_p(self.__coordinateGroupOffsets),
+      self.__to_void_p(self.__coordinateGroupGradientSizes), self.__to_void_p(self.__groupCoordinateCountsOuter),
+      count, self.maxNumIndicesNeeded, ctypes.c_uint64(0xffffffffffffffff), ctypes.byref(groups), ctypes.byref(coordinates))
+    if error:
+      raise RuntimeError(f"gradientIndicesKernel: coordinate grouping failed ({error}).")
+    self.__numCoordinateGroups = groups.value
+    self.__numTotalCoordinatesCPU = coordinates.value
+    self.__compactCoordinateRows()
+
+  def __compactCoordinateRows(self):
+    """Retain group-local rows; original per-instance rows are build-only."""
+    groups = self.__numCoordinateGroups
+    count = groups * self.maxNumIndicesNeeded
+    indices = gpuarray.empty(count, dtype=np.uint32)
+    sizes = gpuarray.empty(count, dtype=np.uint16)
+    permutations = gpuarray.empty(count, dtype=np.int16)
+    error = self.__compact_coordinate_kernel(
+      self.__to_void_p(self.__outputIndices), self.__to_void_p(self.__outputIndexSizes),
+      self.__to_void_p(self.__outputPermutations), self.__to_void_p(self.__coordinateGroupRepresentatives),
+      self.__to_void_p(indices), self.__to_void_p(sizes), self.__to_void_p(permutations),
+      groups, self.maxNumIndicesNeeded)
+    if error:
+      raise RuntimeError(f"gradientIndicesKernel: coordinate row compaction failed ({error}).")
+    self.__outputIndices, self.__outputIndexSizes, self.__outputPermutations = indices, sizes, permutations
+    # Group discovery needs worst-case N capacity, but assembly/cache retain M.
+    for name, size in (("__coordinateGroupRepresentatives", groups),
+                       ("__coordinateGroupOffsets", groups + 1),
+                       ("__coordinateGroupGradientSizes", groups),
+                       ("__groupCoordinateCountsOuter", groups + 1)):
+      value = getattr(self, "_gradientIndicesKernel" + name)
+      if value.size != size:
+        setattr(self, "_gradientIndicesKernel" + name, value[:size].copy())
+    self.__outputGradientSizes = gpuarray.empty(0, dtype=np.uint16)
+    self.__outputGroupedIndicesInner = gpuarray.empty(0, dtype=np.uint32)
+    self.__outputGroupedIndicesOuter = gpuarray.empty(0, dtype=np.uint32)
+    self.__outputCompressedCoordinateCountsOuter = gpuarray.empty(0, dtype=np.uint32)
+
+  def __generateGroupCoordinates(self):
+    if self.__coordinateGroupLocalLookups.size < self.numTotalCoordinates:
+      self.__coordinateGroupLocalLookups = gpuarray.empty(self.numTotalCoordinates, dtype=np.uint32)
+    storage = ctypes.c_uint32()
+    error = self.__group_coordinate_kernel(
+      self.__to_void_p(self.__outputIndices), self.__to_void_p(self.__outputPermutations),
+      self.__to_void_p(self.__outputIndexSizes),
+      self.__to_void_p(self.__groupCoordinateCountsOuter), self.__to_void_p(self.__outputCoordinates),
+      self.__to_void_p(self.__outputBlockDimensions), self.__to_void_p(self.__coordinateGroupLocalLookups),
+      self.__numCoordinateGroups, self.maxNumIndicesNeeded, self.numTotalCoordinates, ctypes.byref(storage))
+    if error:
+      raise RuntimeError(f"gradientIndicesKernel: group coordinate expansion failed ({error}).")
+    self.__coordinateGroupStorageSize = storage.value
 
 
   def __getGradientSize(self, path_dict: Dict[attribute, List[attribute]], current_attribute: attribute) -> Tuple[int, int]:
@@ -663,8 +1034,12 @@ class gradientIndicesKernel:
     elif current_attribute in self.__unioned_child_to_its_children:
       unioned_children = self.__unioned_child_to_its_children[current_attribute]
       for child in unioned_children:
-        if child in path_dict or child in self.__wrt:
-          # if the child is in the path dict, we can use it
+        if (child in path_dict or child in self.__wrt or
+            (child.operator in (DATA, CONSTANT) and
+             any(child in children for children in path_dict.values()))):
+          # Retained leaves need local projection slots even outside global
+          # wrt. The union map also contains paths filtered by local_targets,
+          # so only include such leaves when the final path still uses them.
           children_attributes.append(child)
     else:
       raise ValueError(f"Attribute {current_attribute.fullName} is not in the path dict or unioned child to its children, cannot compute gradient size.")
@@ -1031,16 +1406,34 @@ extern "C" int get_indices(
   @timed("gradientIndicesKernel.__reallocate")
   def __reallocate(self):
     self.__invalidateCPUMetadata()
+    self.__numCoordinateGroups = 0
+    self.__coordinateGroupStorageSize = 0
     newNumInstances: int = self.__energy.correspondance.numInstances
-    if newNumInstances > self.__maxInstances:
+    if self.__reduced_dimension or newNumInstances > self.__maxInstances:
       # resize the gpu arrays
-      self.__outputIndices = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
-      self.__outputIndexSizes = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint16)
-      self.__outputPermutations = gpuarray.zeros(self.maxNumIndicesNeeded * newNumInstances, dtype=np.int16)
+      # Active rows are cleared below. empty also handles N=0 without asking
+      # PyCUDA's fill kernel to pack a null allocation as a device argument.
+      self.__outputIndices = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint32)
+      self.__outputIndexSizes = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.uint16)
+      self.__outputPermutations = gpuarray.empty(self.maxNumIndicesNeeded * newNumInstances, dtype=np.int16)
       self.__outputGradientSizes = gpuarray.empty(newNumInstances, dtype=np.uint16)
       self.__outputGroupedIndicesInner = gpuarray.empty(newNumInstances, dtype=np.uint32)
       self.__outputCompressedCoordinateCountsOuter = gpuarray.empty(newNumInstances + 1, dtype=np.uint32)
       self.__maxInstances = newNumInstances # update the maximum size
+    if self.__reduced_dimension:
+      # The N-row build buffers are replaced by compact M-row arrays after
+      # grouping. Never treat a previous compact array as N-row capacity.
+      self.__outputGroupedIndicesOuter = gpuarray.zeros(self.__gradientSize + 2, dtype=np.uint32)
+      if newNumInstances == 0:
+        for name, dtype in (("__coordinateGroupRepresentatives", np.uint32),
+                            ("__coordinateGroupInstances", np.uint32),
+                            ("__coordinateGroupOffsets", np.uint32),
+                            ("__coordinateGroupGradientSizes", np.uint16),
+                            ("__groupCoordinateCountsOuter", np.uint32),
+                            ("__coordinateGroupLocalLookups", np.uint32)):
+          setattr(self, "_gradientIndicesKernel" + name, gpuarray.empty(0, dtype=dtype))
+        self.__outputGroupedIndicesOuter = gpuarray.empty(0, dtype=np.uint32)
+        self.__outputCompressedCoordinateCountsOuter = gpuarray.empty(0, dtype=np.uint32)
     self.__numInstances = newNumInstances # update the number of instances
     if newNumInstances == 0:
       self.__numInstances = 0
@@ -1098,7 +1491,7 @@ extern "C" int get_indices(
       self.__to_void_p(self.__outputNumUniqueGradientSizes),
       self.__numInstances,
       self.maxNumIndicesNeeded,
-      int(self.__generate_coordinates))
+      2 if self.__reduced_dimension else int(self.__generate_coordinates))
     if error_code != 0:
       raise RuntimeError(f"gradientIndiciesKernel.__compressIndicesLocal: Error in compressing indices: {error_code}")
 
@@ -1150,8 +1543,13 @@ extern "C" int get_indices(
     self.__computeIndices(wrt_start_indices)
     self.__compressIndicesLocal()
     if self.__generate_coordinates:
+      if self.__reduced_dimension:
+        self.__groupCoordinates()
       self.__allocateSpaceForCoordinates()
-      self.__generateCoordinates()
+      if self.__reduced_dimension:
+        self.__generateGroupCoordinates()
+      else:
+        self.__generateCoordinates()
 
   def saveAssemblyIndices(self):
     """Own a compact copy of the indices needed by numerical assembly.
@@ -1161,23 +1559,40 @@ extern "C" int get_indices(
     the much larger uncompressed coordinate/dimension arrays for every batch.
     """
     n = self.__numInstances
+    rows = self.__numCoordinateGroups if self.__reduced_dimension else n
     unique = self.numUniqueGradientSizesCPU
     lengths = {
-      "__outputIndices": n * self.maxNumIndicesNeeded,
-      "__outputIndexSizes": n * self.maxNumIndicesNeeded,
-      "__outputPermutations": n * self.maxNumIndicesNeeded,
-      "__outputGradientSizes": n,
-      "__outputGroupedIndicesInner": n,
-      "__outputCompressedCoordinateCountsOuter": n + 1 if n else 0,
+      "__outputIndices": rows * self.maxNumIndicesNeeded,
+      "__outputIndexSizes": rows * self.maxNumIndicesNeeded,
+      "__outputPermutations": rows * self.maxNumIndicesNeeded,
       "__outputUniqueGradientSizes": unique,
-      "__outputGroupedIndicesOuter": unique + 1 if n else 0,
       "__outputNumUniqueGradientSizes": 1,
     }
+    if self.__reduced_dimension:
+      groups = self.__numCoordinateGroups
+      lengths.update({
+        "__coordinateGroupRepresentatives": groups,
+        "__coordinateGroupInstances": n,
+        "__coordinateGroupOffsets": groups + 1 if n else 0,
+        "__coordinateGroupGradientSizes": groups,
+        "__groupCoordinateCountsOuter": groups + 1 if n else 0,
+        "__coordinateGroupLocalLookups": self.numTotalCoordinates,
+      })
+    else:
+      lengths.update({
+        "__outputGradientSizes": n,
+        "__outputGroupedIndicesInner": n,
+        "__outputCompressedCoordinateCountsOuter": n + 1 if n else 0,
+        "__outputGroupedIndicesOuter": unique + 1 if n else 0,
+      })
     arrays = {}
     for name, size in lengths.items():
       value = getattr(self, "_gradientIndicesKernel" + name)
       arrays[name] = value[:size].copy() if size else gpuarray.empty(0, value.dtype)
-    return {"arrays": arrays, "count": n, "unique": unique, "sizes": self.outputUniqueGradientSizesCPU.copy(), "coordinates": self.numTotalCoordinates}
+    return {"arrays": arrays, "count": n, "unique": unique, "sizes": self.outputUniqueGradientSizesCPU.copy(), "coordinates": self.numTotalCoordinates,
+      "reduced_dimension": self.__reduced_dimension, "groups": self.__numCoordinateGroups,
+      "group_sizes": self.coordinateGroupGradientSizesCPU.copy() if self.__reduced_dimension else None,
+      "group_storage_size": self.__coordinateGroupStorageSize}
 
   def restoreAssemblyIndices(self, saved):
     """Borrow read-only assembly buffers without copies or CUDA launches.
@@ -1187,6 +1602,8 @@ extern "C" int get_indices(
     """
     if saved["count"] != self.__energy.correspondance.numInstances:
       raise ValueError("Cached assembly indices have a different instance count.")
+    if saved.get("reduced_dimension", False) != self.__reduced_dimension:
+      raise ValueError("Cached assembly indices use a different reduction policy.")
     if self.__assembly_working_arrays is None:
       self.__assembly_working_arrays = {name: getattr(self, "_gradientIndicesKernel" + name) for name in saved["arrays"]}
     for name, value in saved["arrays"].items():
@@ -1195,6 +1612,9 @@ extern "C" int get_indices(
     self.__outputNumUniqueGradientSizesCPU = saved["unique"]
     self.__outputUniqueGradientSizesCPU = saved["sizes"]
     self.__numTotalCoordinatesCPU = saved["coordinates"]
+    self.__numCoordinateGroups = saved.get("groups", 0)
+    self.__coordinateGroupGradientSizesCPU = saved.get("group_sizes")
+    self.__coordinateGroupStorageSize = saved.get("group_storage_size", 0)
 
   def releaseAssemblyIndices(self):
     """Return to owned writable buffers before index generation or invalidation."""

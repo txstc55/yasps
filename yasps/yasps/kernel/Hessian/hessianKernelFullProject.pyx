@@ -3,8 +3,22 @@ from yasps.attribute import attribute
 from yasps.connectivity import connectivity
 from yasps.primitiveUnion import primitiveUnion
 class hessianKernelFullProject:
-  def __init__(self, evaluation, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int, hessian_row_size: int, grouped_add: bool = False):
-    atomic_add = "atomic_add_grouped" if grouped_add else "atomicAdd"
+  def __init__(self, evaluation, unique_gradient_size: int, gradient_only: bool, max_num_indices: int, attributeName: str, num_attributes: int, hessian_row_size: int, grouped_add: bool = False, reduced_dimension: bool = False):
+    atomic_add = "atomic_add_grouped" if grouped_add or reduced_dimension else "atomicAdd"
+    schedule = f'''
+  const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= nth_gradient_size) return; // reduced ABI: total member count
+  const unsigned int coordinate_row = coordinate_group_for_member(index, groupedIndicesOuter, coordinate_group_count);
+  if (coordinate_group_sizes[coordinate_row] != {unique_gradient_size}) return;
+  const unsigned int instance = groupedIndicesInner[index];
+''' if reduced_dimension else '''
+  const unsigned int start = groupedIndicesOuter[nth_gradient_size];
+  const unsigned int end = groupedIndicesOuter[nth_gradient_size + 1];
+  const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= end - start) return;
+  const unsigned int instance = groupedIndicesInner[start + index];
+  const unsigned int coordinate_row = instance;
+'''
     packed_size = hessian_row_size * (hessian_row_size + 1) // 2
     dense_size = hessian_row_size * hessian_row_size
     packed_compression = packed_size + unique_gradient_size * unique_gradient_size < dense_size
@@ -30,6 +44,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int* coordinatesOuter,           // this will tell us for each instance, the starting and ending index in the lookup table for putting the hessian blocks into the global hessian data array
   const unsigned int* groupedIndicesInner, // we need to know which instance will correspond to the current size
   const unsigned int* groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
+  {"const unsigned short* coordinate_group_sizes, const unsigned int coordinate_group_count," if reduced_dimension else ""}
   const unsigned int nth_gradient_size,    // this indicates which position we are in the outer array
   const unsigned int projection_method,
   double* gradient,   // the gradient output
@@ -40,16 +55,7 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   const unsigned int* gradient_segments_start // for each attribute, where does the gradient start
 ){{
   const unsigned int N = {unique_gradient_size}; // the size of the gradient and hessian, this is the unique gradient size
-  // get the start and end position of the current gradient size
-  const unsigned int start = groupedIndicesOuter[nth_gradient_size];
-  const unsigned int end = groupedIndicesOuter[nth_gradient_size + 1];
-  // first we get the index
-  unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (index >= end - start){{
-    return;
-  }}
-  index = start + index; // add to begin
-  const unsigned int instance = groupedIndicesInner[index]; // this will tell us which instance of the hessian we are computing
+  {schedule}
   constexpr unsigned int HESSIAN_ROWS = {hessian_row_size};
   double intermediates[{scratch_size}];
 
@@ -58,9 +64,9 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   unsigned int gradient_offset = 0;
   for (unsigned int i = 0; i < {max_num_indices}; i++){{
     // we will first get the segment size
-    unsigned short int segment_size = segment_sizes[instance * {max_num_indices} + i];
+    unsigned short int segment_size = segment_sizes[(size_t)coordinate_row * {max_num_indices} + i];
     // and the position for this segment
-    unsigned int segment_placement = segment_indices[instance * {max_num_indices} + i];
+    unsigned int segment_placement = segment_indices[(size_t)coordinate_row * {max_num_indices} + i];
     if (segment_placement == 0){{
       gradient_offset += segment_size;
       continue; // we encountered space reserved for union, skip
@@ -108,15 +114,15 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
   unsigned int row_offset = 0;
   if (N != HESSIAN_ROWS){{ // Equal sizes imply the compression is the identity.
     for (unsigned int i = 0; i < {max_num_indices}; i++){{
-      short int permutation_i = local_permutations[instance * {max_num_indices} + i];
+      short int permutation_i = local_permutations[(size_t)coordinate_row * {max_num_indices} + i];
       if (permutation_i < 0) permutation_i = -permutation_i;
-      const unsigned short int segment_size_i = segment_sizes[instance * {max_num_indices} + i];
+      const unsigned short int segment_size_i = segment_sizes[(size_t)coordinate_row * {max_num_indices} + i];
       for (unsigned int k = 0; k < segment_size_i; k++){{
         unsigned int col_offset = 0;
         for (unsigned int j = 0; j < {max_num_indices}; j++){{
-          short int permutation_j = local_permutations[instance * {max_num_indices} + j];
+          short int permutation_j = local_permutations[(size_t)coordinate_row * {max_num_indices} + j];
           if (permutation_j < 0) permutation_j = -permutation_j;
-          const unsigned short int segment_size_j = segment_sizes[instance * {max_num_indices} + j];
+          const unsigned short int segment_size_j = segment_sizes[(size_t)coordinate_row * {max_num_indices} + j];
           for (unsigned int l = 0; l < segment_size_j; l++){{
 #if {int(packed_compression)}
             const double value = symmetric_upper_get<HESSIAN_ROWS>(intermediates, row_offset + k, col_offset + l);
@@ -143,28 +149,27 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
 
   // we will now put the compressed hessian into the global hessian blocks
   // as well as the diagonal blocks
-  const unsigned int coordinate_start = coordinatesOuter[instance];
-  const unsigned int coordinate_end = coordinatesOuter[instance];
+  const unsigned int coordinate_start = coordinatesOuter[coordinate_row];
   row_offset = 0;
   unsigned int valid_block_counts = 0;
   for (unsigned int i = 0; i < {max_num_indices}; i++){{
     // we first determine what's the correct position to put in the compressed hessian
-    short int permutation_i = local_permutations[instance * {max_num_indices} + i]; // get the permuted placement
-    unsigned int segment_index_i = segment_indices[instance * {max_num_indices} + i];
+    short int permutation_i = local_permutations[(size_t)coordinate_row * {max_num_indices} + i]; // get the permuted placement
+    unsigned int segment_index_i = segment_indices[(size_t)coordinate_row * {max_num_indices} + i];
     if (permutation_i > 0 && segment_index_i >= 2){{
       // make it 0 indexed first
       permutation_i -= 1;
-      unsigned short int segment_size_i = segment_sizes[instance * {max_num_indices} + i];
+      unsigned short int segment_size_i = segment_sizes[(size_t)coordinate_row * {max_num_indices} + i];
       segment_index_i -= 2;
       // we know exactly the row block, we now check for column block
       for (unsigned int j = i; j < {max_num_indices}; j++){{
-        short int permutation_j = local_permutations[instance * {max_num_indices} + j]; // get the permuted placement
-        unsigned int segment_index_j = segment_indices[instance * {max_num_indices} + j];
+        short int permutation_j = local_permutations[(size_t)coordinate_row * {max_num_indices} + j]; // get the permuted placement
+        unsigned int segment_index_j = segment_indices[(size_t)coordinate_row * {max_num_indices} + j];
         if (permutation_j > 0 && segment_index_j >= 2){{
           // ok we have found a valid block
           // first again we make it 0 indexed
           permutation_j -= 1;
-          unsigned short int segment_size_j = segment_sizes[instance * {max_num_indices} + j];
+          unsigned short int segment_size_j = segment_sizes[(size_t)coordinate_row * {max_num_indices} + j];
           segment_index_j -= 2;
           // we now need to get the index
           unsigned int placement_index = lookups[coordinate_start + valid_block_counts];
@@ -185,9 +190,9 @@ __global__ void compute_hessian_and_gradient_global_function_final_gradient_size
             }}
           }}
           // additionally, if it is a diagonal block, we also need to put the diagonal elements
-          if (i == j){{
+          if ({int(not reduced_dimension)} && i == j){{
             // get the placement
-            unsigned int segment_index = segment_indices[instance * {max_num_indices} + i] - 2;
+            unsigned int segment_index = segment_indices[(size_t)coordinate_row * {max_num_indices} + i] - 2;
             for (unsigned int k = 0; k < segment_size_i; k++){{
               {atomic_add}(&diagonal[segment_index + k], compressed_hessian(permutation_i + k, permutation_j + k));
             }}

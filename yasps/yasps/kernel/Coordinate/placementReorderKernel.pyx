@@ -240,6 +240,8 @@ int reorderPlacementIndices(
     giKernel: gradientIndicesKernel,
     lookups: gpuarray.GPUArray,
   ):
+    if giKernel.reduced_dimension:
+      raise ValueError("placementReorderKernel: reduced coordinate groups are not supported by per-instance placement reordering.")
     if self.__energy.correspondance.numInstances <= 0:
       return
     assert self.__kernel is not None, "placementReorderKernel.reorderPlacementindices: Kernel has not been compiled yet"

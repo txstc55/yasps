@@ -5,7 +5,7 @@ from yasps.primitiveUnion import primitiveUnion
 from yasps.projection import SMALL_EVD_HEADER
 from typing import List, Set
 class hessianKernelHeader:
-  def __init__(self, att: attribute, unique_gradient_sizes: Set[int], sortedDependency: List[deviceKernel], block_activity: bool = False, evaluation = None):
+  def __init__(self, att: attribute, unique_gradient_sizes: Set[int], sortedDependency: List[deviceKernel], block_activity: bool = False, evaluation = None, reduced_dimension: bool = False):
     self.__att = att
     inputs = self.__att.deviceKernel if evaluation is None else evaluation
     sortedDatas: List[attribute] = inputs.kernelDatas
@@ -40,7 +40,9 @@ __device__ __forceinline__ void atomic_add_grouped(double *address, double value
     if (peers == contiguous) {
       const unsigned int rank = lane - first;
       for (unsigned int offset = 1; offset < 32; offset <<= 1) {
-        const double other = __shfl_down_sync(active, value, offset);
+        // Other destination groups can take a different branch (including
+        // the singleton fast path), so only this peer set participates.
+        const double other = __shfl_down_sync(peers, value, offset);
         if ((rank & (2 * offset - 1)) == 0 && lane + offset <= last) {
           value += other;
         }
@@ -53,6 +55,20 @@ __device__ __forceinline__ void atomic_add_grouped(double *address, double value
   }
 #endif
   atomicAdd(address, value);
+}
+
+// Reduced assembly schedules the sorted member list without padding groups
+// to warps. Its only per-instance metadata is the original instance ID;
+// recover the coordinate row from the per-group CSR boundaries.
+__device__ __forceinline__ unsigned int coordinate_group_for_member(
+    unsigned int member, const unsigned int* offsets, unsigned int groups) {
+  unsigned int first = 0, last = groups;
+  while (first + 1 < last) {
+    const unsigned int middle = first + (last - first) / 2;
+    if (offsets[middle] <= member) first = middle;
+    else last = middle;
+  }
+  return first;
 }
 
 // Row-major packed storage for the upper triangle, including the diagonal.
@@ -321,6 +337,7 @@ const unsigned int* lookups,                    // how to place the current bloc
 const unsigned int* coordinatesOuter,           // this will tell us for each instance, the starting and ending index in the lookup table for putting the hessian blocks into the global hessian data array
 const unsigned int* groupedIndicesInner, // we need to know which instance will correspond to the current size
 const unsigned int* groupedIndicesOuter, // the outer indices that will indicate for each gradient size, what's the start and end in the inner array
+{"const unsigned short* coordinate_group_sizes, const unsigned int coordinate_group_count," if reduced_dimension else ""}
 {"const unsigned char* block_activity, const unsigned int activity_stride," if block_activity else ""}
 const unsigned int nth_gradient_size,    // this indicates which position we are in the outer array
 const unsigned int projection_method,

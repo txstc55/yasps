@@ -237,7 +237,7 @@ def update_position(coordinates, values):
       coordinate.updateValue(value, deepCopy=True)
 
 
-def particle_graph(mesh, name, grid, q, grid_rest, count, h, liquid, liquid_determinant_weight=None, liquid_volume_weight=1.0):
+def particle_graph(mesh, name, grid, q, grid_rest, count, h, liquid, liquid_determinant_weight=1.0, liquid_volume_weight=1.0):
   from yasps import attribute
   particles = mesh.addPrimitive(name, numInstances=count, isDynamic=True)
   connection = particles.addConnectivity("stencil", grid, np.tile(np.arange(27, dtype=np.uint32), (count, 1)), 27)
@@ -271,23 +271,7 @@ def particle_graph(mesh, name, grid, q, grid_rest, count, h, liquid, liquid_dete
     bindings.append((old_F, "F", 9))
   materials, energies = [], []
 
-  if liquid:
-    material = mesh.addPrimitive(f"{name}_model", numInstances=count, isDynamic=True)
-    identity = material.addConnectivity("particle", particles, np.arange(count, dtype=np.uint32), 1)
-    J = constant(particles, "volume_ratio", np.ones(count))
-    # cof(F0):(D*F0) = det(F0)*trace(D), without large cancelling products.
-    divergence = sum(increment[axis, axis] for axis in range(3))
-    residual = particles.addAttribute("volume_residual", computed_attribute=J - 1.0 + J * divergence)
-    # The one-to-one join preserves a scalar inner Hessian, without projection.
-    local_residual = material.addAttribute("residual", through=identity, source=residual)
-    volume = constant(material, "volume", np.ones(count))
-    bulk = constant(material, "bulk", np.ones(count))
-    density = 0.5 * liquid_volume_weight * bulk * local_residual * local_residual
-    energy = material.addAttribute("energy", computed_attribute=h * h * volume * density)
-    bindings += [(J, "J", 1), (volume, "volume", 1), (bulk, "bulk", 1)]
-    materials.append(material)
-    energies.append(energy)
-  else:
+  if not liquid:
     material = mesh.addPrimitive(f"{name}_model", numInstances=count, isDynamic=True)
     identity = material.addConnectivity("particle", particles, np.arange(count, dtype=np.uint32), 1)
     local_F = material.addAttribute("F", through=identity, source=F).resize(3, 3)
@@ -300,9 +284,8 @@ def particle_graph(mesh, name, grid, q, grid_rest, count, h, liquid, liquid_dete
     materials.append(material)
     energies.append(energy)
 
-  energy_groups = [(energies.copy(), -1, "liquid_gn")] if liquid else [(energies.copy(), 1, "solid_stable_neo_hookean")]
-  if liquid and liquid_determinant_weight is not None:
-    # Add the exact determinant penalty without replacing the scalar GN energy.
+  if liquid:
+    # This is the only liquid material energy; no linearized volume objective.
     # A is affine in grid DOFs: project its 9x9 Hessian before J^T H J.
     # Joining det(A) instead would omit its nonlinear second derivative.
     incremental_F = particles.addAttribute("incremental_F", computed_attribute=attribute.identity(3) + increment)
@@ -320,7 +303,7 @@ def particle_graph(mesh, name, grid, q, grid_rest, count, h, liquid, liquid_dete
     bindings += [(previous_J, "J", 1), (volume, "volume", 1), (bulk, "bulk", 1)]
     materials.append(material)
     energies.append(energy)
-    energy_groups.append(([energy], 1, "liquid_exact_determinant_penalty"))
+  energy_groups = [(energies.copy(), 1, "liquid_exact_determinant_penalty" if liquid else "solid_stable_neo_hookean")]
   return {"primitive": particles, "materials": materials, "connection": connection, "count": count, "position": position, "F": F, "energies": energies, "energy_groups": energy_groups, "liquid": liquid, "bindings": bindings}
 
 

@@ -24,16 +24,19 @@ from helpers import position_attributes, update_position, create_collision_detec
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "ccd"))
+# Reuse CK's recorder so both runs have the same timing/memory provenance.
+sys.path.insert(0, str(HERE.parent))
+from ck_mpm_deep_water_bunnies.performance import PerformanceRecorder
 
 ##################################################################
 ## Configuration: SI, y-up, 64 nodes per axis, eight bodies in total
 ##################################################################
 FRAME_DT = 0.01
-NUM_FRAMES = 100
+NUM_FRAMES = 400
 PARTICLES_PER_BUNNY = 80_000
 LIQUID_PARTICLES_PER_BUNNY = [184_000] * 5
 MOTION_TOLERANCE = 2e-2
-CG_TOLERANCE = 1e-5
+CG_TOLERANCE = 1e-3
 MAX_CG_ITERATIONS = 2000
 MAX_NEWTON_ITERATIONS = 10000
 GRID_INERTIA_MIN_MASS = 1e-8
@@ -41,10 +44,10 @@ MAX_BACKTRACKS = 8
 MATERIAL_BATCH_SIZE = 100_000  # Bound raw-coordinate sorting memory; bounded peak compression workspace.
 SEPARATE_COORDINATES = False
 HIERARCHY_INCLUDE_INITIAL_CONTACTS = True
-HIERARCHY_REBUILD_INTERVAL = 1
+HIERARCHY_REBUILD_INTERVAL = 5
 CONTACT_DISTANCE = 0.001  # physical activation distance; CCD receives its square
 CONTACT_STIFFNESS = 1e7
-CCD_SLACKNESS = 0.5
+CCD_SLACKNESS = 0.8
 CONTAINER_MESH_ID = 5  # Distinct from both affine bodies (2/3) and MPM (4).
 CHECKPOINT_START_FRAME = 0
 CHECKPOINT_INTERVAL = 5  # Full restart state every five frames; surface/particle exports every frame.
@@ -52,9 +55,8 @@ ORTHOGONAL_STIFFNESS = 1e9
 DETERMINANT_STIFFNESS = 1e9
 INITIAL_VELOCITY = np.zeros(3)
 LIQUID_DEPTH_FRACTION = 0.30
-LIQUID_BULK = 2e3
-LIQUID_VOLUME_WEIGHT = 100.0
-LIQUID_GN_AUTO_PARTITION = 2  # Fixed grid segments: cache J^T H, then scatter 3x3 blocks.
+LIQUID_BULK = 200000.0
+LIQUID_VOLUME_WEIGHT = 1.0
 LIQUID_DETERMINANT_WEIGHT = 1.0  # Relative to the weighted liquid bulk coefficient.
 LIQUID_DENSITY = 1000.0
 DENSITIES = [1100.0, 200.0] + [LIQUID_DENSITY] * 5 + [900.0]
@@ -63,19 +65,24 @@ POISSON = [.45, .25]
 COLORS = ["#dfad3b", "#e64b4b"] + ["#38bde0"] * 5 + ["#7855cf"]
 BODY_ORDER = ["affine", "soft"] + [f"liquid{i}" for i in range(5)] + ["solid_mpm"]
 MPM_BODY_GROUPS = [("liquid", list(range(2, 7))), ("solid", [7])]
+TRANSFER_SCHEME = "quadratic_mpm_liquid_flip_solid_apic"
+TRANSFER_VERSION = 1
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--frames", type=int, default=NUM_FRAMES)
 parser.add_argument("--particles", type=int, default=PARTICLES_PER_BUNNY, help="Particles per solid MPM bunny")
 parser.add_argument("--liquid-particles", type=int, nargs=5, default=LIQUID_PARTICLES_PER_BUNNY, help="Particle counts for the five liquid bunnies")
 parser.add_argument("--batch-size", type=int, default=MATERIAL_BATCH_SIZE, help="Particles per bounded MPM material-Hessian batch")
-parser.add_argument("--output", type=Path, default=HERE / "outputs" / "deep_water_det_64_1m")
+parser.add_argument("--no-reduced-dimension", action="store_true", help="Disable coordinate grouping for MPM material Hessians only")
+parser.add_argument("--output", type=Path, default=HERE / "outputs" / "grouped_flip_200k_64_1m_400")
 parser.add_argument("--restart", type=Path, help="Resume from a complete restart_after_frame_XXXX.npz checkpoint")
 parser.add_argument("--gui", action="store_true")
 parser.add_argument("--checkpoints-only", action="store_true", help="Save restart NPZs including liquid_J from frame 0; no rendering or other exports")
 parser.add_argument("--fresh-cache", action="store_true")
 parser.add_argument("--geometry-only", action="store_true", help="Validate geometry and volumes, then exit before compilation")
 args = parser.parse_args()
+if args.restart:
+  args.restart = args.restart.resolve()
 yasps.helper.DEBUG_TIME = False  # The frame log below records phase timings without per-kernel print overhead.
 if min(args.frames, args.particles, *args.liquid_particles, args.batch_size, HIERARCHY_REBUILD_INTERVAL) <= 0:
   raise ValueError("Frames, particle count, and batch size must be positive")
@@ -83,6 +90,9 @@ particles_per_material = {"liquid": args.liquid_particles, "solid": [args.partic
 total_particles = sum(sum(counts) for counts in particles_per_material.values())
 OUTPUT = args.output.resolve()
 OUTPUT.mkdir(parents=True, exist_ok=True)
+if not args.restart and ((OUTPUT / "statistics.json").exists() or any(OUTPUT.glob("frame_*.npz")) or any(OUTPUT.glob("restart_after_frame_*.npz"))):
+  raise ValueError("Output already contains a run; choose a new directory or an explicit quadratic-MPM checkpoint")
+performance = PerformanceRecorder(OUTPUT, HERE)
 os.chdir(HERE)
 if args.fresh_cache:
   backup = Path(tempfile.mkdtemp(prefix="yasps_mpm_cache_backup_"))
@@ -131,12 +141,19 @@ specs = {"frames": args.frames, "nominal_dt": FRAME_DT, "grid_nodes": GRID_N, "g
 specs.update({"liquid_bulk_pa": LIQUID_BULK, "liquid_volume_weight": LIQUID_VOLUME_WEIGHT, "effective_liquid_bulk_pa": LIQUID_BULK * LIQUID_VOLUME_WEIGHT, "liquid_rest_volume_m3": float(liquid_volume), "rest_water_depth_m": float(water_depth), "liquid_particle_volumes_m3": (body_volumes[2:7] / args.liquid_particles).tolist(), "solid_particle_volume_m3": float(body_volumes[7] / args.particles)})
 specs.update({"linear_solver": "mas", "fallback_solver": "jacobian", "grid_inertia_min_mass": GRID_INERTIA_MIN_MASS, "cg_tolerance": CG_TOLERANCE, "max_cg_iterations": MAX_CG_ITERATIONS, "max_newton_iterations": MAX_NEWTON_ITERATIONS, "motion_tolerance": MOTION_TOLERANCE, "max_backtracks": MAX_BACKTRACKS, "ccd_slackness": CCD_SLACKNESS})
 specs.update({"contact_distance_m": CONTACT_DISTANCE, "contact_stiffness": CONTACT_STIFFNESS, "container_bounds_m": [BOX_LOWER.tolist(), BOX_UPPER.tolist()], "initial_velocity_m_s": INITIAL_VELOCITY.tolist(), "container_mesh_id": CONTAINER_MESH_ID, "ccd_capacity_growth": 1.5})
-specs.update({"mpm_liquid_model": "weighted frozen scalar volume/divergence GN residual", "liquid_inner_hessian": "1x1, projection_method=-1", "liquid_positive_determinant_guarantee": False, "determinant_step_limit": False, "mas_hierarchy_rebuild_interval": HIERARCHY_REBUILD_INTERVAL, "mpm_solid_model": "projected stable Neo-Hookean", "gpu_baseline_used_gib": (gpu_total - free_at_start) / 2**30})
-specs["liquid_gn_auto_partition"] = LIQUID_GN_AUTO_PARTITION
-specs.update({"liquid_determinant_weight": LIQUID_DETERMINANT_WEIGHT, "liquid_determinant_model": "additive exact (1 - J_previous * det(I + D))^2", "liquid_determinant_projection": 1, "liquid_determinant_inner_hessian": "9x9", "liquid_determinant_product_tiles": "9x9, auto_partition=False"})
+specs.update({"mpm_liquid_model": "single exact quadratic volume energy", "liquid_inner_hessian": "9x9, projection_method=1", "liquid_positive_determinant_guarantee": False, "determinant_step_limit": False, "mas_hierarchy_rebuild_interval": HIERARCHY_REBUILD_INTERVAL, "mpm_solid_model": "projected stable Neo-Hookean", "solid_material_projection": 1, "gpu_baseline_used_gib": (gpu_total - free_at_start) / 2**30})
+specs.update({"liquid_determinant_weight": LIQUID_DETERMINANT_WEIGHT, "liquid_determinant_model": "0.5 * dt^2 * V0 * effective_bulk * determinant_weight * (J_previous * det(I + D) - 1)^2", "liquid_determinant_projection": 1, "liquid_determinant_inner_hessian": "9x9", "liquid_determinant_product_tiles": "9x9, auto_partition=0"})
+specs.update({"transfer_scheme": TRANSFER_SCHEME, "transfer_version": TRANSFER_VERSION, "liquid_velocity_transfer": "pure_flip", "solid_velocity_transfer": "apic", "particle_position_transfer": "solved_grid_displacement", "flip_baseline": "physical mixed P2G momentum/mass before gravity", "grid_count": 1, "stencil_nodes": 27, "reduced_dimension": not args.no_reduced_dimension, "reduced_dimension_scope": [] if args.no_reduced_dimension else ["liquid_material", "solid_material"]})
+specs.update({"total_grid_nodes": len(GRID), "grid_origins_m": [GRID_ORIGIN.tolist()], "particle_stencil_dofs": 81})
+specs["linear_initial_guess"] = "previous successful solve, unscaled; cold after failure or process restart; inactive grid entries zeroed"
+specs["physical_diagnostics_policy"] = "warn and record; no determinant, mass-error or container-clearance abort"
+configuration_path = OUTPUT / "configuration.json"
+if args.restart and configuration_path.exists():
+  (OUTPUT / f"configuration_before_resume_{os.getpid()}.json").write_bytes(configuration_path.read_bytes())
 (OUTPUT / "configuration.json").write_text(json.dumps(specs, indent=2))
 print("CONFIGURATION " + json.dumps(specs), flush=True)
 if args.geometry_only:
+  performance.finish(completed_frames=0, success=True)
   sys.exit(0)
 transfer = SourceModule((HERE / "transfers.cu").read_text(), options=TRANSFER_OPTIONS, no_extern_c=True)
 
@@ -186,7 +203,7 @@ soft_mu = constant(soft_material, "mu", np.full(len(source_tets), mu_cpu[0]))
 soft_lam = constant(soft_material, "lam", np.full(len(source_tets), lam_cpu[0]))
 soft_density = snh_density(soft_local_F, soft_mu, soft_lam)
 soft_elastic = soft_material.addAttribute("elastic", computed_attribute=h_attribute * h_attribute * soft_volume * soft_density)
-s.addEnergy(soft_elastic, projection_method=1, separate_hessian_jacobian=True)
+s.addEnergy(soft_elastic, projection_method=2, separate_hessian_jacobian=True)
 
 ##################################################################
 ## Affine bodies: three independent rows, volume-lumped vertex inertia
@@ -199,7 +216,7 @@ for a, name in enumerate("xyz"):
 T = affine.addAttribute("T", computed_attribute=attribute.to_array([row[b] for row in affine_rows for b in range(4)], rows=3, cols=4))
 affine_volume = constant(affine, "volume", [volumes[0].sum()])
 affine_energy = affine.addAttribute("rotation", computed_attribute=h_attribute * h_attribute * affine_volume * rotation_penalty(T, ORTHOGONAL_STIFFNESS, DETERMINANT_STIFFNESS))
-s.addEnergy(affine_energy, projection_method=1)
+s.addEnergy(affine_energy, projection_method=2)
 affine_vertices = mesh.addPrimitive("affine_vertices", numInstances=nv)
 affine_connection = affine_vertices.addConnectivity("body", affine, np.zeros(nv, dtype=np.uint32), 1)
 affine_rest = constant(affine_vertices, "rest", np.column_stack([rest[0], np.ones(nv)]), 4)
@@ -296,7 +313,7 @@ for name, arity in [("pp", 2), ("pe", 3), ("pt", 4), ("ee", 4)]:
   weight = constant(primitive, "weight", np.empty(0))
   energy = primitive.addAttribute("barrier", computed_attribute=contact_barrier(local_position, name, dhat, h_attribute * h_attribute * kappa * weight))
   squared_distance = primitive.addAttribute("distance_squared", computed_attribute=contact_distance_squared(local_position, name))
-  s.addEnergy(energy, projection_method=1, dynamic_instances=True, separate_hessian_jacobian=True, auto_partition=False)
+  s.addEnergy(energy, projection_method=2, dynamic_instances=True, separate_hessian_jacobian=True, auto_partition=False)
   contacts.append({"primitive": primitive, "connection": connection, "weight": weight, "arity": arity, "distance": squared_distance})
   if name in ("pe", "pt"):
     contacts[-1]["point_connection"] = point_connection
@@ -304,13 +321,14 @@ for name, arity in [("pp", 2), ("pe", 3), ("pt", 4), ("ee", 4)]:
 s.addMinimizeTarget(targets)
 s.minimizer.setSolver("mas")
 for group in groups:
-  model = "liquid scalar GN residual plus projected exact determinant penalty" if group["liquid"] else "projected stable Neo-Hookean"
+  model = "single projected exact liquid volume energy" if group["liquid"] else "projected stable Neo-Hookean"
   print(f"DIFFERENTIATE {group['primitive'].name}: {model}, batch size {args.batch_size}", flush=True)
   material_hessian = None
   for energies, projection_method, model_name in group["energy_groups"]:
-    auto_partition = LIQUID_GN_AUTO_PARTITION if group["liquid"] and projection_method == -1 else 0
-    print(f"  {model_name}: {len(energies)} energy type(s), projection_method={projection_method}, auto_partition={auto_partition}", flush=True)
-    term_hessian = differentiator().diff2(energies, targets, targets, projection_method=projection_method, dynamic_instances=True, separate_hessian_jacobian=True, grouped_add=True, auto_partition=auto_partition)
+    auto_partition = 0
+    print(f"  {model_name}: {len(energies)} energy type(s), projection_method={projection_method}, auto_partition={auto_partition}, reduced_dimension={not args.no_reduced_dimension}", flush=True)
+    # Optional material-coordinate deduplication; inertia/contact/FEM/ABD stay ordinary.
+    term_hessian = differentiator().diff2(energies, targets, targets, projection_method=projection_method, dynamic_instances=True, separate_hessian_jacobian=True, grouped_add=True, auto_partition=auto_partition, reduced_dimension=not args.no_reduced_dimension)
     material_hessian = term_hessian if material_hessian is None else material_hessian + term_hessian
   # Material connectivity is frozen per frame; ordinary scene contacts refresh
   # independently at every Newton iterate and every line-search trial.
@@ -321,6 +339,7 @@ for group in groups:
 ##################################################################
 ndof = sum(att.size * att.correspondance.numInstances for att in targets)
 initial_guess = gpuarray.zeros(ndof, np.float64)
+has_initial_guess = False  # Own the unscaled H^-1 g from the last successful solve.
 # Keep MAS as the primary solver; this separate instance handles failed solves.
 jacobi_solver = solver("jacobian")
 assembled = matrix(ndof, ndof, symmetric_storage=True)
@@ -343,6 +362,11 @@ start_frame = 0
 restart_time = 0.0
 if args.restart:
   checkpoint = np.load(args.restart.resolve())
+  checkpoint_transfer = (str(checkpoint.get("transfer_scheme", "")), int(checkpoint.get("transfer_version", -1)))
+  if checkpoint_transfer not in {("", -1), (TRANSFER_SCHEME, TRANSFER_VERSION)} or "solid_C" not in checkpoint:
+    raise ValueError("A quadratic-MPM checkpoint is required; CK-MPM transfer state is not interchangeable")
+  if checkpoint_transfer == ("", -1):
+    print("RESTART legacy quadratic APIC state: liquid switches to pure FLIP; liquid C is not used", flush=True)
   if "grid_nodes" in checkpoint and int(checkpoint["grid_nodes"]) != GRID_N:
     raise ValueError("Restart checkpoint grid resolution does not match GRID_N")
   start_frame = int(checkpoint["next_frame"])
@@ -374,7 +398,7 @@ if args.restart:
 # Initialize the frozen maps before evaluating particle geometry, without advancing.
 for group in groups:
   state, frozen = group["state"], group["frozen"]
-  transfer.get_function("p2g")(state["x"], state["v"], state["F"], state["C"], group["mass"], frozen["indices"], frozen["weights"], frozen["B"], node_mass, node_momentum, invalid, np.int32(group["count"]), np.int32(group["liquid"]), block=(128, 1, 1), grid=((group["count"] + 127) // 128, 1, 1))
+  transfer.get_function("p2g_flip" if group["liquid"] else "p2g")(state["x"], state["v"], state["F"], state["C"], group["mass"], frozen["indices"], frozen["weights"], frozen["B"], node_mass, node_momentum, invalid, np.int32(group["count"]), np.int32(group["liquid"]), block=(128, 1, 1), grid=((group["count"] + 127) // 128, 1, 1))
   bind_particle_range(group)
 if invalid.get()[0]:
   raise ValueError("Initial particle stencil left the grid")
@@ -420,6 +444,7 @@ physical_time = restart_time
 ##################################################################
 for frame in range(start_frame, args.frames):
   frame_started = time.perf_counter()
+  performance.begin_frame(frame)
   timing = {name: 0.0 for name in ["p2g", "hierarchy", "hierarchy_contact_cd", "assembly", "cg", "ccd", "cd", "ccd_sweep", "ccd_step", "line_search", "line_search_cd", "g2p"]}
   old_soft = soft_x.compute().value.copy()
   old_soft_values = [att.value.copy() for att in soft_coordinates]
@@ -434,7 +459,7 @@ for frame in range(start_frame, args.frames):
     group["material_hessian"].clearDynamicCoordinateCache()
     frozen["x"], frozen["F"] = state["x"], state["F"]
     freeze_particle_model(group)
-    transfer.get_function("p2g")(state["x"], state["v"], state["F"], state["C"], group["mass"], frozen["indices"], frozen["weights"], frozen["B"], node_mass, node_momentum, invalid, np.int32(group["count"]), np.int32(group["liquid"]), block=(128, 1, 1), grid=((group["count"] + 127) // 128, 1, 1))
+    transfer.get_function("p2g_flip" if group["liquid"] else "p2g")(state["x"], state["v"], state["F"], state["C"], group["mass"], frozen["indices"], frozen["weights"], frozen["B"], node_mass, node_momentum, invalid, np.int32(group["count"]), np.int32(group["liquid"]), block=(128, 1, 1), grid=((group["count"] + 127) // 128, 1, 1))
     bind_particle_range(group)
   cuda.Context.synchronize()
   if invalid.get()[0]:
@@ -468,10 +493,11 @@ for frame in range(start_frame, args.frames):
   mass_host = node_mass.get()
   mpm_mass = sum(float(gpuarray.sum(group["mass"]).get()) for group in groups)
   mass_error = abs(mass_host.sum() - mpm_mass) / mpm_mass
-  if mass_error > 1e-10:
-    raise RuntimeError(f"P2G mass conservation failed: {mass_error}")
+  if not np.isfinite(mass_error) or mass_error > 1e-10:
+    print(f"DIAGNOSTIC WARNING frame={frame:03d}: P2G relative mass error={mass_error}; continuing", flush=True)
   h = FRAME_DT
   cg_iterations = newton_total = 0
+  line_search_failures = solver_fallbacks = zero_steps = 0
   accepted_alpha = 1.0
   # One fixed-duration solve per frame; commit the final iterate at the Newton cap.
   update_position(grid_coordinates, G.value)
@@ -508,7 +534,10 @@ for frame in range(start_frame, args.frames):
     tick = time.perf_counter()
     active_solver = s.minimizer.linearSolver
     mas_failure = None
-    code = active_solver.computeSolution(assembled, gradient, initial_guess, tolerance=CG_TOLERANCE, maxIterations=MAX_CG_ITERATIONS, zero_initial_guess=True)
+    warm_started = has_initial_guess
+    if warm_started:
+      transfer.get_function("mask_inactive")(initial_guess, node_mass, np.int32(SEPARATE_COORDINATES), block=(128, 1, 1), grid=((len(GRID) + 127) // 128, 1, 1))
+    code = active_solver.computeSolution(assembled, gradient, initial_guess, tolerance=CG_TOLERANCE, maxIterations=MAX_CG_ITERATIONS, zero_initial_guess=not warm_started)
     mas_stats = active_solver.statistics.copy()
     # Keep MAS's latest iterate on stagnation or iteration exhaustion.
     # Other failures (e.g. local inversion/curvature) still retry with Jacobi.
@@ -517,11 +546,13 @@ for frame in range(start_frame, args.frames):
       mas_failure = f"code={code}, reason={mas_stats.get('breakdown')}"
     mas_seconds = time.perf_counter() - tick
     if mas_failure is not None:
+      solver_fallbacks += 1
       print(f"JACOBI FALLBACK frame={frame:03d} k={newton:03d}: MAS failed ({mas_failure}); solving the same Hessian and RHS", flush=True)
       active_solver = jacobi_solver
-      code = active_solver.computeSolution(assembled, gradient, initial_guess, tolerance=CG_TOLERANCE, maxIterations=MAX_CG_ITERATIONS, zero_initial_guess=True)
+      code = active_solver.computeSolution(assembled, gradient, initial_guess, tolerance=CG_TOLERANCE, maxIterations=MAX_CG_ITERATIONS, zero_initial_guess=not warm_started)
     timing["cg"] += time.perf_counter() - tick
     stats = active_solver.statistics.copy()
+    stats["warm_started"] = warm_started
     use_gradient_direction = mas_stats.get("result") == -8 and code <= -1000 and stats.get("breakdown") == "non-positive curvature or invalid preconditioned residual"
     stats.update({"used_jacobi_fallback": mas_failure is not None, "used_gradient_fallback": use_gradient_direction, "mas_failure": mas_failure, "mas_attempt_seconds": mas_seconds})
     if mas_failure is not None:
@@ -556,9 +587,16 @@ for frame in range(start_frame, args.frames):
     if reference_gradient_norm is None:
       reference_gradient_norm = max(gradient_norm, 1e-30)
     relative_gradient = gradient_norm / reference_gradient_norm
-    relative_linear_residual = float(stats.get("relative_residual", np.nan))
+    relative_linear_residual = stats.get("relative_residual")
+    residual_text = "unavailable" if relative_linear_residual is None else f"{relative_linear_residual:.3e}"
     if not np.isfinite(slope):
       raise RuntimeError(f"Frame {frame}, Newton {newton}: {active_solver.solverName} PCG returned a non-finite gTd={slope}")
+    # Store the raw solution, never a failed/partial or line-search-scaled step.
+    has_initial_guess = code == 0 and not use_gradient_direction
+    if has_initial_guess:
+      cuda.memcpy_dtod(initial_guess.gpudata, active_solver.solution.gpudata, initial_guess.nbytes)
+    else:
+      initial_guess.fill(0.0)
     originals = [att.value.copy() for att in targets]
     cursor = 0
     directions = []
@@ -609,13 +647,14 @@ for frame in range(start_frame, args.frames):
     if not np.isfinite(energy_after):
       raise RuntimeError(f"Frame {frame}, Newton {newton}: every line-search trial had nonfinite energy")
     if not accepted:
+      line_search_failures += 1
       print(f"LINE SEARCH WARNING frame={frame:03d} k={newton:03d} accepting the final finite trial at alpha={alpha:.6e}", flush=True)
+    zero_steps += int(alpha == 0.0)
     accepted_alpha = alpha
-    print(f"NEWTON frame={frame:03d} k={newton:03d} h={h:.6g} motion={motion:.6e} alpha={alpha:.6e} energy={energy_after:.9e} |g|inf={gradient_inf:.6e} relative_g={relative_gradient:.3e} linear_residual={relative_linear_residual:.3e} cg={stats.get('iterations')} ccd_candidates={ccd.candidate_count} contacts={ccd.separated_counts}", flush=True)
+    print(f"NEWTON frame={frame:03d} k={newton:03d} h={h:.6g} motion={motion:.6e} alpha={alpha:.6e} energy={energy_after:.9e} |g|inf={gradient_inf:.6e} relative_g={relative_gradient:.3e} linear_residual={residual_text} cg={stats.get('iterations')} ccd_candidates={ccd.candidate_count} contacts={ccd.separated_counts}", flush=True)
     # Retain per-Newton phases and native solver statistics for saved-frame benchmarks.
-    if not args.checkpoints_only:
-      with (OUTPUT / "newton_statistics.jsonl").open("a") as timing_file:
-        timing_file.write(json.dumps({"frame": frame, "newton": newton, "seconds": time.perf_counter() - newton_started, "timing_seconds": {name: timing[name] - timing_before[name] for name in timing}, "solver": stats, "solver_code": code, "motion": motion, "alpha": alpha, "energy": energy_after, "candidates": ccd.candidate_count}) + "\n")
+    with (OUTPUT / "newton_statistics.jsonl").open("a") as timing_file:
+      timing_file.write(json.dumps({"process_id": os.getpid(), "frame": frame, "newton": newton, "seconds": time.perf_counter() - newton_started, "timing_seconds": {name: timing[name] - timing_before[name] for name in timing}, "solver": stats, "solver_code": code, "motion": motion, "alpha": alpha, "energy": energy_after, "candidates": ccd.candidate_count, "line_search_accepted": accepted, "line_search_trials": backtrack + 1, "slope": slope, "energy_before": energy_before}) + "\n")
     # Neither a raw-gradient step nor a failed partial solve establishes convergence.
     if not use_gradient_direction and not use_partial_jacobi_direction and motion < MOTION_TOLERANCE:
       converged = True
@@ -627,7 +666,7 @@ for frame in range(start_frame, args.frames):
 
 
   ################################################################
-  ## Commit once: APIC G2P, incremental liquid volume, and mesh velocities
+  ## Commit once: liquid FLIP / solid APIC, incremental volume, mesh velocities
   ################################################################
   tick = time.perf_counter()
   committed_states = []
@@ -636,7 +675,9 @@ for frame in range(start_frame, args.frames):
     next_state = {key: gpuarray.empty_like(value) for key, value in state.items()}
     if not group["liquid"]:
       accepted_F = group["F"].compute().value.copy()
-    transfer.get_function("g2p")(q.compute().value, np.float64(h), frozen["x"], frozen["F"], frozen["indices"], frozen["weights"], frozen["B"], next_state["x"], next_state["v"], next_state["F"], next_state["C"], np.int32(group["count"]), state["J"] if group["liquid"] else np.uintp(0), next_state["J"] if group["liquid"] else np.uintp(0), np.int32(group["liquid"]), block=(128, 1, 1), grid=((group["count"] + 127) // 128, 1, 1))
+    # Physical mixed P2G momentum/mass remains frozen before gravity/Newton.
+    flip_inputs = (state["v"], node_mass, node_momentum) if group["liquid"] else ()
+    transfer.get_function("g2p_flip" if group["liquid"] else "g2p")(q.compute().value, np.float64(h), frozen["x"], frozen["F"], frozen["indices"], frozen["weights"], frozen["B"], next_state["x"], next_state["v"], next_state["F"], next_state["C"], np.int32(group["count"]), state["J"] if group["liquid"] else np.uintp(0), next_state["J"] if group["liquid"] else np.uintp(0), np.int32(group["liquid"]), *flip_inputs, block=(128, 1, 1), grid=((group["count"] + 127) // 128, 1, 1))
     if not group["liquid"]:
       error = float(gpuarray.max(abs(next_state["F"] - accepted_F)).get())
       if error > 1e-8:
@@ -672,10 +713,26 @@ for frame in range(start_frame, args.frames):
   # Diagnostic only: exclude fixed container vertices (which lie on the floor).
   body_geometry_now = union_x.compute().value.get().reshape(-1, 3)[body_query_ids]
   floor_clearance = float(body_geometry_now[:, 1].min() - container_points[:, 1].min())
+  wall_clearance = np.minimum(body_geometry_now - BOX_LOWER, BOX_UPPER - body_geometry_now)
+  outside_count = int(np.count_nonzero(np.any(wall_clearance < -1e-10, axis=1)))
+  if not np.isfinite(wall_clearance).all() or outside_count:
+    print(f"DIAGNOSTIC WARNING frame={frame:03d}: {outside_count} moving points outside the container; minimum clearance={wall_clearance.min()}; continuing", flush=True)
+  determinant_minima = np.array([*particle_J, soft_J.min(), np.linalg.det(A).min()])
+  if not np.isfinite(determinant_minima).all() or np.any(determinant_minima <= 0):
+    print(f"DIAGNOSTIC WARNING frame={frame:03d}: determinant minima [liquid, solid, FEM, affine]={determinant_minima.tolist()}; continuing without clamping or resetting", flush=True)
   free, _ = cuda.mem_get_info()
   peak_used = max(peak_used, gpu_total - free)
   record = {"frame": frame, "time": physical_time, "h": h, "newton_iterations": newton_total, "cg_iterations": cg_iterations, "active_grid_nodes": int((mass_host > 0).sum()), "particles": 4 * args.particles, "accepted_alpha": accepted_alpha, "motion": motion, "gradient_inf": gradient_inf, "relative_gradient": relative_gradient, "true_linear_relative_residual": relative_linear_residual, "solver_relative_residual": stats.get("relative_residual"), "min_detF": float(min(*particle_J, soft_J.min())), "min_affine_det": float(np.linalg.det(A).min()), "affine_orthogonality_inf": float(np.abs(A.transpose(0, 2, 1) @ A - np.eye(3)).max()), "min_active_contact_distance": contact_min, "min_surface_particle_y_above_floor": floor_clearance, "p2g_relative_mass_error": mass_error, "timing_seconds": timing, "frame_seconds": time.perf_counter() - frame_started, "gpu_used_gib": (gpu_total - free) / 2**30, "gpu_sampled_peak_added_gib": (peak_used - (gpu_total - free_at_start)) / 2**30, "converged": converged, "accepted_at_newton_cap": accepted_at_newton_cap}
   record["particles"] = sum(group["count"] for group in groups)
+  record["process_id"] = os.getpid()
+  record["linear_solver"] = "mas"
+  record["ndof"] = ndof
+  record["stencil_dofs_per_particle"] = 81
+  record["ccd_capacity"] = ccd_capacity
+  record.update(line_search_failures=line_search_failures, solver_fallbacks=solver_fallbacks, zero_steps=zero_steps)
+  record["performance"] = performance.snapshot()
+  record["min_container_clearance_m"] = float(wall_clearance.min())
+  record["outside_container_count"] = outside_count
   liquid_J_host = groups[0]["state"]["J"].get()
   record["liquid_J_min"] = particle_J[0]
   record["liquid_J_mean"] = float(liquid_J_host.mean())
@@ -697,8 +754,13 @@ for frame in range(start_frame, args.frames):
     np.savez_compressed(OUTPUT / f"frame_{frame:04d}.npz", time=physical_time, affine_T=affine_T_now, affine_surface=np.array([m.points for m in render_meshes[:1]]), soft_surface=np.array([m.points for m in render_meshes[1:]]), surface_triangles=render_triangles, liquid_positions=groups[0]["state"]["x"].get().reshape(-1, 3), solid_positions=groups[1]["state"]["x"].get().reshape(-1, 3), liquid_body_counts=groups[0]["particle_counts"], solid_body_counts=groups[1]["particle_counts"], liquid_J=liquid_J_host, liquid_rest_volume=groups[0]["parameters"]["volume"].get(), solid_rest_volume=groups[1]["parameters"]["volume"].get())
   # Checkpoint-only runs also save the first ten frames, including liquid J.
   if args.checkpoints_only or (frame >= CHECKPOINT_START_FRAME and (frame % CHECKPOINT_INTERVAL == 0 or frame + 1 == args.frames)):
-    np.savez_compressed(OUTPUT / f"restart_after_frame_{frame:04d}.npz", completed_frame=frame, next_frame=frame + 1, time=physical_time, dt=h, grid_nodes=GRID_N, particles_per_bunny=args.particles, liquid_particles_per_bunny=args.liquid_particles, liquid_body_counts=groups[0]["particle_counts"], solid_body_counts=groups[1]["particle_counts"], soft_position=soft_x.value.get(), soft_velocity=soft_velocity.get(), affine_rows=np.array([att.value.get() for att in affine_rows]), affine_velocity=affine_velocity.get(), liquid_x=groups[0]["state"]["x"].get(), liquid_v=groups[0]["state"]["v"].get(), liquid_F=groups[0]["state"]["F"].get(), liquid_C=groups[0]["state"]["C"].get(), liquid_J=groups[0]["state"]["J"].get(), solid_x=groups[1]["state"]["x"].get(), solid_v=groups[1]["state"]["v"].get(), solid_F=groups[1]["state"]["F"].get(), solid_C=groups[1]["state"]["C"].get())
+    np.savez_compressed(OUTPUT / f"restart_after_frame_{frame:04d}.npz", transfer_scheme=TRANSFER_SCHEME, transfer_version=TRANSFER_VERSION, completed_frame=frame, next_frame=frame + 1, time=physical_time, dt=h, grid_nodes=GRID_N, particles_per_bunny=args.particles, liquid_particles_per_bunny=args.liquid_particles, liquid_body_counts=groups[0]["particle_counts"], solid_body_counts=groups[1]["particle_counts"], soft_position=soft_x.value.get(), soft_velocity=soft_velocity.get(), affine_rows=np.array([att.value.get() for att in affine_rows]), affine_velocity=affine_velocity.get(), liquid_x=groups[0]["state"]["x"].get(), liquid_v=groups[0]["state"]["v"].get(), liquid_F=groups[0]["state"]["F"].get(), liquid_C=groups[0]["state"]["C"].get(), liquid_J=groups[0]["state"]["J"].get(), solid_x=groups[1]["state"]["x"].get(), solid_v=groups[1]["state"]["v"].get(), solid_F=groups[1]["state"]["F"].get(), solid_C=groups[1]["state"]["C"].get())
     print(f"CHECKPOINT saved={OUTPUT / f'restart_after_frame_{frame:04d}.npz'} next_frame={frame + 1}", flush=True)
+
+  record["end_to_end_frame_seconds"] = time.perf_counter() - frame_started
+  record["export_seconds"] = record["end_to_end_frame_seconds"] - record["frame_seconds"]
+  record["performance"] = performance.snapshot()
+  (OUTPUT / "statistics.json").write_text(json.dumps(logs, indent=2))
 
 video = None if args.checkpoints_only else save_video(OUTPUT, args.frames - start_frame, 30, first_frame=start_frame)
 print(f"FINISHED elapsed={time.perf_counter() - started:.2f}s video={video}", flush=True)
@@ -707,3 +769,4 @@ s.minimizer.linearSolver.reset()
 jacobi_solver.reset()
 if not args.checkpoints_only:
   plotter.close()
+performance.finish(completed_frames=args.frames - start_frame, success=True)

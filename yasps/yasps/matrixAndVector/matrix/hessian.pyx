@@ -830,7 +830,15 @@ class hessian(matrix):
     self.__compression_kernel.compressCoordinatesAndDimensions()
     for item in self.__indices_kernels:
       item.releaseRawCoordinates()
-    self.__block_indices_gpu = self.__compression_kernel.lookupArrays
+    lookup_arrays = self.__compression_kernel.lookupArrays
+    self.__block_indices_gpu = []
+    tmp_count = 0
+    for item in self.__indices_kernels:
+      if item.numTotalCoordinates > 0:
+        self.__block_indices_gpu.append(lookup_arrays[tmp_count])
+        tmp_count += 1
+      else:
+        self.__block_indices_gpu.append(gpuarray.empty(0, dtype=np.uint32))
 
     # Separated kernels map their permuted entries to these original lookups.
 
@@ -1095,7 +1103,8 @@ class hessian(matrix):
         grouped_add = grouped_add[index],
         lto = lto[index],
         auto_partition = auto_partitions[index],
-        segment_sizes = segment_sizes
+        segment_sizes = segment_sizes,
+        reduced_dimension = indices_kernels[index].reduced_dimension
       )
       kernels[index].generateKernel(
         indices_kernels[index].outputUniqueGradientSizesCPU.tolist(),
